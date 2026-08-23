@@ -101,7 +101,9 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             branch: "feature/grok",
             stagedSummary: "M apps/server/src/provider/Drivers/GrokDriver.ts",
             stagedPatch: "diff --git a/.../GrokDriver.ts b/.../GrokDriver.ts",
-            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt"),
+            modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-mock-alt", [
+              { id: "reasoningEffort", value: "low" },
+            ]),
           });
 
           expect(generated.subject).toBe("Add Grok provider");
@@ -115,12 +117,12 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             terminal: false,
           });
           expect(
-            requests.some(
-              (request) =>
-                request.method === "session/set_model" &&
-                request.params?.modelId === "grok-mock-alt",
-            ),
-          ).toBe(true);
+            requests.find((request) => request.method === "session/set_model")?.params,
+          ).toEqual({
+            sessionId: "mock-session-1",
+            modelId: "grok-mock-alt",
+            _meta: { reasoningEffort: "low" },
+          });
         }),
     );
   });

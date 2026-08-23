@@ -30,7 +30,11 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import {
+  makeGrokAcpRuntime,
+  parseGrokAcpModelMetadata,
+  resolveGrokAcpBaseModelId,
+} from "../acp/GrokAcpSupport.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -100,52 +104,13 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function trimmedString(value: unknown): string | undefined {
-  return typeof value === "string" ? value.trim() || undefined : undefined;
-}
-
 function buildGrokModelCapabilities(model: EffectAcpSchema.ModelInfo): ModelCapabilities {
-  const meta = model._meta;
-  if (
-    !isRecord(meta) ||
-    (meta.supportsReasoningEffort !== undefined && meta.supportsReasoningEffort !== true)
-  ) {
+  const meta = parseGrokAcpModelMetadata(model._meta);
+  if (meta.supportsReasoningEffort === false || meta.reasoningEfforts.length === 0) {
     return EMPTY_CAPABILITIES;
   }
-
-  const rawEfforts = meta.reasoningEfforts;
-  if (!Array.isArray(rawEfforts)) {
-    return EMPTY_CAPABILITIES;
-  }
-
-  const seen = new Set<string>();
-  const efforts = rawEfforts.flatMap((raw) => {
-    if (!isRecord(raw)) {
-      return [];
-    }
-    const value = trimmedString(raw.value);
-    if (!value || seen.has(value)) {
-      return [];
-    }
-    seen.add(value);
-    return [
-      {
-        value,
-        label: trimmedString(raw.label) ?? value,
-        description: trimmedString(raw.description),
-        isDefault: raw.default === true,
-      },
-    ];
-  });
-  if (efforts.length === 0) {
-    return EMPTY_CAPABILITIES;
-  }
-
-  const currentValue = trimmedString(meta.reasoningEffort);
+  const efforts = meta.reasoningEfforts;
+  const currentValue = meta.reasoningEffort;
   const defaultValue =
     efforts.find((effort) => effort.isDefault)?.value ??
     efforts.find((effort) => effort.value === currentValue)?.value;

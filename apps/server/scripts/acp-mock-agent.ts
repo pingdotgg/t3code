@@ -278,18 +278,33 @@ function modeState(): AcpSchema.SessionModeState {
   };
 }
 
-const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
-  { modelId: "grok-build", name: "Grok Build" },
-  { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
-];
+const grokReasoningEfforts = [
+  { id: "low", value: "low", label: "Low", default: false },
+  { id: "medium", value: "medium", label: "Medium", default: true },
+  { id: "high", value: "high", label: "High", default: false },
+] as const;
+
+function grokAcpModels(): ReadonlyArray<AcpSchema.ModelInfo> {
+  return ["grok-build", "grok-mock-alt"].map((modelId) => ({
+    modelId,
+    name: modelId === "grok-build" ? "Grok Build" : "Grok Mock Alt",
+    _meta: {
+      supportsReasoningEffort: true,
+      reasoningEffort: currentReasoning,
+      reasoningEfforts: grokReasoningEfforts,
+      totalContextTokens: 262_144,
+    },
+  }));
+}
 
 function modelState(): AcpSchema.SessionModelState {
-  const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
+  const models = grokAcpModels();
+  const modelId = models.some((model) => model.modelId === currentModelId)
     ? currentModelId
     : "grok-build";
   return {
     currentModelId: modelId,
-    availableModels: grokAcpModels,
+    availableModels: models,
   };
 }
 
@@ -382,7 +397,7 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
+      if (!grokAcpModels().some((model) => model.modelId === request.modelId)) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {
@@ -392,6 +407,13 @@ const program = Effect.gen(function* () {
         );
       }
       currentModelId = request.modelId;
+      if (
+        request._meta &&
+        typeof request._meta.reasoningEffort === "string" &&
+        request._meta.reasoningEffort.trim()
+      ) {
+        currentReasoning = request._meta.reasoningEffort.trim();
+      }
       return {};
     }),
   );

@@ -17,6 +17,7 @@ const T3_CODE_OAUTH_REFERRER = "t3code";
 const GROK_AUTH_METHOD_API_KEY = "xai.api_key";
 const GROK_AUTH_METHOD_CACHED_TOKEN = "cached_token";
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+const GROK_LEGACY_DEFAULT_MODEL_ID = "grok-build";
 
 type GrokAcpRuntimeGrokSettings = Pick<GrokSettings, "binaryPath">;
 
@@ -78,31 +79,146 @@ export const makeGrokAcpRuntime = (
 
 export function resolveGrokAcpBaseModelId(model: string | null | undefined): string {
   const trimmed = model?.trim();
-  const base = trimmed && trimmed.length > 0 ? trimmed : "grok-build";
-  return normalizeModelSlug(base, GROK_DRIVER_KIND) ?? "grok-build";
+  const base = trimmed && trimmed.length > 0 ? trimmed : GROK_LEGACY_DEFAULT_MODEL_ID;
+  return normalizeModelSlug(base, GROK_DRIVER_KIND) ?? GROK_LEGACY_DEFAULT_MODEL_ID;
 }
 
-export function currentGrokModelIdFromSessionSetup(
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function trimmedString(value: unknown): string | undefined {
+  return typeof value === "string" ? value.trim() || undefined : undefined;
+}
+
+export interface GrokAcpReasoningEffortOption {
+  readonly value: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly isDefault: boolean;
+}
+
+export interface GrokAcpModelMetadata {
+  readonly supportsReasoningEffort: boolean | undefined;
+  readonly reasoningEffort: string | undefined;
+  readonly reasoningEfforts: ReadonlyArray<GrokAcpReasoningEffortOption>;
+  readonly totalContextTokens: number | undefined;
+}
+
+export function parseGrokAcpModelMetadata(meta: unknown): GrokAcpModelMetadata {
+  if (!isRecord(meta)) {
+    return {
+      supportsReasoningEffort: undefined,
+      reasoningEffort: undefined,
+      reasoningEfforts: [],
+      totalContextTokens: undefined,
+    };
+  }
+
+  const seen = new Set<string>();
+  const reasoningEfforts = Array.isArray(meta.reasoningEfforts)
+    ? meta.reasoningEfforts.flatMap((raw) => {
+        if (!isRecord(raw)) {
+          return [];
+        }
+        const value = trimmedString(raw.value);
+        if (!value || seen.has(value)) {
+          return [];
+        }
+        seen.add(value);
+        const description = trimmedString(raw.description);
+        return [
+          {
+            value,
+            label: trimmedString(raw.label) ?? value,
+            ...(description ? { description } : {}),
+            isDefault: raw.default === true,
+          } satisfies GrokAcpReasoningEffortOption,
+        ];
+      })
+    : [];
+  const totalContextTokens = meta.totalContextTokens;
+
+  return {
+    supportsReasoningEffort:
+      typeof meta.supportsReasoningEffort === "boolean" ? meta.supportsReasoningEffort : undefined,
+    reasoningEffort: trimmedString(meta.reasoningEffort),
+    reasoningEfforts,
+    totalContextTokens:
+      typeof totalContextTokens === "number" &&
+      Number.isSafeInteger(totalContextTokens) &&
+      totalContextTokens > 0
+        ? totalContextTokens
+        : undefined,
+  };
+}
+
+export interface GrokAcpModelSelectionState {
+  readonly modelId: string | undefined;
+  readonly reasoningEffort: string | undefined;
+}
+
+export interface GrokAcpSessionModelState extends GrokAcpModelSelectionState {
+  readonly totalContextTokens: number | undefined;
+}
+
+export function currentGrokModelSelectionFromSessionSetup(
   sessionSetupResult:
     | EffectAcpSchema.LoadSessionResponse
     | EffectAcpSchema.NewSessionResponse
     | EffectAcpSchema.ResumeSessionResponse,
-): string | undefined {
-  return sessionSetupResult.models?.currentModelId?.trim() || undefined;
+): GrokAcpSessionModelState {
+  const modelId = sessionSetupResult.models?.currentModelId?.trim() || undefined;
+  const currentModel = sessionSetupResult.models?.availableModels.find(
+    (model) => model.modelId.trim() === modelId,
+  );
+  const metadata = parseGrokAcpModelMetadata(currentModel?._meta);
+  return {
+    modelId,
+    reasoningEffort: metadata.reasoningEffort,
+    totalContextTokens: metadata.totalContextTokens,
+  };
 }
 
 export function applyGrokAcpModelSelection<E>(input: {
   readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
+  readonly currentReasoningEffort: string | undefined;
   readonly requestedModelId: string | undefined;
+  readonly requestedReasoningEffort: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
-}): Effect.Effect<string | undefined, E> {
-  const shouldSwitchModel =
-    input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
-  if (!shouldSwitchModel) {
-    return Effect.succeed(input.currentModelId);
+}): Effect.Effect<GrokAcpModelSelectionState, E> {
+  const requestedModelId = input.requestedModelId?.trim() || undefined;
+  const requestedReasoningEffort = input.requestedReasoningEffort?.trim() || undefined;
+  const targetModelId =
+    requestedModelId === GROK_LEGACY_DEFAULT_MODEL_ID
+      ? input.currentModelId
+      : (requestedModelId ?? input.currentModelId);
+  const modelChanged =
+    requestedModelId !== undefined &&
+    requestedModelId !== GROK_LEGACY_DEFAULT_MODEL_ID &&
+    requestedModelId !== input.currentModelId;
+  const effortChanged =
+    requestedReasoningEffort !== undefined &&
+    requestedReasoningEffort !== input.currentReasoningEffort;
+
+  if ((!modelChanged && !effortChanged) || targetModelId === undefined) {
+    return Effect.succeed({
+      modelId: input.currentModelId,
+      reasoningEffort: input.currentReasoningEffort,
+    });
   }
   return input.runtime
-    .setSessionModel(input.requestedModelId)
-    .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+    .setSessionModel(
+      targetModelId,
+      requestedReasoningEffort ? { reasoningEffort: requestedReasoningEffort } : undefined,
+    )
+    .pipe(
+      Effect.mapError(input.mapError),
+      Effect.as({
+        modelId: targetModelId,
+        reasoningEffort:
+          requestedReasoningEffort ?? (modelChanged ? undefined : input.currentReasoningEffort),
+      }),
+    );
 }

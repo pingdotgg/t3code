@@ -5,6 +5,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
+  currentGrokModelSelectionFromSessionSetup,
   resolveGrokAcpBaseModelId,
 } from "./GrokAcpSupport.ts";
 
@@ -37,11 +38,11 @@ describe("buildGrokAcpSpawnInput", () => {
 
 describe("applyGrokAcpModelSelection", () => {
   const makeRecordingRuntime = (failure?: EffectAcpErrors.AcpError) => {
-    const modelCalls: Array<string> = [];
+    const modelCalls: Array<{ modelId: string; meta?: Readonly<Record<string, unknown>> }> = [];
     const runtime = {
-      setSessionModel: (modelId: string) =>
+      setSessionModel: (modelId: string, meta?: Readonly<Record<string, unknown>>) =>
         Effect.gen(function* () {
-          modelCalls.push(modelId);
+          modelCalls.push({ modelId, ...(meta ? { meta } : {}) });
           if (failure) return yield* failure;
           return {};
         }),
@@ -55,39 +56,61 @@ describe("applyGrokAcpModelSelection", () => {
       const result = yield* applyGrokAcpModelSelection({
         runtime,
         currentModelId: "grok-build",
+        currentReasoningEffort: "medium",
         requestedModelId: "grok-mock-alt",
+        requestedReasoningEffort: "high",
         mapError: (cause) => cause.message,
       });
-      expect(modelCalls).toEqual(["grok-mock-alt"]);
-      expect(result).toBe("grok-mock-alt");
+      expect(modelCalls).toEqual([{ modelId: "grok-mock-alt", meta: { reasoningEffort: "high" } }]);
+      expect(result).toEqual({ modelId: "grok-mock-alt", reasoningEffort: "high" });
     }),
   );
 
-  it.effect("skips set_model when requested matches current", () =>
+  it.effect("changes reasoning on the current model without a redundant model transition", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
         runtime,
-        currentModelId: "grok-build",
+        currentModelId: "grok-4.6",
+        currentReasoningEffort: "medium",
+        requestedModelId: "grok-4.6",
+        requestedReasoningEffort: "low",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([{ modelId: "grok-4.6", meta: { reasoningEffort: "low" } }]);
+      expect(result).toEqual({ modelId: "grok-4.6", reasoningEffort: "low" });
+    }),
+  );
+
+  it.effect("keeps the CLI-selected model for the legacy grok-build sentinel", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-4.6",
+        currentReasoningEffort: "medium",
         requestedModelId: "grok-build",
+        requestedReasoningEffort: "medium",
         mapError: (cause) => cause.message,
       });
       expect(modelCalls).toEqual([]);
-      expect(result).toBe("grok-build");
+      expect(result).toEqual({ modelId: "grok-4.6", reasoningEffort: "medium" });
     }),
   );
 
-  it.effect("skips set_model when no model is requested", () =>
+  it.effect("clears the tracked effort when changing models without an explicit effort", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
         runtime,
-        currentModelId: "grok-build",
-        requestedModelId: undefined,
+        currentModelId: "grok-4.6",
+        currentReasoningEffort: "high",
+        requestedModelId: "grok-4.5",
+        requestedReasoningEffort: undefined,
         mapError: (cause) => cause.message,
       });
-      expect(modelCalls).toEqual([]);
-      expect(result).toBe("grok-build");
+      expect(modelCalls).toEqual([{ modelId: "grok-4.5" }]);
+      expect(result).toEqual({ modelId: "grok-4.5", reasoningEffort: undefined });
     }),
   );
 
@@ -99,11 +122,40 @@ describe("applyGrokAcpModelSelection", () => {
         applyGrokAcpModelSelection({
           runtime,
           currentModelId: "grok-build",
+          currentReasoningEffort: "medium",
           requestedModelId: "grok-mock-alt",
+          requestedReasoningEffort: "high",
           mapError: (cause) => cause.message,
         }),
       );
       expect(error).toBe(failure.message);
     }),
   );
+});
+
+describe("currentGrokModelSelectionFromSessionSetup", () => {
+  it("reads the current effort and context window from Grok model metadata", () => {
+    expect(
+      currentGrokModelSelectionFromSessionSetup({
+        sessionId: "session-1",
+        models: {
+          currentModelId: "grok-4.6",
+          availableModels: [
+            {
+              modelId: "grok-4.6",
+              name: "Grok 4.6",
+              _meta: {
+                reasoningEffort: "high",
+                totalContextTokens: 262_144,
+              },
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      modelId: "grok-4.6",
+      reasoningEffort: "high",
+      totalContextTokens: 262_144,
+    });
+  });
 });

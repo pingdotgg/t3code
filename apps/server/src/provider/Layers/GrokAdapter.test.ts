@@ -188,6 +188,67 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("applies Grok reasoning effort atomically and skips duplicate selections", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-reasoning-selection");
+      const requestLogDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-reasoning-log-")),
+      );
+      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const instanceId = ProviderInstanceId.make("grok");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId,
+          model: "grok-mock-alt",
+          options: [{ id: "reasoningEffort", value: "low" }],
+        },
+      });
+
+      for (const input of ["use high effort", "keep high effort"]) {
+        yield* adapter.sendTurn({
+          threadId,
+          input,
+          attachments: [],
+          modelSelection: {
+            instanceId,
+            model: "grok-mock-alt",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        });
+      }
+
+      const setModelRequests = (yield* Effect.promise(() => readJsonLines(requestLogPath))).filter(
+        (request) => request.method === "session/set_model",
+      );
+      assert.deepStrictEqual(
+        setModelRequests.map((request) => request.params),
+        [
+          {
+            sessionId: "mock-session-1",
+            modelId: "grok-mock-alt",
+            _meta: { reasoningEffort: "low" },
+          },
+          {
+            sessionId: "mock-session-1",
+            modelId: "grok-mock-alt",
+            _meta: { reasoningEffort: "high" },
+          },
+        ],
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
