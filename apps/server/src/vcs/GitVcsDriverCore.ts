@@ -1,5 +1,6 @@
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -2812,12 +2813,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* fileSystem.copyFile(path.join(sourceRoot, relativePath), targetFilePath);
       }).pipe(
         // Best effort per entry: one broken file must not block the rest.
+        // Interruptions still propagate so cancellation is not masked.
         Effect.catchCause((cause) =>
-          Effect.logWarning("failed to copy a .worktreeinclude file into the new worktree", {
-            relativePath,
-            worktreePath,
-            cause,
-          }),
+          Cause.hasInterrupts(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("failed to copy a .worktreeinclude file into the new worktree", {
+                relativePath,
+                worktreePath,
+                cause,
+              }),
         ),
       );
     }
@@ -2854,14 +2858,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     // Best effort: a failed copy leaves the worktree usable, so log instead of
-    // rolling back the creation.
+    // rolling back the creation. Interruptions still propagate so cancellation
+    // is not masked.
     yield* copyWorktreeIncludedFiles(input.cwd, worktreePath).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning("failed to copy .worktreeinclude files into the new worktree", {
-          cwd: input.cwd,
-          worktreePath,
-          cause,
-        }),
+        Cause.hasInterrupts(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("failed to copy .worktreeinclude files into the new worktree", {
+              cwd: input.cwd,
+              worktreePath,
+              cause,
+            }),
       ),
     );
 
