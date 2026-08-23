@@ -37,25 +37,32 @@ const electronClerkUI = {
 
 const app = <AppRoot router={router} />;
 
+// Tesla in-car browsers send a "Tesla/<version>" UA token (older models: QtCarBrowser).
+const isTeslaCarBrowser = /Tesla\/|QtCarBrowser/.test(navigator.userAgent);
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    {clerkPublishableKey && hasCloudPublicConfig() ? (
-      isElectron ? (
-        <ElectronClerkProvider
-          {...electronClerkUI}
-          appearance={clerkAppearance}
-          publishableKey={clerkPublishableKey}
-          passkeys={passkeys}
-        >
-          <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
-        </ElectronClerkProvider>
+  isTeslaCarBrowser ? (
+    "T3 Code does not endorse this behavior"
+  ) : (
+    <React.StrictMode>
+      {clerkPublishableKey && hasCloudPublicConfig() ? (
+        isElectron ? (
+          <ElectronClerkProvider
+            {...electronClerkUI}
+            appearance={clerkAppearance}
+            publishableKey={clerkPublishableKey}
+            passkeys={passkeys}
+          >
+            <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
+          </ElectronClerkProvider>
+        ) : (
+          <ClerkProvider appearance={clerkAppearance} publishableKey={clerkPublishableKey}>
+            <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
+          </ClerkProvider>
+        )
       ) : (
-        <ClerkProvider appearance={clerkAppearance} publishableKey={clerkPublishableKey}>
-          <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
-        </ClerkProvider>
-      )
-    ) : (
-      app
-    )}
-  </React.StrictMode>,
+        app
+      )}
+    </React.StrictMode>
+  ),
 );
