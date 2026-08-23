@@ -261,6 +261,35 @@ function buildEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
     .join("; ");
 }
 
+function buildNushellEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
+  return names
+    .map((name) => {
+      if (!SHELL_ENV_NAME_PATTERN.test(name)) {
+        throw new Error(`Unsupported environment variable name: ${name}`);
+      }
+
+      // Nushell has no `||` operator and rejects the POSIX probe at parse
+      // time; `try`/`catch` with an empty print keeps missing variables
+      // silent so the marker extraction stays unchanged.
+      return [
+        `print '${envCaptureStart(name)}'`,
+        `try { printenv ${name} } catch { print '' }`,
+        `print '${envCaptureEnd(name)}'`,
+      ].join("; ");
+    })
+    .join("; ");
+}
+
+/**
+ * Nushell cannot run the POSIX environment probe, so its login shells need
+ * their own capture command. Matches the `nu` binary regardless of case and
+ * Windows `.exe` suffixes.
+ */
+function isNushellPath(shell: string): boolean {
+  const basename = shell.split(/[\\/]/u).at(-1)?.toLowerCase() ?? "";
+  return basename.replace(/\.exe$/u, "").startsWith("nu");
+}
+
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
   return [
     "$ErrorActionPreference = 'Stop'",
@@ -312,7 +341,10 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
     return {};
   }
 
-  const output = execFile(shell, ["-ilc", buildEnvironmentCaptureCommand(names)], {
+  const captureCommand = isNushellPath(shell)
+    ? buildNushellEnvironmentCaptureCommand(names)
+    : buildEnvironmentCaptureCommand(names);
+  const output = execFile(shell, ["-ilc", captureCommand], {
     encoding: "utf8",
     timeout: 5000,
   });

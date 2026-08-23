@@ -186,6 +186,53 @@ describe("readEnvironmentFromLoginShell", () => {
       CUSTOM_VAR: "  padded value  ",
     });
   });
+
+  it("sends a nushell-compatible probe when the login shell is nushell", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => ["__T3CODE_ENV_PATH_START__", "/a:/b", "__T3CODE_ENV_PATH_END__"].join("\n"));
+
+    expect(readEnvironmentFromLoginShell("/bin/nu", ["PATH"], execFile)).toEqual({
+      PATH: "/a:/b",
+    });
+
+    const script = execFile.mock.calls[0]?.[1]?.[1];
+    // Nushell has no `||` operator and rejects the POSIX probe at parse time.
+    expect(script).toBeDefined();
+    expect(script).not.toContain("||");
+    expect(script).toContain("try { printenv PATH } catch { print '' }");
+  });
+
+  it("detects nushell regardless of case or a .exe suffix", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => "");
+
+    readEnvironmentFromLoginShell("C:\\Program Files\\nu\\NU.EXE", ["PATH"], execFile);
+    const script = execFile.mock.calls[0]?.[1]?.[1];
+    expect(script).not.toContain("||");
+  });
+
+  it("keeps the POSIX probe for non-nushell shells", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => "");
+
+    readEnvironmentFromLoginShell("/bin/zsh", ["PATH"], execFile);
+    expect(execFile.mock.calls[0]?.[1]?.[1]).toContain("printenv PATH || true");
+  });
 });
 
 describe("listLoginShellCandidates", () => {
