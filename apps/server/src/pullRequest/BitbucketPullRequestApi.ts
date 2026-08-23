@@ -12,6 +12,7 @@ import type {
   PullRequestMergeMethod,
   PullRequestMergeability,
   PullRequestReviewCommentDraft,
+  PullRequestReviewPosition,
   PullRequestReviewThread,
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
@@ -106,6 +107,16 @@ export type BitbucketPullRequestApiError =
   | BitbucketViewerUnavailableError
   | BitbucketRepositoryUnsupportedError
   | BitbucketDiffCommitError;
+
+/**
+ * `/user/permissions/repositories` answering CHANGE-2770's removal notice rather than a
+ * permission — Bitbucket sends this for every account now, not only ones it would have refused.
+ */
+function isRepositoryPermissionRemovedError(
+  error: BitbucketPullRequestApiError,
+): error is BitbucketApi.BitbucketResponseError {
+  return error._tag === "BitbucketResponseError" && error.status === 410;
+}
 
 /**
  * Bitbucket's own ceiling. Asking for more does not fail — it answers with an empty page and no
@@ -222,9 +233,23 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly mergeMethod?: PullRequestMergeMethod;
     }) => Effect.Effect<void, BitbucketPullRequestApiError>;
 
+    readonly updateChangeRequest: (input: {
+      readonly repository: string;
+      readonly number: number;
+      readonly title?: string | undefined;
+      readonly body?: string | undefined;
+    }) => Effect.Effect<void, BitbucketPullRequestApiError>;
+
     readonly comment: (input: {
       readonly repository: string;
       readonly number: number;
+      readonly body: string;
+    }) => Effect.Effect<void, BitbucketPullRequestApiError>;
+
+    readonly updateComment: (input: {
+      readonly repository: string;
+      readonly number: number;
+      readonly commentId: string;
       readonly body: string;
     }) => Effect.Effect<void, BitbucketPullRequestApiError>;
 
@@ -337,6 +362,19 @@ function mergeStrategy(method: PullRequestMergeMethod | undefined): string {
       return "rebase_fast_forward";
     default:
       return "merge_commit";
+  }
+}
+
+function bitbucketReviewPosition(
+  position: PullRequestReviewPosition,
+): { readonly from: number } | { readonly to: number } {
+  switch (position.kind) {
+    case "added":
+      return { to: position.newLine };
+    case "deleted":
+      return { from: position.oldLine };
+    case "context":
+      return position.side === "left" ? { from: position.oldLine } : { to: position.newLine };
   }
 }
 
@@ -539,6 +577,13 @@ export const make = Effect.gen(function* () {
     // Nothing on the repository, the pull request or the workspace states what the credentials
     // may do, so this endpoint is the one request Bitbucket makes unavoidable. It is asked
     // alongside the reads the detail was already making, so it costs no round trip of its own.
+    //
+    // Bitbucket permanently removed this endpoint (CHANGE-2770): every account now gets HTTP 410
+    // in place of an answer, whatever it may do. That is the deprecated-endpoint signal, not a
+    // permission being refused, so it is read the same way an unreachable read already is
+    // elsewhere — as a permission that could not be learned, which grants rather than blocks, and
+    // leaves the actual merge or write to say why if the account may not do it. Any other failure
+    // (a bad token, a network fault, an unreadable body) still fails as it did before.
     getRepositoryPermission: (input) =>
       withRepository(input.repository, () =>
         readPage({
@@ -548,7 +593,7 @@ export const make = Effect.gen(function* () {
           )}`,
           decode: decodeRepositoryPermissionJson,
         }),
-      ),
+      ).pipe(Effect.catchIf(isRepositoryPermissionRemovedError, () => Effect.succeed(true))),
 
     getPullRequestDiff: (input) =>
       input.commit !== undefined && !isCommitSha(input.commit)
@@ -701,6 +746,24 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.asVoid);
       }),
 
+    updateChangeRequest: (input) =>
+      withRepository(input.repository, (path) =>
+        // Only the words this call rewrites travel in the body: as `setReviewerRequest` above
+        // relies on, Bitbucket's PUT is a partial update, so any field left out is left as it
+        // was — sending `reviewers` back here would overwrite a change another user made to it
+        // between this call being issued and the request landing.
+        bitbucket
+          .request({
+            method: "PUT",
+            url: `${path}/pullrequests/${input.number}`,
+            body: JSON.stringify({
+              ...(input.title === undefined ? {} : { title: input.title }),
+              ...(input.body === undefined ? {} : { description: input.body }),
+            }),
+          })
+          .pipe(Effect.asVoid),
+      ),
+
     comment: (input) =>
       withRepository(input.repository, (path) =>
         bitbucket
@@ -708,6 +771,21 @@ export const make = Effect.gen(function* () {
             method: "POST",
             url: `${path}/pullrequests/${input.number}/comments`,
             // A JSON document rather than a form field, so the body stays text whatever it says.
+            body: JSON.stringify({ content: { raw: input.body } }),
+          })
+          .pipe(Effect.asVoid),
+      ),
+
+    updateComment: (input) =>
+      withRepository(input.repository, (path) =>
+        bitbucket
+          .request({
+            // Bitbucket keeps a pull request's remarks and its line comments in the one
+            // collection, so this endpoint rewrites either kind.
+            method: "PUT",
+            url: `${path}/pullrequests/${input.number}/comments/${encodeURIComponent(
+              input.commentId,
+            )}`,
             body: JSON.stringify({ content: { raw: input.body } }),
           })
           .pipe(Effect.asVoid),
@@ -730,7 +808,7 @@ export const make = Effect.gen(function* () {
                   content: { raw: comment.body },
                   inline: {
                     path: comment.path,
-                    ...(comment.side === "left" ? { from: comment.line } : { to: comment.line }),
+                    ...bitbucketReviewPosition(comment.position),
                   },
                 }),
               }),

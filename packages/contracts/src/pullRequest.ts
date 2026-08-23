@@ -25,14 +25,95 @@ export type PullRequestState = typeof PullRequestState.Type;
 export const PullRequestListState = Schema.Literals(["all", "open", "closed", "merged"]);
 export type PullRequestListState = typeof PullRequestListState.Type;
 
+/** Where a review stands overall, as a host that summarises its reviews reports it. */
+export const PullRequestReviewDecision = Schema.Literals([
+  "approved",
+  "changes-requested",
+  "review-required",
+]);
+export type PullRequestReviewDecision = typeof PullRequestReviewDecision.Type;
+
+/** One qualifier's value, bounded because it is written into a host's own search query. */
+const PullRequestQualifierValue = TrimmedNonEmptyString.check(Schema.isMaxLength(200));
+const PullRequestQualifierValues = Schema.Array(PullRequestQualifierValue).check(
+  Schema.isMaxLength(10),
+);
+
+/**
+ * Narrowings beyond state and involvement, each absent by default — an absent field filters
+ * nothing, which is what every listing did before there were any. Optional as a whole so a page
+ * and a server of different ages still speak to each other.
+ *
+ * `checks` is host-side only: no row carries its own check state, so a host that cannot match it
+ * answers unnarrowed rather than the page pretending to know.
+ */
+export const PullRequestListFilters = Schema.Struct({
+  draft: Schema.optional(Schema.Literals(["only", "hide"])),
+  review: Schema.optional(
+    Schema.Literals(["approved", "changes-requested", "review-required", "none"]),
+  ),
+  checks: Schema.optional(Schema.Literals(["passing", "failing"])),
+  /**
+   * Labels as GitHub's own search reads them: each group is one `label:` qualifier, a row must
+   * satisfy every group, and a group holding several names is satisfied by any one of them —
+   * `label:size:S,size:XS` finds either size. Typed rather than picked, since a project's labels
+   * are its own and no menu can list them. Bounded because each becomes a host search qualifier.
+   */
+  labels: Schema.optional(Schema.Array(PullRequestQualifierValues).check(Schema.isMaxLength(10))),
+  excludedLabels: Schema.optional(PullRequestQualifierValues),
+  /** One login, as `author:` names it. */
+  author: Schema.optional(PullRequestQualifierValue),
+});
+export type PullRequestListFilters = typeof PullRequestListFilters.Type;
+
+/** The one-glyph summary of a change request's checks, as its list row wears it. */
+export const PullRequestChecksState = Schema.Literals(["passing", "failing", "pending"]);
+export type PullRequestChecksState = typeof PullRequestChecksState.Type;
+
 export const PullRequestMergeability = Schema.Literals(["mergeable", "conflicting", "unknown"]);
 export type PullRequestMergeability = typeof PullRequestMergeability.Type;
 
 export const PullRequestMergeMethod = Schema.Literals(["merge", "squash", "rebase"]);
 export type PullRequestMergeMethod = typeof PullRequestMergeMethod.Type;
 
-export const PullRequestAction = Schema.Literals(["merge", "ready", "draft", "close", "reopen"]);
+export const PullRequestAction = Schema.Literals([
+  "merge",
+  "ready",
+  "draft",
+  "close",
+  "reopen",
+  /** Bring the base branch's commits into this one, which is what unblocks a stale branch. */
+  "update-branch",
+  /**
+   * Hand the merge to the host: it waits for whatever it requires — a green pipeline, the
+   * approvals, an unblocked branch — and merges without anybody coming back. Separate from
+   * `merge` because the two answer different questions. `merge` is refused outright by a host
+   * that is not ready yet, and this one is for exactly that moment.
+   */
+  "enable-auto-merge",
+  /** Take the standing instruction back, which leaves the change request where it was. */
+  "disable-auto-merge",
+]);
 export type PullRequestAction = typeof PullRequestAction.Type;
+
+/**
+ * How a stale branch catches up with its base: a merge commit, or a rebase onto it. The two are
+ * the host's own choices, not this page's — GitHub offers both and refuses a rebase it cannot
+ * replay, so what is offered comes from the host and what is allowed comes from the viewer.
+ */
+export const PullRequestUpdateMethod = Schema.Literals(["merge", "rebase"]);
+export type PullRequestUpdateMethod = typeof PullRequestUpdateMethod.Type;
+
+/**
+ * Where the branch stands against the base it would merge into. Separate from `mergeability`,
+ * which answers a different question: a branch can be behind and still merge cleanly, and that
+ * pairing — out of date, no conflicts — is the one an update button exists for.
+ *
+ * "unknown" where the host was not asked or could not say, which is every host but GitHub and
+ * every pull request whose head repository could not be compared.
+ */
+export const PullRequestBaseComparison = Schema.Literals(["up-to-date", "behind", "unknown"]);
+export type PullRequestBaseComparison = typeof PullRequestBaseComparison.Type;
 
 export const PullRequestActor = Schema.Struct({
   login: TrimmedNonEmptyString,
@@ -66,6 +147,39 @@ export const PullRequestCheck = Schema.Struct({
 });
 export type PullRequestCheck = typeof PullRequestCheck.Type;
 
+/**
+ * The reactions a remark can carry. GitHub's eight, which is also what the picker offers: GitLab
+ * accepts any emoji as an award, and the ones outside this set are read as nothing rather than
+ * shown under a name no other host would recognise.
+ */
+export const PullRequestReactionContent = Schema.Literals([
+  "thumbs-up",
+  "thumbs-down",
+  "laugh",
+  "hooray",
+  "confused",
+  "heart",
+  "rocket",
+  "eyes",
+]);
+export type PullRequestReactionContent = typeof PullRequestReactionContent.Type;
+
+/** One reaction and everyone behind it, which is what the hover on a reaction pill says. */
+export const PullRequestReaction = Schema.Struct({
+  content: PullRequestReactionContent,
+  count: PositiveInt,
+  /**
+   * Who reacted, as far as the host named them. A host that reports fewer names than it counts
+   * leaves the rest out, so this is never longer than `count` and may be shorter. When
+   * `viewerHasReacted` is true, the viewer's own login is left out of this list — the page names
+   * them "You" instead — but `count` still counts them along with everyone else.
+   */
+  actors: Schema.Array(TrimmedNonEmptyString),
+  /** The signed-in account is one of them, so pressing the pill takes the reaction back. */
+  viewerHasReacted: Schema.Boolean,
+});
+export type PullRequestReaction = typeof PullRequestReaction.Type;
+
 export const PullRequestCommentKind = Schema.Literals([
   "issue-comment",
   "review-comment",
@@ -82,6 +196,8 @@ export const PullRequestComment = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   path: Schema.NullOr(Schema.String),
   reviewState: Schema.NullOr(Schema.String),
+  /** Absent from a host with no reactions at all, which is a different thing from none on this. */
+  reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 });
 export type PullRequestComment = typeof PullRequestComment.Type;
 
@@ -103,6 +219,7 @@ export const PullRequestThreadComment = Schema.Struct({
   body: Schema.String,
   createdAt: IsoDateTime,
   url: Schema.NullOr(Schema.String),
+  reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 });
 export type PullRequestThreadComment = typeof PullRequestThreadComment.Type;
 
@@ -124,6 +241,10 @@ export const PullRequestReviewThread = Schema.Struct({
    */
   isOutdated: Schema.Boolean,
   comments: Schema.Array(PullRequestThreadComment),
+  /** Host-reported total, when this thread was read in pages. */
+  commentCount: Schema.optional(NonNegativeInt),
+  /** Opaque cursor for the next comment page. Absent once this thread is whole. */
+  nextCommentsCursor: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestReviewThread = typeof PullRequestReviewThread.Type;
 
@@ -198,6 +319,20 @@ export const PullRequestReviewCapabilities = Schema.Struct({
 export type PullRequestReviewCapabilities = typeof PullRequestReviewCapabilities.Type;
 
 /**
+ * What a host lets be rewritten after it has been posted. The two are separate because a host can
+ * take one without the other: Azure DevOps takes a new title and description through the same
+ * command that closes a pull request, and has no way to post a remark here at all — so nothing it
+ * shows in a conversation can be rewritten either.
+ */
+export const PullRequestEditCapabilities = Schema.Struct({
+  /** The change request's own title and description can be rewritten. */
+  changeRequest: Schema.Boolean,
+  /** A remark can be rewritten by whoever wrote it. */
+  comment: Schema.Boolean,
+});
+export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
+
+/**
  * What a host can do about who reviews. The two are independent: a host can take a request without
  * publishing who may receive one, which is Azure DevOps.
  */
@@ -231,13 +366,32 @@ export const PullRequestCapabilities = Schema.Struct({
   /** Merge strategies the provider itself offers, before repository settings narrow them. */
   mergeMethods: Schema.Array(PullRequestMergeMethod),
   /**
+   * How this host can bring a stale branch up to date. Absent where it cannot at all, which is
+   * every host that has not said otherwise — so a provider that says nothing offers nothing.
+   */
+  updateMethods: Schema.optional(Schema.Array(PullRequestUpdateMethod)),
+  /**
    * The host can narrow a listing by free text. False means it answers unnarrowed and whoever
    * asked has to do the narrowing — which is a different promise, so the page is told rather
    * than left to show every change request on that host as a search result.
    */
   search: Schema.Boolean,
+  /**
+   * Reactions can be read from a remark, and added to one or taken back. One flag for both:
+   * neither host here reports reactions it will not also take, and a surface that could show a
+   * pill it may never press is a surface offering nothing. Optional for the same reason as
+   * `updateMethods` and `edit`: a server that says nothing about reactions has none, which is
+   * what every server before this field was.
+   */
+  reactions: Schema.optional(Schema.Boolean),
   review: PullRequestReviewCapabilities,
   reviewers: PullRequestReviewerCapabilities,
+  /**
+   * What can be rewritten after the fact. Optional so a page and a server of different ages still
+   * speak to each other: a server that says nothing about rewriting is one that cannot, which is
+   * what every server before this one was.
+   */
+  edit: Schema.optional(PullRequestEditCapabilities),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -262,6 +416,11 @@ export const PullRequestViewerPermissions = Schema.Struct({
   verdicts: Schema.Array(PullRequestReviewVerdict),
   /** This viewer may ask somebody for a review, and take the request back again. */
   requestReviewers: Schema.Boolean,
+  /**
+   * The ways this viewer may bring the branch up to date, narrowed from what the host offers.
+   * Absent or empty means they may not, which is also what a host with no such action says.
+   */
+  updateMethods: Schema.optional(Schema.Array(PullRequestUpdateMethod)),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -303,6 +462,10 @@ export const PullRequestListEntry = Schema.Struct({
   updatedAt: IsoDateTime,
   viewerReviewRequested: Schema.Boolean,
   labels: Schema.Array(PullRequestLabel),
+  /** Absent where the host does not summarise its reviews, which is every host but GitHub. */
+  reviewDecision: Schema.optional(PullRequestReviewDecision),
+  /** Absent where the host reports no check rollup, or the change request has no checks. */
+  checksState: Schema.optional(PullRequestChecksState),
 });
 export type PullRequestListEntry = typeof PullRequestListEntry.Type;
 
@@ -324,7 +487,14 @@ export type PullRequestListCursors = typeof PullRequestListCursors.Type;
 export const PullRequestListInput = Schema.Struct({
   state: PullRequestListState,
   involvement: Schema.optional(PullRequestInvolvement),
+  filters: Schema.optional(PullRequestListFilters),
   projectId: Schema.optional(ProjectId),
+  /**
+   * Only these projects, for a client that assigns each shared repository to one of its
+   * connections and asks the others to stay quiet about it. Absent means every project, which
+   * is what every listing asked for before there were several connections to spread across.
+   */
+  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
   /**
    * Narrows the listing to one host, named as the host itself rather than as its provider kind:
    * github.com and a GitHub Enterprise install are two accounts, and a kind cannot tell them
@@ -499,6 +669,27 @@ export const PullRequestDetail = Schema.Struct({
   labels: Schema.Array(PullRequestLabel),
   checks: Schema.Array(PullRequestCheck),
   mergeCapabilities: PullRequestMergeCapabilities,
+  /**
+   * Who the host says the reader is, which is the one thing a conversation cannot be read without
+   * to tell the reader's own remarks from everybody else's — and rewriting a remark is offered
+   * only where the two names agree. Absent where the host could not say, which offers nothing
+   * rather than everything.
+   */
+  viewer: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Where the branch stands against its base. Optional so a host that cannot compare says
+   * nothing rather than claiming the branch is current — the page shows a banner only where the
+   * answer is "behind", and silence is not that answer.
+   */
+  baseComparison: Schema.optional(PullRequestBaseComparison),
+  /** How many commits the base is ahead by, where the host counted them. */
+  behindBy: Schema.optional(NonNegativeInt),
+  /**
+   * Whether the host is already armed to merge this on its own. Absent where the host does not
+   * report it, which is not the same as off: a page that reads silence as "not armed" offers to
+   * arm something that is already armed, and a second arming is a write nobody asked for.
+   */
+  autoMergeEnabled: Schema.optional(Schema.Boolean),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
@@ -527,6 +718,11 @@ export const PullRequestActivity = Schema.Struct({
   commentsTruncated: Schema.Boolean,
   reviewThreads: Schema.Array(PullRequestReviewThread),
   commits: Schema.Array(PullRequestCommit),
+  /**
+   * The change request's own reactions — the ones on its description, which every host counts
+   * against the change request itself rather than against a remark in the conversation.
+   */
+  reactions: Schema.optional(Schema.Array(PullRequestReaction)),
 });
 export type PullRequestActivity = typeof PullRequestActivity.Type;
 
@@ -562,6 +758,14 @@ export const PullRequestDiffInput = Schema.Struct({
 });
 export type PullRequestDiffInput = typeof PullRequestDiffInput.Type;
 
+/** Real line counts for a file whose hunks the host withheld from the patch. */
+export const PullRequestOmittedFileStat = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  additions: Schema.Number,
+  deletions: Schema.Number,
+});
+export type PullRequestOmittedFileStat = typeof PullRequestOmittedFileStat.Type;
+
 export const PullRequestDiffResult = Schema.Struct({
   patch: Schema.String,
   /**
@@ -571,6 +775,11 @@ export const PullRequestDiffResult = Schema.Struct({
   truncated: Schema.Boolean,
   /** Where the next slice starts, or null once the diff is whole. */
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * The host's own counts for the files whose hunks it withheld, so a file the patch cannot
+   * show still reports what changed instead of a zero the diff never had.
+   */
+  omittedFileStats: Schema.optional(Schema.Array(PullRequestOmittedFileStat)),
 });
 export type PullRequestDiffResult = typeof PullRequestDiffResult.Type;
 
@@ -594,7 +803,14 @@ export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileConten
 export const PullRequestActionInput = Schema.Struct({
   ...PullRequestRef.fields,
   action: PullRequestAction,
+  /**
+   * Which strategy the merge uses, read for `merge` and for `enable-auto-merge` alike — a merge
+   * the host performs later is still a merge, and the strategy is chosen when it is armed rather
+   * than at the moment it happens. Absent means the host's own default.
+   */
   mergeMethod: Schema.optional(PullRequestMergeMethod),
+  /** Only read for `update-branch`, where absent means the host's own default. */
+  updateMethod: Schema.optional(PullRequestUpdateMethod),
 });
 export type PullRequestActionInput = typeof PullRequestActionInput.Type;
 
@@ -610,6 +826,60 @@ export const PullRequestCommentInput = Schema.Struct({
 });
 export type PullRequestCommentInput = typeof PullRequestCommentInput.Type;
 
+/**
+ * A change request's own words rewritten: its title, its description, or both. Each is optional
+ * because the page rewrites them apart — a title corrected on its own must not carry a description
+ * nobody opened — and the service refuses a request that carries neither.
+ *
+ * The title is bounded far past what any host takes, GitHub refusing one past 256 characters, so
+ * an oversized one is turned away before it reaches a subprocess. The body is not trimmed for the
+ * same reason a comment is not: it is markdown, where leading spaces open a code block. An empty
+ * one is allowed, which is how a description is cleared.
+ */
+export const PullRequestUpdateInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  title: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(1024))),
+  body: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))),
+});
+export type PullRequestUpdateInput = typeof PullRequestUpdateInput.Type;
+
+/**
+ * A remark already posted, rewritten by whoever wrote it. The kind travels beside the id because
+ * an id alone does not say which endpoint addresses it: GitHub rewrites a comment on the
+ * conversation and a comment on a line through two different mutations.
+ *
+ * A review's own summary is not among them. The hosts disagree about what one even is — the entry
+ * Bitbucket shows is a vote this page renders as a remark, with no words behind it to rewrite —
+ * and a control that worked on one host and failed on another is worse than one that is not there.
+ */
+export const PullRequestCommentUpdateInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  commentId: TrimmedNonEmptyString,
+  kind: Schema.Literals(["issue-comment", "review-comment"]),
+  body: CommentBody,
+});
+export type PullRequestCommentUpdateInput = typeof PullRequestCommentUpdateInput.Type;
+
+/** The coordinates of one line in a pull request diff. */
+export const PullRequestReviewPosition = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("added"),
+    newLine: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("deleted"),
+    oldLine: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("context"),
+    oldLine: PositiveInt,
+    newLine: PositiveInt,
+    /** Which copy of an unchanged line the reviewer selected in a split diff. */
+    side: PullRequestDiffSide,
+  }),
+]);
+export type PullRequestReviewPosition = typeof PullRequestReviewPosition.Type;
+
 /** One remark in a review that has not been sent yet, anchored to a line of the diff. */
 export const PullRequestReviewCommentDraft = Schema.Struct({
   path: TrimmedNonEmptyString,
@@ -619,8 +889,7 @@ export const PullRequestReviewCommentDraft = Schema.Struct({
    * the hosts that address a comment by one path ignore this.
    */
   oldPath: Schema.optional(TrimmedNonEmptyString),
-  line: PositiveInt,
-  side: PullRequestDiffSide,
+  position: PullRequestReviewPosition,
   body: CommentBody,
 });
 export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft.Type;
@@ -639,6 +908,19 @@ export const PullRequestSubmitReviewInput = Schema.Struct({
 });
 export type PullRequestSubmitReviewInput = typeof PullRequestSubmitReviewInput.Type;
 
+export const PullRequestThreadCommentsInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  threadId: TrimmedNonEmptyString,
+  cursor: TrimmedNonEmptyString,
+});
+export type PullRequestThreadCommentsInput = typeof PullRequestThreadCommentsInput.Type;
+
+export const PullRequestThreadCommentsResult = Schema.Struct({
+  comments: Schema.Array(PullRequestThreadComment),
+  nextCursor: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type PullRequestThreadCommentsResult = typeof PullRequestThreadCommentsResult.Type;
+
 export const PullRequestThreadReplyInput = Schema.Struct({
   ...PullRequestRef.fields,
   threadId: TrimmedNonEmptyString,
@@ -652,6 +934,23 @@ export const PullRequestThreadResolutionInput = Schema.Struct({
   resolved: Schema.Boolean,
 });
 export type PullRequestThreadResolutionInput = typeof PullRequestThreadResolutionInput.Type;
+
+/**
+ * Reacting and taking the reaction back are one operation with `reacted` turned around, which is
+ * what pressing the same pill twice is.
+ */
+export const PullRequestReactionInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  /**
+   * Which remark to react to, as it arrived in the conversation. Absent reacts to the change
+   * request itself, which is where its description's reactions live — the id a host uses for
+   * that is its own to work out.
+   */
+  subjectId: Schema.optional(TrimmedNonEmptyString),
+  content: PullRequestReactionContent,
+  reacted: Schema.Boolean,
+});
+export type PullRequestReactionInput = typeof PullRequestReactionInput.Type;
 
 /**
  * Asking for a review and taking the request back are one operation with `requested` turned
@@ -723,6 +1022,26 @@ export function pullRequestHostOf(
 ): string {
   const host = identity?.canonicalKey?.split("/")[0]?.trim();
   return host === undefined || host.length === 0 ? kind : host.toLowerCase();
+}
+
+/**
+ * `author:me` names whoever is signed in to the host being read, GitHub's `@me` spelled either
+ * way. A host's own search would answer it, but the page and the server both re-check an author
+ * against the row's login, so the name is resolved before either comparison rather than being
+ * matched as the literal login "me".
+ *
+ * Null viewer where the host has not said who the reader is; the filter then stands as typed,
+ * which is the same answer a search for a user named "me" would give.
+ *
+ * Shared between the server and the page so both narrow by the same login.
+ */
+export function resolvePullRequestAuthorFilter(
+  author: string,
+  viewer: string | null | undefined,
+): string {
+  const trimmed = author.trim();
+  if (!/^@?me$/i.test(trimmed)) return trimmed;
+  return viewer === null || viewer === undefined || viewer.trim().length === 0 ? trimmed : viewer;
 }
 
 /**

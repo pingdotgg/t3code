@@ -3,6 +3,8 @@ import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types
 export type {
   MarkdownCodeHighlighter,
   MarkdownHighlightedToken,
+  MarkdownImageRenderer,
+  MarkdownImageRequest,
   NativeMarkdownTextStyle,
   SelectableMarkdownSkill,
   SelectableMarkdownTextProps,

@@ -19,6 +19,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
@@ -74,13 +75,16 @@ import {
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
 import {
+  extractMarkdownLinkHrefs,
   normalizeMarkdownLinkDestination,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
+  shouldOpenMarkdownFileLinkInEditor,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
+import { useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
 import { useRightPanelStore } from "../rightPanelStore";
 import { useActiveEnvironmentId } from "../state/entities";
@@ -90,6 +94,13 @@ import { usePreparedConnection } from "../state/session";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { projectEnvironment } from "../state/projects";
+import {
+  claimWorkspaceBasenameLookup,
+  needsWorkspaceBasenameLookup,
+  pickWorkspaceBasenameMatch,
+  WORKSPACE_BASENAME_LOOKUP_LIMIT,
+} from "../workspaceBasenameLookup";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
@@ -110,6 +121,8 @@ interface ChatMarkdownProps {
   className?: string;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
+  /** Parse sanitized raw HTML instead of displaying its source text. */
+  parseRawHtml?: boolean;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -146,6 +159,58 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
   if (!match?.[1]) return null;
   return listItemStart + firstLine.indexOf(match[1]);
 }
+
+/**
+ * The default `1.25rem` marker gutter (`.chat-markdown ol`) fits markers up to
+ * two characters wide. Once a marker reaches three characters (item 100+),
+ * `list-style-position: outside` paints it wider than that gutter and clips
+ * the leading character against the item's own overflow. Rather than widening
+ * the gutter for every list, only lists whose widest marker is 3+ characters
+ * get a wider `--list-gutter`. The width includes a negative marker's minus
+ * sign.
+ */
+export function orderedListGutterStyle(
+  itemCount: number,
+  start: unknown,
+): { "--list-gutter": string } | undefined {
+  const parsedStart = Number.parseInt(String(start ?? 1), 10);
+  const firstNumber = Number.isNaN(parsedStart) ? 1 : parsedStart;
+  const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
+  const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
+  if (markerWidth <= 2) return undefined;
+  return { "--list-gutter": `${markerWidth + 1}ch` };
+}
+
+type MarkdownHtmlAstNode = {
+  type?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: MarkdownHtmlAstNode[];
+};
+
+/** Preserve Windows drive paths through the protocol allowlist in rehype-sanitize. */
+function rehypeNormalizeWindowsImageSrc() {
+  return (tree: MarkdownHtmlAstNode) => {
+    const visit = (node: MarkdownHtmlAstNode) => {
+      const src = node.properties?.src;
+      if (
+        node.type === "element" &&
+        node.tagName === "img" &&
+        typeof src === "string" &&
+        /^[A-Za-z]:[\\/]/.test(src)
+      ) {
+        node.properties = {
+          ...node.properties,
+          src: `file:///${src.replaceAll("\\", "/")}`,
+        };
+      }
+      node.children?.forEach(visit);
+    };
+
+    visit(tree);
+  };
+}
+
 const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
@@ -157,6 +222,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   protocols: {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), "file"],
+    src: [...(defaultSchema.protocols?.src ?? []), "file"],
   },
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
@@ -179,6 +245,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
+  rehypeNormalizeWindowsImageSrc,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
@@ -449,7 +516,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
           {children}
         </table>
       </ScrollArea>
-      <div className="chat-markdown-table-footer select-none">
+      <div className="mt-0.5 flex items-center justify-between select-none">
         <Tooltip>
           <TooltipTrigger
             render={
@@ -642,12 +709,12 @@ function MarkdownCodeBlock({
 
   return (
     <div
-      className="chat-markdown-codeblock border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
+      className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
     >
-      <div className="chat-markdown-codeblock-header select-none">
-        <span className="chat-markdown-codeblock-title">
+      <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
+        <span className="inline-flex min-w-0 items-center gap-[0.4rem] [font-family:var(--font-mono,ui-monospace,SFMono-Regular,monospace)] [font-size:0.6875rem]">
           <MarkdownCodeBlockTitleContent
             fenceTitle={fenceTitle}
             language={language}
@@ -791,11 +858,11 @@ interface MarkdownFileLinkProps {
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
   onOpen: (targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>;
+  onOpenInPanel: (workspaceRelativePath: string, line: number | undefined) => void;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   className?: string | undefined;
 }
 
-const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link cursor-pointer transition-colors hover:bg-accent/70";
 
@@ -874,16 +941,6 @@ function extractInlineCodeSpans(text: string): string[] {
   return spans;
 }
 
-function extractMarkdownLinkHrefs(text: string): string[] {
-  const hrefs: string[] = [];
-  for (const match of text.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
-    const href = match[1]?.trim();
-    if (!href) continue;
-    hrefs.push(href);
-  }
-  return hrefs;
-}
-
 function normalizeMarkdownLinkHrefKey(href: string): string {
   const normalizedHref = normalizeMarkdownLinkDestination(href);
   return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
@@ -897,7 +954,10 @@ const failedFaviconHosts = new Set<string>();
 const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: string }) {
   const [failedHost, setFailedHost] = useState<string | null>(null);
   return (
-    <span className="chat-markdown-link-favicon" aria-hidden>
+    <span
+      className="ms-[0.25em] me-[0.2em] inline-flex size-[14px] [vertical-align:-0.125em]"
+      aria-hidden
+    >
       {failedHost === host || failedFaviconHosts.has(host) ? (
         <GlobeIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
       ) : (
@@ -914,6 +974,62 @@ const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: 
         />
       )}
     </span>
+  );
+});
+
+const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME =
+  "h-auto w-auto max-h-[30rem] max-w-[min(100%,30rem)] object-contain";
+
+// block! outranks the unlayered `.chat-markdown img { display: inline-block }`
+// rule, keeping workspace images on the same block layout as their placeholder.
+const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
+  CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
+  "my-1 block! rounded-lg border border-border/40",
+);
+
+function ChatMarkdownImageFallback(props: { readonly alt: string }) {
+  return (
+    <span className="my-1 inline-flex items-center gap-1.5 rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+      {props.alt.length > 0 ? `Image unavailable · ${props.alt}` : "Image unavailable"}
+    </span>
+  );
+}
+
+/** Markdown images whose src is a workspace file path load through a signed asset URL. */
+const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(props: {
+  readonly threadRef: ScopedThreadRef;
+  readonly path: string;
+  readonly alt: string;
+}) {
+  const assetUrl = useAssetUrlState(props.threadRef.environmentId, {
+    _tag: "workspace-file",
+    threadId: props.threadRef.threadId,
+    path: props.path,
+  });
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+
+  if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
+    return <ChatMarkdownImageFallback alt={props.alt} />;
+  }
+  if (assetUrl._tag !== "Success") {
+    return (
+      <span
+        role="status"
+        aria-label="Loading image"
+        className="my-1 block aspect-video w-full max-w-[30rem] rounded-lg bg-muted/60"
+      />
+    );
+  }
+  return (
+    <img
+      src={assetUrl.url}
+      alt={props.alt}
+      loading="lazy"
+      draggable={false}
+      className={CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME}
+      onError={() => setFailedUrl(assetUrl.url)}
+    />
   );
 });
 
@@ -1044,7 +1160,7 @@ function MarkdownExternalLinkContent({
     const leadingLength = leadingExternalLinkTextLength(plainText);
     return (
       <>
-        <span className="chat-markdown-link-leading">
+        <span className="whitespace-nowrap">
           <MarkdownLinkFavicon host={host} />
           {plainText.slice(0, leadingLength)}
         </span>
@@ -1060,7 +1176,7 @@ function MarkdownExternalLinkContent({
     const leadingLength = leadingExternalLinkTextLength(firstChild);
     return (
       <>
-        <span className="chat-markdown-link-leading">
+        <span className="whitespace-nowrap">
           <MarkdownLinkFavicon host={host} />
           {firstChild.slice(0, leadingLength)}
         </span>
@@ -1072,7 +1188,7 @@ function MarkdownExternalLinkContent({
 
   return (
     <>
-      <span className="chat-markdown-link-leading">
+      <span className="whitespace-nowrap">
         <MarkdownLinkFavicon host={host} />
         {firstChild}
       </span>
@@ -1093,6 +1209,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   theme,
   threadRef,
   onOpen,
+  onOpenInPanel,
   onOpenInBrowser,
   className,
 }: MarkdownFileLinkProps) {
@@ -1136,8 +1253,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       handleOpenInEditor();
       return;
     }
-    useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath, line);
-  }, [handleOpenInEditor, line, threadRef, workspaceRelativePath]);
+    onOpenInPanel(workspaceRelativePath, line);
+  }, [handleOpenInEditor, line, onOpenInPanel, threadRef, workspaceRelativePath]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!onOpenInBrowser) {
@@ -1273,6 +1390,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
+              if (shouldOpenMarkdownFileLinkInEditor(event)) {
+                handleOpenInEditor();
+                return;
+              }
               if (onOpenInBrowser) {
                 handleOpenInBrowser();
                 return;
@@ -1289,8 +1410,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         side="top"
         className="max-w-[min(40rem,calc(100vw-2rem))] font-mono text-[11px] leading-tight"
       >
-        <div className="markdown-file-link-tooltip-scroll overflow-x-auto whitespace-nowrap">
-          {displayPath}
+        {/* The full path: the chip already shows the shortened form, and a link
+            to the workspace root collapses to a bare label that repeats it. */}
+        <div className="overflow-x-auto whitespace-nowrap [scrollbar-color:color-mix(in_srgb,var(--contrast-border)_78%,transparent)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[color-mix(in_srgb,var(--contrast-border)_78%,transparent)] [&::-webkit-scrollbar-track]:bg-transparent">
+          {targetPath}
         </div>
       </TooltipPopup>
     </Tooltip>
@@ -1313,6 +1436,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.theme === next.theme &&
     previous.threadRef === next.threadRef &&
     previous.onOpen === next.onOpen &&
+    previous.onOpenInPanel === next.onOpenInPanel &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.className === next.className
   );
@@ -1327,9 +1451,13 @@ function ChatMarkdown({
   skills = EMPTY_MARKDOWN_SKILLS,
   className,
   lineBreaks = false,
+  parseRawHtml = true,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+  });
+  const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
     reportFailure: false,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, {
@@ -1434,6 +1562,40 @@ function ChatMarkdown({
     },
     [createAssetUrl, openPreview, preparedConnection, threadRef],
   );
+  // A bare filename resolves to the workspace root, which is rarely where the
+  // file is, so ask the index before opening.
+  const openFileInPanel = useCallback(
+    (workspaceRelativePath: string, line: number | undefined) => {
+      if (!threadRef) return;
+      // Claimed on every open so a synchronous one supersedes a lookup already
+      // in flight.
+      const isLatestLookup = claimWorkspaceBasenameLookup();
+      const openAt = (path: string) =>
+        useRightPanelStore.getState().openFile(threadRef, path, line);
+      if (!cwd || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+        openAt(workspaceRelativePath);
+        return;
+      }
+      void (async () => {
+        const result = await searchProjectEntries({
+          environmentId: threadRef.environmentId,
+          input: {
+            cwd,
+            query: workspaceRelativePath,
+            limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+            kind: "file",
+          },
+        });
+        const match =
+          result._tag === "Success"
+            ? pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries)
+            : null;
+        if (!isLatestLookup()) return;
+        openAt(match ?? workspaceRelativePath);
+      })();
+    },
+    [cwd, searchProjectEntries, threadRef],
+  );
   /* eslint-disable react/no-unstable-nested-components -- ReactMarkdown requires component
    * renderers that close over this message's metadata. useMemo keeps them stable until that
    * metadata changes. */
@@ -1467,6 +1629,7 @@ function ChatMarkdown({
           theme={resolvedTheme}
           threadRef={threadRef}
           onOpen={openInPreferredEditor}
+          onOpenInPanel={openFileInPanel}
           onOpenInBrowser={
             threadRef &&
             isPreviewSupportedInRuntime() &&
@@ -1501,6 +1664,15 @@ function ChatMarkdown({
             </p>
             {children}
           </div>
+        );
+      },
+      ol({ node, start, style, ...props }) {
+        const itemCount =
+          node?.children?.filter((child) => child.type === "element" && child.tagName === "li")
+            .length ?? 0;
+        const gutterStyle = orderedListGutterStyle(itemCount, start);
+        return (
+          <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
         );
       },
       li({ node, children, ...props }) {
@@ -1542,9 +1714,12 @@ function ChatMarkdown({
           />
         );
       },
-      a({ node, href, children, ...props }) {
+      a({ node, href, children, title: _title, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        const fileLinkMeta = normalizedHref
+          ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
+            resolveMarkdownFileLinkMeta(normalizedHref, cwd))
+          : null;
         if (!fileLinkMeta) {
           const faviconHost = resolveExternalWebLinkHost(href);
           const isSameDocumentLink = href?.startsWith("#") ?? false;
@@ -1569,13 +1744,14 @@ function ChatMarkdown({
                 if (href) openChangeRequestLink(event, href);
               }}
               onContextMenu={(event) => {
-                if (!canOpenInPreview || !href || !faviconHost) return;
+                if (!href || !faviconHost) return;
                 event.preventDefault();
                 event.stopPropagation();
                 const api = readLocalApi();
                 if (!api) return;
                 void showExternalLinkContextMenu({
                   href,
+                  canOpenInPreview,
                   position: { x: event.clientX, y: event.clientY },
                   showContextMenu: (items, position) => api.contextMenu.show(items, position),
                   openInPreview: async (target) => {
@@ -1642,6 +1818,32 @@ function ChatMarkdown({
           </code>
         );
       },
+      img({ node: _node, title: _title, src, alt, ...props }) {
+        const srcString = typeof src === "string" ? normalizeMarkdownLinkDestination(src) : "";
+        const altText = alt ?? "";
+        const imageSource = classifyMarkdownImageSource(srcString, cwd);
+        if (imageSource._tag === "Direct") {
+          return (
+            <img
+              {...props}
+              src={imageSource.uri}
+              alt={altText}
+              loading="lazy"
+              className={cn(props.className, CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME)}
+            />
+          );
+        }
+        if (imageSource._tag === "WorkspaceFile" && threadRef) {
+          return (
+            <ChatMarkdownWorkspaceImage
+              threadRef={threadRef}
+              path={imageSource.path}
+              alt={altText}
+            />
+          );
+        }
+        return <ChatMarkdownImageFallback alt={altText} />;
+      },
       table({ node: _node, ...props }) {
         return <MarkdownTable {...props} />;
       },
@@ -1685,6 +1887,7 @@ function ChatMarkdown({
     isStreaming,
     markdownFileLinkMetaByHref,
     onTaskListChange,
+    openFileInPanel,
     openInPreferredEditor,
     openExternalLinkInPreview,
     openMarkdownFileInPreview,
@@ -1695,10 +1898,13 @@ function ChatMarkdown({
   ]);
   /* eslint-enable react/no-unstable-nested-components */
 
+  // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
+  // Keep that behavior explicit because literal mode depends on escaping the
+  // complete source token instead of dropping it from the rendered message.
   return (
     <div
       className={cn(
-        "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80",
+        "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80 [overflow-wrap:anywhere] [word-break:break-word]",
         className,
       )}
       onCopy={handleCopy}
@@ -1707,7 +1913,8 @@ function ChatMarkdown({
         remarkPlugins={
           lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
         }
-        rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
+        rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+        skipHtml={false}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >
