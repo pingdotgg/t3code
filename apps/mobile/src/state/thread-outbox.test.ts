@@ -148,7 +148,7 @@ describe("thread outbox", () => {
     expect(order).toEqual(["acknowledge", "remove"]);
   });
 
-  it("removes a delivered outbox row when draft acknowledgement fails", async () => {
+  it("keeps a delivered outbox row when draft acknowledgement fails", async () => {
     const order: string[] = [];
     const error = new Error("draft storage unavailable");
 
@@ -168,8 +168,8 @@ describe("thread outbox", () => {
           order.push("remove");
         },
       }),
-    ).resolves.toBe(true);
-    expect(order).toEqual(["acknowledge", "acknowledge-error", "remove"]);
+    ).resolves.toBe(false);
+    expect(order).toEqual(["acknowledge", "acknowledge-error"]);
   });
 
   it("does not acknowledge discarded or retryable delivery failures", async () => {

@@ -120,6 +120,7 @@ export async function completeThreadOutboxDelivery(input: {
       await input.acknowledgeDraftSelection();
     } catch (error) {
       input.onAcknowledgeError(error);
+      return false;
     }
   }
   await input.removeMessage();
