@@ -706,6 +706,7 @@ export const AntigravityIcon: Icon = (props) => {
           y="-50%"
           width="200%"
           height="200%"
+          colorInterpolationFilters="sRGB"
           filterUnits="objectBoundingBox"
         >
           <feGaussianBlur stdDeviation="15" />
@@ -716,6 +717,7 @@ export const AntigravityIcon: Icon = (props) => {
           y="-50%"
           width="200%"
           height="200%"
+          colorInterpolationFilters="sRGB"
           filterUnits="objectBoundingBox"
         >
           <feGaussianBlur stdDeviation="4" />
