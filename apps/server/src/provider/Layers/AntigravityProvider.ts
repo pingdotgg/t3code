@@ -36,7 +36,7 @@ import {
 
 const ANTIGRAVITY_PRESENTATION = {
   displayName: "Antigravity",
-  showInteractionModeToggle: true,
+  showInteractionModeToggle: false,
 } as const;
 
 export const ANTIGRAVITY_EFFORT_CAPABILITIES_HIGH_MED_LOW: ModelCapabilities =

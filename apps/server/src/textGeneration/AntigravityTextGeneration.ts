@@ -34,6 +34,36 @@ import {
 const ANTIGRAVITY_TIMEOUT_MS = 180_000;
 const isTextGenerationError = Schema.is(TextGenerationError);
 
+function parseAgyTextGenLine(line: string): { textDelta?: string; response?: string } | undefined {
+  const trimmed = line.trim();
+  if (!trimmed || !trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") {
+      return undefined;
+    }
+    if (
+      parsed.event === "step_update" &&
+      parsed.step_update &&
+      typeof (parsed.step_update as { text_delta?: unknown }).text_delta === "string"
+    ) {
+      return { textDelta: (parsed.step_update as { text_delta: string }).text_delta };
+    }
+    if (
+      parsed.event === "result" &&
+      parsed.result &&
+      typeof (parsed.result as { response?: unknown }).response === "string"
+    ) {
+      return { response: (parsed.result as { response: string }).response };
+    }
+  } catch {
+    // ignore malformed JSON lines
+  }
+  return undefined;
+}
+
 export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGeneration")(function* (
   antigravityConfig: AntigravitySettings,
   environment?: NodeJS.ProcessEnv,
@@ -103,23 +133,12 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
                 Effect.forEach(
                   lines,
                   (line) => {
-                    const trimmed = line.trim();
-                    if (!trimmed || !trimmed.startsWith("{") || !trimmed.endsWith("}")) {
-                      return Effect.void;
+                    const parsed = parseAgyTextGenLine(line);
+                    if (parsed?.textDelta) {
+                      return Ref.update(outputRef, (curr) => curr + parsed.textDelta);
                     }
-                    try {
-                      const parsed = JSON.parse(trimmed);
-                      if (parsed.event === "step_update" && parsed.step_update?.text_delta) {
-                        return Ref.update(
-                          outputRef,
-                          (curr) => curr + parsed.step_update.text_delta,
-                        );
-                      }
-                      if (parsed.event === "result" && parsed.result?.response) {
-                        return Ref.set(outputRef, parsed.result.response);
-                      }
-                    } catch {
-                      // ignore malformed JSON lines
+                    if (parsed?.response) {
+                      return Ref.set(outputRef, parsed.response);
                     }
                     return Effect.void;
                   },
@@ -140,6 +159,16 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
         const exitCode = yield* child.exitCode;
         yield* Fiber.join(stdoutFiber).pipe(Effect.catch(() => Effect.void));
         yield* Fiber.join(stderrFiber).pipe(Effect.catch(() => Effect.void));
+
+        const finalRemainder = yield* Ref.get(stdoutRemainderRef);
+        const parsedFinal = parseAgyTextGenLine(finalRemainder);
+        if (parsedFinal?.textDelta) {
+          yield* Ref.update(outputRef, (curr) => curr + parsedFinal.textDelta);
+        }
+        if (parsedFinal?.response) {
+          yield* Ref.set(outputRef, parsedFinal.response);
+        }
+
         yield* Effect.yieldNow;
 
         if (exitCode !== 0) {

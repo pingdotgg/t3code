@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import * as NodeFS from "node:fs";
@@ -152,5 +152,47 @@ it.layer(AntigravityTextGenerationTestLayer)("AntigravityTextGeneration", (it) =
         expect(generated.branch).toBe("feat/antigravity-support");
       }),
     ),
+  );
+
+  it.effect("handles final NDJSON result emitted without trailing newline", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-agy-text-"));
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(tempDir, { recursive: true, force: true });
+        }),
+      );
+      const binDir = NodePath.join(tempDir, "bin");
+      const agyPath = NodePath.join(binDir, "agy");
+      NodeFS.mkdirSync(binDir, { recursive: true });
+
+      const streamLine = JSON.stringify({
+        event: "result",
+        result: {
+          response: JSON.stringify({ title: "No newline final title" }),
+        },
+      });
+
+      NodeFS.writeFileSync(
+        agyPath,
+        ["#!/bin/sh", `printf '%s' '${streamLine}'`, "exit 0", ""].join("\n"),
+        "utf8",
+      );
+      NodeFS.chmodSync(agyPath, 0o755);
+
+      const config = decodeAntigravitySettings({ binaryPath: agyPath });
+      const textGeneration = yield* makeAntigravityTextGeneration(config);
+
+      const generated = yield* textGeneration.generateThreadTitle({
+        cwd: process.cwd(),
+        message: "Test stream without newline",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("antigravity"),
+          "gemini-3.7-flash-high",
+        ),
+      });
+
+      expect(generated.title).toBe("No newline final title");
+    }).pipe(Effect.scoped),
   );
 });
