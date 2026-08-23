@@ -1966,8 +1966,8 @@ const make = Effect.gen(function* () {
         if (
           isModelSelection(modelSelection) &&
           modelSelection.instanceId === thread.modelSelection.instanceId &&
-          (event.providerInstanceId === undefined ||
-            modelSelection.instanceId === event.providerInstanceId)
+          event.providerInstanceId !== undefined &&
+          modelSelection.instanceId === event.providerInstanceId
         ) {
           yield* orchestrationEngine.dispatch({
             type: "thread.meta.update",

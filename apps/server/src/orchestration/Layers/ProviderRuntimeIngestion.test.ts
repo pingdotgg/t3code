@@ -420,7 +420,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
-  it("ignores session configuration from a mismatched or retired provider instance", async () => {
+  it("ignores session configuration without ownership of the thread's provider instance", async () => {
     const currentInstanceId = ProviderInstanceId.make("grok_primary");
     const retiredInstanceId = ProviderInstanceId.make("grok_retired");
     const originalSelection = {
@@ -463,6 +463,21 @@ describe("ProviderRuntimeIngestion", () => {
           modelSelection: {
             instanceId: retiredInstanceId,
             model: "grok-4.7",
+          },
+        },
+      },
+    });
+    harness.emit({
+      type: "session.configured",
+      eventId: asEventId("evt-session-configured-missing-instance"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        config: {
+          modelSelection: {
+            instanceId: currentInstanceId,
+            model: "grok-4.8",
           },
         },
       },
