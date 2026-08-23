@@ -869,6 +869,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1677,6 +1678,52 @@ function ComposerPromptEditorInner({
     return snapshot;
   }, [editor]);
 
+  const isCaretOnVisualEdge = useCallback(
+    (edge: "start" | "end"): boolean => {
+      const snapshot = readSnapshot();
+      if (snapshot.value.length === 0) return true;
+
+      const beforeCaret = snapshot.value.slice(0, snapshot.expandedCursor);
+      const afterCaret = snapshot.value.slice(snapshot.expandedCursor);
+      if (edge === "start" ? beforeCaret.includes("\n") : afterCaret.includes("\n")) {
+        return false;
+      }
+
+      const rootElement = editor.getRootElement();
+      const selection = window.getSelection();
+      const anchorNode = selection?.anchorNode;
+      if (
+        !rootElement ||
+        !selection ||
+        !selection.isCollapsed ||
+        selection.rangeCount === 0 ||
+        !anchorNode ||
+        !rootElement.contains(anchorNode)
+      ) {
+        return false;
+      }
+
+      const range = selection.getRangeAt(0);
+      if (typeof range.getBoundingClientRect !== "function") return false;
+      let caretRect = range.getBoundingClientRect();
+      if (caretRect.height === 0) {
+        const container = range.startContainer;
+        const element = container instanceof HTMLElement ? container : container.parentElement;
+        if (!element) return false;
+        caretRect = element.getBoundingClientRect();
+      }
+
+      const edgeElement =
+        edge === "start" ? rootElement.firstElementChild : rootElement.lastElementChild;
+      const edgeRect = (edgeElement ?? rootElement).getBoundingClientRect();
+      const threshold = (caretRect.height || 20) / 2;
+      return edge === "start"
+        ? caretRect.top - edgeRect.top < threshold
+        : edgeRect.bottom - caretRect.bottom < threshold;
+    },
+    [editor, readSnapshot],
+  );
+
   useImperativeHandle(
     editorRef,
     () => ({
@@ -1692,9 +1739,10 @@ function ComposerPromptEditorInner({
           ),
         );
       },
+      isCaretOnVisualEdge,
       readSnapshot,
     }),
-    [focusAt, readSnapshot],
+    [focusAt, isCaretOnVisualEdge, readSnapshot],
   );
 
   const handleEditorChange = useCallback((editorState: EditorState) => {

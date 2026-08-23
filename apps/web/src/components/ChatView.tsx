@@ -263,6 +263,7 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { buildComposerPromptHistoryEntries } from "./chat/composerPromptHistory";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -2606,13 +2607,24 @@ function ChatViewContent(props: ChatViewProps) {
     if (optimisticUserMessages.length === 0) {
       return serverMessagesWithPreviewHandoff;
     }
-    const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
+    const optimisticMessagesById = new Map(
+      optimisticUserMessages.map((message) => [message.id, message] as const),
+    );
+    const acknowledgedMessages = serverMessagesWithPreviewHandoff.map((message) => {
+      const promptHistoryText = optimisticMessagesById.get(message.id)?.promptHistoryText;
+      return promptHistoryText === undefined ? message : { ...message, promptHistoryText };
+    });
+    const serverIds = new Set(acknowledgedMessages.map((message) => message.id));
     const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
     if (pendingMessages.length === 0) {
-      return serverMessagesWithPreviewHandoff;
+      return acknowledgedMessages;
     }
-    return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
+    return [...acknowledgedMessages, ...pendingMessages];
   }, [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages]);
+  const composerPromptHistoryEntries = useMemo(
+    () => buildComposerPromptHistoryEntries(timelineMessages),
+    [timelineMessages],
+  );
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(
@@ -5322,6 +5334,7 @@ function ChatViewContent(props: ChatViewProps) {
         id: messageIdForSend,
         role: "user",
         text: outgoingMessageText,
+        promptHistoryText: trimmed,
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
         turnId: null,
         createdAt: messageCreatedAt,
@@ -5827,6 +5840,7 @@ function ChatViewContent(props: ChatViewProps) {
           id: messageIdForSend,
           role: "user",
           text: outgoingMessageText,
+          promptHistoryText: trimmed,
           turnId: null,
           createdAt: messageCreatedAt,
           updatedAt: messageCreatedAt,
@@ -6626,6 +6640,7 @@ function ChatViewContent(props: ChatViewProps) {
                             activeThreadId={activeThreadId}
                             activeThreadEnvironmentId={activeThread?.environmentId}
                             activeThread={activeThread}
+                            promptHistoryEntries={composerPromptHistoryEntries}
                             isServerThread={isServerThread}
                             isLocalDraftThread={isLocalDraftThread}
                             forceExpandedOnMobile={forceExpandedMobileComposer && isDraftHeroState}

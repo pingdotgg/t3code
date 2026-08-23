@@ -39,6 +39,8 @@ export type ChatAttachment = ChatImageAttachment;
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+  /** Exact composer text retained while an optimistic user message is in the local timeline. */
+  readonly promptHistoryText?: string | undefined;
 }
 
 export type ProposedPlan = OrchestrationProposedPlan;

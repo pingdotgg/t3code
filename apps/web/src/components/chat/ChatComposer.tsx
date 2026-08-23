@@ -104,6 +104,10 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
+import {
+  findComposerPromptHistoryOffset,
+  navigateComposerPromptHistory,
+} from "./composerPromptHistory";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
   getComposerPromptInjectionState,
@@ -537,6 +541,7 @@ export interface ChatComposerProps {
   activeThreadId: ThreadId | null;
   activeThreadEnvironmentId: EnvironmentId | undefined;
   activeThread: Thread | undefined;
+  promptHistoryEntries: readonly string[];
   isServerThread: boolean;
   isLocalDraftThread: boolean;
   forceExpandedOnMobile: boolean;
@@ -649,6 +654,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
+    promptHistoryEntries,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
@@ -991,6 +997,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   const [isTasksDrawerOpen, setIsTasksDrawerOpen] = useState(false);
+  const [promptHistoryOffset, setPromptHistoryOffset] = useState<number | null>(null);
   const [dismissedTasksTurnId, setDismissedTasksTurnId] = useState<TurnId | null>(null);
   const [stashPulse, setStashPulse] = useState<{ key: number; active: boolean }>({
     key: 0,
@@ -1017,6 +1024,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const mobileComposerExpandInFlightRef = useRef(false);
   const stashPulseKeyRef = useRef(0);
   const stashPulseTimeoutRef = useRef<number | null>(null);
+  const promptHistoryDraftRef = useRef("");
+  const promptHistoryRecallRef = useRef<string | null>(null);
   /**
    * Snapshots currently being encoded, keyed by target+prompt+image ids.
    * Keyed rather than boolean so a genuinely different prompt (or a different
@@ -1312,6 +1321,54 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [composerDraftTarget, setComposerDraftPrompt],
   );
+
+  const leaveComposerPromptHistory = useCallback(() => {
+    promptHistoryDraftRef.current = "";
+    promptHistoryRecallRef.current = null;
+    setPromptHistoryOffset(null);
+  }, []);
+
+  const applyComposerPromptHistory = useCallback(
+    (nextPrompt: string, nextOffset: number | null, nextDraft: string) => {
+      promptHistoryDraftRef.current = nextDraft;
+      promptHistoryRecallRef.current = nextOffset === null ? null : nextPrompt;
+      setPromptHistoryOffset(nextOffset);
+      promptRef.current = nextPrompt;
+      setPrompt(nextPrompt);
+      setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
+      setComposerTrigger(null);
+    },
+    [promptRef, setPrompt],
+  );
+
+  useEffect(() => {
+    promptHistoryDraftRef.current = "";
+    promptHistoryRecallRef.current = null;
+    setPromptHistoryOffset(null);
+
+    return () => {
+      if (promptHistoryRecallRef.current !== null) {
+        setComposerDraftPrompt(composerDraftTarget, promptHistoryDraftRef.current);
+      }
+    };
+  }, [composerDraftTarget, setComposerDraftPrompt]);
+
+  useEffect(() => {
+    const recalledPrompt = promptHistoryRecallRef.current;
+    if (recalledPrompt === null || prompt === recalledPrompt) return;
+    leaveComposerPromptHistory();
+  }, [leaveComposerPromptHistory, prompt]);
+
+  useEffect(() => {
+    const recalledPrompt = promptHistoryRecallRef.current;
+    if (recalledPrompt === null) return;
+    const nextOffset = findComposerPromptHistoryOffset(promptHistoryEntries, recalledPrompt);
+    if (nextOffset === null) {
+      applyComposerPromptHistory(promptHistoryDraftRef.current, null, "");
+      return;
+    }
+    setPromptHistoryOffset(nextOffset);
+  }, [applyComposerPromptHistory, promptHistoryEntries]);
 
   const addComposerImage = useCallback(
     (image: ComposerImageAttachment) => {
@@ -1609,6 +1666,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       cursorAdjacentToMention: boolean,
       terminalContextIds: string[],
     ) => {
+      if (
+        promptHistoryRecallRef.current !== null &&
+        nextPrompt !== promptHistoryRecallRef.current
+      ) {
+        leaveComposerPromptHistory();
+      }
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
         setComposerCursor(nextCursor);
         setComposerTrigger(
@@ -1645,6 +1708,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerDraftTarget,
       composerTerminalContexts,
       setComposerDraftTerminalContexts,
+      leaveComposerPromptHistory,
     ],
   );
 
@@ -1985,6 +2049,42 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if ((key === "Enter" || key === "Tab") && selectedItem) {
         onSelectComposerItem(selectedItem);
         return true;
+      }
+    }
+    if ((key === "ArrowUp" || key === "ArrowDown") && !composerMenuOpenRef.current) {
+      if (
+        !isComposerApprovalState &&
+        !activePendingProgress &&
+        pendingUserInputs.length === 0 &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.isComposing &&
+        composerImages.length === 0 &&
+        composerTerminalContexts.length === 0 &&
+        composerElementContexts.length === 0 &&
+        composerPreviewAnnotations.length === 0 &&
+        composerReviewComments.length === 0
+      ) {
+        const direction = key === "ArrowUp" ? "backward" : "forward";
+        const visualEdge = key === "ArrowUp" ? "start" : "end";
+        const canNavigateFromCaret =
+          promptHistoryOffset === null ||
+          composerEditorRef.current?.isCaretOnVisualEdge(visualEdge) === true;
+        if (canNavigateFromCaret) {
+          const navigation = navigateComposerPromptHistory({
+            direction,
+            entries: promptHistoryEntries,
+            offset: promptHistoryOffset,
+            currentPrompt: promptRef.current,
+            draft: promptHistoryDraftRef.current,
+          });
+          if (navigation) {
+            applyComposerPromptHistory(navigation.prompt, navigation.offset, navigation.draft);
+            return true;
+          }
+        }
       }
     }
     const submissionIntent =
