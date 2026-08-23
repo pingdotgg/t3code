@@ -200,14 +200,24 @@ function ChatRouteGlobalShortcuts() {
             .threadSettlement === true;
         if (!supportsSettlement) return;
         const threadKey = scopedThreadKey(routeThreadRef);
-        // Same PR resolution as ChatView's banner: resolveDisplayedThreadPr
-        // over live git status + the snapshot map.
-        const activeThreadPr = resolveDisplayedThreadPr({
-          threadBranch: activeThreadShell.branch,
-          gitStatus: gitStatusQuery.data ?? null,
-          snapshot: changeRequestSnapshotByKey.get(threadKey),
-          retainTerminalOnBranchMismatch: activeThreadShell.worktreePath === null,
-        });
+        const snapshot = changeRequestSnapshotByKey.get(threadKey);
+        // While VCS status is still loading, resolveDisplayedThreadPr drops
+        // non-terminal (open) snapshot PRs, which would let inactivity
+        // auto-settle classify a thread with an open PR as settled. Use the
+        // Sidebar's snapshot rule until the live status lands.
+        const activeThreadPr =
+          gitStatusQuery.data !== null || !gitStatusQuery.isPending
+            ? resolveDisplayedThreadPr({
+                threadBranch: activeThreadShell.branch,
+                gitStatus: gitStatusQuery.data,
+                snapshot,
+                retainTerminalOnBranchMismatch: activeThreadShell.worktreePath === null,
+              })
+            : snapshot != null &&
+                (activeThreadShell.worktreePath === null ||
+                  snapshot.branch === activeThreadShell.branch)
+              ? snapshot.pr
+              : null;
         const changeRequest =
           activeThreadPr === null
             ? null
