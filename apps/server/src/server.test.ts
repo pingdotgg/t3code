@@ -4486,6 +4486,55 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("uploads image bytes through a signed URL issued by websocket rpc", () =>
+    Effect.gen(function* () {
+      const config = yield* buildAppUnderTest();
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const wsUrl = yield* getWsServerUrl("/ws");
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const issued = yield* client[WS_METHODS.attachmentsCreateUploadUrl]({
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 6,
+            });
+            const rejected = yield* HttpClient.post(issued.relativeUrl, {
+              body: HttpBody.uint8Array(new Uint8Array([1, 2, 3]), "image/png"),
+            });
+            assert.equal(rejected.status, 400);
+
+            const response = yield* HttpClient.post(issued.relativeUrl, {
+              headers: { origin: crossOriginClientOrigin },
+              body: HttpBody.uint8Array(new Uint8Array([1, 2, 3, 4, 5, 6]), "image/png"),
+            });
+            assert.equal(response.status, 204);
+            assertBrowserApiCorsResponseHeaders(response.headers);
+
+            const attachmentPath = path.join(config.attachmentsDir, `${issued.attachmentId}.png`);
+            assert.isTrue(yield* fileSystem.exists(attachmentPath));
+
+            yield* client[WS_METHODS.attachmentsDelete]({ attachmentId: issued.attachmentId });
+            assert.isFalse(yield* fileSystem.exists(attachmentPath));
+
+            const streamed = yield* client[WS_METHODS.attachmentsCreateUploadUrl]({
+              name: "streamed.png",
+              mimeType: "image/png",
+              sizeBytes: 6,
+            });
+            const streamedResponse = yield* HttpClient.post(streamed.relativeUrl, {
+              body: HttpBody.stream(Stream.make(new Uint8Array([1, 2, 3, 4, 5, 6])), "image/png"),
+            });
+            assert.equal(streamedResponse.status, 204);
+            yield* client[WS_METHODS.attachmentsDelete]({ attachmentId: streamed.attachmentId });
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("keeps feedback errors structured across websocket rpc", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread-feedback-failure");

@@ -10,7 +10,11 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 
-import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
+import {
+  createAttachmentId,
+  planAttachmentClaim,
+  resolveAttachmentPath,
+} from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -108,6 +112,65 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       canonicalCommand.message.attachments,
       (attachment) =>
         Effect.gen(function* () {
+          if (!("dataUrl" in attachment)) {
+            const claim = planAttachmentClaim({
+              attachmentsDir: serverConfig.attachmentsDir,
+              threadId: canonicalCommand.threadId,
+              attachmentId: attachment.id,
+            });
+            if (!claim.ok) {
+              return yield* new OrchestrationDispatchCommandError({
+                message: `Attachment '${attachment.name}' cannot be sent: ${claim.reason}.`,
+              });
+            }
+
+            const info = yield* fileSystem.stat(claim.currentPath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationDispatchCommandError({
+                    message: `Attachment '${attachment.name}' cannot be sent: attachment not found.`,
+                    cause,
+                  }),
+              ),
+            );
+            if (Number(info.size) !== attachment.sizeBytes) {
+              return yield* new OrchestrationDispatchCommandError({
+                message: `Attachment '${attachment.name}' cannot be sent: stored size does not match.`,
+              });
+            }
+
+            const normalizedAttachment = {
+              ...attachment,
+              id: claim.finalId,
+              mimeType: attachment.mimeType.toLowerCase(),
+            };
+            const expectedPath = resolveAttachmentPath({
+              attachmentsDir: serverConfig.attachmentsDir,
+              attachment: normalizedAttachment,
+            });
+            if (expectedPath !== claim.finalPath) {
+              return yield* new OrchestrationDispatchCommandError({
+                message: `Attachment '${attachment.name}' cannot be sent: image type does not match the upload.`,
+              });
+            }
+
+            if (!claim.alreadyScoped) {
+              // Keep the pending copy until the turn succeeds. A failed thread
+              // bootstrap can then retry with a fresh thread id.
+              yield* fileSystem.copyFile(claim.currentPath, claim.finalPath).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationDispatchCommandError({
+                      message: `Failed to claim attachment '${attachment.name}' for this thread.`,
+                      cause,
+                    }),
+                ),
+              );
+            }
+
+            return normalizedAttachment;
+          }
+
           const parsed = parseBase64DataUrl(attachment.dataUrl);
           if (!parsed || !parsed.mimeType.startsWith("image/")) {
             return yield* new OrchestrationDispatchCommandError({
