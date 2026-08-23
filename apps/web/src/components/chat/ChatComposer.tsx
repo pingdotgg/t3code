@@ -108,6 +108,7 @@ import {
   type ComposerPromptHistoryAttachment,
   type ComposerPromptHistoryEntry,
   findComposerPromptHistoryOffset,
+  isUnmodifiedComposerPromptHistoryKey,
   materializeComposerPromptHistoryAttachments,
   navigateComposerPromptHistory,
   restoreComposerPromptHistoryDraft,
@@ -1455,6 +1456,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [composerDraftTarget, replaceComposerPromptAndImages]);
 
   useEffect(() => {
+    if (promptHistoryApplyPendingRef.current) {
+      leaveComposerPromptHistory();
+      return;
+    }
     const recalledPrompt = promptHistoryRecallRef.current;
     if (recalledPrompt === null || prompt === recalledPrompt) return;
     leaveComposerPromptHistory();
@@ -1462,8 +1467,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useEffect(() => {
     if (promptHistoryApplyPendingRef.current) {
-      promptHistoryApplyGenerationRef.current += 1;
-      promptHistoryApplyPendingRef.current = false;
+      leaveComposerPromptHistory();
       return;
     }
     const recalledAttachmentIds = promptHistoryRecallAttachmentIdsRef.current;
@@ -2180,7 +2184,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     }
     if ((key === "ArrowUp" || key === "ArrowDown") && !composerMenuOpenRef.current) {
-      if (promptHistoryApplyPendingRef.current) {
+      const isUnmodifiedHistoryKey = isUnmodifiedComposerPromptHistoryKey(event);
+      if (isUnmodifiedHistoryKey && promptHistoryApplyPendingRef.current) {
         return true;
       }
       const recalledAttachmentIds = promptHistoryRecallAttachmentIdsRef.current;
@@ -2193,11 +2198,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         !isComposerApprovalState &&
         !activePendingProgress &&
         pendingUserInputs.length === 0 &&
-        !event.shiftKey &&
-        !event.altKey &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.isComposing &&
+        isUnmodifiedHistoryKey &&
         composerImagesMatchHistory &&
         composerTerminalContexts.length === 0 &&
         composerElementContexts.length === 0 &&
@@ -3385,14 +3386,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <div
                   data-chat-composer-image-attachments="true"
                   className={cn(
-                    "grid transition-[grid-template-rows,margin-bottom,opacity] duration-200 ease-out motion-reduce:transition-none",
+                    "grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
                     visibleComposerImages.length > 0
-                      ? "mb-3 grid-rows-[1fr] opacity-100"
-                      : "mb-0 grid-rows-[0fr] opacity-0",
+                      ? "grid-rows-[1fr] opacity-100"
+                      : "grid-rows-[0fr] opacity-0",
                   )}
                 >
                   <div className="min-h-0 overflow-hidden">
-                    <div className="flex flex-wrap gap-2">
+                    <div className="mb-3 flex flex-wrap gap-2">
                       {visibleComposerImages.map((image) => (
                         <div
                           key={image.id}

@@ -15,6 +15,7 @@ import { appendReviewCommentsToPrompt, buildFileReviewComment } from "../../revi
 import {
   buildComposerPromptHistoryEntries,
   findComposerPromptHistoryOffset,
+  isUnmodifiedComposerPromptHistoryKey,
   materializeComposerPromptHistoryAttachments,
   navigateComposerPromptHistory,
   preserveComposerPromptHistoryAttachmentFiles,
@@ -294,6 +295,29 @@ describe("navigateComposerPromptHistory", () => {
       attachments: [],
     });
   });
+});
+
+describe("isUnmodifiedComposerPromptHistoryKey", () => {
+  const unmodifiedKey = {
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    ctrlKey: false,
+    isComposing: false,
+  };
+
+  it("accepts an unmodified key", () => {
+    expect(isUnmodifiedComposerPromptHistoryKey(unmodifiedKey)).toBe(true);
+  });
+
+  it.each(["shiftKey", "altKey", "metaKey", "ctrlKey", "isComposing"] as const)(
+    "leaves %s key handling to the editor",
+    (modifier) => {
+      expect(isUnmodifiedComposerPromptHistoryKey({ ...unmodifiedKey, [modifier]: true })).toBe(
+        false,
+      );
+    },
+  );
 });
 
 describe("findComposerPromptHistoryOffset", () => {

@@ -41,6 +41,16 @@ export interface ComposerPromptHistoryNavigation {
   readonly attachments: ReadonlyArray<ComposerPromptHistoryAttachment>;
 }
 
+export function isUnmodifiedComposerPromptHistoryKey(input: {
+  readonly shiftKey: boolean;
+  readonly altKey: boolean;
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly isComposing: boolean;
+}): boolean {
+  return !input.shiftKey && !input.altKey && !input.metaKey && !input.ctrlKey && !input.isComposing;
+}
+
 function stripTrailingReviewComments(prompt: string): string {
   const segments = parseReviewCommentMessageSegments(prompt);
   if (!segments.some((segment) => segment.kind === "review-comment")) {
