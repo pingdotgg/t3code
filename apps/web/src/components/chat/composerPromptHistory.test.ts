@@ -84,21 +84,29 @@ describe("buildComposerPromptHistoryEntries", () => {
   it("includes optimistic prompt text and collapses consecutive duplicates", () => {
     expect(
       buildComposerPromptHistoryEntries([
-        { role: "assistant", text: "Answer" },
-        { role: "user", text: "First" },
-        { role: "user", text: "First" },
+        { id: "assistant-1", role: "assistant", text: "Answer" },
+        { id: "user-1", role: "user", text: "First" },
+        { id: "user-2", role: "user", text: "First" },
         {
+          id: "user-3",
           role: "user",
           text: "Ultrathink:\nSecond",
           promptHistoryText: "Second as typed",
         },
       ]),
-    ).toEqual(["First", "Second as typed"]);
+    ).toEqual([
+      { id: "user-2", prompt: "First" },
+      { id: "user-3", prompt: "Second as typed" },
+    ]);
   });
 });
 
 describe("navigateComposerPromptHistory", () => {
-  const entries = ["First", "Second", "Third"];
+  const entries = [
+    { id: "first", prompt: "First" },
+    { id: "second", prompt: "Second" },
+    { id: "third", prompt: "Third" },
+  ];
 
   it("walks backward and restores the unsent draft when walking forward", () => {
     const latest = navigateComposerPromptHistory({
@@ -108,7 +116,7 @@ describe("navigateComposerPromptHistory", () => {
       currentPrompt: "",
       draft: "",
     });
-    expect(latest).toEqual({ offset: 0, draft: "", prompt: "Third" });
+    expect(latest).toEqual({ entryId: "third", offset: 0, draft: "", prompt: "Third" });
 
     const older = navigateComposerPromptHistory({
       direction: "backward",
@@ -117,7 +125,7 @@ describe("navigateComposerPromptHistory", () => {
       currentPrompt: latest?.prompt ?? "",
       draft: latest?.draft ?? "",
     });
-    expect(older).toEqual({ offset: 1, draft: "", prompt: "Second" });
+    expect(older).toEqual({ entryId: "second", offset: 1, draft: "", prompt: "Second" });
 
     expect(
       navigateComposerPromptHistory({
@@ -127,7 +135,7 @@ describe("navigateComposerPromptHistory", () => {
         currentPrompt: "Third",
         draft: "unfinished draft",
       }),
-    ).toEqual({ offset: null, draft: "", prompt: "unfinished draft" });
+    ).toEqual({ entryId: null, offset: null, draft: "", prompt: "unfinished draft" });
   });
 
   it("does not enter history when the composer contains text", () => {
@@ -144,8 +152,13 @@ describe("navigateComposerPromptHistory", () => {
 });
 
 describe("findComposerPromptHistoryOffset", () => {
-  it("signals when a recalled entry disappears from a refreshed timeline", () => {
-    expect(findComposerPromptHistoryOffset(["First", "Third"], "Second")).toBeNull();
-    expect(findComposerPromptHistoryOffset(["First", "Second", "Third"], "Second")).toBe(1);
+  it("tracks the recalled message when duplicate prompt text exists", () => {
+    const entries = [
+      { id: "older-a", prompt: "A" },
+      { id: "middle-b", prompt: "B" },
+      { id: "newer-a", prompt: "A" },
+    ];
+    expect(findComposerPromptHistoryOffset(entries, "older-a")).toBe(2);
+    expect(findComposerPromptHistoryOffset(entries, "missing")).toBeNull();
   });
 });

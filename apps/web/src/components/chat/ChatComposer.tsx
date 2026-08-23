@@ -105,6 +105,7 @@ import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import {
+  type ComposerPromptHistoryEntry,
   findComposerPromptHistoryOffset,
   navigateComposerPromptHistory,
 } from "./composerPromptHistory";
@@ -541,7 +542,7 @@ export interface ChatComposerProps {
   activeThreadId: ThreadId | null;
   activeThreadEnvironmentId: EnvironmentId | undefined;
   activeThread: Thread | undefined;
-  promptHistoryEntries: readonly string[];
+  promptHistoryEntries: readonly ComposerPromptHistoryEntry[];
   isServerThread: boolean;
   isLocalDraftThread: boolean;
   forceExpandedOnMobile: boolean;
@@ -1025,6 +1026,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const stashPulseKeyRef = useRef(0);
   const stashPulseTimeoutRef = useRef<number | null>(null);
   const promptHistoryDraftRef = useRef("");
+  const promptHistoryEntryIdRef = useRef<string | null>(null);
   const promptHistoryRecallRef = useRef<string | null>(null);
   /**
    * Snapshots currently being encoded, keyed by target+prompt+image ids.
@@ -1324,13 +1326,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const leaveComposerPromptHistory = useCallback(() => {
     promptHistoryDraftRef.current = "";
+    promptHistoryEntryIdRef.current = null;
     promptHistoryRecallRef.current = null;
     setPromptHistoryOffset(null);
   }, []);
 
   const applyComposerPromptHistory = useCallback(
-    (nextPrompt: string, nextOffset: number | null, nextDraft: string) => {
+    (
+      nextPrompt: string,
+      nextEntryId: string | null,
+      nextOffset: number | null,
+      nextDraft: string,
+    ) => {
       promptHistoryDraftRef.current = nextDraft;
+      promptHistoryEntryIdRef.current = nextEntryId;
       promptHistoryRecallRef.current = nextOffset === null ? null : nextPrompt;
       setPromptHistoryOffset(nextOffset);
       promptRef.current = nextPrompt;
@@ -1343,11 +1352,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useEffect(() => {
     promptHistoryDraftRef.current = "";
+    promptHistoryEntryIdRef.current = null;
     promptHistoryRecallRef.current = null;
     setPromptHistoryOffset(null);
 
     return () => {
-      if (promptHistoryRecallRef.current !== null) {
+      if (promptHistoryEntryIdRef.current !== null) {
         setComposerDraftPrompt(composerDraftTarget, promptHistoryDraftRef.current);
       }
     };
@@ -1360,11 +1370,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [leaveComposerPromptHistory, prompt]);
 
   useEffect(() => {
-    const recalledPrompt = promptHistoryRecallRef.current;
-    if (recalledPrompt === null) return;
-    const nextOffset = findComposerPromptHistoryOffset(promptHistoryEntries, recalledPrompt);
+    const entryId = promptHistoryEntryIdRef.current;
+    if (entryId === null) return;
+    const nextOffset = findComposerPromptHistoryOffset(promptHistoryEntries, entryId);
     if (nextOffset === null) {
-      applyComposerPromptHistory(promptHistoryDraftRef.current, null, "");
+      applyComposerPromptHistory(promptHistoryDraftRef.current, null, null, "");
       return;
     }
     setPromptHistoryOffset(nextOffset);
@@ -2081,7 +2091,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             draft: promptHistoryDraftRef.current,
           });
           if (navigation) {
-            applyComposerPromptHistory(navigation.prompt, navigation.offset, navigation.draft);
+            applyComposerPromptHistory(
+              navigation.prompt,
+              navigation.entryId,
+              navigation.offset,
+              navigation.draft,
+            );
             return true;
           }
         }

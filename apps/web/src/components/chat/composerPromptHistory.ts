@@ -8,12 +8,19 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 
 export interface ComposerPromptHistoryMessage {
+  readonly id: string;
   readonly role: string;
   readonly text: string;
   readonly promptHistoryText?: string | undefined;
 }
 
+export interface ComposerPromptHistoryEntry {
+  readonly id: string;
+  readonly prompt: string;
+}
+
 export interface ComposerPromptHistoryNavigation {
+  readonly entryId: string | null;
   readonly offset: number | null;
   readonly draft: string;
   readonly prompt: string;
@@ -71,31 +78,36 @@ export function recallableComposerPrompt(messageText: string): string {
 
 export function buildComposerPromptHistoryEntries(
   messages: ReadonlyArray<ComposerPromptHistoryMessage>,
-): string[] {
-  const entries: string[] = [];
+): ComposerPromptHistoryEntry[] {
+  const entries: ComposerPromptHistoryEntry[] = [];
   for (const message of messages) {
     if (message.role !== "user") continue;
     const prompt =
       message.promptHistoryText === undefined
         ? recallableComposerPrompt(message.text)
         : message.promptHistoryText.trim();
-    if (prompt.length === 0 || entries.at(-1) === prompt) continue;
-    entries.push(prompt);
+    if (prompt.length === 0) continue;
+    const entry = { id: message.id, prompt };
+    if (entries.at(-1)?.prompt === prompt) {
+      entries[entries.length - 1] = entry;
+      continue;
+    }
+    entries.push(entry);
   }
   return entries;
 }
 
 export function findComposerPromptHistoryOffset(
-  entries: ReadonlyArray<string>,
-  recalledPrompt: string,
+  entries: ReadonlyArray<ComposerPromptHistoryEntry>,
+  entryId: string,
 ): number | null {
-  const entryIndex = entries.lastIndexOf(recalledPrompt);
+  const entryIndex = entries.findIndex((entry) => entry.id === entryId);
   return entryIndex < 0 ? null : entries.length - 1 - entryIndex;
 }
 
 export function navigateComposerPromptHistory(input: {
   readonly direction: "backward" | "forward";
-  readonly entries: ReadonlyArray<string>;
+  readonly entries: ReadonlyArray<ComposerPromptHistoryEntry>;
   readonly offset: number | null;
   readonly currentPrompt: string;
   readonly draft: string;
@@ -105,16 +117,20 @@ export function navigateComposerPromptHistory(input: {
   if (input.direction === "backward") {
     if (input.offset === null && input.currentPrompt.length > 0) return null;
     const offset = Math.min((input.offset ?? -1) + 1, input.entries.length - 1);
+    const entry = input.entries[input.entries.length - 1 - offset];
+    if (!entry) return null;
     return {
+      entryId: entry.id,
       offset,
       draft: input.offset === null ? input.currentPrompt : input.draft,
-      prompt: input.entries[input.entries.length - 1 - offset] ?? "",
+      prompt: entry.prompt,
     };
   }
 
   if (input.offset === null) return null;
   if (input.offset === 0) {
     return {
+      entryId: null,
       offset: null,
       draft: "",
       prompt: input.draft,
@@ -122,9 +138,12 @@ export function navigateComposerPromptHistory(input: {
   }
 
   const offset = input.offset - 1;
+  const entry = input.entries[input.entries.length - 1 - offset];
+  if (!entry) return null;
   return {
+    entryId: entry.id,
     offset,
     draft: input.draft,
-    prompt: input.entries[input.entries.length - 1 - offset] ?? "",
+    prompt: entry.prompt,
   };
 }

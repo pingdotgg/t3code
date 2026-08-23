@@ -865,6 +865,34 @@ function collectTerminalContextIds(node: LexicalNode): string[] {
   return [];
 }
 
+function composerCaretLineRect(range: Range): DOMRect | null {
+  const collapsedRect = Array.from(range.getClientRects()).find((rect) => rect.height > 0);
+  if (collapsedRect) return collapsedRect;
+
+  const container = range.startContainer;
+  if (container.nodeType === Node.TEXT_NODE) {
+    const textNode = container as Text;
+    if (textNode.data.length > 0) {
+      const probeStart = Math.min(range.startOffset, textNode.data.length - 1);
+      const probeRange = document.createRange();
+      probeRange.setStart(textNode, probeStart);
+      probeRange.setEnd(textNode, probeStart + 1);
+      const probeRect = Array.from(probeRange.getClientRects()).find((rect) => rect.height > 0);
+      if (probeRect) return probeRect;
+      const boundingRect = probeRange.getBoundingClientRect();
+      if (boundingRect.height > 0) return boundingRect;
+    }
+    return null;
+  }
+
+  if (container instanceof HTMLElement && container.textContent?.length === 0) {
+    const emptyLineRect = container.getBoundingClientRect();
+    return emptyLineRect.height > 0 ? emptyLineRect : null;
+  }
+
+  return null;
+}
+
 export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
@@ -1704,14 +1732,8 @@ function ComposerPromptEditorInner({
       }
 
       const range = selection.getRangeAt(0);
-      if (typeof range.getBoundingClientRect !== "function") return false;
-      let caretRect = range.getBoundingClientRect();
-      if (caretRect.height === 0) {
-        const container = range.startContainer;
-        const element = container instanceof HTMLElement ? container : container.parentElement;
-        if (!element) return false;
-        caretRect = element.getBoundingClientRect();
-      }
+      const caretRect = composerCaretLineRect(range);
+      if (!caretRect) return false;
 
       const edgeElement =
         edge === "start" ? rootElement.firstElementChild : rootElement.lastElementChild;
