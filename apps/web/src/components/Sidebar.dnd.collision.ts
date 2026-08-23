@@ -132,6 +132,15 @@ export function detectSidebarThreadCollision(input: SidebarThreadCollisionInput)
     return section === ownedSection;
   });
 
+  if (transaction.sourceSection === "pinned" && ownedSection === "pinned") {
+    if (args.pointerCoordinates !== null && !pointerInsideBoardWidth) return [];
+    return closestCenter({
+      ...args,
+      collisionRect: sourceCollisionRect,
+      droppableContainers: collisionCandidates,
+    });
+  }
+
   const pointerCollisions = pointerWithin({
     ...args,
     droppableContainers: collisionCandidates,

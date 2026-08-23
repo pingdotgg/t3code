@@ -85,8 +85,9 @@ so touching a shelf does not steal the last Regular slot.
 
 After one category owns the drag, invalid destinations are removed. `pointerWithin` chooses an exact
 row or boundary when possible; `closestCenter` fills the gaps between visible droppables. The active
-row remains a candidate, which preserves dnd-kit's normal sortable behavior inside Pinned. Leaving
-the board width clears the target.
+row remains a candidate. Same-category Pinned reorder bypasses `pointerWithin` and uses dnd-kit's
+measured rectangles with `closestCenter`, matching a normal sortable list without feeding transformed
+row positions back into collision detection. Leaving the board width clears the target.
 
 ### Sortable projection and FLIP
 
