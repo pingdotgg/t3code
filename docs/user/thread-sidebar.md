@@ -3,7 +3,7 @@
 The sidebar groups threads into Pinned, Regular, Snoozed, and Settled. On web and desktop, drag
 any thread between these sections. The sidebar keeps the dragged thread under the pointer and holds
 your scroll position while a section appears or changes.
-Empty Pinned, Regular, Snoozed, and Settled sections appear as drop targets while you drag.
+Empty Pinned, Snoozed, and Settled sections appear as drop targets while you drag.
 
 The destination chooses the thread's state:
 
