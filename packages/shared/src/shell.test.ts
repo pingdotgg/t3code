@@ -233,6 +233,19 @@ describe("readEnvironmentFromLoginShell", () => {
     readEnvironmentFromLoginShell("/bin/zsh", ["PATH"], execFile);
     expect(execFile.mock.calls[0]?.[1]?.[1]).toContain("printenv PATH || true");
   });
+
+  it("keeps the POSIX probe for shells whose name merely contains nu", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => "");
+
+    readEnvironmentFromLoginShell("/usr/bin/nushell-compat", ["PATH"], execFile);
+    expect(execFile.mock.calls[0]?.[1]?.[1]).toContain("printenv PATH || true");
+  });
 });
 
 describe("listLoginShellCandidates", () => {

@@ -282,12 +282,12 @@ function buildNushellEnvironmentCaptureCommand(names: ReadonlyArray<string>): st
 
 /**
  * Nushell cannot run the POSIX environment probe, so its login shells need
- * their own capture command. Matches the `nu` binary regardless of case and
- * Windows `.exe` suffixes.
+ * their own capture command. Matches the `nu` binary exactly, regardless of
+ * case and Windows `.exe` suffixes.
  */
 function isNushellPath(shell: string): boolean {
   const basename = shell.split(/[\\/]/u).at(-1)?.toLowerCase() ?? "";
-  return basename.replace(/\.exe$/u, "").startsWith("nu");
+  return basename.replace(/\.exe$/u, "") === "nu";
 }
 
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
