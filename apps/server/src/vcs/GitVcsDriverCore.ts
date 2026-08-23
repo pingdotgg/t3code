@@ -2828,17 +2828,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           );
         }
         const targetDir = path.dirname(targetFilePath);
-        yield* fileSystem.makeDirectory(targetDir, { recursive: true });
-        const realTargetDir = yield* fileSystem.realPath(targetDir);
+        // Verify containment on the deepest existing ancestor before creating
+        // anything, so a recursive mkdir cannot follow a tracked symlink out
+        // of the worktree either.
+        let existingAncestor = targetDir;
+        while (!(yield* fileSystem.exists(existingAncestor))) {
+          existingAncestor = path.dirname(existingAncestor);
+        }
+        const realAncestor = yield* fileSystem.realPath(existingAncestor);
         if (
-          realTargetDir !== realWorktreeRoot &&
-          !realTargetDir.startsWith(realWorktreeRoot + path.sep)
+          realAncestor !== realWorktreeRoot &&
+          !realAncestor.startsWith(realWorktreeRoot + path.sep)
         ) {
           return yield* Effect.logWarning(
             ".worktreeinclude entry resolves through a symlink; skipped",
             { relativePath, worktreePath },
           );
         }
+        yield* fileSystem.makeDirectory(targetDir, { recursive: true });
         yield* fileSystem.copyFile(path.join(sourceRoot, relativePath), targetFilePath);
       }).pipe(
         // Best effort per entry: one broken file must not block the rest.

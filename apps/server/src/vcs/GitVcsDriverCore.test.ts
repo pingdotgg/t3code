@@ -1507,6 +1507,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
         yield* writeTextFile(cwd, ".worktreeinclude", ".env\n");
         yield* writeTextFile(cwd, "shared/.env", "LEAK=1\n");
+        yield* writeTextFile(cwd, "shared/deep/nested/.env", "NESTED_LEAK=1\n");
 
         const worktreePath = pathService.join(
           yield* makeTmpDir("git-worktrees-"),
@@ -1520,6 +1521,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         });
 
         assert.equal(yield* fileSystem.exists(pathService.join(outsideDir, ".env")), false);
+        assert.equal(yield* fileSystem.exists(pathService.join(outsideDir, "deep")), false);
       }),
     );
 
