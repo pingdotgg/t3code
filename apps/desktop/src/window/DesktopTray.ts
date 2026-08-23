@@ -30,7 +30,6 @@ export class DesktopTrayActionError extends Schema.TaggedErrorClass<DesktopTrayA
 export class DesktopTrayConfigurationError extends Schema.TaggedErrorClass<DesktopTrayConfigurationError>()(
   "DesktopTrayConfigurationError",
   {
-    stage: Schema.Literal("setup"),
     cause: Schema.Defect(),
   },
 ) {
@@ -126,11 +125,8 @@ export const make = Effect.gen(function* () {
     yield* logTrayInfo("Windows tray configured");
   }).pipe(
     Effect.catchCause((cause) => {
-      const error = new DesktopTrayConfigurationError({ stage: "setup", cause });
-      return logTrayWarning(error.message, {
-        errorTag: error._tag,
-        stage: error.stage,
-      });
+      const error = new DesktopTrayConfigurationError({ cause });
+      return logTrayWarning(error.message, { errorTag: error._tag });
     }),
     Effect.withSpan("desktop.tray.configure"),
   );
