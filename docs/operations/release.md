@@ -11,7 +11,7 @@ This document covers the unified release workflow for stable and nightly desktop
   - push tag matching `v*.*.*` for stable releases
   - scheduled nightly check every three hours
   - manual `workflow_dispatch` for either channel
-- Runs quality gates first: lint, typecheck, test.
+- Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
 - Builds four artifacts in parallel for both channels:
   - macOS `arm64` DMG
@@ -365,6 +365,7 @@ Checklist:
 4. Push tag.
 5. Verify workflow steps:
    - preflight passes
+   - release quality checks pass
    - all matrix builds pass
    - `publish_cli` publishes the exact release version before the release job
    - release job uploads expected files
