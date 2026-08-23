@@ -1465,9 +1465,9 @@ describe("ProviderCommandReactor", () => {
 
   it.each([
     ["configured", "codex/team/1234abcd", "codex/team/feature/reconnect-backoff"],
-    ["legacy", "t3code/1234abcd", "t3code/feature/reconnect-backoff"],
+    ["legacy", "t3code/1234abcd", "codex/team/feature/reconnect-backoff"],
   ] as const)(
-    "preserves the %s temporary branch prefix when naming the first turn",
+    "renames the %s temporary branch into the configured prefix on the first turn",
     async (_kind, temporaryBranch, expectedBranch) => {
       const harness = await createHarness({ worktreeBranchPrefix: "codex/team" });
       const now = "2026-01-01T00:00:00.000Z";

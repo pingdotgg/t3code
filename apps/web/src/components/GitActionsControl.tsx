@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { DEFAULT_WORKTREE_BRANCH_PREFIX, type ScopedThreadRef } from "@t3tools/contracts";
+import { type ScopedThreadRef } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -1127,16 +1127,23 @@ export default function GitActionsControl({
     activeDraftThread?.envMode === "worktree" &&
     activeDraftThread.worktreePath === null;
 
+  const worktreeBranchPrefix = serverConfig?.settings.worktreeBranchPrefix;
+
   useEffect(() => {
     if (isGitActionRunning || isSelectingWorktreeBase || activeServerThread) {
+      return;
+    }
+    // Without the server config the configured prefix is unknown, and
+    // classifying against the default could persist a temporary branch as
+    // semantic. Reconciliation resumes once the config loads.
+    if (worktreeBranchPrefix === undefined) {
       return;
     }
 
     const branchUpdate = resolveLiveThreadBranchUpdate({
       threadBranch: activeDraftThread?.branch ?? null,
       gitStatus: gitStatusForActions,
-      worktreeBranchPrefix:
-        serverConfig?.settings.worktreeBranchPrefix ?? DEFAULT_WORKTREE_BRANCH_PREFIX,
+      worktreeBranchPrefix,
     });
     if (!branchUpdate) {
       return;
@@ -1150,7 +1157,7 @@ export default function GitActionsControl({
     isGitActionRunning,
     isSelectingWorktreeBase,
     persistThreadBranchSync,
-    serverConfig?.settings.worktreeBranchPrefix,
+    worktreeBranchPrefix,
   ]);
 
   const isDefaultRef = useMemo(() => {

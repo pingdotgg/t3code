@@ -12,10 +12,7 @@ import {
   type RuntimeMode,
   type TurnId,
 } from "@t3tools/contracts";
-import {
-  buildGeneratedWorktreeBranchName,
-  extractTemporaryWorktreeBranchPrefix,
-} from "@t3tools/shared/git";
+import { buildGeneratedWorktreeBranchName, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -785,11 +782,10 @@ const make = Effect.gen(function* () {
               settings,
               yield* providerRegistry.getProviders,
             );
-      const temporaryPrefix = extractTemporaryWorktreeBranchPrefix(
-        oldBranch,
-        settings.worktreeBranchPrefix,
-      );
-      if (!temporaryPrefix) {
+      // Rename into the configured prefix even when the temporary branch was
+      // created under the legacy default (e.g. a client that had not loaded
+      // the setting yet), so a stale namespace heals on the first turn.
+      if (!isTemporaryWorktreeBranch(oldBranch, settings.worktreeBranchPrefix)) {
         return;
       }
 
@@ -801,7 +797,10 @@ const make = Effect.gen(function* () {
       });
       if (!generated) return;
 
-      const targetBranch = buildGeneratedWorktreeBranchName(generated.branch, temporaryPrefix);
+      const targetBranch = buildGeneratedWorktreeBranchName(
+        generated.branch,
+        settings.worktreeBranchPrefix,
+      );
       if (targetBranch === oldBranch) return;
 
       const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });
