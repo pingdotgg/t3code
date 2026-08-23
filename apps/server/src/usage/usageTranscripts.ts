@@ -116,6 +116,20 @@ export function parseClaudeLine(line: string): UsageRecord | null {
   const dedupeKey =
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
+  const totals: UsageTokenTotals = {
+    uncachedInputTokens: int(usageRecord["input_tokens"]),
+    cachedInputTokens: int(usageRecord["cache_read_input_tokens"]),
+    cacheCreationTokens: int(usageRecord["cache_creation_input_tokens"]),
+    outputTokens: int(usageRecord["output_tokens"]),
+    // Anthropic folds thinking tokens into output and does not break them out.
+    reasoningTokens: 0,
+  };
+  // Locally generated assistant lines (`<synthetic>` error notices,
+  // interrupts) carry an all-zero usage object. A billed response always
+  // reports tokens; counting the empties minted phantom `<synthetic>` buckets
+  // and $0 sessions for providers the user never drove.
+  if (totalTokens(totals) === 0) return null;
+
   const cost = record["costUSD"];
 
   return {
@@ -123,14 +137,7 @@ export function parseClaudeLine(line: string): UsageRecord | null {
     timestampMs,
     model,
     sessionId: typeof record["sessionId"] === "string" ? record["sessionId"] : "",
-    totals: {
-      uncachedInputTokens: int(usageRecord["input_tokens"]),
-      cachedInputTokens: int(usageRecord["cache_read_input_tokens"]),
-      cacheCreationTokens: int(usageRecord["cache_creation_input_tokens"]),
-      outputTokens: int(usageRecord["output_tokens"]),
-      // Anthropic folds thinking tokens into output and does not break them out.
-      reasoningTokens: 0,
-    },
+    totals,
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     dedupeKey,
   };

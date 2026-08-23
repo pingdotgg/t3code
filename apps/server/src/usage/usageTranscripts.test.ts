@@ -65,6 +65,42 @@ describe("parseClaudeLine", () => {
     expect(parseClaudeLine(JSON.stringify({ type: "user", message: {} }))).toBeNull();
     expect(parseClaudeLine("not json")).toBeNull();
   });
+
+  it("drops locally generated messages that were never billed", () => {
+    // Error notices and interrupts are written as assistant lines with model
+    // `<synthetic>` and an all-zero usage object; shaped after a real record.
+    const line = JSON.stringify({
+      type: "assistant",
+      timestamp: "2026-03-28T03:06:03.360Z",
+      sessionId: "c648e44d-254f-4428-a4f2-870411d7c701",
+      message: {
+        id: "c648e44d-254f-4428-a4f2-870411d7c701",
+        role: "assistant",
+        model: "<synthetic>",
+        content: [{ type: "text" }],
+        usage: {
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+          output_tokens: 0,
+        },
+      },
+    });
+
+    expect(parseClaudeLine(line)).toBeNull();
+  });
+
+  it("drops assistant records with no token activity under any model", () => {
+    // The guard is on totals, not the model name, so future synthetic
+    // variants are covered without a blocklist.
+    const line = claudeLine({ messageId: "msg_3", contentType: "text" })
+      .replace('"input_tokens":2', '"input_tokens":0')
+      .replace('"cache_creation_input_tokens":66818', '"cache_creation_input_tokens":0')
+      .replace('"cache_read_input_tokens":1000', '"cache_read_input_tokens":0')
+      .replace(/"output_tokens":\d+/, '"output_tokens":0');
+
+    expect(parseClaudeLine(line)).toBeNull();
+  });
 });
 
 describe("parseCodexLine", () => {
