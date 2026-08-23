@@ -99,7 +99,7 @@ const readWorkflowDir = Effect.fn("grok.readWorkflowDir")(function* (
     if (Option.isNone(bytes)) {
       continue;
     }
-    const source = new TextDecoder("utf8").decode(bytes.value);
+    const source = new TextDecoder().decode(bytes.value);
     const fallbackName = entry.endsWith(".rhai") ? entry.slice(0, -".rhai".length) : entry;
     const meta = parseGrokWorkflowScriptMeta(source, fallbackName);
     if (!meta) {
