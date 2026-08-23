@@ -1490,6 +1490,33 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("resolves relative worktree paths against cwd when copying includes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+
+        yield* writeTextFile(cwd, ".worktreeinclude", ".env\n");
+        yield* writeTextFile(cwd, ".env", "RELATIVE=1\n");
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: "relative-worktree",
+          refName: initialBranch,
+          newRefName: "feature/relative-worktree",
+        });
+
+        const expectedPath = pathService.resolve(cwd, "relative-worktree");
+        assert.equal(created.worktree.path, expectedPath);
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(expectedPath, ".env")),
+          "RELATIVE=1\n",
+        );
+      }),
+    );
+
     it.effect("never writes .worktreeinclude copies through tracked symlinks", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

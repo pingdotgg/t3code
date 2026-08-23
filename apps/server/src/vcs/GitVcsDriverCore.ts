@@ -2869,7 +2869,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const targetBranch = input.newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
-    const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+    // git resolves a relative worktree path against its cwd; mirror that so
+    // the copy step and the returned path always point at the real location.
+    const worktreePath = path.resolve(
+      input.cwd,
+      input.path ?? path.join(worktreesDir, repoName, sanitizedBranch),
+    );
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
