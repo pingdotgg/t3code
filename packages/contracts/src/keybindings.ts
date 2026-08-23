@@ -75,12 +75,19 @@ export const STATIC_KEYBINDING_COMMANDS = [
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;
 
+/**
+ * Identifier portion of a script run command (`script.<id>.run`). The web
+ * client rebuilds that command during keybinding wiring, so any id persisted
+ * by the server must satisfy this constraint or thread views throw.
+ */
+export const ProjectScriptId = Schema.NonEmptyString.check(
+  Schema.isMaxLength(MAX_SCRIPT_ID_LENGTH),
+  Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/),
+);
+
 export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
   Schema.Literal("script."),
-  Schema.NonEmptyString.check(
-    Schema.isMaxLength(MAX_SCRIPT_ID_LENGTH),
-    Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/),
-  ),
+  ProjectScriptId,
   Schema.Literal(".run"),
 ]);
 

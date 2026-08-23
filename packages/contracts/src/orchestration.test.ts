@@ -221,6 +221,49 @@ it.effect("rejects command fields that become empty after trim", () =>
   }),
 );
 
+it.effect("rejects project scripts whose ids cannot form keybinding commands", () =>
+  Effect.gen(function* () {
+    // The web client rebuilds `script.<id>.run` keybinding commands while
+    // rendering; an id outside the pattern's constraint crashes thread
+    // views, so the server must refuse to persist it.
+    const result = yield* Effect.exit(
+      decodeProjectMetaUpdatedPayload({
+        projectId: "project-1",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        scripts: [
+          {
+            id: "123e4567-e89b-42d3-a456-426614174000",
+            name: "Setup",
+            command: "echo hi",
+            icon: "configure",
+            runOnWorktreeCreate: false,
+          },
+        ],
+      }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("accepts project scripts with conforming ids", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectMetaUpdatedPayload({
+      projectId: "project-1",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      scripts: [
+        {
+          id: "run-setup",
+          name: "Setup",
+          command: "echo hi",
+          icon: "configure",
+          runOnWorktreeCreate: false,
+        },
+      ],
+    });
+    assert.strictEqual(parsed.scripts?.[0]?.id, "run-setup");
+  }),
+);
+
 it.effect("decodes thread.turn.start defaults for provider and runtime mode", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadTurnStartCommand({

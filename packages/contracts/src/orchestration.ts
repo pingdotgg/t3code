@@ -23,6 +23,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProjectScriptId } from "./keybindings.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -207,7 +208,12 @@ export const ProjectScriptIcon = Schema.Literals([
 export type ProjectScriptIcon = typeof ProjectScriptIcon.Type;
 
 export const ProjectScript = Schema.Struct({
-  id: TrimmedNonEmptyString,
+  /**
+   * Must satisfy the script-id constraint from the keybinding command
+   * pattern (`script.<id>.run`); the web client rebuilds that command while
+   * rendering, so a non-conforming id persisted here crashes thread views.
+   */
+  id: ProjectScriptId,
   name: TrimmedNonEmptyString,
   command: TrimmedNonEmptyString,
   icon: ProjectScriptIcon,
