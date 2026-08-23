@@ -837,6 +837,10 @@ function capHistoryByBytes(history: string, targetBytes: number): string {
     start += 1;
   }
   const suffix = encoded.subarray(start).toString();
+  const previousByte = start > 0 ? encoded[start - 1] : undefined;
+  if (previousByte === 0x0a || (previousByte === 0x0d && encoded[start] !== 0x0a)) {
+    return suffix;
+  }
 
   const newlineIndex = suffix.indexOf("\n");
   const carriageReturnIndex = suffix.indexOf("\r");

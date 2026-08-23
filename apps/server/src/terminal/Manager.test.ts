@@ -1522,6 +1522,22 @@ it.layer(
     }),
   );
 
+  it.effect("retains a complete line when the byte cutoff follows a newline", () =>
+    Effect.gen(function* () {
+      const { manager, logsDir } = yield* createManager(100, {
+        historyTargetBytes: 8,
+        historyMaxBytes: 10,
+      });
+      const historyPath = yield* historyLogPath(logsDir);
+      yield* writeFileString(historyPath, "xx\naa\nbb\ncc");
+
+      const opened = yield* manager.open(openInput());
+
+      expect(opened.history).toBe("aa\nbb\ncc");
+      expect(yield* readFileString(historyPath)).toBe("aa\nbb\ncc");
+    }),
+  );
+
   it.effect("strips replay-unsafe terminal query and reply sequences from persisted history", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
