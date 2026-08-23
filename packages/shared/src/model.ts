@@ -18,6 +18,22 @@ export interface SelectableModelOption {
   name: string;
 }
 
+export function providerInteractionModeControlsEnabled(input: {
+  readonly planModeEnabled: boolean;
+  readonly providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "showInteractionModeToggle">
+  >;
+  readonly modelSelection: Pick<ModelSelection, "instanceId"> | null | undefined;
+}): boolean {
+  if (!input.planModeEnabled || !input.modelSelection) {
+    return false;
+  }
+  return (
+    input.providers.find((provider) => provider.instanceId === input.modelSelection.instanceId)
+      ?.showInteractionModeToggle ?? true
+  );
+}
+
 export function modelChangeRequiresNewThread(input: {
   readonly providers: ReadonlyArray<
     Pick<ServerProvider, "instanceId" | "models" | "requiresNewThreadForModelChange">

@@ -60,6 +60,7 @@ import {
   buildModelOptions,
   groupByProvider,
   markModelOptionsRequiringNewThread,
+  threadShellHasConversationHistory,
 } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -74,6 +75,8 @@ import {
   searchTaskReferences,
 } from "@t3tools/shared/taskReferenceSearch";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
+import { providerInteractionModeControlsEnabled } from "@t3tools/shared/model";
+import { useLegacyPlanModeEnabled } from "./use-legacy-plan-mode-enabled";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 import {
@@ -365,6 +368,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ) ?? null
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
+  const planModeEnabled = useLegacyPlanModeEnabled();
+  const showInteractionModeCommands = providerInteractionModeControlsEnabled({
+    planModeEnabled,
+    providers: props.serverConfig?.providers ?? [],
+    modelSelection: currentModelSelection,
+  });
 
   // ── Trigger detection ────────────────────────────────────
   const [composerSelection, setComposerSelection] = useState(() => ({
@@ -422,20 +431,24 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           label: "/model",
           description: "Switch model",
         },
-        {
-          id: "cmd:plan",
-          type: "slash-command" as const,
-          command: "plan",
-          label: "/plan",
-          description: "Switch to plan mode",
-        },
-        {
-          id: "cmd:default",
-          type: "slash-command" as const,
-          command: "default",
-          label: "/default",
-          description: "Switch to default mode",
-        },
+        ...(showInteractionModeCommands
+          ? [
+              {
+                id: "cmd:plan",
+                type: "slash-command" as const,
+                command: "plan",
+                label: "/plan",
+                description: "Switch to plan mode",
+              },
+              {
+                id: "cmd:default",
+                type: "slash-command" as const,
+                command: "default",
+                label: "/default",
+                description: "Switch to default mode",
+              },
+            ]
+          : []),
       ];
       const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
 
@@ -564,7 +577,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus, taskReferenceIndex]);
+  }, [
+    composerTrigger,
+    pathSearch.entries,
+    selectedProviderStatus,
+    showInteractionModeCommands,
+    taskReferenceIndex,
+  ]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -599,6 +618,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       if (!composerTrigger) return;
 
       if (
+        showInteractionModeCommands &&
         item.type === "slash-command" &&
         (item.command === "plan" || item.command === "default")
       ) {
@@ -640,7 +660,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       setComposerSelection({ start: result.cursor, end: result.cursor });
       onChangeDraftMessage(result.text);
     },
-    [composerTrigger, draftMessage, onChangeDraftMessage, onUpdateInteractionMode],
+    [
+      composerTrigger,
+      draftMessage,
+      onChangeDraftMessage,
+      onUpdateInteractionMode,
+      showInteractionModeCommands,
+    ],
   );
 
   // ── Model menu ───────────────────────────────────────────
@@ -659,10 +685,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           ),
           providers: props.serverConfig?.providers ?? [],
           currentModelSelection,
-          hasConversationHistory: props.selectedThread.latestTurn !== null,
+          hasConversationHistory: threadShellHasConversationHistory(props.selectedThread),
         }),
       ),
-    [currentModelSelection, modelOptions, props.selectedThread.latestTurn, props.serverConfig],
+    [
+      currentModelSelection,
+      modelOptions,
+      props.selectedThread.latestTurn,
+      props.selectedThread.latestUserMessageAt,
+      props.serverConfig,
+    ],
   );
   const currentModelOption =
     modelOptions.find(

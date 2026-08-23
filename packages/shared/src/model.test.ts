@@ -13,7 +13,43 @@ import {
   modelChangeRequiresNewThread,
   normalizeCustomModelSlug,
   normalizeModelSlug,
+  providerInteractionModeControlsEnabled,
 } from "./model.ts";
+
+describe("provider interaction mode controls", () => {
+  it("requires both the preference and the selected provider capability", () => {
+    const grokInstanceId = ProviderInstanceId.make("grok");
+    const providers = [
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        showInteractionModeToggle: true,
+      },
+      { instanceId: grokInstanceId, showInteractionModeToggle: false },
+    ];
+
+    expect(
+      providerInteractionModeControlsEnabled({
+        planModeEnabled: true,
+        providers,
+        modelSelection: { instanceId: grokInstanceId },
+      }),
+    ).toBe(false);
+    expect(
+      providerInteractionModeControlsEnabled({
+        planModeEnabled: false,
+        providers: [],
+        modelSelection: { instanceId: ProviderInstanceId.make("codex") },
+      }),
+    ).toBe(false);
+    expect(
+      providerInteractionModeControlsEnabled({
+        planModeEnabled: true,
+        providers: [],
+        modelSelection: { instanceId: ProviderInstanceId.make("codex") },
+      }),
+    ).toBe(true);
+  });
+});
 
 describe("model session compatibility", () => {
   const instanceId = ProviderInstanceId.make("grok");

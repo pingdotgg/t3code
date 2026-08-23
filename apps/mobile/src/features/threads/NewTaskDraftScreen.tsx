@@ -71,6 +71,7 @@ import {
   searchTaskReferences,
 } from "@t3tools/shared/taskReferenceSearch";
 import { resolveSelectableModelSelection } from "../../lib/modelOptions";
+import { providerInteractionModeControlsEnabled } from "@t3tools/shared/model";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
@@ -137,6 +138,11 @@ export function NewTaskDraftScreen(props: {
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
   );
+  const showInteractionModeControl = providerInteractionModeControlsEnabled({
+    planModeEnabled: flow.planModeEnabled,
+    providers: selectedEnvironmentServerConfig?.providers ?? [],
+    modelSelection: flow.selectedModel,
+  });
   const environmentConnected =
     selectedProject !== null &&
     connectedEnvironments.find(
@@ -760,7 +766,11 @@ export function NewTaskDraftScreen(props: {
       draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
     const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
     const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
-    const interactionMode = flow.planModeEnabled
+    const interactionMode = providerInteractionModeControlsEnabled({
+      planModeEnabled: flow.planModeEnabled,
+      providers: selectedEnvironmentServerConfig?.providers ?? [],
+      modelSelection,
+    })
       ? (draft.interactionMode ?? flow.interactionMode)
       : "default";
     const initialMessageText = draft.text.trim();
@@ -1126,7 +1136,7 @@ export function NewTaskDraftScreen(props: {
               maxWidth={152}
               onPress={settingsSheetPresentation.open}
             />
-            {flow.planModeEnabled ? (
+            {showInteractionModeControl ? (
               <ComposerInlineControl
                 accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
                 accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}

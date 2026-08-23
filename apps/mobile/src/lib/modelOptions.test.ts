@@ -8,6 +8,7 @@ import {
   markModelOptionsRequiringNewThread,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
+  threadShellHasConversationHistory,
 } from "./modelOptions";
 
 describe("mobile model options", () => {
@@ -49,12 +50,17 @@ describe("mobile model options", () => {
     } as unknown as ServerConfig;
     const currentModelSelection = { instanceId, model: "grok-build" };
     const options = buildModelOptions(config, currentModelSelection);
+    const hasConversationHistory = threadShellHasConversationHistory({
+      latestTurn: null,
+      latestUserMessageAt: "2026-08-23T12:00:00.000Z",
+    });
+    expect(hasConversationHistory).toBe(true);
 
     const restricted = markModelOptionsRequiringNewThread({
       options,
       providers: config.providers,
       currentModelSelection,
-      hasConversationHistory: true,
+      hasConversationHistory,
     });
     expect(restricted[0]?.disabledReason).toBeUndefined();
     expect(restricted[1]?.disabledReason).toBeUndefined();

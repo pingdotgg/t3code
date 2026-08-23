@@ -41,6 +41,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
+  providerInteractionModeControlsEnabled,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
@@ -5176,6 +5177,14 @@ function ChatViewContent(props: ChatViewProps) {
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
       ctxSelectedModelSelection,
     );
+    const selectedProviderSupportsInteractionMode = providerInteractionModeControlsEnabled({
+      planModeEnabled: settings.planModeEnabled,
+      providers: providerStatuses,
+      modelSelection: ctxSelectedModelSelection,
+    });
+    const interactionModeForSend = selectedProviderSupportsInteractionMode
+      ? interactionMode
+      : DEFAULT_INTERACTION_MODE;
     const composerImages =
       directAnnotation?.image &&
       !sendContextImages.some((image) => image.id === directAnnotation.image?.id)
@@ -5236,10 +5245,10 @@ function ChatViewContent(props: ChatViewProps) {
       });
       return;
     }
-    // Legacy plan mode: /plan and /default only act when the beta flag is on;
-    // otherwise they send as plain text like any other message.
+    // Legacy plan mode: /plan and /default only act when the preference and
+    // selected provider support it. Otherwise they send as plain text.
     const standaloneSlashCommand =
-      settings.planModeEnabled &&
+      selectedProviderSupportsInteractionMode &&
       composerImages.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
@@ -5457,7 +5466,7 @@ function ChatViewContent(props: ChatViewProps) {
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
         runtimeMode,
-        interactionMode,
+        interactionMode: interactionModeForSend,
       });
       if (settingsResult._tag === "Failure") {
         failure = settingsResult;
@@ -5481,7 +5490,7 @@ function ChatViewContent(props: ChatViewProps) {
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
-                      interactionMode,
+                      interactionMode: interactionModeForSend,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
@@ -5515,7 +5524,7 @@ function ChatViewContent(props: ChatViewProps) {
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
           runtimeMode,
-          interactionMode,
+          interactionMode: interactionModeForSend,
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },

@@ -1,6 +1,7 @@
 import type {
   ModelCapabilities,
   ModelSelection,
+  OrchestrationThreadShell,
   ServerProvider,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
@@ -29,6 +30,12 @@ export type ProviderGroup = {
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
 };
+
+export function threadShellHasConversationHistory(
+  thread: Pick<OrchestrationThreadShell, "latestTurn" | "latestUserMessageAt">,
+): boolean {
+  return thread.latestTurn !== null || thread.latestUserMessageAt !== null;
+}
 
 export function markModelOptionsRequiringNewThread(input: {
   readonly options: ReadonlyArray<ModelOption>;
