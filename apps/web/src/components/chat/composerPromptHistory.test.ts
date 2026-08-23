@@ -19,6 +19,7 @@ import {
   navigateComposerPromptHistory,
   preserveComposerPromptHistoryAttachmentFiles,
   recallableComposerPrompt,
+  restoreComposerPromptHistoryDraft,
 } from "./composerPromptHistory";
 
 const terminalContext: TerminalContextSelection = {
@@ -353,6 +354,44 @@ describe("materializeComposerPromptHistoryAttachments", () => {
         },
       ]),
     ).resolves.toEqual({ attachments: [], failedAttachmentCount: 1 });
+  });
+});
+
+describe("restoreComposerPromptHistoryDraft", () => {
+  it("restores draft images with fresh preview URLs after leaving history", async () => {
+    const file = new File(["draft image"], "draft.png", { type: "image/png" });
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:restored-draft");
+    const replaceDraft = vi.fn();
+
+    await expect(
+      restoreComposerPromptHistoryDraft(
+        "unfinished draft",
+        [
+          {
+            type: "image",
+            id: "draft-image",
+            name: file.name,
+            mimeType: file.type,
+            sizeBytes: file.size,
+            previewUrl: "blob:revoked-draft",
+            file,
+          },
+        ],
+        replaceDraft,
+      ),
+    ).resolves.toBe(0);
+
+    expect(replaceDraft).toHaveBeenCalledWith("unfinished draft", [
+      {
+        type: "image",
+        id: "draft-image",
+        name: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        previewUrl: "blob:restored-draft",
+        file,
+      },
+    ]);
   });
 });
 

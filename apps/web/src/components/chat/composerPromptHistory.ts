@@ -237,3 +237,18 @@ export async function materializeComposerPromptHistoryAttachments(
   }
   return { attachments: materialized, failedAttachmentCount };
 }
+
+export async function restoreComposerPromptHistoryDraft(
+  prompt: string,
+  attachments: ReadonlyArray<ComposerPromptHistoryAttachment>,
+  replaceDraft: (
+    prompt: string,
+    attachments: Awaited<
+      ReturnType<typeof materializeComposerPromptHistoryAttachments>
+    >["attachments"],
+  ) => void,
+): Promise<number> {
+  const materialized = await materializeComposerPromptHistoryAttachments(attachments);
+  replaceDraft(prompt, materialized.attachments);
+  return materialized.failedAttachmentCount;
+}

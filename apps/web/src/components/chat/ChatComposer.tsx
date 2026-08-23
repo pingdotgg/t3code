@@ -110,6 +110,7 @@ import {
   findComposerPromptHistoryOffset,
   materializeComposerPromptHistoryAttachments,
   navigateComposerPromptHistory,
+  restoreComposerPromptHistoryDraft,
 } from "./composerPromptHistory";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -1444,7 +1445,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptHistoryApplyGenerationRef.current += 1;
       promptHistoryApplyPendingRef.current = false;
       if (promptHistoryEntryIdRef.current !== null) {
-        replaceComposerPromptAndImages(promptHistoryDraftRef.current, []);
+        void restoreComposerPromptHistoryDraft(
+          promptHistoryDraftRef.current,
+          promptHistoryDraftAttachmentsRef.current,
+          replaceComposerPromptAndImages,
+        );
       }
     };
   }, [composerDraftTarget, replaceComposerPromptAndImages]);
