@@ -742,6 +742,16 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           status: "failed",
         },
         {
+          type: "mcpToolCall",
+          id: "successful-mcp-with-failed-status",
+          server: "t3-code",
+          tool: "inspectTaskChanges",
+          arguments: {},
+          error: null,
+          result: { content: [{ type: "text", text: "diff details" }] },
+          status: "failed",
+        },
+        {
           type: "fileChange",
           id: "declined-change",
           changes: [],
@@ -774,7 +784,10 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.completed") {
           return;
         }
-        NodeAssert.equal(firstEvent.value.payload.status, item.status);
+        NodeAssert.equal(
+          firstEvent.value.payload.status,
+          item.id === "successful-mcp-with-failed-status" ? "completed" : item.status,
+        );
       }
     }),
   );

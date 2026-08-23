@@ -294,6 +294,36 @@ function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): stri
   return undefined;
 }
 
+function hasSuccessfulToolResult(item: CodexLifecycleItem): boolean {
+  if (item.type !== "mcpToolCall") {
+    return false;
+  }
+  return item.result != null && item.error == null;
+}
+
+function itemLifecycleStatus(
+  item: CodexLifecycleItem,
+  lifecycle: "item.started" | "item.updated" | "item.completed",
+): "inProgress" | "failed" | "declined" | "completed" | undefined {
+  if (lifecycle === "item.started") {
+    return "inProgress";
+  }
+
+  if (lifecycle !== "item.completed") {
+    return undefined;
+  }
+
+  if (
+    "status" in item &&
+    (item.status === "failed" || item.status === "declined") &&
+    !hasSuccessfulToolResult(item)
+  ) {
+    return item.status;
+  }
+
+  return "completed";
+}
+
 function toRequestTypeFromMethod(method: string): CanonicalRequestType {
   switch (method) {
     case "item/commandExecution/requestApproval":
@@ -476,14 +506,7 @@ function mapItemLifecycle(
   }
 
   const detail = itemDetail(itemType, item);
-  const status =
-    lifecycle === "item.started"
-      ? "inProgress"
-      : lifecycle === "item.completed"
-        ? "status" in item && (item.status === "failed" || item.status === "declined")
-          ? item.status
-          : "completed"
-        : undefined;
+  const status = itemLifecycleStatus(item, lifecycle);
 
   return {
     ...runtimeEventBase(event, canonicalThreadId),
