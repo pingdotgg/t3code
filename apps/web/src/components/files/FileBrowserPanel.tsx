@@ -41,7 +41,7 @@ const TREE_UNSAFE_CSS = `
     --trees-hover-bg-override: color-mix(in srgb, currentColor 7%, transparent);
     --trees-border-color-override: color-mix(in srgb, currentColor 14%, transparent);
     --trees-font-family-override: var(--font-sans);
-    --trees-font-size-override: 12px;
+    --trees-font-size-override: 0.75rem;
   }
   button[data-type='item'] { border-radius: 5px; }
 `;
