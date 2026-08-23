@@ -1,4 +1,5 @@
 import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -236,6 +237,61 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders a feedback command and its pending response as normal thread messages", () => {
+    const submission = {
+      id: MessageId.make("feedback-command"),
+      command: "/feedback The agent stopped early.",
+      createdAt: MESSAGE_CREATED_AT,
+      status: "uploading" as const,
+    };
+    const messages = [
+      codexFeedbackMessage(submission),
+      codexFeedbackMessage(submission, "assistant"),
+    ];
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={messages.map((message) => ({
+          id: message.id,
+          kind: "message" as const,
+          createdAt: message.createdAt,
+          message,
+        }))}
+      />,
+    );
+
+    expect(markup).toContain("/feedback The agent stopped early.");
+    expect(markup).toContain("Sending feedback to OpenAI...");
+  });
+
+  it("renders the returned Codex thread ID in the feedback response", () => {
+    const submission = {
+      id: MessageId.make("feedback-command"),
+      command: "/feedback The agent stopped early.",
+      createdAt: MESSAGE_CREATED_AT,
+      status: "sent" as const,
+      feedbackId: "codex-thread-1",
+    };
+    const messages = [
+      codexFeedbackMessage(submission),
+      codexFeedbackMessage(submission, "assistant"),
+    ];
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={messages.map((message) => ({
+          id: message.id,
+          kind: "message" as const,
+          createdAt: message.createdAt,
+          message,
+        }))}
+      />,
+    );
+
+    expect(markup).toContain("Feedback sent to OpenAI.");
+    expect(markup).toContain("codex-thread-1");
+  });
+
   it("renders the worked-for row at assistant response text size", () => {
     const turnId = TurnId.make("turn-with-fold");
     const assistantEntry = buildAssistantTimelineEntry("Done.");

@@ -1,17 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
+import { ThreadId } from "./baseSchemas.ts";
 import {
   ProviderEvent,
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  ProviderUploadFeedbackError,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
 } from "./provider.ts";
 
 const decodeProviderSessionStartInput = Schema.decodeUnknownSync(ProviderSessionStartInput);
 const decodeProviderSendTurnInput = Schema.decodeUnknownSync(ProviderSendTurnInput);
 const decodeProviderSession = Schema.decodeUnknownSync(ProviderSession);
 const decodeProviderEvent = Schema.decodeUnknownSync(ProviderEvent);
+const decodeProviderUploadFeedbackInput = Schema.decodeUnknownSync(ProviderUploadFeedbackInput);
+const decodeProviderUploadFeedbackResult = Schema.decodeUnknownSync(ProviderUploadFeedbackResult);
 
 function getOptionValue(
   options: ReadonlyArray<{ id: string; value: unknown }> | undefined,
@@ -150,6 +156,39 @@ describe("ProviderSendTurnInput", () => {
     expect(parsed.modelSelection?.instanceId).toBe("claudeAgent");
     expect(getOptionValue(parsed.modelSelection?.options, "effort")).toBe("ultrathink");
     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
+  });
+});
+
+describe("provider feedback", () => {
+  it("accepts a thread and an optional feedback reason", () => {
+    expect(
+      decodeProviderUploadFeedbackInput({
+        threadId: "thread-1",
+        reason: "The agent stopped early.",
+      }),
+    ).toEqual({ threadId: "thread-1", reason: "The agent stopped early." });
+    expect(decodeProviderUploadFeedbackInput({ threadId: "thread-1" })).toEqual({
+      threadId: "thread-1",
+    });
+  });
+
+  it("returns the shareable Codex feedback identifier", () => {
+    expect(decodeProviderUploadFeedbackResult({ feedbackId: "provider-thread-1" })).toEqual({
+      feedbackId: "provider-thread-1",
+    });
+  });
+
+  it("keeps the failed thread and original cause without exposing upstream text", () => {
+    const cause = new Error("provider request secret");
+    const error = new ProviderUploadFeedbackError({
+      threadId: ThreadId.make("thread-1"),
+      cause,
+    });
+
+    expect(error.threadId).toBe("thread-1");
+    expect(error.cause).toBe(cause);
+    expect(error.message).toBe("Failed to upload feedback for thread thread-1.");
+    expect(error.message).not.toContain("provider request secret");
   });
 });
 

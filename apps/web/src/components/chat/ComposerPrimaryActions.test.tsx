@@ -87,7 +87,7 @@ function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent:
   );
 }
 
-function renderSendButton() {
+function renderSendButton(sendDisabledReason: string | null = null) {
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
       compact: true,
@@ -96,7 +96,7 @@ function renderSendButton() {
       showPlanFollowUpPrompt: false,
       promptHasText: true,
       isSendBusy: false,
-      sendDisabledReason: null,
+      sendDisabledReason,
       isConnecting: false,
       isEnvironmentUnavailable: false,
       isPreparingWorktree: false,
@@ -204,6 +204,13 @@ describe("formatPendingPrimaryActionLabel", () => {
 });
 
 describe("ComposerPrimaryActions", () => {
+  it("disables and labels the send button while feedback is uploading", () => {
+    const markup = renderSendButton("Sending feedback");
+
+    expect(markup).toContain("disabled");
+    expect(markup).toContain('aria-label="Sending feedback"');
+  });
+
   it("offers Stop generation while a running turn is waiting for user input", () => {
     expect(renderPendingActions(true)).toContain('aria-label="Stop generation"');
   });
