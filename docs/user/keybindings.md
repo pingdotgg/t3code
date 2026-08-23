@@ -43,9 +43,14 @@ Repeating either shortcut closes that search, and switching shortcuts replaces t
 `themeEditor.toggle` opens or closes the floating theme editor and defaults to
 `mod+alt+shift+t`. Select a color label to spotlight the elements that use it; select the label
 again to clear the spotlight. The swatch and hex field keep that color selected while you edit it.
+Advanced mode groups related app tokens into a smaller set of color families. Changing a family
+updates its paired text and interaction states while leaving every unrelated imported color intact.
 Use **Inspect** to pick an element in the app and reveal its color token. Inspect disarms after one
-successful pick; its hover glow and badge preview the element and token that click will select.
+successful pick; its hover glow and badge preview the element and color family that click will select.
 **Cancel** or `Escape` exits Inspect and clears its selection and spotlight.
+
+`rightPanel.toggleMaximized` maximizes or restores the open right panel. It has no default shortcut,
+so add one in **Settings** → **Keybindings** if you want to use it.
 
 The command palette searches active thread titles, projects, branches, user messages, and final
 agent responses across connected environments. Message matches show one labeled excerpt while
@@ -61,6 +66,10 @@ environment mode always come from your configured defaults, not from the thread 
 at. To keep a worktree, use the explicit "new thread in this worktree" action in the branch
 toolbar. The only difference between the two commands: with the current sidebar and more than one
 project, `chat.new` opens a project chooser first.
+
+Background submission from a new thread is the exception. `mod+enter` starts that thread and opens
+another new thread with the same workspace mode and base branch. **New worktree** remains selected,
+but the new thread does not reuse the worktree created for the thread that just started.
 
 ## `when` Conditions
 

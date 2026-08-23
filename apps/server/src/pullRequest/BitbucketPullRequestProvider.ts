@@ -4,6 +4,7 @@ import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3t
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
 import {
   PullRequestProviderError,
+  type PullRequestProviderFailure,
   type ProviderChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
@@ -19,6 +20,9 @@ const CAPABILITIES: PullRequestCapabilities = {
   actions: ["merge", "close"],
   mergeMethods: ["merge", "squash", "rebase"],
   search: true,
+  // Bitbucket Cloud's API exposes no reaction on a pull request or on a comment, so none is
+  // read and none is offered.
+  reactions: false,
   review: {
     inlineComment: true,
     reply: true,
@@ -26,6 +30,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve", "request-changes"],
   },
   reviewers: { request: true, listCandidates: true },
+  edit: { changeRequest: true, comment: true },
 };
 
 /**
@@ -55,15 +60,21 @@ export function bitbucketViewerPermissions(input: {
 }
 
 /** The failures that mean the credentials are the problem, rather than one request. */
-export function bitbucketErrorReason(
+export function bitbucketProviderFailure(
   error: BitbucketPullRequestApi.BitbucketPullRequestApiError,
-): PullRequestProviderError["reason"] {
+): PullRequestProviderFailure {
   // Bitbucket is read over HTTP with credentials from the environment, so there is no tool to be
   // missing: unusable always means the credentials are absent or refused.
   if (error._tag === "BitbucketResponseError" && error.status === 401) {
-    return "unauthenticated";
+    return { reason: "unauthenticated" };
   }
-  return "failed";
+  if (error._tag === "BitbucketResponseError" && error.status === 429) {
+    return {
+      reason: "rate-limited",
+      ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+    };
+  }
+  return { reason: "failed" };
 }
 
 function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeRequest {
@@ -96,7 +107,7 @@ export const make = Effect.gen(function* () {
       new PullRequestProviderError({
         provider: "bitbucket",
         operation,
-        reason: bitbucketErrorReason(error),
+        ...bitbucketProviderFailure(error),
         // Every Bitbucket failure states its own fact; this names the operation around it, so
         // the two do not stack into "failed in x: failed in y: ...".
         detail: error.detail,
@@ -249,10 +260,30 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("runAction"))),
 
+    updateChangeRequest: (input) =>
+      api
+        .updateChangeRequest({
+          repository: input.repository,
+          number: input.number,
+          title: input.title,
+          body: input.body,
+        })
+        .pipe(Effect.mapError(fail("updateChangeRequest"))),
+
     comment: (input) =>
       api
         .comment({ repository: input.repository, number: input.number, body: input.body })
         .pipe(Effect.mapError(fail("comment"))),
+
+    updateComment: (input) =>
+      api
+        .updateComment({
+          repository: input.repository,
+          number: input.number,
+          commentId: input.commentId,
+          body: input.body,
+        })
+        .pipe(Effect.mapError(fail("updateComment"))),
 
     submitReview: (input) =>
       api
@@ -274,6 +305,17 @@ export const make = Effect.gen(function* () {
           body: input.body,
         })
         .pipe(Effect.mapError(fail("replyToThread"))),
+
+    // Never called: `capabilities.reactions` is false, and the service refuses without it.
+    setReaction: () =>
+      Effect.fail(
+        new PullRequestProviderError({
+          provider: "bitbucket",
+          operation: "setReaction",
+          reason: "failed",
+          detail: "Bitbucket does not support reactions.",
+        }),
+      ),
 
     setThreadResolution: (input) =>
       api

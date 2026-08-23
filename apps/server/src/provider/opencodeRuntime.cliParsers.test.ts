@@ -2,7 +2,11 @@ import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";
 
-import { parseModelsCliOutput, parseAgentListCliOutput } from "./opencodeRuntime.ts";
+import {
+  parseAgentListCliOutput,
+  parseModelsCliOutput,
+  parseSkillsCliOutput,
+} from "./opencodeRuntime.ts";
 
 describe("parseModelsCliOutput", () => {
   it("parses a single model from a single provider", () => {
@@ -250,5 +254,33 @@ describe("parseAgentListCliOutput", () => {
     const result = parseAgentListCliOutput(stdout);
     NodeAssert.equal(result[0]!.hidden, true);
     NodeAssert.equal(result[1]!.hidden, false);
+  });
+});
+
+describe("parseSkillsCliOutput", () => {
+  it("parses skill metadata from the CLI JSON output", () => {
+    const result = parseSkillsCliOutput(
+      JSON.stringify([
+        {
+          name: "review-pr",
+          description: "Review a pull request.",
+          location: "/tmp/review-pr/SKILL.md",
+          content: "---\nname: review-pr\n---\n",
+        },
+      ]),
+    );
+
+    NodeAssert.deepEqual(result, [
+      {
+        name: "review-pr",
+        description: "Review a pull request.",
+        location: "/tmp/review-pr/SKILL.md",
+        content: "---\nname: review-pr\n---\n",
+      },
+    ]);
+  });
+
+  it("degrades malformed output to an empty skill list", () => {
+    NodeAssert.deepEqual(parseSkillsCliOutput("not json"), []);
   });
 });
