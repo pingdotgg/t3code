@@ -42,7 +42,9 @@ const isTeslaCarBrowser = /Tesla\/|QtCarBrowser/.test(navigator.userAgent);
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   isTeslaCarBrowser ? (
-    "T3 Code does not endorse this behavior"
+    <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10 text-center text-foreground">
+      <p className="max-w-md text-lg font-medium">T3 Code does not endorse this behavior</p>
+    </div>
   ) : (
     <React.StrictMode>
       {clerkPublishableKey && hasCloudPublicConfig() ? (
