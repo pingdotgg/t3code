@@ -151,6 +151,16 @@ describe("XAiAcpExtension", () => {
         },
       }),
     ).toBeUndefined();
+    expect(
+      extractXAiModelChangedNotification("x.ai/session_notification", {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "model_changed",
+          model_id: "grok-4",
+          reasoning_effort: 42,
+        },
+      }),
+    ).toBeUndefined();
   });
 
   it("extracts questions from the real xAI ask_user_question payload shape", () => {

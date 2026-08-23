@@ -148,13 +148,20 @@ export function extractXAiModelChangedNotification(
   const sessionId = trimmedUnknownString(notification.sessionId);
   const update = isRecord(notification.update) ? notification.update : undefined;
   const modelId = trimmedUnknownString(update?.model_id);
-  if (sessionId === undefined || update?.sessionUpdate !== "model_changed" || !modelId) {
+  const rawReasoningEffort = update?.reasoning_effort;
+  const reasoningEffort = trimmedUnknownString(rawReasoningEffort);
+  if (
+    sessionId === undefined ||
+    update?.sessionUpdate !== "model_changed" ||
+    !modelId ||
+    (rawReasoningEffort !== undefined && reasoningEffort === undefined)
+  ) {
     return undefined;
   }
   return {
     sessionId,
     modelId,
-    reasoningEffort: trimmedUnknownString(update.reasoning_effort),
+    reasoningEffort,
   };
 }
 
