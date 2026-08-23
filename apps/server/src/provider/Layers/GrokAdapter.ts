@@ -1083,18 +1083,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               const requestedTurnModelId = turnModelSelection?.model
                 ? resolveGrokAcpBaseModelId(turnModelSelection.model)
                 : undefined;
-              const currentModelSelection = yield* applyGrokAcpModelSelection({
-                runtime: ctx.acp,
-                currentModelId: ctx.currentModelId,
-                currentReasoningEffort: ctx.currentReasoningEffort,
-                requestedModelId: requestedTurnModelId,
-                requestedReasoningEffort: getModelSelectionStringOptionValue(
-                  turnModelSelection,
-                  "reasoningEffort",
-                ),
-                mapError: (cause) =>
-                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
-              });
               const text = input.input?.trim();
               if ((input.attachments?.length ?? 0) > 0 && !ctx.supportsImageInput) {
                 return yield* new ProviderAdapterValidationError({
@@ -1149,6 +1137,18 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 });
               }
 
+              const currentModelSelection = yield* applyGrokAcpModelSelection({
+                runtime: ctx.acp,
+                currentModelId: ctx.currentModelId,
+                currentReasoningEffort: ctx.currentReasoningEffort,
+                requestedModelId: requestedTurnModelId,
+                requestedReasoningEffort: getModelSelectionStringOptionValue(
+                  turnModelSelection,
+                  "reasoningEffort",
+                ),
+                mapError: (cause) =>
+                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
+              });
               ctx.currentModelId = currentModelSelection.modelId;
               ctx.currentReasoningEffort = currentModelSelection.reasoningEffort;
               ctx.currentContextWindow = currentModelSelection.modelId

@@ -634,8 +634,15 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("rejects images when Grok does not advertise ACP image support", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-unsupported-image");
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const requestLogDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-rejected-image-log-")),
+      );
+      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
       const adapter = yield* makeTestAdapter(wrapperPath);
+      const instanceId = ProviderInstanceId.make("grok");
 
       yield* adapter.startSession({
         threadId,
@@ -657,11 +664,20 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
               sizeBytes: 4,
             },
           ],
+          modelSelection: {
+            instanceId,
+            model: "grok-mock-alt",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
         }),
       );
 
       assert.equal(error._tag, "ProviderAdapterValidationError");
       assert.include(error.message, "does not advertise ACP image prompt support");
+      const setModelRequests = (yield* Effect.promise(() => readJsonLines(requestLogPath))).filter(
+        (request) => request.method === "session/set_model",
+      );
+      assert.deepEqual(setModelRequests, []);
       yield* adapter.stopSession(threadId);
     }),
   );
