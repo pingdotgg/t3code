@@ -25,6 +25,8 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ServerProviderSkill,
+  ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -71,6 +73,37 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /**
+   * Skills visible from a specific workspace root.
+   *
+   * `snapshot.skills` is machine-scoped: it is produced once per instance
+   * against the server's own cwd, which for a packaged desktop build is the
+   * user's home directory. Skills are project-scoped, so that snapshot can
+   * only ever report the user-scope ones. Callers that know which project
+   * they are asking about (a thread's worktree or its project's workspace
+   * root) use this instead, and drivers that can enumerate skills per
+   * directory implement it.
+   *
+   * Optional: a driver that has no directory-scoped skill concept simply
+   * omits it and callers fall back to the snapshot.
+   */
+  readonly discoverSkillsForCwd?: (
+    cwd: string,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
+  /**
+   * Slash commands visible from a specific workspace root.
+   *
+   * Same scoping problem as `discoverSkillsForCwd`, different source: these
+   * come from the agent CLI's own init handshake, which reports PROJECT-scoped
+   * commands. `snapshot.slashCommands` is probed once against the server's cwd
+   * and therefore lists only the CLI's built-ins.
+   *
+   * Unlike the skills scan this spawns the CLI, so implementations should
+   * cache per directory rather than probe per call.
+   */
+  readonly discoverSlashCommandsForCwd?: (
+    cwd: string,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderSlashCommand>>;
 }
 
 export interface ProviderContinuationIdentity {

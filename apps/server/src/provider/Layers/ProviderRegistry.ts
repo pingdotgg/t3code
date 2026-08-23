@@ -27,6 +27,8 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderSkill,
+  type ServerProviderSlashCommand,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -508,6 +510,33 @@ export const ProviderRegistryLive = Layer.effect(
       );
     });
 
+    const discoverSkillsForInstance = Effect.fn("discoverSkillsForInstance")(function* (
+      instanceId: ProviderInstanceId,
+      cwd: string,
+    ) {
+      const instance = Array.from((yield* Ref.get(liveSubsRef)).values()).find(
+        (candidate) => candidate.instanceId === instanceId,
+      );
+      // Not live, or a driver with no directory-scoped skill concept: resolve
+      // empty so the caller falls back to the snapshot instead of failing.
+      if (!instance?.discoverSkillsForCwd) {
+        return [] as ReadonlyArray<ServerProviderSkill>;
+      }
+      return yield* instance.discoverSkillsForCwd(cwd);
+    });
+
+    const discoverSlashCommandsForInstance = Effect.fn("discoverSlashCommandsForInstance")(
+      function* (instanceId: ProviderInstanceId, cwd: string) {
+        const instance = Array.from((yield* Ref.get(liveSubsRef)).values()).find(
+          (candidate) => candidate.instanceId === instanceId,
+        );
+        if (!instance?.discoverSlashCommandsForCwd) {
+          return [] as ReadonlyArray<ServerProviderSlashCommand>;
+        }
+        return yield* instance.discoverSlashCommandsForCwd(cwd);
+      },
+    );
+
     /**
      * Diff the aggregator's live-source set against the current
      * `ProviderInstanceRegistry` and:
@@ -711,6 +740,8 @@ export const ProviderRegistryLive = Layer.effect(
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
+      discoverSkillsForInstance,
+      discoverSlashCommandsForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);

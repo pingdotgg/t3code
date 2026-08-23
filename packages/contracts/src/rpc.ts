@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -175,6 +176,8 @@ import {
   ServerProcessResourceHistoryResult,
   ServerSignalProcessInput,
   ServerSignalProcessResult,
+  ServerProviderSkill,
+  ServerProviderSlashCommand,
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
@@ -258,6 +261,10 @@ export const WS_METHODS = {
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
+
+  // Provider capability methods. Project-scoped, unlike the machine-scoped
+  // provider snapshot: resolved against one thread's workspace root.
+  providersWorkspaceSkills: "providers.workspaceSkills",
 
   // Server meta
   serverProbe: "server.probe",
@@ -644,6 +651,48 @@ export const WsProjectsListEntriesRpc = Rpc.make(WS_METHODS.projectsListEntries,
   error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
 });
 
+/**
+ * Skills visible to a thread, resolved against its workspace root.
+ *
+ * `ServerProvider.skills` on the provider snapshot is machine-scoped: it is
+ * scanned once per instance against the server's own cwd, which a packaged
+ * desktop build sets to the user's home directory. Skills are project-scoped,
+ * so the snapshot can only ever report user-scope ones. Clients showing a
+ * skill picker for a specific thread ask here instead.
+ */
+export const ProvidersWorkspaceSkillsInput = Schema.Struct({
+  /** Project whose workspace root is scanned. Present for draft threads too. */
+  projectId: ProjectId,
+  /** Provider instance whose skills are wanted. */
+  instanceId: ProviderInstanceId,
+  /**
+   * Optional: a persisted thread whose worktree overrides the project root.
+   * A draft thread has no server-side row yet, so callers omit it and still
+   * get the project's skills — which is exactly when the picker matters most.
+   */
+  threadId: Schema.optional(ThreadId),
+});
+export type ProvidersWorkspaceSkillsInput = typeof ProvidersWorkspaceSkillsInput.Type;
+
+export const ProvidersWorkspaceSkillsResult = Schema.Struct({
+  /** Workspace root everything was resolved against, for display and debugging. */
+  workspaceRoot: TrimmedNonEmptyString,
+  skills: Schema.Array(ServerProviderSkill),
+  /**
+   * Slash commands the agent CLI reports from that workspace root, which
+   * include project-scoped commands the machine-scoped snapshot cannot see.
+   * Empty when the driver cannot enumerate commands per directory.
+   */
+  slashCommands: Schema.Array(ServerProviderSlashCommand),
+});
+export type ProvidersWorkspaceSkillsResult = typeof ProvidersWorkspaceSkillsResult.Type;
+
+export const WsProvidersWorkspaceSkillsRpc = Rpc.make(WS_METHODS.providersWorkspaceSkills, {
+  payload: ProvidersWorkspaceSkillsInput,
+  success: ProvidersWorkspaceSkillsResult,
+  error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+});
+
 export const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   payload: ProjectReadFileInput,
   success: ProjectReadFileResult,
@@ -997,6 +1046,7 @@ export const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeReso
 });
 
 export const WsRpcGroup = RpcGroup.make(
+  WsProvidersWorkspaceSkillsRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

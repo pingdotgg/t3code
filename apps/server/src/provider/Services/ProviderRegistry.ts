@@ -10,6 +10,8 @@ import type {
   ProviderInstanceId,
   ProviderDriverKind,
   ServerProvider,
+  ServerProviderSkill,
+  ServerProviderSlashCommand,
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -56,6 +58,36 @@ export interface ProviderRegistryShape {
     instanceId: ProviderInstanceId,
     provider: ProviderDriverKind,
   ) => Effect.Effect<ProviderMaintenanceCapabilities>;
+
+  /**
+   * Skills one live instance can see from a specific workspace root.
+   *
+   * `ServerProvider.skills` is machine-scoped — scanned once against the
+   * server's own cwd, which a packaged desktop build sets to the home
+   * directory — so it reports user-scope skills only. Callers holding a
+   * project context ask here instead.
+   *
+   * Resolves to an empty array when the instance is not live or its driver
+   * has no directory-scoped skill concept; callers then fall back to the
+   * snapshot rather than treating it as an error.
+   */
+  readonly discoverSkillsForInstance: (
+    instanceId: ProviderInstanceId,
+    cwd: string,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
+
+  /**
+   * Slash commands one live instance can see from a specific workspace root.
+   *
+   * Same scoping story as `discoverSkillsForInstance`, but sourced from the
+   * agent CLI's init handshake rather than the filesystem, so it may spawn a
+   * process. Resolves empty when the instance is not live or its driver cannot
+   * enumerate commands per directory.
+   */
+  readonly discoverSlashCommandsForInstance: (
+    instanceId: ProviderInstanceId,
+    cwd: string,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderSlashCommand>>;
 
   /**
    * Apply volatile maintenance-action state to one configured instance.
