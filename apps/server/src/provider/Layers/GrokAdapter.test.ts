@@ -25,6 +25,7 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 
+import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
@@ -453,7 +454,9 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("restores ready without completing an unstarted turn when preparation fails", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-preparation-failure-while-connecting");
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_SUPPORTS_IMAGES: "1" }),
+      );
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
@@ -503,6 +506,94 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       assert.isUndefined(readySession?.activeTurnId);
 
       yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("rejects images when Grok does not advertise ACP image support", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-unsupported-image");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const error = yield* Effect.flip(
+        adapter.sendTurn({
+          threadId,
+          input: "inspect this image",
+          attachments: [
+            {
+              type: "image",
+              id: "grok-unsupported-image-12345678-1234-1234-1234-123456789abc",
+              name: "diagram.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+        }),
+      );
+
+      assert.equal(error._tag, "ProviderAdapterValidationError");
+      assert.include(error.message, "does not advertise ACP image prompt support");
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("sends images when Grok advertises ACP image support", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-supported-image");
+      const requestLogDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-image-log-")),
+      );
+      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_SUPPORTS_IMAGES: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const { attachmentsDir } = yield* ServerConfig;
+      const attachment = {
+        type: "image" as const,
+        id: "grok-supported-image-12345678-1234-1234-1234-123456789abc",
+        name: "diagram.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+      };
+      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.dirname(attachmentPath), { recursive: true }),
+      );
+      yield* Effect.promise(() => NodeFSP.writeFile(attachmentPath, Uint8Array.from([1, 2, 3, 4])));
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "inspect this image",
+        attachments: [attachment],
+      });
+
+      const promptRequest = (yield* Effect.promise(() => readJsonLines(requestLogPath))).find(
+        (request) => request.method === "session/prompt",
+      );
+      const prompt = (promptRequest?.params as { readonly prompt?: unknown } | undefined)?.prompt;
+      assert.deepEqual(prompt, [
+        { type: "text", text: "inspect this image" },
+        { type: "image", data: "AQIDBA==", mimeType: "image/png" },
+      ]);
+
       yield* adapter.stopSession(threadId);
     }),
   );

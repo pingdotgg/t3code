@@ -15,6 +15,21 @@ import {
 
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
+function mockGrokWrapperScript(mockAgentPath: string, extraEnv?: Record<string, string>): string {
+  return [
+    "#!/bin/sh",
+    'if [ "$1" = "--version" ]; then',
+    '  printf "grok-cli 1.0.5\\n"',
+    "  exit 0",
+    "fi",
+    ...Object.entries(extraEnv ?? {}).map(
+      ([key, value]) => `export ${key}=${JSON.stringify(value)}`,
+    ),
+    `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(mockAgentPath)} "$@"`,
+    "",
+  ].join("\n");
+}
+
 describe("buildInitialGrokProviderSnapshot", () => {
   it.effect("returns a disabled snapshot when settings.enabled is false", () =>
     Effect.gen(function* () {
@@ -46,7 +61,7 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.status).toBe("warning");
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking Grok");
-      expect(snapshot.requiresNewThreadForModelChange).toBe(true);
+      expect(snapshot.requiresNewThreadForModelChange).toBe(false);
     }),
   );
 });
@@ -241,6 +256,61 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.installed).toBe(true);
       expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build"]);
       expect(snapshot.message).toContain("ACP startup failed");
+    }),
+  );
+
+  it.effect("reports authenticated after successful Grok ACP discovery", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-authenticated-" });
+          const grokPath = path.join(dir, "grok");
+          const mockAgentPath = path.join(process.cwd(), "apps/server/scripts/acp-mock-agent.ts");
+          yield* fs.writeFileString(grokPath, mockGrokWrapperScript(mockAgentPath));
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, XAI_API_KEY: "" },
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.auth).toEqual({
+        status: "authenticated",
+        type: "cached_token",
+        label: "Grok account",
+      });
+      expect(snapshot.models.map((model) => model.slug)).toEqual(["grok-build", "grok-mock-alt"]);
+    }),
+  );
+
+  it.effect("reports unauthenticated when Grok ACP requests authentication", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-unauthenticated-" });
+          const grokPath = path.join(dir, "grok");
+          const mockAgentPath = path.join(process.cwd(), "apps/server/scripts/acp-mock-agent.ts");
+          yield* fs.writeFileString(
+            grokPath,
+            mockGrokWrapperScript(mockAgentPath, { T3_ACP_FAIL_AUTHENTICATION: "1" }),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.auth).toEqual({ status: "unauthenticated" });
     }),
   );
 });

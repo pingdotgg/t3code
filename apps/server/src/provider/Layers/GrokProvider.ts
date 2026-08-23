@@ -5,7 +5,9 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import * as EffectAcpErrors from "effect-acp/errors";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -13,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -40,7 +43,7 @@ const GROK_PRESENTATION = {
   displayName: "Grok",
   badgeLabel: "Early Access",
   showInteractionModeToggle: false,
-  requiresNewThreadForModelChange: true,
+  requiresNewThreadForModelChange: false,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -48,6 +51,18 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
+function grokAuthenticatedState(environment: NodeJS.ProcessEnv) {
+  return environment.XAI_API_KEY?.trim()
+    ? { status: "authenticated" as const, type: "apiKey", label: "xAI API key" }
+    : { status: "authenticated" as const, type: "cached_token", label: "Grok account" };
+}
+
+function grokDiscoveryAuthFailed(cause: Cause.Cause<unknown>): boolean {
+  const error = Option.getOrUndefined(Cause.findErrorOption(cause));
+  return isAcpRequestError(error) && error.code === -32000;
+}
 
 const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -313,7 +328,9 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         installed: true,
         version,
         status: "error",
-        auth: { status: "unknown" },
+        auth: grokDiscoveryAuthFailed(discoveryExit.cause)
+          ? { status: "unauthenticated" }
+          : { status: "unknown" },
         message: "Grok CLI is installed but ACP startup failed. Check server logs for details.",
       },
     });
@@ -351,7 +368,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       installed: true,
       version,
       status: "ready",
-      auth: { status: "unknown" },
+      auth: grokAuthenticatedState(environment),
     },
   });
 });

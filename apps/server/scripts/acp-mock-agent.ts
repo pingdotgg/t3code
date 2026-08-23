@@ -21,6 +21,8 @@ const emitUsageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE === "1";
 const emitSessionInfoUpdate = process.env.T3_ACP_EMIT_SESSION_INFO_UPDATE === "1";
 const emitConfigOptionUpdate = process.env.T3_ACP_EMIT_CONFIG_OPTION_UPDATE === "1";
 const emitPromptUsage = process.env.T3_ACP_EMIT_PROMPT_USAGE === "1";
+const supportsImages = process.env.T3_ACP_SUPPORTS_IMAGES === "1";
+const failAuthentication = process.env.T3_ACP_FAIL_AUTHENTICATION === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
@@ -322,12 +324,19 @@ const program = Effect.gen(function* () {
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 1,
-        agentCapabilities: { loadSession: true },
+        agentCapabilities: {
+          loadSession: true,
+          ...(supportsImages ? { promptCapabilities: { image: true } } : {}),
+        },
       };
     }),
   );
 
-  yield* agent.handleAuthenticate(() => Effect.succeed({}));
+  yield* agent.handleAuthenticate(() =>
+    failAuthentication
+      ? Effect.fail(AcpError.AcpRequestError.authRequired("Mock authentication required"))
+      : Effect.succeed({}),
+  );
 
   yield* agent.handleCreateSession(() =>
     Effect.succeed({
