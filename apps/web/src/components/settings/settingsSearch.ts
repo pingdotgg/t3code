@@ -487,6 +487,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta alpha simlock callstack simulator emulator ios android pool lease gateway"],
   },
   {
+    id: "local-voice-input",
+    title: "Local voice input",
+    to: "/settings/general",
+    desktopOnly: true,
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/threads",

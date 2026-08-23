@@ -43,15 +43,14 @@ export function useDesktopSpeechInput(onTranscript: (text: string) => void) {
     if (!bridge || !status?.supported || status.state !== "recording") return;
     const timeout = window.setTimeout(() => void bridge.stop(), 120_000);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
-      event.stopPropagation();
       void bridge.cancel();
     };
-    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keydown", onKeyDown);
     return () => {
       window.clearTimeout(timeout);
-      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keydown", onKeyDown);
     };
   }, [bridge, status]);
 

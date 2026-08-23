@@ -1,8 +1,10 @@
 import type { DesktopSpeechStatus } from "@t3tools/contracts";
-import { LoaderCircleIcon, MicIcon, SquareIcon, XIcon } from "lucide-react";
+import { MicIcon, SquareIcon, XIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { cn } from "~/lib/utils";
 
 export function ComposerSpeechButton(props: {
   status: DesktopSpeechStatus | null;
@@ -17,6 +19,7 @@ export function ComposerSpeechButton(props: {
   const state = props.status?.supported ? props.status.state : "missing-model";
   const recording = state === "recording";
   const busy = state === "downloading" || state === "transcribing";
+  const inactive = props.disabled || busy;
   const label = recording
     ? "Stop and transcribe"
     : state === "downloading"
@@ -28,42 +31,63 @@ export function ComposerSpeechButton(props: {
           : "Start voice input";
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            size="icon-sm"
-            variant={recording ? "destructive" : "ghost"}
-            aria-label={label}
-            aria-pressed={recording}
-            disabled={props.disabled || busy}
-            onClick={recording ? props.onStop : props.onStart}
-            className="relative"
-          >
-            {recording ? (
-              <>
-                <span
-                  aria-hidden
-                  className="absolute inset-0 rounded-[inherit] bg-white/20 transition-transform"
-                  style={{ transform: `scale(${1 + Math.min(1, props.level) * 0.16})` }}
-                />
-                <SquareIcon className="relative size-3 fill-current" />
-              </>
-            ) : busy ? (
-              <LoaderCircleIcon className="animate-spin" />
-            ) : state === "error" ? (
-              <XIcon />
-            ) : (
-              <MicIcon />
-            )}
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">
-        {label}
-        {recording ? " · esc to cancel" : ""}
-      </TooltipPopup>
-    </Tooltip>
+    <div className="flex items-center gap-1">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-sm"
+              variant={recording ? "destructive" : "ghost"}
+              aria-label={label}
+              aria-pressed={recording}
+              aria-disabled={inactive}
+              onClick={() => {
+                if (inactive) return;
+                if (recording) props.onStop();
+                else props.onStart();
+              }}
+              className={cn("relative", inactive && "cursor-not-allowed opacity-64")}
+            >
+              {recording ? (
+                <>
+                  <span
+                    aria-hidden
+                    className="absolute inset-0 rounded-[inherit] bg-white/20 transition-transform"
+                    style={{ transform: `scale(${1 + Math.min(1, props.level) * 0.16})` }}
+                  />
+                  <SquareIcon className="relative size-3 fill-current" />
+                </>
+              ) : busy ? (
+                <Spinner aria-hidden />
+              ) : state === "error" ? (
+                <XIcon />
+              ) : (
+                <MicIcon />
+              )}
+            </Button>
+          }
+        />
+        <TooltipPopup side="top">{label}</TooltipPopup>
+      </Tooltip>
+      {recording ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Discard voice input"
+                onClick={props.onCancel}
+              >
+                <XIcon />
+              </Button>
+            }
+          />
+          <TooltipPopup side="top">Discard voice input</TooltipPopup>
+        </Tooltip>
+      ) : null}
+    </div>
   );
 }
