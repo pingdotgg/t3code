@@ -1668,6 +1668,7 @@ export default function ChatView(props: ChatViewProps) {
   const sendInFlightRef = useRef(false);
   const environmentUnavailableSendToastSlotRef = useRef(0);
   const feedbackUploadsInFlightRef = useRef(new Set<string>());
+  const goalCommandsInFlightRef = useRef(new Set<string>());
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   const terminalUiState = useTerminalUiStateStore((state) =>
@@ -6141,7 +6142,8 @@ export default function ChatView(props: ChatViewProps) {
       isConnecting ||
       threadDetailLoading ||
       sendInFlightRef.current ||
-      feedbackUploadsInFlightRef.current.has(routeThreadKey)
+      feedbackUploadsInFlightRef.current.has(routeThreadKey) ||
+      goalCommandsInFlightRef.current.has(routeThreadKey)
     ) {
       notifyDirectAnnotationAttached();
       return;
@@ -6370,6 +6372,7 @@ export default function ChatView(props: ChatViewProps) {
 
       const target = { environmentId, input: { threadId: activeThreadId } };
       const submittedThreadKey = activeThreadKey;
+      const submittedGoalCommandThreadKey = routeThreadKey;
       const stillOnSubmittedThread = () => activeThreadKeyRef.current === submittedThreadKey;
       const clearSubmittedGoalCommandDraft = () => {
         if (!stillOnSubmittedThread() || promptRef.current !== promptForSend) return;
@@ -6377,7 +6380,7 @@ export default function ChatView(props: ChatViewProps) {
         clearComposerDraftContent(composerDraftTarget);
         composerRef.current?.resetCursorState();
       };
-      sendInFlightRef.current = true;
+      goalCommandsInFlightRef.current.add(submittedGoalCommandThreadKey);
       try {
         if (codexGoalCommand.action === "status") {
           const result = await getCodexGoal(target);
@@ -6439,7 +6442,7 @@ export default function ChatView(props: ChatViewProps) {
         clearSubmittedGoalCommandDraft();
         return;
       } finally {
-        sendInFlightRef.current = false;
+        goalCommandsInFlightRef.current.delete(submittedGoalCommandThreadKey);
       }
     }
     if (

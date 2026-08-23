@@ -69,6 +69,22 @@ export type CodexGoalCommand =
 const GOAL_USAGE =
   "Usage: /goal [status | create <objective> | steer <objective> | pause | resume | clear | reset]";
 
+export function toCodexGoalSubscriptionTarget<
+  EnvironmentId,
+  GoalInput extends { readonly threadId: unknown },
+>(target: {
+  readonly environmentId: EnvironmentId;
+  readonly input: GoalInput;
+}): {
+  readonly environmentId: EnvironmentId;
+  readonly input: { readonly threadId: GoalInput["threadId"] };
+} {
+  return {
+    environmentId: target.environmentId,
+    input: { threadId: target.input.threadId },
+  };
+}
+
 export function formatCodexGoalUsage(goal: CodexGoal): string {
   const budget = goal.tokenBudget == null ? "" : ` / ${goal.tokenBudget.toLocaleString()}`;
   return `${goal.tokensUsed.toLocaleString()} tokens${budget}, ${goal.timeUsedSeconds.toLocaleString()} seconds`;
@@ -220,7 +236,8 @@ export function createThreadEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }: { environmentId: string; input: CodexGoalSetInput }) =>
           JSON.stringify([environmentId, input.threadId]),
       },
-      onSuccess: refreshCodexGoal,
+      onSuccess: (target, registry) =>
+        refreshCodexGoal(toCodexGoalSubscriptionTarget(target), registry),
     }),
     clearCodexGoal: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:codex-goal:clear",

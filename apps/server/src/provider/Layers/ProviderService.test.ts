@@ -1637,13 +1637,24 @@ routing.layer("ProviderServiceLive routing", (it) => {
         cwd: "/tmp/claude-goal-thread",
         runtimeMode: "full-access",
       });
-
-      const result = yield* provider.getCodexGoal(threadId).pipe(Effect.result);
-      assert.equal(result._tag, "Failure");
-      if (result._tag === "Failure") {
-        assert.equal(result.failure._tag, "ProviderValidationError");
-      }
       yield* provider.stopSession({ threadId });
+      routing.claude.startSession.mockClear();
+      routing.claude.stopSession.mockClear();
+
+      const results = yield* Effect.all([
+        provider.getCodexGoal(threadId).pipe(Effect.result),
+        provider
+          .setCodexGoal({ threadId, objective: "Unsupported Goal", status: "active" })
+          .pipe(Effect.result),
+        provider.clearCodexGoal(threadId).pipe(Effect.result),
+      ]);
+      for (const result of results) {
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(result.failure._tag, "ProviderValidationError");
+        }
+      }
+      assert.equal(routing.claude.startSession.mock.calls.length, 0);
       routing.claude.startSession.mockClear();
       routing.claude.stopSession.mockClear();
     }),

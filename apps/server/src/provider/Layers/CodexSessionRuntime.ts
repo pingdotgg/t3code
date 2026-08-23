@@ -1028,6 +1028,8 @@ function shouldSuppressChildConversationNotification(
     method === "thread/settings/updated" ||
     method === "thread/tokenUsage/updated" ||
     method === "model/rerouted" ||
+    method === "thread/goal/updated" ||
+    method === "thread/goal/cleared" ||
     method === "turn/started" ||
     method === "turn/completed" ||
     method === "turn/plan/updated" ||
@@ -1078,6 +1080,8 @@ const CHILD_CHATTER_METHODS: ReadonlySet<string> = new Set([
   "turn/plan/updated",
   "turn/diff/updated",
   "thread/name/updated",
+  "thread/goal/updated",
+  "thread/goal/cleared",
   "rawResponseItem/completed",
   // Child-owned thread lifecycle: the parent adapter maps these onto the
   // PARENT thread (archived/compacted state), so a child compacting would

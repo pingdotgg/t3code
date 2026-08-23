@@ -8,6 +8,7 @@ import {
   formatCodexGoalStatus,
   formatCodexGoalUsage,
   parseCodexGoalCommand,
+  toCodexGoalSubscriptionTarget,
 } from "./threadCommands.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -46,6 +47,21 @@ describe("parseCodexGoalCommand", () => {
     for (const [command, expected] of cases) {
       expect(parseCodexGoalCommand(command)).toEqual(expected);
     }
+  });
+});
+
+describe("toCodexGoalSubscriptionTarget", () => {
+  it("keys Goal refreshes only by environment and thread", () => {
+    expect(
+      toCodexGoalSubscriptionTarget({
+        environmentId: "environment-1",
+        input: {
+          threadId: "thread-1",
+          objective: "Do not leak into the subscription key",
+          status: "active",
+        },
+      }),
+    ).toEqual({ environmentId: "environment-1", input: { threadId: "thread-1" } });
   });
 });
 
