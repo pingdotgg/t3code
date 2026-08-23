@@ -203,7 +203,13 @@ export function SidebarThreadBoard(props: {
                 data-testid="sidebar-pinned-divider"
                 className="mx-2.5 my-1.5 h-px bg-sidebar-border/60"
               />
-            ) : null;
+            ) : (
+              <div
+                ref={bag.setDroppableNodeRef}
+                aria-hidden
+                className="absolute inset-x-0 top-0 h-px"
+              />
+            );
             break;
           case "snoozed":
             content =

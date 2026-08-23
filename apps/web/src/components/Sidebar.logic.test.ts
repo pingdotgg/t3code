@@ -27,6 +27,7 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebar,
+  sortSnoozedThreadsForSidebar,
   pinOrderKeyBetween,
   planPinnedReorder,
   sortPinnedThreadsForSidebar,
@@ -778,6 +779,18 @@ describe("sortThreadsForSidebar", () => {
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("sortSnoozedThreadsForSidebar", () => {
+  it("orders by wake time, soonest first, with stable id ties", () => {
+    const sorted = sortSnoozedThreadsForSidebar([
+      { id: "later", snoozedUntil: "2026-03-09T12:00:00.000Z" },
+      { id: "b", snoozedUntil: "2026-03-09T10:00:00.000Z" },
+      { id: "a", snoozedUntil: "2026-03-09T10:00:00.000Z" },
+    ]);
+
+    expect(sorted.map((thread) => thread.id)).toEqual(["a", "b", "later"]);
   });
 });
 

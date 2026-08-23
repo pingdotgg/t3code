@@ -63,10 +63,20 @@ export function useSidebarPinnedDnd(input: {
   );
   const orderedPinnedThreads = useMemo(() => {
     if (optimisticPinnedOrder === null) return input.pinnedThreads;
-    return orderItemsByPreferredIds({
-      items: input.pinnedThreads,
+    const optimisticallyOrderedKeys = new Set(optimisticPinnedOrder.order);
+    const reorderedThreads = orderItemsByPreferredIds({
+      items: input.pinnedThreads.filter((thread) =>
+        optimisticallyOrderedKeys.has(sidebarThreadKey(thread)),
+      ),
       preferredIds: optimisticPinnedOrder.order,
       getId: sidebarThreadKey,
+    });
+    let reorderedIndex = 0;
+    return input.pinnedThreads.map((thread) => {
+      if (!optimisticallyOrderedKeys.has(sidebarThreadKey(thread))) return thread;
+      const reorderedThread = reorderedThreads[reorderedIndex];
+      reorderedIndex += 1;
+      return reorderedThread ?? thread;
     });
   }, [input.pinnedThreads, optimisticPinnedOrder]);
   useEffect(() => {

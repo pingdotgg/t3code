@@ -119,11 +119,11 @@ the viewport edges.
 
 Some React changes still affect real layout: empty rails appear at activation for Pinned and
 Settled, the empty Snoozed header appears, projected entries mount on release, and canonical entries
-replace the projection after reconciliation. Regular has no synthetic empty target. Before the
-other changes, the client records one stable entry's viewport position. After React commits, it
-changes only the sidebar `scrollTop` by that entry's visual delta. The content disables native scroll
-anchoring so the browser and the client do not both compensate. User scroll and dnd-kit auto-scroll
-update the anchor baseline.
+replace the projection after reconciliation. Empty Regular keeps an absolutely positioned boundary
+droppable, which takes no layout space. Before the other changes, the client records one stable
+entry's viewport position. After React commits, it changes only the sidebar `scrollTop` by that
+entry's visual delta. The content disables native scroll anchoring so the browser and the client do
+not both compensate. User scroll and dnd-kit auto-scroll update the anchor baseline.
 
 Pinned reorder does not need manual viewport correction after release. Its membership, category
 structure, and total height stay unchanged, so dnd-kit's layout animation is sufficient.
@@ -136,7 +136,8 @@ drop adds no command, event, or compatibility path.
 
 `thread.pin.reorder` remains key-only. Moving into Pinned computes the order keys for the visible
 position, prepares any neighbor keys, then pins the source with its key. Pinned preserves that
-manual order. The other categories use the same sort functions for drop projection and canonical
+manual order. During an optimistic reorder, pinned rows without reorder capability keep their
+existing slots. The other categories use the same sort functions for drop projection and canonical
 rendering.
 
 A Snoozed drop holds the projected compact slot while the standard duration menu is open. Choosing
