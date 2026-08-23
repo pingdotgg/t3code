@@ -1,12 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodePerformance from "node:perf_hooks";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
 import { describe, expect, it } from "@effect/vitest";
 
-import { readOpenCodeRecords } from "./usageTranscriptReader.ts";
+import { listTranscriptFiles, readOpenCodeRecords } from "./usageTranscriptReader.ts";
 
 function createDatabase(): string {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-"));
@@ -94,6 +95,34 @@ describe("readOpenCodeRecords", () => {
       ]);
     } finally {
       NodeFS.rmSync(NodePath.dirname(dbPath), { recursive: true, force: true });
+    }
+  });
+
+  it("waits briefly for a writer before reporting a locked database", async () => {
+    const dbPath = createDatabase();
+    const writer = new NodeSqlite.DatabaseSync(dbPath);
+    writer.exec("BEGIN EXCLUSIVE");
+    const startedAt = NodePerformance.performance.now();
+    try {
+      expect(await readOpenCodeRecords(dbPath, 2_000)).toBeNull();
+      expect(NodePerformance.performance.now() - startedAt).toBeGreaterThanOrEqual(500);
+    } finally {
+      writer.exec("ROLLBACK");
+      writer.close();
+      NodeFS.rmSync(NodePath.dirname(dbPath), { recursive: true, force: true });
+    }
+  });
+});
+
+describe("listTranscriptFiles", () => {
+  it("reports a traversal error separately from an empty transcript set", async () => {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-transcripts-"));
+    try {
+      const listing = await listTranscriptFiles(NodePath.join(directory, "missing"), 0);
+      expect(listing.files).toEqual([]);
+      expect(listing.hadReadError).toBe(true);
+    } finally {
+      NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });
 });

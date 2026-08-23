@@ -491,11 +491,13 @@ export const make = Effect.gen(function* () {
       }
 
       walkedRoots.push(dir);
-      const files = yield* Effect.promise(() =>
+      const listing = yield* Effect.promise(() =>
         listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
       );
+      const files = listing.files;
       let scannedFiles = 0;
       let skippedFiles = 0;
+      let failedFiles = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
@@ -504,7 +506,12 @@ export const make = Effect.gen(function* () {
         livePaths.add(file.path);
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
         // A failed read is not an empty file: it is neither scanned nor cached.
-        if (records === null || records.length === 0) {
+        if (records === null) {
+          failedFiles += 1;
+          skippedFiles += 1;
+          continue;
+        }
+        if (records.length === 0) {
           skippedFiles += 1;
           continue;
         }
@@ -520,12 +527,15 @@ export const make = Effect.gen(function* () {
 
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: "ok",
+        status: listing.hadReadError || failedFiles > 0 ? "partial" : "ok",
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
         distinctSessions: sessionIds.size,
-        message: null,
+        message:
+          listing.hadReadError || failedFiles > 0
+            ? "Some transcript files could not be read."
+            : null,
       });
     }
 

@@ -5,6 +5,7 @@ import {
   type UsageBucket,
   type UsageDay,
   type UsageProviderKind,
+  type UsageSourceStatus,
   type UsageSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -41,6 +42,7 @@ function summary(
     homePath: string;
     volumeId?: string;
     distinctSessions?: number;
+    status?: UsageSourceStatus;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
@@ -58,7 +60,7 @@ function summary(
         resolvedHomePath: source.homePath,
         volumeId: source.volumeId ?? `vol-${source.hostId}`,
       },
-      status: "ok" as const,
+      status: source.status ?? "ok",
       scannedFiles: 1,
       skippedFiles: 0,
       malformedRecords: 0,
@@ -255,6 +257,54 @@ describe("mergeUsage", () => {
 
     expect(merged.costUsd).toBe(10);
     expect(merged.duplicateSources).toHaveLength(1);
+  });
+
+  it("does not let a failed source hide a healthy shared source", () => {
+    const shared = {
+      provider: "opencode" as const,
+      hostId: "mac",
+      homePath: "/Users/theo/.local/share/opencode/opencode.db",
+    };
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([], [{ ...shared, status: "failed" }])),
+        environment("env-b", summary([bucket({ provider: "opencode" })], [shared])),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.records).toBe(5);
+    expect(merged.duplicateSources).toHaveLength(0);
+    expect(merged.contributingEnvironments).toEqual(["env-b"]);
+  });
+
+  it("prefers a healthy source over a partial duplicate", () => {
+    const shared = {
+      provider: "opencode" as const,
+      hostId: "mac",
+      homePath: "/Users/theo/.local/share/opencode/opencode.db",
+    };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ provider: "opencode", costUsd: 1 })],
+            [{ ...shared, status: "partial" }],
+          ),
+        ),
+        environment("env-b", summary([bucket({ provider: "opencode" })], [shared])),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.records).toBe(5);
+    expect(merged.duplicateSources).toEqual([
+      "env-a: /Users/theo/.local/share/opencode/opencode.db",
+    ]);
+    expect(merged.contributingEnvironments).toEqual(["env-b"]);
   });
 
   it("totals sessions from per-directory distinct counts, not per-bucket sums", () => {

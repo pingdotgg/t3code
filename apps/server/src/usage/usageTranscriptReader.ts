@@ -38,6 +38,11 @@ export interface TranscriptFile {
   readonly mtimeMs: number;
 }
 
+export interface TranscriptFileListing {
+  readonly files: readonly TranscriptFile[];
+  readonly hadReadError: boolean;
+}
+
 /**
  * Lists `.jsonl` transcripts under `root` last modified at or after `sinceMs`.
  *
@@ -53,8 +58,9 @@ export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
   options?: { readonly fileName?: string },
-): Promise<readonly TranscriptFile[]> {
+): Promise<TranscriptFileListing> {
   const found: TranscriptFile[] = [];
+  let hadReadError = false;
   const fileName = options?.fileName;
 
   const walk = async (dir: string): Promise<void> => {
@@ -62,6 +68,7 @@ export async function listTranscriptFiles(
     try {
       entries = await NodeFSP.readdir(dir, { withFileTypes: true });
     } catch {
+      hadReadError = true;
       return;
     }
     for (const entry of entries) {
@@ -87,7 +94,7 @@ export async function listTranscriptFiles(
   };
 
   await walk(root);
-  return found;
+  return { files: found, hadReadError };
 }
 
 /**
@@ -194,6 +201,10 @@ const OPEN_CODE_LEGACY_USAGE_QUERY = `
     AND json_extract(data, '$.time.completed') IS NOT NULL
 `;
 
+// OpenCode writes this database while usage is being read. A short busy
+// timeout avoids treating a normal WAL transaction as a failed source.
+const OPEN_CODE_SQLITE_BUSY_TIMEOUT_MS = 1_000;
+
 const OPEN_CODE_CURRENT_USAGE_QUERY = `
   SELECT
     id AS messageId,
@@ -238,7 +249,10 @@ export async function readOpenCodeRecords(
 ): Promise<readonly UsageRecord[] | null> {
   let database: NodeSqlite.DatabaseSync;
   try {
-    database = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
+    database = new NodeSqlite.DatabaseSync(dbPath, {
+      readOnly: true,
+      timeout: OPEN_CODE_SQLITE_BUSY_TIMEOUT_MS,
+    });
   } catch {
     return null;
   }

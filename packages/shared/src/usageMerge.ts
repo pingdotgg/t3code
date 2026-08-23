@@ -11,6 +11,7 @@ import {
   type EnvironmentId,
   type UsageBucket,
   type UsageProviderKind,
+  type UsageSource,
   type UsageSourceFingerprint,
   type UsageSummary,
 } from "@t3tools/contracts";
@@ -100,13 +101,26 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
   ].join(" ");
 }
 
+/** Only sources with usable data may claim a shared transcript directory. */
+function sourceClaimRank(source: UsageSource): number | null {
+  switch (source.status) {
+    case "ok":
+      return 2;
+    case "partial":
+      return 1;
+    case "missing":
+    case "failed":
+      return null;
+  }
+}
+
 /**
  * Decides which environment owns each physical transcript directory.
  *
  * Several environments on one machine (worktree servers, for instance) resolve
  * the same provider home and would otherwise double count every token. The
- * first environment in a stable order claims a fingerprint; the rest have that
- * provider's buckets dropped. Environments are sorted by id so the winner does
+ * The healthiest source claims a fingerprint; the rest have that provider's
+ * buckets dropped. Ties are resolved by environment ID so the winner does
  * not change between renders.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
@@ -114,19 +128,33 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly duplicates: readonly string[];
 } {
   const ownerByFingerprint = new Map<string, EnvironmentId>();
+  const ownerLabelByFingerprint = new Map<string, string>();
+  const ownerRankByFingerprint = new Map<string, number>();
   const duplicates: string[] = [];
 
   const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
 
   for (const environment of ordered) {
     for (const source of environment.summary.sources) {
-      if (source.status === "missing") continue;
+      const rank = sourceClaimRank(source);
+      if (rank === null) continue;
       const key = fingerprintKey(source.fingerprint);
-      if (ownerByFingerprint.has(key)) {
+      const ownerRank = ownerRankByFingerprint.get(key);
+      if (ownerRank === undefined) {
+        ownerByFingerprint.set(key, environment.environmentId);
+        ownerLabelByFingerprint.set(key, environment.label);
+        ownerRankByFingerprint.set(key, rank);
+      } else if (rank > ownerRank) {
+        const previousOwnerLabel = ownerLabelByFingerprint.get(key);
+        if (previousOwnerLabel !== undefined) {
+          duplicates.push(`${previousOwnerLabel}: ${source.fingerprint.resolvedHomePath}`);
+        }
+        ownerByFingerprint.set(key, environment.environmentId);
+        ownerLabelByFingerprint.set(key, environment.label);
+        ownerRankByFingerprint.set(key, rank);
+      } else {
         duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
-        continue;
       }
-      ownerByFingerprint.set(key, environment.environmentId);
     }
   }
 
@@ -144,7 +172,7 @@ function ownedContribution(
   const ownedProviders = new Set<UsageProviderKind>();
   const sessionsByProvider = new Map<UsageProviderKind, number>();
   for (const source of environment.summary.sources) {
-    if (source.status === "missing") continue;
+    if (sourceClaimRank(source) === null) continue;
     const key = fingerprintKey(source.fingerprint);
     if (ownerByFingerprint.get(key) === environment.environmentId) {
       const provider = source.fingerprint.provider;
