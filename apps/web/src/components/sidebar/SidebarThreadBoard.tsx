@@ -75,6 +75,7 @@ function SidebarThreadShelfHeader(props: {
   section: "snoozed" | "settled";
   count: number;
   expanded: boolean;
+  dropActive: boolean;
   setDroppableNodeRef: (node: HTMLElement | null) => void;
   onToggle: () => void;
 }) {
@@ -82,6 +83,7 @@ function SidebarThreadShelfHeader(props: {
   const label = snoozed ? "Snoozed" : "Settled";
   const color = snoozed ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground/50";
   const divider = snoozed ? "bg-blue-500/20 dark:bg-blue-400/15" : "bg-sidebar-border/60";
+  const presentationExpanded = props.expanded || props.dropActive;
   return (
     <div data-thread-selection-safe>
       <button
@@ -93,12 +95,12 @@ function SidebarThreadShelfHeader(props: {
         className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left transition-colors"
       >
         <span className={cn("text-xs font-medium", color)}>
-          {props.expanded ? label : `${label} (${props.count})`}
+          {presentationExpanded ? label : `${label} (${props.count})`}
         </span>
         <span className={cn("h-px flex-1", divider)} />
         <ChevronDownIcon
           aria-hidden
-          className={cn("size-3 transition-transform", props.expanded && "rotate-180", color)}
+          className={cn("size-3 transition-transform", presentationExpanded && "rotate-180", color)}
         />
       </button>
     </div>
@@ -216,11 +218,8 @@ export function SidebarThreadBoard(props: {
                 <SidebarThreadShelfHeader
                   section="snoozed"
                   count={snoozedThreadCount}
-                  expanded={
-                    railVisible ||
-                    dnd.transaction?.target?.section === "snoozed" ||
-                    props.snoozedShelf.expanded
-                  }
+                  expanded={props.snoozedShelf.expanded}
+                  dropActive={railVisible || dnd.transaction?.target?.section === "snoozed"}
                   setDroppableNodeRef={bag.setDroppableNodeRef}
                   onToggle={props.snoozedShelf.onToggle}
                 />
@@ -232,9 +231,8 @@ export function SidebarThreadBoard(props: {
                 <SidebarThreadShelfHeader
                   section="settled"
                   count={settledThreadCount}
-                  expanded={
-                    dnd.transaction?.target?.section === "settled" || props.settledShelf.expanded
-                  }
+                  expanded={props.settledShelf.expanded}
+                  dropActive={dnd.transaction?.target?.section === "settled"}
                   setDroppableNodeRef={bag.setDroppableNodeRef}
                   onToggle={props.settledShelf.onToggle}
                 />

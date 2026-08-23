@@ -304,6 +304,7 @@ export function useSidebarThreadDnd(input: {
       transaction: SidebarThreadCommittingTransaction;
       receiptSequencesByEnvironment: ReadonlyMap<EnvironmentThreadShell["environmentId"], number>;
     }) => {
+      if (transactionRef.current !== reconciliation.transaction) return;
       setTransaction({
         ...reconciliation.transaction,
         phase: "reconciling",
@@ -847,29 +848,29 @@ export function useSidebarThreadDnd(input: {
 
   useLayoutEffect(() => {
     if (transaction === null || transaction.phase !== "reconciling") return;
+    if (input.isSearchingThreads || input.scopeKey !== transaction.scopeKey) return;
     for (const [environmentId, receiptSequence] of transaction.receiptSequencesByEnvironment) {
       const snapshot = appAtomRegistry.get(environmentSnapshotAtom(environmentId));
       if (snapshot === null || snapshot.snapshotSequence < receiptSequence) return;
     }
     finishTransaction();
-  }, [finishTransaction, input.threads, transaction]);
+  }, [finishTransaction, input.isSearchingThreads, input.scopeKey, input.threads, transaction]);
   useLayoutEffect(() => {
-    if (
-      transaction === null ||
-      (transaction.phase !== "dragging" &&
-        transaction.phase !== "dropping" &&
-        transaction.phase !== "awaiting-snooze-choice")
-    ) {
+    if (transaction === null) return;
+    if (input.isSearchingThreads || input.scopeKey !== transaction.scopeKey) {
+      clearTransaction();
       return;
     }
     if (
-      input.isSearchingThreads ||
-      input.scopeKey !== transaction.scopeKey ||
-      currentSourceThread(transaction) === null
+      transaction.phase !== "dragging" &&
+      transaction.phase !== "dropping" &&
+      transaction.phase !== "awaiting-snooze-choice"
     ) {
-      finishTransaction();
+      return;
     }
+    if (currentSourceThread(transaction) === null) finishTransaction();
   }, [
+    clearTransaction,
     finishTransaction,
     input.isSearchingThreads,
     input.scopeKey,

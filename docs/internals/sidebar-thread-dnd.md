@@ -144,8 +144,10 @@ order.
 
 The projected row remains rendered while the command is pending. Reconciliation ends only after
 each affected environment's shell snapshot reaches its receipt sequence. Canonical state then wins.
-If the source disappears, becomes archived, loses the needed capability, or leaves the starting
-sidebar scope during an interactive phase, the client cancels the transaction.
+Changing sidebar scope or entering search clears the projection in every phase. An already-dispatched
+command may still complete, but it cannot restore entries from the previous view. During an
+interactive phase, the client also cancels if the source disappears, becomes archived, or loses the
+needed capability.
 
 ## Consequences
 

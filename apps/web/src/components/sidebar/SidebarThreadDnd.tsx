@@ -154,7 +154,8 @@ export function SidebarThreadDndShell(props: {
           (props.variant === "slim"
             ? "[content-visibility:auto] [contain-intrinsic-size:auto_36px]"
             : "py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]"),
-        dnd && "touch-pan-y cursor-grab active:cursor-grabbing",
+        dnd &&
+          "touch-pan-y cursor-grab active:cursor-grabbing [&_[data-thread-row]]:cursor-grab [&_[data-thread-row]]:active:cursor-grabbing",
         dragView !== null && "z-20 cursor-grabbing",
         props.hidden && "opacity-0",
         props.inert && "pointer-events-none",

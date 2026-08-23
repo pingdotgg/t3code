@@ -176,7 +176,9 @@ export function useSidebarPinnedDnd(input: {
       if (transaction.sourceSection === "pinned" || transaction.target.section !== "pinned") {
         return null;
       }
-      const existingKeys = input.allPinnedThreads.map(sidebarThreadKey);
+      const existingKeys = input.allPinnedThreads
+        .map(sidebarThreadKey)
+        .filter((key) => key !== transaction.sourceThreadKey);
       let insertionIndex = existingKeys.length;
       if (transaction.target.threadKey !== null) {
         const targetIndex = existingKeys.indexOf(transaction.target.threadKey);
