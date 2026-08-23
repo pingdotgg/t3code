@@ -320,6 +320,32 @@ public struct NewThreadView: View {
             Text("No projects")
                 .font(T3Typography.threadHeading1.weight(.regular))
                 .foregroundStyle(T3Colors.textPrimary)
+            if !unreachableEnvironments.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(unreachableEnvironments) { environment in
+                        Label(
+                            "\(environment.name) is unreachable",
+                            systemImage: "network.slash"
+                        )
+                        .accessibilityLabel("\(environment.name) is unreachable")
+                        .accessibilityIdentifier(
+                            "new-task-unreachable-environment-\(environment.id)"
+                        )
+                    }
+                }
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.warning)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+
+                Button("Try again") {
+                    Task { await model.reload() }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .accessibilityHint("Refresh environment status")
+                .accessibilityIdentifier("new-task-unreachable-retry")
+            }
             Button("Add project") {
                 dismiss()
                 Task { @MainActor in
@@ -457,6 +483,10 @@ public struct NewThreadView: View {
 
     private var creationProjects: [FeatureProject] {
         DailyUXCreationContext.projects(in: model.snapshot)
+    }
+
+    private var unreachableEnvironments: [FeatureEnvironment] {
+        DailyUXCreationContext.unreachableEnvironments(in: model.snapshot)
     }
 
     private var creationProjectIDs: [String] {
@@ -1149,6 +1179,36 @@ private struct NewTaskProjectPicker: View {
                                 }
                             }
                         }
+
+                        if !unreachableEnvironments.isEmpty {
+                            Section("Unavailable environments") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(Array(unreachableEnvironments.prefix(3))) {
+                                        environment in
+                                        Label(
+                                            "\(environment.name) is unreachable",
+                                            systemImage: "network.slash"
+                                        )
+                                        .accessibilityLabel(
+                                            "\(environment.name) is unreachable"
+                                        )
+                                    }
+
+                                    if unreachableEnvironments.count > 3 {
+                                        Text(
+                                            "And \(unreachableEnvironments.count - 3) more"
+                                        )
+                                        .foregroundStyle(T3Colors.textTertiary)
+                                    }
+                                }
+                                .font(T3Typography.supporting)
+                                .foregroundStyle(T3Colors.warning)
+                                .accessibilityElement(children: .contain)
+                                .accessibilityIdentifier(
+                                    "new-task-unreachable-environments-notice"
+                                )
+                            }
+                        }
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
@@ -1211,6 +1271,10 @@ private struct NewTaskProjectPicker: View {
             query: query,
             environments: environments
         )
+    }
+
+    private var unreachableEnvironments: [FeatureEnvironment] {
+        DailyUXCreationContext.unreachableEnvironments(in: environments)
     }
 
     private func projectLocation(_ group: DailyUXProjectGroup) -> String {

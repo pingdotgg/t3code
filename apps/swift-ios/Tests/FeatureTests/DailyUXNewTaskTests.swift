@@ -1112,6 +1112,130 @@ struct DailyUXNewTaskTests {
         #expect(sections.others.isEmpty)
     }
 
+    @Test
+    func newTaskAvailabilityOnlyTreatsEnabledDisconnectedOrReconnectingEnvironmentsAsUnreachable() {
+        let environments = [
+            FeatureEnvironment(
+                id: "disconnected",
+                name: "Studio Mac",
+                endpoint: "http://studio",
+                connectionState: .disconnected
+            ),
+            FeatureEnvironment(
+                id: "reconnecting",
+                name: "Travel Mac",
+                endpoint: "http://travel",
+                connectionState: .reconnecting
+            ),
+            FeatureEnvironment(
+                id: "connecting",
+                name: "New Mac",
+                endpoint: "http://new",
+                connectionState: .connecting
+            ),
+            FeatureEnvironment(
+                id: "connected",
+                name: "Desk Mac",
+                endpoint: "http://desk",
+                connectionState: .connected
+            ),
+            FeatureEnvironment(
+                id: "unknown",
+                name: "Unknown Mac",
+                endpoint: "http://unknown"
+            ),
+            FeatureEnvironment(
+                id: "disabled",
+                name: "Disabled Mac",
+                endpoint: "http://disabled",
+                isEnabled: false,
+                connectionState: .disconnected
+            ),
+        ]
+
+        #expect(
+            DailyUXCreationContext.unreachableEnvironments(in: environments).map(\.id)
+                == ["disconnected", "reconnecting"]
+        )
+    }
+
+    @Test
+    func newTaskRouteOpensForUnreachableEnvironmentsWithoutProjects() {
+        let snapshot = rankedSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "studio",
+                    name: "Studio Mac",
+                    endpoint: "http://studio",
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [],
+            threads: []
+        )
+
+        #expect(DailyUXCreationContext.shouldOpenNewTask(in: snapshot))
+    }
+
+    @Test
+    func newTaskRouteStillUsesProjectCreationWhenNothingIsReachableOrKnownUnreachable() {
+        let snapshot = rankedSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "connecting",
+                    name: "New Mac",
+                    endpoint: "http://new",
+                    connectionState: .connecting
+                ),
+                FeatureEnvironment(
+                    id: "disabled",
+                    name: "Disabled Mac",
+                    endpoint: "http://disabled",
+                    isEnabled: false,
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [],
+            threads: []
+        )
+
+        #expect(!DailyUXCreationContext.shouldOpenNewTask(in: snapshot))
+    }
+
+    @Test
+    func newTaskRouteKeepsReachableProjectsWhenUnreachableEnvironmentsCoexist() {
+        let project = rankedProject(
+            "reachable-project",
+            name: "Reachable",
+            environmentID: "connected"
+        )
+        let snapshot = rankedSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "connected",
+                    name: "Desk Mac",
+                    endpoint: "http://desk",
+                    connectionState: .connected
+                ),
+                FeatureEnvironment(
+                    id: "unreachable",
+                    name: "Studio Mac",
+                    endpoint: "http://studio",
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [project],
+            threads: []
+        )
+
+        #expect(DailyUXCreationContext.projects(in: snapshot).map(\.id) == [project.id])
+        #expect(DailyUXCreationContext.shouldOpenNewTask(in: snapshot))
+        #expect(
+            DailyUXCreationContext.unreachableEnvironments(in: snapshot).map(\.name)
+                == ["Studio Mac"]
+        )
+    }
+
     private func rankedProject(
         _ id: String,
         name: String,

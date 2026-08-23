@@ -160,6 +160,24 @@ enum DailyUXCreationContext {
         }
     }
 
+    static func unreachableEnvironments(in snapshot: FeatureSnapshot) -> [FeatureEnvironment] {
+        unreachableEnvironments(in: snapshot.environments)
+    }
+
+    static func unreachableEnvironments(
+        in environments: [FeatureEnvironment]
+    ) -> [FeatureEnvironment] {
+        environments.filter { environment in
+            guard environment.isEnabled else { return false }
+            return environment.connectionState == .disconnected
+                || environment.connectionState == .reconnecting
+        }
+    }
+
+    static func shouldOpenNewTask(in snapshot: FeatureSnapshot) -> Bool {
+        !projects(in: snapshot).isEmpty || !unreachableEnvironments(in: snapshot).isEmpty
+    }
+
     static func projectGroups(in snapshot: FeatureSnapshot) -> [DailyUXProjectGroup] {
         return DailyUXProjectGrouping.groups(
             projects: projects(in: snapshot),
