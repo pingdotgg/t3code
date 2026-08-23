@@ -1392,7 +1392,12 @@ const make = Effect.gen(function* () {
     });
     switch (event.type) {
       case "thread.meta-updated":
-        yield* threadTitleRegenerationWorker.enqueue(event);
+        if (event.payload.modelSelection !== undefined) {
+          threadModelSelections.set(event.payload.threadId, event.payload.modelSelection);
+        }
+        if (event.payload.regenerateTitle === true) {
+          yield* threadTitleRegenerationWorker.enqueue(event);
+        }
         return;
       case "thread.runtime-mode-set": {
         const thread = yield* resolveThread(event.payload.threadId);
@@ -1454,7 +1459,8 @@ const make = Effect.gen(function* () {
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
-        (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
+        (event.type === "thread.meta-updated" &&
+          (event.payload.regenerateTitle === true || event.payload.modelSelection !== undefined)) ||
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||

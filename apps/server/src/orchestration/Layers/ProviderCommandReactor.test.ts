@@ -2273,6 +2273,65 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
+  it("uses provider-confirmed model selections when restarting for runtime mode changes", async () => {
+    const instanceId = ProviderInstanceId.make("grok");
+    const originalSelection = createModelSelection(instanceId, "grok-4.5", [
+      { id: "reasoningEffort", value: "medium" },
+    ]);
+    const providerSelection = createModelSelection(instanceId, "grok-4.6", [
+      { id: "reasoningEffort", value: "high" },
+    ]);
+    const harness = await createHarness({ threadModelSelection: originalSelection });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-provider-model-change"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-provider-model-change"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        modelSelection: originalSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-provider-model-change"),
+        threadId: ThreadId.make("thread-1"),
+        modelSelection: providerSelection,
+      }),
+    );
+    await harness.drain();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("cmd-runtime-mode-after-provider-model-change"),
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      modelSelection: providerSelection,
+      runtimeMode: "full-access",
+    });
+  });
+
   it("does not inject derived model options when restarting claude on runtime mode changes", async () => {
     const harness = await createHarness({
       threadModelSelection: {
