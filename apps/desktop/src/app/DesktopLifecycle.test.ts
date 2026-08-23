@@ -80,6 +80,7 @@ function makeDesktopWindowLayer(
   input: {
     readonly activate?: Effect.Effect<void>;
     readonly flushMainWindowBounds?: Effect.Effect<void>;
+    readonly backgroundModeEnabled?: boolean;
     readonly prepareForQuit?: () => void;
   } = {},
 ) {
@@ -94,6 +95,7 @@ function makeDesktopWindowLayer(
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
     setBackgroundModeEnabled: () => undefined,
+    isBackgroundModeEnabled: () => input.backgroundModeEnabled ?? false,
     prepareForQuit: input.prepareForQuit ?? (() => undefined),
     resetQuitPreparation: () => undefined,
     dispatchMenuAction: () => Effect.void,
@@ -267,6 +269,45 @@ describe("DesktopLifecycle", () => {
           appListeners.get("activate")?.();
 
           assert.equal(activationCount, 0);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("keeps the Windows host running without windows in tray background mode", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      let quitCount = 0;
+      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "win32",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          makeElectronAppLayer(
+            appListeners,
+            Effect.sync(() => {
+              quitCount += 1;
+            }),
+          ),
+        ),
+        Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(makeElectronWindowLayer()),
+        Layer.provideMerge(makeDesktopWindowLayer({ backgroundModeEnabled: true })),
+        Layer.provideMerge(environmentLayer),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* lifecycle.register;
+
+          appListeners.get("window-all-closed")?.();
+          yield* Effect.yieldNow;
+
+          assert.equal(quitCount, 0);
         }),
       ).pipe(Effect.provide(layer));
     }),

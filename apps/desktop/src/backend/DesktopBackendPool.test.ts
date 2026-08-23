@@ -91,6 +91,7 @@ function makePoolLayer(
           handleBackendNotReady: Effect.void,
           flushMainWindowBounds: Effect.void,
           setBackgroundModeEnabled: () => undefined,
+          isBackgroundModeEnabled: () => false,
           prepareForQuit: () => undefined,
           resetQuitPreparation: () => undefined,
           dispatchMenuAction: () => Effect.die("unexpected menu action"),

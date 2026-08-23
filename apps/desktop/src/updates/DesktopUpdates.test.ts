@@ -32,6 +32,7 @@ interface UpdatesHarnessOptions {
   readonly setUpdateChannelError?: DesktopAppSettings.DesktopSettingsWriteError;
   readonly setDisableDifferentialDownload?: Effect.Effect<void>;
   readonly stopBackend?: Effect.Effect<void>;
+  readonly backendDesiredRunning?: boolean;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly env?: Record<string, string | undefined>;
 }
@@ -46,6 +47,8 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
   let resetQuitPreparationCount = 0;
+  let backendStartCount = 0;
+  let windowActivationCount = 0;
 
   const addListener = (eventName: string, listener: (...args: readonly unknown[]) => void) => {
     const eventListeners = listeners.get(eventName) ?? new Set();
@@ -120,13 +123,16 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     createMain: Effect.die("unexpected window creation"),
     ensureMain: Effect.die("unexpected window creation"),
     revealOrCreateMain: Effect.die("unexpected window creation"),
-    activate: Effect.die("unexpected window activation"),
+    activate: Effect.sync(() => {
+      windowActivationCount += 1;
+    }),
     createMainIfBackendReady: Effect.die("unexpected window creation"),
     showConnectingSplash: Effect.die("unexpected splash creation"),
     handleBackendReady: () => Effect.die("unexpected backend-ready handling"),
     handleBackendNotReady: Effect.die("unexpected backend-not-ready handling"),
     flushMainWindowBounds: Effect.void,
     setBackgroundModeEnabled: () => undefined,
+    isBackgroundModeEnabled: () => false,
     prepareForQuit: () => undefined,
     resetQuitPreparation: () => {
       resetQuitPreparationCount += 1;
@@ -139,11 +145,13 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   const stubBackendInstance: DesktopBackendPool.DesktopBackendInstance = {
     id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
     label: Effect.succeed("Windows"),
-    start: Effect.void,
+    start: Effect.sync(() => {
+      backendStartCount += 1;
+    }),
     stop: () => options.stopBackend ?? Effect.void,
     currentConfig: Effect.succeed(Option.none()),
     snapshot: Effect.succeed({
-      desiredRunning: false,
+      desiredRunning: options.backendDesiredRunning ?? true,
       ready: false,
       activePid: Option.none(),
       restartAttempt: 0,
@@ -238,6 +246,8 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     feedUrls: () => feedUrls,
     fullChangelog: () => fullChangelog,
     resetQuitPreparationCount: () => resetQuitPreparationCount,
+    backendStartCount: () => backendStartCount,
+    windowActivationCount: () => windowActivationCount,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
         (total, eventListeners) => total + eventListeners.size,
@@ -739,6 +749,8 @@ describe("DesktopUpdates", () => {
         assert.isFalse(result.completed);
         assert.isFalse(yield* Ref.get(desktopState.quitting));
         assert.equal(harness.resetQuitPreparationCount(), 1);
+        assert.equal(harness.backendStartCount(), 1);
+        assert.equal(harness.windowActivationCount(), 1);
 
         const failedState = yield* updates.getState;
         assert.equal(failedState.status, "downloaded");
@@ -773,6 +785,8 @@ describe("DesktopUpdates", () => {
         assert.isFalse(result.completed);
         assert.isFalse(yield* Ref.get(desktopState.quitting));
         assert.equal(harness.resetQuitPreparationCount(), 1);
+        assert.equal(harness.backendStartCount(), 1);
+        assert.equal(harness.windowActivationCount(), 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -797,6 +811,8 @@ describe("DesktopUpdates", () => {
 
         assert.isFalse(yield* Ref.get(desktopState.quitting));
         assert.equal(harness.resetQuitPreparationCount(), 1);
+        assert.equal(harness.backendStartCount(), 1);
+        assert.equal(harness.windowActivationCount(), 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

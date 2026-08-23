@@ -81,6 +81,7 @@ const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,
     setBackgroundModeEnabled: () => undefined,
+    isBackgroundModeEnabled: () => false,
     prepareForQuit: () => undefined,
     resetQuitPreparation: () => undefined,
     dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),

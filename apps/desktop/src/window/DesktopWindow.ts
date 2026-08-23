@@ -102,6 +102,7 @@ export class DesktopWindow extends Context.Service<
     // These switches are synchronous because Electron's native close event must
     // be accepted or cancelled before its listener returns.
     readonly setBackgroundModeEnabled: (enabled: boolean) => void;
+    readonly isBackgroundModeEnabled: () => boolean;
     readonly prepareForQuit: () => void;
     readonly resetQuitPreparation: () => void;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
@@ -885,6 +886,7 @@ export const make = Effect.gen(function* () {
     setBackgroundModeEnabled: (enabled) => {
       backgroundModeEnabled = enabled;
     },
+    isBackgroundModeEnabled: () => backgroundModeEnabled,
     prepareForQuit: () => {
       quitPrepared = true;
     },

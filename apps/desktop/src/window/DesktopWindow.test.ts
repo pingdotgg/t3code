@@ -543,7 +543,9 @@ describe("DesktopWindow", () => {
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.isFalse(desktopWindow.isBackgroundModeEnabled());
         desktopWindow.setBackgroundModeEnabled(true);
+        assert.isTrue(desktopWindow.isBackgroundModeEnabled());
 
         const close = fakeWindow.windowListeners.get("close");
         if (!close) {

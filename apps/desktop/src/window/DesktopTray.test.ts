@@ -73,6 +73,7 @@ function makeLayer(input: {
     setBackgroundModeEnabled: (enabled: boolean) => {
       input.backgroundModeChanges.push(enabled);
     },
+    isBackgroundModeEnabled: () => input.backgroundModeChanges.at(-1) ?? false,
     prepareForQuit: () => undefined,
     resetQuitPreparation: () => undefined,
     dispatchMenuAction: () => Effect.void,
