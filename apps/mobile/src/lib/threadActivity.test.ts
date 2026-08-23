@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
 
 import {
   EventId,
@@ -21,6 +22,34 @@ import {
   type ThreadFeedActivity,
   type ThreadFeedEntry,
 } from "./threadActivity";
+
+describe("Codex feedback pseudo-messages", () => {
+  it("keeps pending and completed feedback messages in the mobile thread body", () => {
+    const pending = {
+      id: MessageId.make("feedback-command"),
+      command: "/feedback The agent stopped early.",
+      createdAt: "2026-08-23T00:00:00.000Z",
+      status: "uploading" as const,
+    };
+    const entries = [codexFeedbackMessage(pending), codexFeedbackMessage(pending, "assistant")].map(
+      (message) => ({
+        type: "message" as const,
+        id: message.id,
+        createdAt: message.createdAt,
+        message,
+      }),
+    );
+
+    expect(deriveThreadFeedPresentation(entries, null, new Set())).toEqual(entries);
+    expect(entries[1]?.message.text).toBe("Sending feedback to OpenAI...");
+
+    const completed = codexFeedbackMessage(
+      { ...pending, status: "sent", feedbackId: "codex-thread-1" },
+      "assistant",
+    );
+    expect(completed.text).toContain("codex-thread-1");
+  });
+});
 
 const singleSelectQuestion = {
   id: "runtime",
