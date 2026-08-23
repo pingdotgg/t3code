@@ -1401,6 +1401,93 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* fileSystem.exists(worktreePath), false);
       }),
     );
+
+    it.effect("copies .worktreeinclude-matched untracked files into a new worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+
+        yield* writeTextFile(cwd, ".gitignore", ".env\nnode_modules/\nsecrets/\n");
+        yield* git(cwd, ["add", ".gitignore"]);
+        yield* git(cwd, ["commit", "-m", "ignore local files"]);
+        yield* writeTextFile(
+          cwd,
+          ".worktreeinclude",
+          "# copied into new worktrees\n.env\nsecrets/\n",
+        );
+        yield* writeTextFile(cwd, ".env", "TOP=1\n");
+        yield* writeTextFile(cwd, "infra/relay/.env", "NESTED=1\n");
+        yield* writeTextFile(cwd, "secrets/token.txt", "token\n");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js", "module.exports = {};\n");
+        yield* writeTextFile(cwd, "notes.txt", "untracked but not included\n");
+
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "include-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/worktree-include",
+        });
+
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(worktreePath, ".env")),
+          "TOP=1\n",
+        );
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(worktreePath, "infra/relay/.env")),
+          "NESTED=1\n",
+        );
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(worktreePath, "secrets/token.txt")),
+          "token\n",
+        );
+        assert.equal(
+          yield* fileSystem.exists(pathService.join(worktreePath, "node_modules")),
+          false,
+        );
+        assert.equal(yield* fileSystem.exists(pathService.join(worktreePath, "notes.txt")), false);
+      }),
+    );
+
+    it.effect("still creates the worktree when a .worktreeinclude copy fails", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+
+        yield* writeTextFile(cwd, ".worktreeinclude", ".env\n");
+        yield* fileSystem.symlink(
+          pathService.join(cwd, "missing-target"),
+          pathService.join(cwd, ".env"),
+        );
+
+        const worktreePath = pathService.join(
+          yield* makeTmpDir("git-worktrees-"),
+          "include-failure-worktree",
+        );
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/worktree-include-failure",
+        });
+
+        assert.equal(created.worktree.path, worktreePath);
+        assert.equal(
+          yield* git(worktreePath, ["branch", "--show-current"]),
+          "feature/worktree-include-failure",
+        );
+        assert.equal(yield* fileSystem.exists(pathService.join(worktreePath, ".env")), false);
+      }),
+    );
   });
 
   describe("remote operations", () => {

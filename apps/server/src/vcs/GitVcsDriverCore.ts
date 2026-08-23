@@ -43,6 +43,13 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 // take well beyond the default 30s (e.g. a 375k-file repo takes ~40s on an idle
 // machine). Give it generous headroom while still bounding a genuinely hung git.
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
+// `.worktreeinclude` at the repository root lists gitignore-style patterns of
+// untracked files (typically gitignored ones like `.env`) to copy from the
+// source checkout into each newly created worktree.
+const WORKTREE_INCLUDE_FILE_NAME = ".worktreeinclude";
+// Listing the candidates walks the full untracked tree, ignored directories
+// included, which can take a while on large repositories.
+const WORKTREE_INCLUDE_LIST_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
@@ -2760,6 +2767,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const copyWorktreeIncludedFiles = Effect.fn("copyWorktreeIncludedFiles")(function* (
+    cwd: string,
+    worktreePath: string,
+  ) {
+    const repositoryPaths = yield* resolveRepositoryPaths(cwd);
+    const sourceRoot = repositoryPaths?.worktreeRoot ?? cwd;
+    const includeFilePath = path.join(sourceRoot, WORKTREE_INCLUDE_FILE_NAME);
+    if (!(yield* fileSystem.exists(includeFilePath))) {
+      return;
+    }
+
+    // Git applies the gitignore-style patterns itself: list the untracked
+    // files in the source checkout that match the `.worktreeinclude` entries.
+    const listed = yield* executeGit(
+      "GitVcsDriver.createWorktree.listIncludedFiles",
+      sourceRoot,
+      ["ls-files", "--others", "--ignored", `--exclude-from=${includeFilePath}`, "-z"],
+      {
+        fallbackErrorDetail: "git ls-files for .worktreeinclude failed",
+        timeoutMs: WORKTREE_INCLUDE_LIST_TIMEOUT_MS,
+      },
+    );
+    if (listed.stdoutTruncated) {
+      yield* Effect.logWarning(
+        ".worktreeinclude matched more files than fit in the git output buffer; copying a partial set",
+        { sourceRoot, worktreePath },
+      );
+    }
+
+    for (const relativePath of splitNullSeparatedGitStdoutPaths(listed)) {
+      const targetFilePath = path.join(worktreePath, relativePath);
+      yield* fileSystem.makeDirectory(path.dirname(targetFilePath), { recursive: true });
+      yield* fileSystem.copyFile(path.join(sourceRoot, relativePath), targetFilePath);
+    }
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
@@ -2789,6 +2832,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         baseBranch,
       ]);
     }
+
+    // Best effort: a failed copy leaves the worktree usable, so log instead of
+    // rolling back the creation.
+    yield* copyWorktreeIncludedFiles(input.cwd, worktreePath).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to copy .worktreeinclude files into the new worktree", {
+          cwd: input.cwd,
+          worktreePath,
+          cause,
+        }),
+      ),
+    );
 
     return {
       worktree: {
