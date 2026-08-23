@@ -1,11 +1,73 @@
 import { describe, expect, it } from "vite-plus/test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ReactMarkdown from "react-markdown";
 
 import {
+  extractMarkdownLinkHrefs,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
+  shouldOpenMarkdownFileLinkInEditor,
 } from "./markdown-links";
+
+function renderMarkdownLinkHref(markdown: string): string | undefined {
+  let renderedHref: string | undefined;
+  renderToStaticMarkup(
+    createElement(
+      ReactMarkdown,
+      {
+        components: {
+          a({ href }) {
+            renderedHref = href;
+            return createElement("a", { href });
+          },
+        },
+      },
+      markdown,
+    ),
+  );
+  return renderedHref;
+}
+
+describe("extractMarkdownLinkHrefs", () => {
+  it("extracts angle-bracketed paths containing spaces", () => {
+    expect(
+      extractMarkdownLinkHrefs(
+        "[Open the Bike Receipts folder](</Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts>)",
+      ),
+    ).toEqual(["/Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts"]);
+  });
+
+  it("preserves ordinary destinations and ignores link titles", () => {
+    expect(
+      extractMarkdownLinkHrefs(
+        '[source](apps/web/src/markdown-links.ts "implementation") and [docs](https://example.com)',
+      ),
+    ).toEqual(["apps/web/src/markdown-links.ts", "https://example.com"]);
+  });
+});
+
+describe("shouldOpenMarkdownFileLinkInEditor", () => {
+  it("uses command-click on macOS", () => {
+    expect(shouldOpenMarkdownFileLinkInEditor({ metaKey: true, ctrlKey: false }, "MacIntel")).toBe(
+      true,
+    );
+    expect(shouldOpenMarkdownFileLinkInEditor({ metaKey: false, ctrlKey: true }, "MacIntel")).toBe(
+      false,
+    );
+  });
+
+  it("uses control-click on other platforms", () => {
+    expect(
+      shouldOpenMarkdownFileLinkInEditor({ metaKey: false, ctrlKey: true }, "Linux x86_64"),
+    ).toBe(true);
+    expect(
+      shouldOpenMarkdownFileLinkInEditor({ metaKey: true, ctrlKey: false }, "Linux x86_64"),
+    ).toBe(false);
+  });
+});
 
 describe("rewriteMarkdownFileUriHref", () => {
   it("rewrites file uri hrefs into direct path hrefs", () => {
@@ -26,6 +88,18 @@ describe("rewriteMarkdownFileUriHref", () => {
         "file:///D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
       ),
     ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69");
+  });
+
+  it("preserves file uri authorities as windows UNC paths", () => {
+    expect(rewriteMarkdownFileUriHref("file://server/share/workspace-image.svg")).toBe(
+      "\\\\server\\share\\workspace-image.svg",
+    );
+  });
+
+  it("treats a localhost file uri as a local path", () => {
+    expect(rewriteMarkdownFileUriHref("file://localhost/home/me/notes.md")).toBe(
+      "/home/me/notes.md",
+    );
   });
 
   it("unwraps angle-bracketed file uri hrefs", () => {
@@ -76,6 +150,18 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
+  it("resolves file uri authorities as windows UNC paths", () => {
+    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBe(
+      "\\\\server\\share\\workspace-image.svg",
+    );
+  });
+
+  it("resolves a localhost file uri as a local path", () => {
+    expect(resolveMarkdownFileLinkTarget("file://localhost/home/me/notes.md")).toBe(
+      "/home/me/notes.md",
+    );
+  });
+
   it("formats tooltip display paths relative to the cwd when possible", () => {
     expect(
       resolveMarkdownFileLinkMeta(
@@ -85,6 +171,30 @@ describe("resolveMarkdownFileLinkTarget", () => {
     ).toMatchObject({
       displayPath: "t3code/apps/web/src/session-logic.ts:501",
       workspaceRelativePath: "apps/web/src/session-logic.ts",
+    });
+  });
+
+  it("resolves the encoded spaces emitted by the markdown renderer", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "/Users/dara/Downloads/Lime%20Ride%20Artifacts/Bike%20Receipts",
+        "/Users/dara/Downloads/Lime Ride Artifacts",
+      ),
+    ).toMatchObject({
+      targetPath: "/Users/dara/Downloads/Lime Ride Artifacts/Bike Receipts",
+      workspaceRelativePath: "Bike Receipts",
+      basename: "Bike Receipts",
+    });
+  });
+
+  it("resolves relative spaced folders from the markdown renderer", () => {
+    const href = renderMarkdownLinkHref("[folder](<docs/My Folder>)");
+
+    expect(href).toBe("docs/My%20Folder");
+    expect(resolveMarkdownFileLinkMeta(href, "/repo/project")).toMatchObject({
+      targetPath: "/repo/project/docs/My Folder",
+      workspaceRelativePath: "docs/My Folder",
+      basename: "My Folder",
     });
   });
 
@@ -132,10 +242,10 @@ describe("resolveMarkdownFileLinkTarget", () => {
 describe("resolveInlineCodeFileLinkMeta", () => {
   it("links relative paths with file extensions", () => {
     expect(
-      resolveInlineCodeFileLinkMeta(".plans/worktree-management-v1.md", "/Users/julius/project"),
+      resolveInlineCodeFileLinkMeta("docs/internals/workspace-layout.md", "/Users/julius/project"),
     ).toMatchObject({
-      targetPath: "/Users/julius/project/.plans/worktree-management-v1.md",
-      basename: "worktree-management-v1.md",
+      targetPath: "/Users/julius/project/docs/internals/workspace-layout.md",
+      basename: "workspace-layout.md",
     });
   });
 
@@ -270,7 +380,7 @@ describe("resolveInlineCodeFileLinkMeta", () => {
   });
 
   it("ignores relative paths without a cwd to resolve against", () => {
-    expect(resolveInlineCodeFileLinkMeta(".plans/worktree-management-v1.md")).toBeNull();
+    expect(resolveInlineCodeFileLinkMeta("docs/internals/workspace-layout.md")).toBeNull();
   });
 });
 
