@@ -558,6 +558,48 @@ describe("MessagesTimeline", () => {
     expect(onAnchorReady).not.toHaveBeenCalled();
   });
 
+  it("does not reserve a blank viewport after the active turn starts tool work", () => {
+    const turnId = TurnId.make("turn-with-active-tool");
+    const firstEntry = buildUserTimelineEntry("Run the command.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        anchorMessageId={firstEntry.message.id}
+        timelineEntries={[
+          firstEntry,
+          {
+            id: "entry-active-tool",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-active-tool",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              toolCallId: "call-active-tool",
+              label: "Run command",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "git status",
+              toolLifecycleStatus: "inProgress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain("data-anchor-index=");
+    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+  });
+
   it("hands end-following back to the list once the send anchor is released", () => {
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {

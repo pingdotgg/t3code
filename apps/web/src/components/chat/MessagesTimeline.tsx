@@ -271,7 +271,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
-  anchorMessageId,
+  anchorMessageId: requestedAnchorMessageId,
   onAnchorReady,
   contentInsetEndAdjustment,
   liveFollowEnabled,
@@ -281,6 +281,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   topFadeEnabled = false,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const anchorMessageId = useMemo(
+    () =>
+      requestedAnchorMessageId !== null &&
+      timelineEntries.some((entry) => entry.kind === "work" && workLogEntryIsToolLike(entry.entry))
+        ? null
+        : requestedAnchorMessageId,
+    [requestedAnchorMessageId, timelineEntries],
+  );
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
