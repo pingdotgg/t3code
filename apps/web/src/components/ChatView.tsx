@@ -2647,8 +2647,46 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
 
+    // Fallback for failed turns (e.g. Provider finish_reason: network_error) where
+    // the checkpoint exists (status: error) but the assistant message is missing or
+    // uses a synthetic `assistant:${turnId}` id that never appears in timelineEntries.
+    // In that case the direct scan above finds nothing, but the nth user message still
+    // corresponds to the nth checkpoint sorted by completedAt (1:1 user->turn).
+    if (turnDiffSummaries.length > 0) {
+      const userIdsInOrder: Array<MessageId> = [];
+      for (const entry of timelineEntries) {
+        if (entry.kind === "message" && entry.message.role === "user") {
+          userIdsInOrder.push(entry.message.id);
+        }
+      }
+      const sortedSummaries = [...turnDiffSummaries].toSorted((left, right) =>
+        left.completedAt.localeCompare(right.completedAt),
+      );
+      for (let orderIndex = 0; orderIndex < userIdsInOrder.length; orderIndex += 1) {
+        const userId = userIdsInOrder[orderIndex]!;
+        if (byUserMessageId.has(userId)) {
+          continue;
+        }
+        const summary = sortedSummaries[orderIndex];
+        if (!summary) {
+          continue;
+        }
+        const turnCount =
+          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+        if (typeof turnCount !== "number") {
+          continue;
+        }
+        byUserMessageId.set(userId, Math.max(0, turnCount - 1));
+      }
+    }
+
     return byUserMessageId;
-  }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  }, [
+    inferredCheckpointTurnCountByTurnId,
+    timelineEntries,
+    turnDiffSummaries,
+    turnDiffSummaryByAssistantMessageId,
+  ]);
 
   const gitCwd = activeProject
     ? projectScriptCwd({
