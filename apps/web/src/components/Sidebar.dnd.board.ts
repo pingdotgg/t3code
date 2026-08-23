@@ -65,6 +65,33 @@ export function findSidebarDndBoardThreadSection(
   return null;
 }
 
+export function findSortedSidebarDndDropTarget(input: {
+  section: "regular" | "snoozed" | "settled";
+  sourceThreadKey: string;
+  threads: readonly EnvironmentThreadShell[];
+}): SidebarThreadDropTarget {
+  const sourceIndex = input.threads.findIndex(
+    (thread) => sidebarThreadKey(thread) === input.sourceThreadKey,
+  );
+  if (sourceIndex === -1) {
+    return { section: input.section, threadKey: null, edge: null };
+  }
+  const nextThread = input.threads[sourceIndex + 1];
+  if (nextThread !== undefined) {
+    return {
+      section: input.section,
+      threadKey: sidebarThreadKey(nextThread),
+      edge: "before",
+    };
+  }
+  const previousThread = input.threads[sourceIndex - 1];
+  return {
+    section: input.section,
+    threadKey: previousThread === undefined ? null : sidebarThreadKey(previousThread),
+    edge: previousThread === undefined ? null : "after",
+  };
+}
+
 export function moveSidebarDndBoardThread(input: {
   entries: readonly SidebarDndBoardEntry[];
   threadKey: string;

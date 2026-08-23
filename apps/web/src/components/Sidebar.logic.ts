@@ -553,11 +553,12 @@ export function sortThreadsForSidebar<
 }
 
 export function sortSnoozedThreadsForSidebar<
-  T extends { readonly snoozedUntil?: string | null | undefined },
+  T extends { readonly id: string; readonly snoozedUntil?: string | null | undefined },
 >(threads: readonly T[]): T[] {
   return [...threads].toSorted(
     (left, right) =>
-      firstValidTimestampMs(left.snoozedUntil) - firstValidTimestampMs(right.snoozedUntil),
+      firstValidTimestampMs(left.snoozedUntil) - firstValidTimestampMs(right.snoozedUntil) ||
+      left.id.localeCompare(right.id),
   );
 }
 

@@ -1,9 +1,6 @@
 import {
-  closestCenter,
   getClientRect,
   PointerSensor,
-  pointerWithin,
-  rectIntersection,
   useSensor,
   useSensors,
   type CollisionDetection,
@@ -11,7 +8,6 @@ import {
   type DragMoveEvent,
   type DragOverEvent,
   type DragStartEvent,
-  type UniqueIdentifier,
 } from "@dnd-kit/core";
 import { getEventCoordinates } from "@dnd-kit/utilities";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -32,14 +28,15 @@ import { environmentSnapshotAtom } from "../state/shell";
 import {
   buildSidebarDndBoardEntries,
   findSidebarDndBoardThreadSection,
+  findSortedSidebarDndDropTarget,
   moveSidebarDndBoardThread,
   type SidebarDndBoardEntry,
 } from "../components/Sidebar.dnd.board";
+import { detectSidebarThreadCollision } from "../components/Sidebar.dnd.collision";
 import {
   parseSidebarDndSectionId,
   resolveSidebarDndAction,
   resolveSidebarDndPreviewVariant,
-  sidebarThreadKey,
   SIDEBAR_DND_SECTIONS,
   type SidebarDndAction,
   type SidebarDndSection,
@@ -82,33 +79,6 @@ type SidebarSnoozeOutcome =
   | { readonly status: "skipped" | "interrupted" }
   | { readonly status: "failure"; readonly error: unknown }
   | { readonly status: "success"; readonly sequence: number };
-
-function sortedDropTarget(input: {
-  section: "regular" | "snoozed" | "settled";
-  sourceThreadKey: string;
-  threads: readonly EnvironmentThreadShell[];
-}): SidebarThreadDropTarget {
-  const sourceIndex = input.threads.findIndex(
-    (thread) => sidebarThreadKey(thread) === input.sourceThreadKey,
-  );
-  if (sourceIndex === -1) {
-    return { section: input.section, threadKey: null, edge: null };
-  }
-  const nextThread = input.threads[sourceIndex + 1];
-  if (nextThread !== undefined) {
-    return {
-      section: input.section,
-      threadKey: sidebarThreadKey(nextThread),
-      edge: "before",
-    };
-  }
-  const previousThread = input.threads[sourceIndex - 1];
-  return {
-    section: input.section,
-    threadKey: previousThread === undefined ? null : sidebarThreadKey(previousThread),
-    edge: previousThread === undefined ? null : "after",
-  };
-}
 
 export function useSidebarThreadDnd(input: {
   threads: readonly EnvironmentThreadShell[];
@@ -158,6 +128,7 @@ export function useSidebarThreadDnd(input: {
   const pointerCoordinatesRef = useRef<{ x: number; y: number } | null>(null);
   const pendingSnoozePresetRef = useRef<SnoozePreset | null>(null);
   const snoozeDropEpochRef = useRef(0);
+  const dragScopeKeyRef = useRef<string | null>(null);
 
   const canPinWithOrder = useCallback(
     (thread: EnvironmentThreadShell) => {
@@ -284,7 +255,7 @@ export function useSidebarThreadDnd(input: {
           return _exhaustive;
         }
       }
-      return sortedDropTarget({
+      return findSortedSidebarDndDropTarget({
         section: destination,
         sourceThreadKey: current.sourceThreadKey,
         threads,
@@ -293,14 +264,30 @@ export function useSidebarThreadDnd(input: {
     [input.activeThreads, input.renderedSettledThreads, input.visibleSnoozedThreads],
   );
 
-  const sourceStillMatchesDragStart = useCallback((current: SidebarThreadDragTransaction) => {
+  const currentSourceThread = useCallback((current: SidebarThreadDragTransaction) => {
     const source = allThreadByKeyRef.current.get(current.sourceThreadKey);
-    return (
-      source !== undefined &&
-      source.archivedAt === null &&
-      canonicalSectionByThreadKeyRef.current.get(current.sourceThreadKey) === current.sourceSection
-    );
+    if (
+      source === undefined ||
+      source.archivedAt !== null ||
+      canonicalSectionByThreadKeyRef.current.get(current.sourceThreadKey) !== current.sourceSection
+    ) {
+      return null;
+    }
+    return source;
   }, []);
+  const sourceStillMatchesDragStart = useCallback(
+    (current: SidebarThreadDragTransaction) => currentSourceThread(current) !== null,
+    [currentSourceThread],
+  );
+  const dropStillValid = useCallback(
+    (current: SidebarThreadDragTransaction, target: SidebarThreadDropTarget) => {
+      const source = currentSourceThread(current);
+      return (
+        source !== null && canDropThreadInSection(source, current.sourceSection, target.section)
+      );
+    },
+    [canDropThreadInSection, currentSourceThread],
+  );
   const clearTransaction = useCallback(() => {
     const current = transactionRef.current;
     snoozeDropEpochRef.current += 1;
@@ -309,6 +296,7 @@ export function useSidebarThreadDnd(input: {
     }
     pointerCoordinatesRef.current = null;
     pendingSnoozePresetRef.current = null;
+    dragScopeKeyRef.current = null;
     setTransaction(null);
   }, [setTransaction]);
   const finishTransaction = useCallback(() => {
@@ -353,7 +341,7 @@ export function useSidebarThreadDnd(input: {
       pinnedPlan: SidebarPinnedInsertionPlan | null,
     ) => {
       void (async () => {
-        if (!sourceStillMatchesDragStart(current)) {
+        if (current.target === null || !dropStillValid(current, current.target)) {
           finishTransaction();
           return;
         }
@@ -452,13 +440,13 @@ export function useSidebarThreadDnd(input: {
       input.planForwardNavigation,
       reportDropFailure,
       setTransaction,
-      sourceStillMatchesDragStart,
+      dropStillValid,
     ],
   );
   const commitSnoozeDrop = useCallback(
     (current: SidebarThreadDragTransaction, preset: SnoozePreset) => {
       void (async () => {
-        if (!sourceStillMatchesDragStart(current)) {
+        if (current.target === null || !dropStillValid(current, current.target)) {
           finishTransaction();
           return;
         }
@@ -516,7 +504,7 @@ export function useSidebarThreadDnd(input: {
       input.performSnooze,
       input.timestampFormat,
       setTransaction,
-      sourceStillMatchesDragStart,
+      dropStillValid,
     ],
   );
   const openSnoozeDropMenu = useCallback(
@@ -563,15 +551,15 @@ export function useSidebarThreadDnd(input: {
           return;
         }
         const preset = menuPresets.find((candidate) => `snooze:${candidate.id}` === selected.value);
-        if (preset === undefined || !sourceStillMatchesDragStart(current)) {
+        if (preset === undefined || !dropStillValid(current, target)) {
           finishTransaction();
           return;
         }
-        const target = resolveSortedTarget(current, "snoozed", preset.snoozedUntil);
+        const projectedTarget = resolveSortedTarget(current, "snoozed", preset.snoozedUntil);
         const entries = moveSidebarDndBoardThread({
           entries: current.initialEntries,
           threadKey: current.sourceThreadKey,
-          target,
+          target: projectedTarget,
         });
         pendingSnoozePresetRef.current = preset;
         captureInsertionPosition(entries, current.sourceThreadKey);
@@ -579,7 +567,7 @@ export function useSidebarThreadDnd(input: {
           ...current,
           phase: "dropping",
           entries,
-          target,
+          target: projectedTarget,
           receiptSequencesByEnvironment: null,
         });
       })();
@@ -590,7 +578,7 @@ export function useSidebarThreadDnd(input: {
       input.timestampFormat,
       resolveSortedTarget,
       setTransaction,
-      sourceStillMatchesDragStart,
+      dropStillValid,
     ],
   );
 
@@ -599,144 +587,18 @@ export function useSidebarThreadDnd(input: {
       if (args.pointerCoordinates !== null) pointerCoordinatesRef.current = args.pointerCoordinates;
       const current = transactionRef.current;
       if (current === null || current.phase !== "dragging") return [];
-
-      if (current.sourceSection === "pinned" && args.pointerCoordinates !== null) {
-        const pinnedContainers = args.droppableContainers.filter((container) => {
-          if (typeof container.id !== "string") return false;
-          return (
-            findSidebarDndBoardThreadSection(current.initialEntries, container.id) === "pinned" &&
-            input.reorderablePinnedKeys.has(container.id)
-          );
-        });
-        const pinnedRects = pinnedContainers.flatMap((container) => {
-          const rect = args.droppableRects.get(container.id);
-          return rect === undefined ? [] : [rect];
-        });
-        const pointerInsidePinnedRows =
-          pinnedRects.length > 0 &&
-          args.pointerCoordinates.x >= Math.min(...pinnedRects.map((rect) => rect.left)) &&
-          args.pointerCoordinates.x <= Math.max(...pinnedRects.map((rect) => rect.right)) &&
-          args.pointerCoordinates.y >= Math.min(...pinnedRects.map((rect) => rect.top)) &&
-          args.pointerCoordinates.y <= Math.max(...pinnedRects.map((rect) => rect.bottom));
-        if (pointerInsidePinnedRows) {
-          return closestCenter({
-            ...args,
-            droppableContainers: pinnedContainers,
-          });
-        }
-      }
-
-      const sectionByContainerId = new Map<UniqueIdentifier, SidebarDndSection>();
-      const validCandidates = args.droppableContainers.filter((container) => {
-        if (container.id === args.active.id) return false;
-        const boundarySection = parseSidebarDndSectionId(container.id);
-        const targetThreadKey =
-          boundarySection === null && typeof container.id === "string" ? container.id : null;
-        const section =
-          boundarySection ??
-          (targetThreadKey === null
-            ? null
-            : findSidebarDndBoardThreadSection(current.initialEntries, targetThreadKey));
-        if (
-          section === null ||
-          !canDropThreadInSection(current.sourceThread, current.sourceSection, section)
-        ) {
-          return false;
-        }
-        const valid =
-          section !== "pinned" ||
-          targetThreadKey === null ||
-          input.reorderablePinnedKeys.has(targetThreadKey);
-        if (valid) sectionByContainerId.set(container.id, section);
-        return valid;
-      });
-      const visualDroppableRects = new Map(args.droppableRects);
-      let visualTop = Number.POSITIVE_INFINITY;
-      let visualBottom = Number.NEGATIVE_INFINITY;
-      let pointerInsideBoardWidth = false;
-      for (const container of validCandidates) {
-        if (typeof container.id !== "string") continue;
-        const measuredRect = visualDroppableRects.get(container.id);
-        const node = container.node.current;
-        const rect = node === null ? measuredRect : getClientRect(node);
-        if (rect === undefined) continue;
-        visualDroppableRects.set(container.id, rect);
-        visualTop = Math.min(visualTop, rect.top);
-        visualBottom = Math.max(visualBottom, rect.bottom);
-        if (
-          args.pointerCoordinates !== null &&
-          rect.left <= args.pointerCoordinates.x &&
-          args.pointerCoordinates.x <= rect.right
-        ) {
-          pointerInsideBoardWidth = true;
-        }
-      }
-      const snoozedBoundary = validCandidates.find(
-        (container) => parseSidebarDndSectionId(container.id) === "snoozed",
-      );
-      const snoozedBoundaryTop =
-        snoozedBoundary === undefined
-          ? null
-          : (visualDroppableRects.get(snoozedBoundary.id)?.top ?? null);
-      const settledBoundary = validCandidates.find(
-        (container) => parseSidebarDndSectionId(container.id) === "settled",
-      );
-      const settledBoundaryTop =
-        settledBoundary === undefined
-          ? null
-          : (visualDroppableRects.get(settledBoundary.id)?.top ?? null);
-      const cardCenterY = args.collisionRect.top + args.collisionRect.height / 2;
-      const shelfSection =
-        settledBoundaryTop !== null && cardCenterY >= settledBoundaryTop
-          ? "settled"
-          : snoozedBoundaryTop !== null && cardCenterY >= snoozedBoundaryTop
-            ? "snoozed"
-            : null;
-      const collisionCandidates = validCandidates.filter((container) => {
-        const section = sectionByContainerId.get(container.id);
-        return shelfSection === null
-          ? section !== "snoozed" && section !== "settled"
-          : section === shelfSection;
-      });
-      const pointerCollisions = pointerWithin({
-        ...args,
-        droppableContainers: collisionCandidates,
-        droppableRects: visualDroppableRects,
-      });
-      if (pointerCollisions.length > 0) {
-        return pointerCollisions;
-      }
-      if (args.pointerCoordinates !== null) {
-        const { x, y } = args.pointerCoordinates;
-        const viewport = layout.viewportRef.current;
-        const viewportRect = viewport === null ? null : getClientRect(viewport);
-        const hitAreaTop = viewportRect?.top ?? visualTop;
-        const hitAreaBottom = viewportRect?.bottom ?? visualBottom;
-        if (!pointerInsideBoardWidth) return [];
-        return closestCenter({
-          ...args,
-          collisionRect:
-            y < hitAreaTop || y > hitAreaBottom
-              ? args.collisionRect
-              : {
-                  width: 0,
-                  height: 0,
-                  top: y,
-                  bottom: y,
-                  left: x,
-                  right: x,
-                },
-          droppableContainers: collisionCandidates,
-          droppableRects: visualDroppableRects,
-        });
-      }
-      return rectIntersection({
-        ...args,
-        droppableContainers: collisionCandidates,
-        droppableRects: visualDroppableRects,
+      const sourceThread = currentSourceThread(current);
+      if (sourceThread === null) return [];
+      return detectSidebarThreadCollision({
+        args,
+        transaction: current,
+        sourceThread,
+        reorderablePinnedKeys: input.reorderablePinnedKeys,
+        viewport: layout.viewportRef.current,
+        canDropThreadInSection,
       });
     },
-    [canDropThreadInSection, input.reorderablePinnedKeys, layout],
+    [canDropThreadInSection, currentSourceThread, input.reorderablePinnedKeys, layout],
   );
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
@@ -761,6 +623,7 @@ export function useSidebarThreadDnd(input: {
         settled: input.settledThreads.length,
       } satisfies Readonly<Record<SidebarDndSection, number>>;
       const initialEntries = canonicalEntriesRef.current;
+      dragScopeKeyRef.current = input.scopeKey;
       layout.captureEntryPosition(threadKey);
       setTransaction({
         phase: "dragging",
@@ -799,6 +662,7 @@ export function useSidebarThreadDnd(input: {
       canDragThread,
       layout,
       input.activeThreads,
+      input.scopeKey,
       input.settledThreads.length,
       input.snoozedThreads.length,
       orderedPinnedThreads,
@@ -913,6 +777,10 @@ export function useSidebarThreadDnd(input: {
   const completeDropAnimation = useCallback(() => {
     const current = transactionRef.current;
     if (current === null || current.phase !== "dropping" || current.target === null) return;
+    if (!dropStillValid(current, current.target)) {
+      finishTransaction();
+      return;
+    }
 
     const action = resolveSidebarDndAction({
       source: current.sourceSection,
@@ -954,6 +822,7 @@ export function useSidebarThreadDnd(input: {
     clearTransaction,
     commitLifecycleDrop,
     commitSnoozeDrop,
+    dropStillValid,
     finishTransaction,
     handlePinnedReorder,
     planPinnedInsertion,
@@ -964,7 +833,12 @@ export function useSidebarThreadDnd(input: {
       const releasePoint = pointerCoordinatesRef.current;
       pointerCoordinatesRef.current = null;
       const target = current?.target ?? null;
-      if (current === null || current.phase !== "dragging" || target === null) {
+      if (
+        current === null ||
+        current.phase !== "dragging" ||
+        target === null ||
+        !dropStillValid(current, target)
+      ) {
         finishTransaction();
         return;
       }
@@ -1012,6 +886,7 @@ export function useSidebarThreadDnd(input: {
     },
     [
       captureInsertionPosition,
+      dropStillValid,
       finishTransaction,
       openSnoozeDropMenu,
       resolveDragTranslation,
@@ -1043,7 +918,11 @@ export function useSidebarThreadDnd(input: {
     ) {
       return;
     }
-    if (input.isSearchingThreads || !sourceStillMatchesDragStart(transaction)) {
+    if (
+      input.isSearchingThreads ||
+      input.scopeKey !== dragScopeKeyRef.current ||
+      !sourceStillMatchesDragStart(transaction)
+    ) {
       finishTransaction();
     }
   }, [

@@ -180,9 +180,8 @@ export function useSidebarPinnedDnd(input: {
       let insertionIndex = existingKeys.length;
       if (transaction.target.threadKey !== null) {
         const targetIndex = existingKeys.indexOf(transaction.target.threadKey);
-        if (targetIndex !== -1) {
-          insertionIndex = targetIndex + (transaction.target.edge === "after" ? 1 : 0);
-        }
+        if (targetIndex === -1) return null;
+        insertionIndex = targetIndex + (transaction.target.edge === "after" ? 1 : 0);
       } else {
         insertionIndex = 0;
       }
