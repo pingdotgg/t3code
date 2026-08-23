@@ -1963,7 +1963,12 @@ const make = Effect.gen(function* () {
 
       if (event.type === "session.configured") {
         const modelSelection = event.payload.config.modelSelection;
-        if (isModelSelection(modelSelection)) {
+        if (
+          isModelSelection(modelSelection) &&
+          modelSelection.instanceId === thread.modelSelection.instanceId &&
+          (event.providerInstanceId === undefined ||
+            modelSelection.instanceId === event.providerInstanceId)
+        ) {
           yield* orchestrationEngine.dispatch({
             type: "thread.meta.update",
             commandId: yield* providerCommandId(event, "thread-model-selection-update"),
