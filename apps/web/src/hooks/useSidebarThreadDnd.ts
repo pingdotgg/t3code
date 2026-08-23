@@ -616,7 +616,6 @@ export function useSidebarThreadDnd(input: {
       } satisfies Readonly<Record<SidebarDndSection, number>>;
       const initialEntries = canonicalEntriesRef.current;
       dragScopeKeyRef.current = input.scopeKey;
-      layout.captureEntryPosition(threadKey);
       setTransaction({
         phase: "dragging",
         sourceThread,

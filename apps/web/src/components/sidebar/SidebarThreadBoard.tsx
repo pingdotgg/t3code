@@ -444,7 +444,7 @@ export function SidebarThreadBoard(props: {
       modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
       autoScroll={{
         enabled: dnd.transaction?.phase === "dragging",
-        layoutShiftCompensation: false,
+        layoutShiftCompensation: { x: false, y: true },
         canScroll: (element) => element === dnd.layout.viewportRef.current,
       }}
     >
