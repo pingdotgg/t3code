@@ -30,6 +30,7 @@ describe("writeTextToClipboard", () => {
 
   it("falls back to a selected textarea when the Clipboard API is unavailable", async () => {
     const focus = vi.fn();
+    const restoreFocus = vi.fn();
     const appendChild = vi.fn();
     const execCommand = vi.fn(() => true);
     const remove = vi.fn();
@@ -37,6 +38,7 @@ describe("writeTextToClipboard", () => {
     const setAttribute = vi.fn();
     const setSelectionRange = vi.fn();
     const textarea = {
+      focus,
       remove,
       select,
       setAttribute,
@@ -48,7 +50,7 @@ describe("writeTextToClipboard", () => {
     vi.stubGlobal("window", {});
     vi.stubGlobal("navigator", {});
     vi.stubGlobal("document", {
-      activeElement: { focus },
+      activeElement: { focus: restoreFocus },
       body: { appendChild },
       createElement: vi.fn(() => textarea),
       execCommand,
@@ -58,11 +60,12 @@ describe("writeTextToClipboard", () => {
 
     expect(textarea.value).toBe("remote command");
     expect(appendChild).toHaveBeenCalledWith(textarea);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(select).toHaveBeenCalledOnce();
     expect(setSelectionRange).toHaveBeenCalledWith(0, "remote command".length);
     expect(execCommand).toHaveBeenCalledWith("copy");
     expect(remove).toHaveBeenCalledOnce();
-    expect(focus).toHaveBeenCalledOnce();
+    expect(restoreFocus).toHaveBeenCalledOnce();
   });
 
   it("preserves the exact clipboard failure without exposing copied contents", async () => {
