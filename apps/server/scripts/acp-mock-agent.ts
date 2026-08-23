@@ -23,6 +23,9 @@ const emitConfigOptionUpdate = process.env.T3_ACP_EMIT_CONFIG_OPTION_UPDATE === 
 const emitPromptUsage = process.env.T3_ACP_EMIT_PROMPT_USAGE === "1";
 const emitXAiPromptMetadata = process.env.T3_ACP_EMIT_XAI_PROMPT_METADATA === "1";
 const emitXAiModelChanged = process.env.T3_ACP_EMIT_XAI_MODEL_CHANGED === "1";
+const emitXAiModelChangedOnSetModel =
+  process.env.T3_ACP_EMIT_XAI_MODEL_CHANGED_ON_SET_MODEL === "1";
+const effectiveReasoningOnSetModel = process.env.T3_ACP_EFFECTIVE_REASONING_ON_SET_MODEL?.trim();
 const supportsImages = process.env.T3_ACP_SUPPORTS_IMAGES === "1";
 const failAuthentication = process.env.T3_ACP_FAIL_AUTHENTICATION === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
@@ -429,6 +432,20 @@ const program = Effect.gen(function* () {
         request._meta.reasoningEffort.trim()
       ) {
         currentReasoning = request._meta.reasoningEffort.trim();
+      }
+      if (emitXAiModelChangedOnSetModel) {
+        currentReasoning = effectiveReasoningOnSetModel || currentReasoning;
+        writeJsonRpcNotification("_x.ai/session_notification", {
+          method: "x.ai/session_notification",
+          params: {
+            sessionId: String(request.sessionId ?? sessionId),
+            update: {
+              sessionUpdate: "model_changed",
+              model_id: currentModelId,
+              reasoning_effort: currentReasoning,
+            },
+          },
+        });
       }
       return {};
     }),

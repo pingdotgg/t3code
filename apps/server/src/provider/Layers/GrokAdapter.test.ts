@@ -250,6 +250,85 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("keeps Grok's model-changed notification authoritative over set-model", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-authoritative-model-change");
+      const requestLogDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-authoritative-model-log-")),
+      );
+      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_EMIT_XAI_MODEL_CHANGED_ON_SET_MODEL: "1",
+          T3_ACP_EFFECTIVE_REASONING_ON_SET_MODEL: "medium",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const instanceId = ProviderInstanceId.make("grok");
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const configured = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "session.configured"
+              ? Deferred.succeed(configured, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      const requestedSelection = {
+        instanceId,
+        model: "grok-mock-alt",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      } as const;
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: requestedSelection,
+      });
+      yield* Deferred.await(configured);
+      yield* adapter.sendTurn({
+        threadId,
+        input: "use normalized effort",
+        attachments: [],
+        modelSelection: requestedSelection,
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "request high again",
+        attachments: [],
+        modelSelection: requestedSelection,
+      });
+
+      const configuredEvent = runtimeEvents.find((event) => event.type === "session.configured");
+      assert.deepStrictEqual(
+        configuredEvent?.type === "session.configured" ? configuredEvent.payload.config : undefined,
+        {
+          model: "grok-mock-alt",
+          effort: "medium",
+          modelSelection: {
+            instanceId: "grok",
+            model: "grok-mock-alt",
+            options: [{ id: "reasoningEffort", value: "medium" }],
+          },
+        },
+      );
+      const setModelRequests = (yield* Effect.promise(() => readJsonLines(requestLogPath))).filter(
+        (request) => request.method === "session/set_model",
+      );
+      assert.equal(setModelRequests.length, 3);
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("maps Grok ACP thought chunks to canonical reasoning events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-thought-chunks");
@@ -406,7 +485,10 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
 
       const sessions = yield* adapter.listSessions();
       assert.equal(sessions[0]?.model, "grok-mock-alt");
-      const configured = runtimeEvents.find((event) => event.type === "session.configured");
+      const configured = runtimeEvents.find(
+        (event) =>
+          event.type === "session.configured" && event.payload.config.model === "grok-mock-alt",
+      );
       assert.deepStrictEqual(
         configured?.type === "session.configured" ? configured.payload.config : undefined,
         {

@@ -105,6 +105,16 @@ interface PendingUserInput {
   readonly resolution: Deferred.Deferred<PendingUserInputResolution>;
 }
 
+type GrokModelChangedNotification = NonNullable<
+  ReturnType<typeof extractXAiModelChangedNotification>
+>;
+
+interface BufferedGrokModelChangedNotification {
+  readonly method: string;
+  readonly params: unknown;
+  readonly modelChanged: GrokModelChangedNotification;
+}
+
 interface GrokSessionContext {
   readonly threadId: ThreadId;
   readonly acpSessionId: string;
@@ -125,10 +135,34 @@ interface GrokSessionContext {
   promptsInFlight: number;
   currentModelId: string | undefined;
   currentReasoningEffort: string | undefined;
+  modelSelectionRevision: number;
   currentContextWindow: number | undefined;
   readonly contextWindowByModelId: ReadonlyMap<string, number>;
   readonly supportsImageInput: boolean;
   stopped: boolean;
+}
+
+function applyGrokModelChangedSelection(
+  ctx: GrokSessionContext,
+  modelChanged: GrokModelChangedNotification,
+  updatedAt: string,
+): boolean {
+  ctx.modelSelectionRevision += 1;
+  if (
+    ctx.currentModelId === modelChanged.modelId &&
+    ctx.currentReasoningEffort === modelChanged.reasoningEffort
+  ) {
+    return false;
+  }
+  ctx.currentModelId = modelChanged.modelId;
+  ctx.currentReasoningEffort = modelChanged.reasoningEffort;
+  ctx.currentContextWindow = ctx.contextWindowByModelId.get(modelChanged.modelId);
+  ctx.session = {
+    ...ctx.session,
+    model: resolveGrokAcpBaseModelId(modelChanged.modelId),
+    updatedAt,
+  };
+  return true;
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -631,6 +665,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 }),
             ),
           );
+          let startingContext: GrokSessionContext | undefined;
+          let bufferedStartingModelChanged: BufferedGrokModelChangedNotification | undefined;
           const started = yield* Effect.gen(function* () {
             yield* Effect.forEach(
               ["x.ai/ask_user_question", "_x.ai/ask_user_question"] as const,
@@ -694,30 +730,28 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   if (modelChanged === undefined) {
                     return;
                   }
-                  const ctx = sessions.get(input.threadId);
-                  if (
-                    ctx === undefined ||
-                    ctx.stopped ||
-                    ctx.acpSessionId !== modelChanged.sessionId ||
-                    (ctx.currentModelId === modelChanged.modelId &&
-                      ctx.currentReasoningEffort === modelChanged.reasoningEffort)
-                  ) {
+                  const ctx = sessions.get(input.threadId) ?? startingContext;
+                  if (ctx === undefined) {
+                    bufferedStartingModelChanged = { method, params, modelChanged };
+                    return;
+                  }
+                  if (ctx.stopped || ctx.acpSessionId !== modelChanged.sessionId) {
                     return;
                   }
                   const updatedAt = yield* nowIso;
+                  const changed = applyGrokModelChangedSelection(ctx, modelChanged, updatedAt);
+                  if (ctx === startingContext) {
+                    bufferedStartingModelChanged = { method, params, modelChanged };
+                    return;
+                  }
+                  if (!changed) {
+                    return;
+                  }
                   const modelSelection = grokRuntimeModelSelection(
                     boundInstanceId,
                     modelChanged.modelId,
                     modelChanged.reasoningEffort,
                   );
-                  ctx.currentModelId = modelChanged.modelId;
-                  ctx.currentReasoningEffort = modelChanged.reasoningEffort;
-                  ctx.currentContextWindow = ctx.contextWindowByModelId.get(modelChanged.modelId);
-                  ctx.session = {
-                    ...ctx.session,
-                    model: resolveGrokAcpBaseModelId(modelChanged.modelId),
-                    updatedAt,
-                  };
                   yield* offerRuntimeEvent({
                     type: "session.configured",
                     ...(yield* makeEventStamp()),
@@ -824,41 +858,27 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               return contextWindow === undefined ? [] : ([[model.modelId, contextWindow]] as const);
             }),
           );
-          const boundModelSelection = yield* applyGrokAcpModelSelection({
-            runtime: acp,
-            currentModelId: setupModelSelection.modelId,
-            currentReasoningEffort: setupModelSelection.reasoningEffort,
-            requestedModelId: requestedStartModelId,
-            requestedReasoningEffort: getModelSelectionStringOptionValue(
-              grokModelSelection,
-              "reasoningEffort",
-            ),
-            mapError: (cause) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
-          });
           const now = yield* nowIso;
-          const session: ProviderSession = {
-            provider: PROVIDER,
-            providerInstanceId: boundInstanceId,
-            status: "ready",
-            runtimeMode: input.runtimeMode,
-            cwd,
-            ...(boundModelSelection.modelId
-              ? { model: resolveGrokAcpBaseModelId(boundModelSelection.modelId) }
-              : {}),
-            threadId: input.threadId,
-            resumeCursor: {
-              schemaVersion: GROK_RESUME_VERSION,
-              sessionId: started.sessionId,
-            },
-            createdAt: now,
-            updatedAt: now,
-          };
-
           const ctx: GrokSessionContext = {
             threadId: input.threadId,
             acpSessionId: started.sessionId,
-            session,
+            session: {
+              provider: PROVIDER,
+              providerInstanceId: boundInstanceId,
+              status: "ready",
+              runtimeMode: input.runtimeMode,
+              cwd,
+              ...(setupModelSelection.modelId
+                ? { model: resolveGrokAcpBaseModelId(setupModelSelection.modelId) }
+                : {}),
+              threadId: input.threadId,
+              resumeCursor: {
+                schemaVersion: GROK_RESUME_VERSION,
+                sessionId: started.sessionId,
+              },
+              createdAt: now,
+              updatedAt: now,
+            },
             scope: sessionScope,
             acp,
             notificationFiber: undefined,
@@ -869,17 +889,49 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
             promptsInFlight: 0,
-            currentModelId: boundModelSelection.modelId,
-            currentReasoningEffort: boundModelSelection.reasoningEffort,
-            currentContextWindow:
-              (boundModelSelection.modelId
-                ? contextWindowByModelId.get(boundModelSelection.modelId)
-                : undefined) ?? setupModelSelection.totalContextTokens,
+            currentModelId: setupModelSelection.modelId,
+            currentReasoningEffort: setupModelSelection.reasoningEffort,
+            modelSelectionRevision: 0,
+            currentContextWindow: setupModelSelection.totalContextTokens,
             contextWindowByModelId,
             supportsImageInput:
               started.initializeResult.agentCapabilities?.promptCapabilities?.image === true,
             stopped: false,
           };
+          if (
+            bufferedStartingModelChanged !== undefined &&
+            bufferedStartingModelChanged.modelChanged.sessionId === ctx.acpSessionId
+          ) {
+            applyGrokModelChangedSelection(ctx, bufferedStartingModelChanged.modelChanged, now);
+          } else {
+            bufferedStartingModelChanged = undefined;
+          }
+          startingContext = ctx;
+          const modelSelectionRevision = ctx.modelSelectionRevision;
+          const optimisticModelSelection = yield* applyGrokAcpModelSelection({
+            runtime: acp,
+            currentModelId: ctx.currentModelId,
+            currentReasoningEffort: ctx.currentReasoningEffort,
+            requestedModelId: requestedStartModelId,
+            requestedReasoningEffort: getModelSelectionStringOptionValue(
+              grokModelSelection,
+              "reasoningEffort",
+            ),
+            mapError: (cause) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
+          });
+          if (ctx.modelSelectionRevision === modelSelectionRevision) {
+            ctx.currentModelId = optimisticModelSelection.modelId;
+            ctx.currentReasoningEffort = optimisticModelSelection.reasoningEffort;
+          }
+          ctx.currentContextWindow =
+            (ctx.currentModelId ? contextWindowByModelId.get(ctx.currentModelId) : undefined) ??
+            setupModelSelection.totalContextTokens;
+          ctx.session = {
+            ...ctx.session,
+            ...(ctx.currentModelId ? { model: resolveGrokAcpBaseModelId(ctx.currentModelId) } : {}),
+          };
+          const session = ctx.session;
 
           const nf = yield* Stream.runDrain(
             Stream.mapEffect(acp.getEvents(), (event) =>
@@ -1022,6 +1074,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
           ctx.notificationFiber = nf;
           sessions.set(input.threadId, ctx);
+          startingContext = undefined;
           sessionScopeTransferred = true;
 
           yield* offerRuntimeEvent({
@@ -1045,6 +1098,30 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             threadId: input.threadId,
             payload: { providerThreadId: started.sessionId },
           });
+          if (ctx.currentModelId !== undefined) {
+            yield* offerRuntimeEvent({
+              type: "session.configured",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              payload: {
+                config: {
+                  model: ctx.currentModelId,
+                  effort: ctx.currentReasoningEffort ?? null,
+                  modelSelection: grokRuntimeModelSelection(
+                    boundInstanceId,
+                    ctx.currentModelId,
+                    ctx.currentReasoningEffort,
+                  ),
+                },
+              },
+              raw: {
+                source: "acp.grok.extension",
+                method: bufferedStartingModelChanged?.method ?? "session/start",
+                payload: bufferedStartingModelChanged?.params ?? started.sessionSetupResult,
+              },
+            });
+          }
 
           return session;
         }).pipe(Effect.scoped),
@@ -1137,7 +1214,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 });
               }
 
-              const currentModelSelection = yield* applyGrokAcpModelSelection({
+              const modelSelectionRevision = ctx.modelSelectionRevision;
+              const optimisticModelSelection = yield* applyGrokAcpModelSelection({
                 runtime: ctx.acp,
                 currentModelId: ctx.currentModelId,
                 currentReasoningEffort: ctx.currentReasoningEffort,
@@ -1149,13 +1227,15 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
-              ctx.currentModelId = currentModelSelection.modelId;
-              ctx.currentReasoningEffort = currentModelSelection.reasoningEffort;
-              ctx.currentContextWindow = currentModelSelection.modelId
-                ? ctx.contextWindowByModelId.get(currentModelSelection.modelId)
+              if (ctx.modelSelectionRevision === modelSelectionRevision) {
+                ctx.currentModelId = optimisticModelSelection.modelId;
+                ctx.currentReasoningEffort = optimisticModelSelection.reasoningEffort;
+              }
+              ctx.currentContextWindow = ctx.currentModelId
+                ? ctx.contextWindowByModelId.get(ctx.currentModelId)
                 : undefined;
-              const displayModel = currentModelSelection.modelId
-                ? resolveGrokAcpBaseModelId(currentModelSelection.modelId)
+              const displayModel = ctx.currentModelId
+                ? resolveGrokAcpBaseModelId(ctx.currentModelId)
                 : undefined;
               for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
                 yield* Effect.yieldNow;
@@ -1192,9 +1272,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   turnId,
                   payload: {
                     ...(displayModel ? { model: displayModel } : {}),
-                    ...(currentModelSelection.reasoningEffort
-                      ? { effort: currentModelSelection.reasoningEffort }
-                      : {}),
+                    ...(ctx.currentReasoningEffort ? { effort: ctx.currentReasoningEffort } : {}),
                   },
                 });
               }
