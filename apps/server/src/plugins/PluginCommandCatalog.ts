@@ -97,7 +97,7 @@ const builtInPlugin: PluginDefinition = {
         id: "t3.plugin-runtime.status",
         label: "Check plugin runtime",
         description: "Verify that the environment plugin runtime is responding.",
-        surfaces: ["web", "desktop", "mobile"],
+        surfaces: ["web", "desktop"],
       },
       handler: Effect.succeed({
         message: "Plugin runtime is active.",

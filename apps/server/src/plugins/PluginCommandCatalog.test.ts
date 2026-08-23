@@ -26,7 +26,7 @@ const testPlugin = (input: {
         id: "acme.hello",
         label: "Say hello",
         description: "Return a greeting from the trusted test plugin.",
-        surfaces: ["web", "desktop", "mobile"],
+        surfaces: ["web", "desktop"],
       },
       handler: Effect.succeed({ message: input.message, tone: "success" }),
     });

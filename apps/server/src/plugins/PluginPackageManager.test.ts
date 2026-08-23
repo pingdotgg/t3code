@@ -47,7 +47,7 @@ export default function activate(api) {
       id: "${commandId}",
       label: "External runtime status",
       description: "Report status from an external local plugin package.",
-      surfaces: ["web", "desktop", "mobile"]
+      surfaces: ["web", "desktop"]
     },
     () => ({ message: ${encodeJsonString(message)}, tone: "success" })
   );
@@ -63,7 +63,7 @@ export default function activate(api) {
     {
       id: "${commandId}",
       label: "External runtime status",
-      surfaces: ["web", "desktop", "mobile"]
+      surfaces: ["web", "desktop"]
     },
     () => ({ message, tone: "success" })
   );
@@ -76,7 +76,7 @@ export default function activate(api) {
     {
       id: "${commandId}",
       label: "External runtime status",
-      surfaces: ["web", "desktop", "mobile"]
+      surfaces: ["web", "desktop"]
     },
     () => ({ message: "retirement gate", tone: "success" })
   );
@@ -94,7 +94,7 @@ export default function activate(api) {
     {
       id: "${commandId}",
       label: "External runtime status",
-      surfaces: ["web", "desktop", "mobile"]
+      surfaces: ["web", "desktop"]
     },
     () => ({ message: "cleanup failure", tone: "success" })
   );

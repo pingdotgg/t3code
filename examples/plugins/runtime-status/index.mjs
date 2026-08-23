@@ -4,7 +4,7 @@ export default function activate(api) {
       id: "example.runtime-status",
       label: "external runtime status",
       description: "report status from an external local plugin package.",
-      surfaces: ["web", "desktop", "mobile"],
+      surfaces: ["web", "desktop"],
     },
     () => ({
       message: "external plugin runtime is active.",

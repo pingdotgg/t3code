@@ -5,7 +5,7 @@ import {
   useNavigation,
   usePreventRemove,
 } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Platform, Pressable, ScrollView, View } from "react-native";
 import {
   KeyboardController,
@@ -22,11 +22,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
-import {
-  ComposerEditor,
-  type ComposerEditorHandle,
-  type ComposerEditorSelection,
-} from "../../components/ComposerEditor";
+import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
   ComposerInlineControl,
   ComposerToolbarButton,
@@ -70,14 +66,6 @@ import {
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
-import { detectComposerTrigger, replaceTextRange } from "@t3tools/shared/composerTrigger";
-import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
-import {
-  buildMobilePluginCommandItems,
-  isCollapsedComposerSelection,
-  reconcileComposerSelectionForTextChange,
-} from "./plugin-command-menu";
-import { useMobilePluginCommands } from "./use-mobile-plugin-commands";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -138,49 +126,6 @@ export function NewTaskDraftScreen(props: {
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
-  const [composerSelection, setComposerSelection] = useState(() => ({
-    start: flow.prompt.length,
-    end: flow.prompt.length,
-  }));
-  const previousPromptLengthRef = useRef(flow.prompt.length);
-  const { commands: pluginCommands, execute: executePluginCommand } = useMobilePluginCommands(
-    selectedProject?.environmentId ?? null,
-  );
-  const pluginCommandTrigger = useMemo(() => {
-    if (!isCollapsedComposerSelection(composerSelection)) return null;
-    const trigger = detectComposerTrigger(flow.prompt, composerSelection.end);
-    return trigger?.kind === "slash-command" ? trigger : null;
-  }, [composerSelection, flow.prompt]);
-  const pluginCommandItems = useMemo<ComposerCommandItem[]>(() => {
-    if (pluginCommandTrigger === null) return [];
-    return buildMobilePluginCommandItems(pluginCommands, pluginCommandTrigger.query);
-  }, [pluginCommandTrigger, pluginCommands]);
-  const handleComposerSelectionChange = useCallback((selection: ComposerEditorSelection) => {
-    setComposerSelection(selection);
-  }, []);
-  const handlePluginCommandSelect = useCallback(
-    (item: ComposerCommandItem) => {
-      if (item.type !== "plugin-command" || pluginCommandTrigger === null) return;
-      const result = replaceTextRange(
-        flow.prompt,
-        pluginCommandTrigger.rangeStart,
-        pluginCommandTrigger.rangeEnd,
-        "",
-      );
-      setComposerSelection({ start: result.cursor, end: result.cursor });
-      flow.setPrompt(result.text);
-      void executePluginCommand(item.command);
-    },
-    [executePluginCommand, flow, pluginCommandTrigger],
-  );
-  useEffect(() => {
-    const end = flow.prompt.length;
-    const previousEnd = previousPromptLengthRef.current;
-    previousPromptLengthRef.current = end;
-    setComposerSelection((selection) =>
-      reconcileComposerSelectionForTextChange(selection, previousEnd, end),
-    );
-  }, [flow.prompt.length]);
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
     editorRef: promptInputRef,
     isEditorFocused: isComposerFocused,
@@ -872,9 +817,7 @@ export function NewTaskDraftScreen(props: {
       scrollEnabled
       value={flow.prompt}
       skills={flow.selectedProviderSkills}
-      selection={composerSelection}
       onChangeText={flow.setPrompt}
-      onSelectionChange={handleComposerSelectionChange}
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
@@ -1012,19 +955,8 @@ export function NewTaskDraftScreen(props: {
   );
 
   const composerDock = (
-    <View className="relative bg-sheet px-4 pt-1" style={{ paddingBottom: controlsBottomPadding }}>
+    <View className="bg-sheet px-4 pt-1" style={{ paddingBottom: controlsBottomPadding }}>
       <View className="pb-1">{workspaceControls}</View>
-
-      {pluginCommandTrigger !== null && pluginCommandItems.length > 0 ? (
-        <View className="absolute inset-x-4 bottom-full z-10 mb-2">
-          <ComposerCommandPopover
-            items={pluginCommandItems}
-            triggerKind={pluginCommandTrigger.kind}
-            isLoading={false}
-            onSelect={handlePluginCommandSelect}
-          />
-        </View>
-      ) : null}
 
       <ComposerSurface
         animateLayout={false}
