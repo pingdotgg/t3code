@@ -142,7 +142,8 @@ rendering.
 
 A Snoozed drop holds the projected compact slot while the standard duration menu is open. Choosing
 a duration sorts the row by wake time before the drop animation. Cancelling restores the source
-order.
+order and source preview before dnd-kit starts its return animation, so the card morph and movement
+run together.
 
 The projected row remains rendered while the command is pending. Reconciliation ends only after
 each affected environment's shell snapshot reaches its receipt sequence. Canonical state then wins.

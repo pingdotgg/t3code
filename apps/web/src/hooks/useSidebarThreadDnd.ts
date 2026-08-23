@@ -21,6 +21,7 @@ import {
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 
 import { readLocalApi } from "../localApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -523,27 +524,57 @@ export function useSidebarThreadDnd(input: {
         target,
         snoozePreset: null,
       });
+      const restoreCanceledDropPresentation = () => {
+        const pending = transactionRef.current;
+        if (
+          snoozeDropEpochRef.current !== epoch ||
+          pending === null ||
+          pending.phase !== "awaiting-snooze-choice" ||
+          !dropStillValid(pending, target)
+        ) {
+          return;
+        }
+        captureInsertionPosition(pending.initialEntries, pending.sourceThreadKey);
+        // dnd-kit snapshots the overlay as soon as cancelDrop resolves.
+        flushSync(() => {
+          setTransaction({
+            ...pending,
+            entries: pending.initialEntries,
+            target: {
+              section: pending.sourceSection,
+              threadKey: pending.sourceThreadKey,
+              edge: null,
+            },
+          });
+        });
+      };
       const api = readLocalApi();
-      if (api === undefined) return false;
       const menuPresets = resolveSnoozePresets(new Date(), input.timestampFormat);
-      const selected = await settlePromise(() =>
-        api.contextMenu.show(
-          menuPresets.map((preset) => ({
-            id: `snooze:${preset.id}`,
-            label: `${preset.label} (${preset.whenLabel})`,
-          })),
-          position,
-        ),
-      );
+      const selected =
+        api === undefined
+          ? null
+          : await settlePromise(() =>
+              api.contextMenu.show(
+                menuPresets.map((preset) => ({
+                  id: `snooze:${preset.id}`,
+                  label: `${preset.label} (${preset.whenLabel})`,
+                })),
+                position,
+              ),
+            );
+      const selectedId = selected?._tag === "Success" ? selected.value : null;
+      const preset =
+        selectedId === null
+          ? undefined
+          : menuPresets.find((candidate) => `snooze:${candidate.id}` === selectedId);
       if (
         snoozeDropEpochRef.current !== epoch ||
-        selected._tag === "Failure" ||
-        selected.value === null
+        preset === undefined ||
+        !dropStillValid(current, target)
       ) {
+        restoreCanceledDropPresentation();
         return false;
       }
-      const preset = menuPresets.find((candidate) => `snooze:${candidate.id}` === selected.value);
-      if (preset === undefined || !dropStillValid(current, target)) return false;
       const projectedTarget = resolveSortedTarget(current, "snoozed", preset.snoozedUntil);
       const projectedEntries = moveSidebarDndBoardThread({
         entries: current.initialEntries,
