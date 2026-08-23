@@ -858,7 +858,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               }
               const compact = parseXAiAutoCompact(params);
               if (compact) {
-                const specs = grokAutoCompactEvents(compact, ctx.lastKnownTokenUsage);
+                const specs = grokAutoCompactEvents(
+                  compact,
+                  ctx.lastKnownTokenUsage,
+                  ctx.promptsInFlight > 0 || ctx.session.status === "running",
+                );
                 const usageEvent = specs.find((spec) => spec.type === "thread.token-usage.updated");
                 if (usageEvent?.type === "thread.token-usage.updated") {
                   ctx.lastKnownTokenUsage = usageEvent.payload.usage;
@@ -1422,7 +1426,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               ctx.currentModelId = currentModelId;
               ctx.currentReasoningEffort = turnSelection.reasoningEffort;
               if (currentModelId) {
-                ctx.maxTokens = ctx.maxTokensByModel.get(currentModelId);
+                const maxTokens = ctx.maxTokensByModel.get(currentModelId);
+                if (maxTokens !== undefined) {
+                  ctx.maxTokens = maxTokens;
+                }
               }
 
               yield* applyGrokAcpSessionMode({
@@ -2014,6 +2021,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             0,
             Math.max(0, trimmedCtx.turns.length - numTurns),
           );
+          trimmedCtx.lastPlanFingerprint = undefined;
+          trimmedCtx.lastKnownTokenUsage = undefined;
+          trimmedCtx.lastCompleteCostUsd = undefined;
+          trimmedCtx.lastQueueLength = undefined;
+          trimmedCtx.workflowTrack = emptyGrokWorkflowTrackState();
+          trimmedCtx.toolUpdateGates.clear();
           return { threadId, turns: trimmedCtx.turns };
         }),
       );

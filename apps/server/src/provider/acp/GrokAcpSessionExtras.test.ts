@@ -58,7 +58,7 @@ describe("GrokAcpSessionExtras", () => {
         reason: "Context window 80% full",
       },
     });
-    const events = grokAutoCompactEvents(parsed!, undefined);
+    const events = grokAutoCompactEvents(parsed!, undefined, false);
     expect(events).toContainEqual({
       type: "thread.token-usage.updated",
       payload: {
@@ -85,12 +85,16 @@ describe("GrokAcpSessionExtras", () => {
         elapsed_ms: 118_411,
       },
     });
-    const events = grokAutoCompactEvents(parsed!, {
-      usedTokens: 402_072,
-      maxTokens: 500_000,
-      lastUsedTokens: 402_072,
-      compactsAutomatically: true,
-    });
+    const events = grokAutoCompactEvents(
+      parsed!,
+      {
+        usedTokens: 402_072,
+        maxTokens: 500_000,
+        lastUsedTokens: 402_072,
+        compactsAutomatically: true,
+      },
+      false,
+    );
     expect(events).toEqual([
       {
         type: "thread.token-usage.updated",
@@ -106,13 +110,28 @@ describe("GrokAcpSessionExtras", () => {
       },
       {
         type: "session.state.changed",
-        payload: { state: "running", reason: "compaction completed", detail: parsed },
+        payload: { state: "ready", reason: "compaction completed", detail: parsed },
       },
       {
         type: "thread.state.changed",
         payload: { state: "compacted", detail: parsed },
       },
     ]);
+  });
+
+  it("keeps compaction-complete running only while a turn is live", () => {
+    const parsed = parseXAiAutoCompact({
+      update: {
+        sessionUpdate: "auto_compact_completed",
+        tokens_before: 402_072,
+        tokens_after: 42_380,
+      },
+    });
+    const events = grokAutoCompactEvents(parsed!, undefined, true);
+    expect(events).toContainEqual({
+      type: "session.state.changed",
+      payload: { state: "running", reason: "compaction completed", detail: parsed },
+    });
   });
 
   it("publishes session_recap onto thread.metadata, never as a title", () => {

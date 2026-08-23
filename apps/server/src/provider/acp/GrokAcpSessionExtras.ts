@@ -263,6 +263,7 @@ export function parseXAiAutoCompact(payload: unknown): GrokAutoCompact | undefin
 export function grokAutoCompactEvents(
   compact: GrokAutoCompact,
   previous: ThreadTokenUsageSnapshot | undefined,
+  sessionIsActive: boolean,
 ): ReadonlyArray<GrokExtraEventSpec> {
   if (compact.kind === "started") {
     const maxTokens = compact.contextWindow ?? previous?.maxTokens;
@@ -306,7 +307,11 @@ export function grokAutoCompactEvents(
   }
   events.push({
     type: "session.state.changed",
-    payload: { state: "running", reason: "compaction completed", detail: compact },
+    payload: {
+      state: sessionIsActive ? "running" : "ready",
+      reason: "compaction completed",
+      detail: compact,
+    },
   });
   events.push({
     type: "thread.state.changed",
