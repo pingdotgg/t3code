@@ -361,7 +361,7 @@ describe("preserveComposerPromptHistoryAttachmentFiles", () => {
     const file = new File(["image bytes"], "diagram.png", { type: "image/png" });
     const serverAttachment = {
       type: "image" as const,
-      id: "image-1",
+      id: "server-image-1",
       name: file.name,
       mimeType: file.type,
       sizeBytes: file.size,
@@ -371,7 +371,14 @@ describe("preserveComposerPromptHistoryAttachmentFiles", () => {
     expect(
       preserveComposerPromptHistoryAttachmentFiles(
         [serverAttachment],
-        [{ ...serverAttachment, previewUrl: "blob:optimistic", file }],
+        [
+          {
+            ...serverAttachment,
+            id: "optimistic-image-1",
+            previewUrl: "blob:optimistic",
+            file,
+          },
+        ],
       ),
     ).toEqual([{ ...serverAttachment, file }]);
   });

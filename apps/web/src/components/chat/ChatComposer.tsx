@@ -1441,6 +1441,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setPromptHistoryOffset(null);
 
     return () => {
+      promptHistoryApplyGenerationRef.current += 1;
+      promptHistoryApplyPendingRef.current = false;
       if (promptHistoryEntryIdRef.current !== null) {
         replaceComposerPromptAndImages(promptHistoryDraftRef.current, []);
       }

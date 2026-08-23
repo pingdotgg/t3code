@@ -123,8 +123,9 @@ export function preserveComposerPromptHistoryAttachmentFiles(
   const optimisticAttachmentsById = new Map(
     optimisticAttachments.map((attachment) => [attachment.id, attachment] as const),
   );
-  return attachments.map((attachment) => {
-    const file = optimisticAttachmentsById.get(attachment.id)?.file;
+  return attachments.map((attachment, index) => {
+    const file =
+      optimisticAttachmentsById.get(attachment.id)?.file ?? optimisticAttachments[index]?.file;
     return file ? { ...attachment, file } : attachment;
   });
 }
