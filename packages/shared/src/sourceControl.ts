@@ -158,7 +158,12 @@ function parseRemoteHost(remoteUrl: string): string | null {
   }
 }
 
-function parseHostName(host: string): string {
+/**
+ * Normalizes a remote host to its bare hostname, dropping any port. Provider CLIs report
+ * hosts inconsistently — `gh` keys by bare hostname while a remote may carry `:8443` — so
+ * comparisons against CLI output go through here.
+ */
+export function parseHostName(host: string): string {
   try {
     return new URL(`https://${host}`).hostname.toLowerCase();
   } catch {
