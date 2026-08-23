@@ -201,27 +201,15 @@ function ChatRouteGlobalShortcuts() {
         if (!supportsSettlement) return;
         const threadKey = scopedThreadKey(routeThreadRef);
         const snapshot = changeRequestSnapshotByKey.get(threadKey);
-        // While VCS status is still loading, resolveDisplayedThreadPr drops
-        // non-terminal (open) snapshot PRs, which would let inactivity
-        // auto-settle classify a thread with an open PR as settled. Until the
-        // live status lands, accept matching-branch snapshots plus terminal
-        // snapshots retained across a mismatch (the same rule
-        // resolveDisplayedThreadPr applies once status arrives).
-        const gitStatus = gitStatusQuery.isPending ? null : gitStatusQuery.data;
-        const activeThreadPr =
-          gitStatus !== null
-            ? resolveDisplayedThreadPr({
-                threadBranch: activeThreadShell.branch,
-                gitStatus,
-                snapshot,
-                retainTerminalOnBranchMismatch: activeThreadShell.worktreePath === null,
-              })
-            : snapshot != null &&
-                (snapshot.branch === activeThreadShell.branch ||
-                  (activeThreadShell.worktreePath === null &&
-                    (snapshot.pr.state === "merged" || snapshot.pr.state === "closed")))
-              ? snapshot.pr
-              : null;
+        // Resolve exactly like ChatView's banner and header menu
+        // (resolveDisplayedThreadPr over live VCS status + snapshots), so the
+        // shortcut can never disagree with the visible Un-settle button.
+        const activeThreadPr = resolveDisplayedThreadPr({
+          threadBranch: activeThreadShell.branch,
+          gitStatus: gitStatusQuery.data,
+          snapshot,
+          retainTerminalOnBranchMismatch: activeThreadShell.worktreePath === null,
+        });
         const changeRequest =
           activeThreadPr === null
             ? null
