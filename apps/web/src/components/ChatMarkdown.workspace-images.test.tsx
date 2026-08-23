@@ -186,6 +186,35 @@ describe("ChatMarkdown workspace images", () => {
     expect(loadingStyle).toEqual(loadedStyle);
   });
 
+  it.each([
+    ["width", "max-width", "min(100%, 30rem, 300px)"],
+    ["height", "max-height", "min(30rem, 300px)"],
+  ])("treats a lone authored %s as a cap", (axis, constraint, expectedValue) => {
+    const markdown = `<img src=".t3/workspace-image.svg" alt="sized" ${axis}="300">`;
+    const loadedStyle = firstInlineStyle(render(markdown));
+    testState.assetState = "loading";
+    const loadingStyle = firstInlineStyle(render(markdown));
+
+    expect(loadedStyle).not.toHaveProperty(axis);
+    expect(loadedStyle).toHaveProperty(constraint, expectedValue);
+    expect(loadingStyle).toEqual(loadedStyle);
+  });
+
+  it("aligns direct and workspace images the same way in inline rows", () => {
+    const html = render(
+      "![remote](https://example.com/badge.svg) ![workspace](.t3/workspace-image.svg)",
+    );
+    const classNames = Array.from(html.matchAll(/<img[^>]*class="([^"]*)"/g), (match) =>
+      match[1]?.split(" "),
+    );
+
+    expect(classNames).toHaveLength(2);
+    for (const classes of classNames) {
+      expect(classes).toContain("align-bottom");
+      expect(classes).not.toContain("my-1");
+    }
+  });
+
   it("retains an authored SVG fragment on the signed URL", () => {
     const html = render("![logo](icons.svg#logo)");
 

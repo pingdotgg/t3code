@@ -982,8 +982,10 @@ const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: 
 });
 
 const CHAT_MARKDOWN_IMAGE_BOUNDS_CLASS_NAME = "max-h-[30rem] max-w-[min(100%,30rem)]";
+const CHAT_MARKDOWN_IMAGE_ALIGNMENT_CLASS_NAME = "align-bottom";
 const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME = cn(
   "h-auto w-auto object-contain",
+  CHAT_MARKDOWN_IMAGE_ALIGNMENT_CLASS_NAME,
   CHAT_MARKDOWN_IMAGE_BOUNDS_CLASS_NAME,
 );
 
@@ -993,22 +995,29 @@ function authoredImageSizeStyle(
 ): CSSProperties | undefined {
   const parsedWidth = Number(width);
   const parsedHeight = Number(height);
-  const style: CSSProperties = {};
-  if (Number.isFinite(parsedWidth) && parsedWidth > 0) style.width = parsedWidth;
-  if (Number.isFinite(parsedHeight) && parsedHeight > 0) style.height = parsedHeight;
-  if (style.width !== undefined && style.height !== undefined) {
-    style.aspectRatio = `${parsedWidth} / ${parsedHeight}`;
-    style.height = "auto";
-    style.maxWidth = `min(100%, 30rem, ${(30 * parsedWidth) / parsedHeight}rem)`;
+  const hasWidth = Number.isFinite(parsedWidth) && parsedWidth > 0;
+  const hasHeight = Number.isFinite(parsedHeight) && parsedHeight > 0;
+  if (hasWidth && hasHeight) {
+    return {
+      width: parsedWidth,
+      height: "auto",
+      aspectRatio: `${parsedWidth} / ${parsedHeight}`,
+      maxWidth: `min(100%, 30rem, ${(30 * parsedWidth) / parsedHeight}rem)`,
+    };
   }
-  return style.width === undefined && style.height === undefined ? undefined : style;
+  if (hasWidth) return { maxWidth: `min(100%, 30rem, ${parsedWidth}px)` };
+  if (hasHeight) return { maxHeight: `min(30rem, ${parsedHeight}px)` };
+  return undefined;
 }
 
-const CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME = "inline-block! align-bottom";
+const CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME = cn(
+  "inline-block!",
+  CHAT_MARKDOWN_IMAGE_ALIGNMENT_CLASS_NAME,
+);
 const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
   CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME,
-  "my-1 rounded-lg border border-border/40",
+  "rounded-lg border border-border/40",
 );
 
 function ChatMarkdownImageFallback(props: {
@@ -1020,7 +1029,7 @@ function ChatMarkdownImageFallback(props: {
       data-markdown-copy={props.copyMarkdown}
       className={cn(
         CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME,
-        "my-1 rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground",
+        "rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground",
       )}
     >
       <span className="inline-flex items-center gap-1.5">
@@ -1058,7 +1067,7 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
         aria-label="Loading image"
         className={cn(
           CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME,
-          "my-1 aspect-video w-64 max-w-full rounded-lg bg-muted/60",
+          "aspect-video w-64 max-w-full rounded-lg bg-muted/60",
           CHAT_MARKDOWN_IMAGE_BOUNDS_CLASS_NAME,
         )}
         style={props.style}
