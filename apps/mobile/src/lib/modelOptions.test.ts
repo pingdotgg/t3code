@@ -5,11 +5,65 @@ import { ProviderInstanceId, type ServerConfig } from "@t3tools/contracts";
 import {
   buildModelOptions,
   groupByProvider,
+  markModelOptionsRequiringNewThread,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("marks cross-agent Grok choices as new-thread-only after the first turn", () => {
+    const instanceId = ProviderInstanceId.make("grok");
+    const config = {
+      providers: [
+        {
+          instanceId,
+          driver: "grok",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "grok-code",
+              name: "Grok Code",
+              isCustom: false,
+              sessionCompatibilityGroup: "code",
+              capabilities: null,
+            },
+            {
+              slug: "grok-research",
+              name: "Grok Research",
+              isCustom: false,
+              sessionCompatibilityGroup: "research",
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const currentModelSelection = { instanceId, model: "grok-code" };
+    const options = buildModelOptions(config, currentModelSelection);
+
+    const restricted = markModelOptionsRequiringNewThread({
+      options,
+      providers: config.providers,
+      currentModelSelection,
+      hasConversationHistory: true,
+    });
+    expect(restricted[0]?.disabledReason).toBeUndefined();
+    expect(restricted[1]).toMatchObject({
+      selection: { model: "grok-research" },
+      disabledReason: "Start a new thread to use this model.",
+    });
+    expect(
+      markModelOptionsRequiringNewThread({
+        options,
+        providers: config.providers,
+        currentModelSelection,
+        hasConversationHistory: false,
+      })[1]?.disabledReason,
+    ).toBeUndefined();
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [

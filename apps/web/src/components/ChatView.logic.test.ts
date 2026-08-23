@@ -312,10 +312,12 @@ describe("getStartedThreadModelChangeBlockReason", () => {
   const providers = [
     {
       instanceId: ProviderInstanceId.make("codex"),
+      models: [],
     },
     {
       instanceId: ProviderInstanceId.make("grok"),
       requiresNewThreadForModelChange: true,
+      models: [],
     },
   ];
 
@@ -324,6 +326,7 @@ describe("getStartedThreadModelChangeBlockReason", () => {
       getStartedThreadModelChangeBlockReason({
         providers,
         hasStartedSession: false,
+        hasConversationHistory: false,
         currentModelSelection: {
           instanceId: ProviderInstanceId.make("grok"),
           model: "grok-build",
@@ -341,6 +344,7 @@ describe("getStartedThreadModelChangeBlockReason", () => {
       getStartedThreadModelChangeBlockReason({
         providers,
         hasStartedSession: true,
+        hasConversationHistory: true,
         currentModelSelection: {
           instanceId: ProviderInstanceId.make("grok"),
           model: "grok-build",
@@ -358,6 +362,7 @@ describe("getStartedThreadModelChangeBlockReason", () => {
       getStartedThreadModelChangeBlockReason({
         providers,
         hasStartedSession: true,
+        hasConversationHistory: true,
         currentModelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
@@ -372,6 +377,50 @@ describe("getStartedThreadModelChangeBlockReason", () => {
       description:
         "This provider does not allow switching models after a conversation has started.",
     });
+  });
+
+  it("blocks cross-agent Grok model changes only after the first turn", () => {
+    const instanceId = ProviderInstanceId.make("grok-compatible");
+    const grokProviders = [
+      {
+        instanceId,
+        models: [
+          {
+            slug: "grok-code",
+            name: "Grok Code",
+            isCustom: false,
+            sessionCompatibilityGroup: "code",
+            capabilities: null,
+          },
+          {
+            slug: "grok-research",
+            name: "Grok Research",
+            isCustom: false,
+            sessionCompatibilityGroup: "research",
+            capabilities: null,
+          },
+        ],
+      },
+    ];
+    const selection = {
+      providers: grokProviders,
+      hasStartedSession: true,
+      currentModelSelection: { instanceId, model: "grok-code" },
+      nextModelSelection: { instanceId, model: "grok-research" },
+    } as const;
+
+    expect(
+      getStartedThreadModelChangeBlockReason({
+        ...selection,
+        hasConversationHistory: false,
+      }),
+    ).toBeNull();
+    expect(
+      getStartedThreadModelChangeBlockReason({
+        ...selection,
+        hasConversationHistory: true,
+      }),
+    ).not.toBeNull();
   });
 });
 

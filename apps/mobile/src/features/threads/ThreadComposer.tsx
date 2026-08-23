@@ -56,7 +56,11 @@ import {
 import { ControlPill } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  groupByProvider,
+  markModelOptionsRequiringNewThread,
+} from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { RemoteClientConnectionState } from "../../lib/connection";
@@ -644,12 +648,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     () => buildModelOptions(props.serverConfig, currentModelSelection),
     [props.serverConfig, currentModelSelection],
   );
-  const providerGroups = useMemo(() => groupByProvider(modelOptions), [modelOptions]);
   // An existing thread is bound to its harness: sessions can't move between
   // provider instances, so the picker only offers the thread's own group.
   const threadProviderGroups = useMemo(
-    () => providerGroups.filter((group) => group.providerKey === currentModelSelection.instanceId),
-    [providerGroups, currentModelSelection.instanceId],
+    () =>
+      groupByProvider(
+        markModelOptionsRequiringNewThread({
+          options: modelOptions.filter(
+            (option) => option.providerKey === currentModelSelection.instanceId,
+          ),
+          providers: props.serverConfig?.providers ?? [],
+          currentModelSelection,
+          hasConversationHistory: props.selectedThread.latestTurn !== null,
+        }),
+      ),
+    [currentModelSelection, modelOptions, props.selectedThread.latestTurn, props.serverConfig],
   );
   const currentModelOption =
     modelOptions.find(

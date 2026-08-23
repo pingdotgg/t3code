@@ -6091,6 +6091,8 @@ function ChatViewContent(props: ChatViewProps) {
       const reason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeThread.session !== null,
+        hasConversationHistory:
+          activeThread.latestTurn !== null || activeThread.messages.length > 0,
         currentModelSelection: activeThread.modelSelection,
         currentProviderInstanceId: activeThread.session?.providerInstanceId ?? null,
         nextModelSelection: { instanceId, model },
@@ -6146,6 +6148,8 @@ function ChatViewContent(props: ChatViewProps) {
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeThread.session !== null,
+        hasConversationHistory:
+          activeThread.latestTurn !== null || activeThread.messages.length > 0,
         currentModelSelection: activeThread.modelSelection,
         currentProviderInstanceId: activeThread.session?.providerInstanceId ?? null,
         nextModelSelection,

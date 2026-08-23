@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -15,6 +16,51 @@ const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 export interface SelectableModelOption {
   slug: string;
   name: string;
+}
+
+export function modelChangeRequiresNewThread(input: {
+  readonly providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "models" | "requiresNewThreadForModelChange">
+  >;
+  readonly currentModelSelection: ModelSelection;
+  readonly nextModelSelection: ModelSelection;
+  readonly hasConversationHistory: boolean;
+}): boolean {
+  if (
+    input.currentModelSelection.instanceId === input.nextModelSelection.instanceId &&
+    input.currentModelSelection.model === input.nextModelSelection.model
+  ) {
+    return false;
+  }
+  const currentProvider = input.providers.find(
+    (provider) => provider.instanceId === input.currentModelSelection.instanceId,
+  );
+  const nextProvider = input.providers.find(
+    (provider) => provider.instanceId === input.nextModelSelection.instanceId,
+  );
+  if (
+    currentProvider?.requiresNewThreadForModelChange === true ||
+    nextProvider?.requiresNewThreadForModelChange === true
+  ) {
+    return true;
+  }
+  if (
+    !input.hasConversationHistory ||
+    input.currentModelSelection.instanceId !== input.nextModelSelection.instanceId
+  ) {
+    return false;
+  }
+  const currentCompatibilityGroup = currentProvider?.models.find(
+    (model) => model.slug === input.currentModelSelection.model,
+  )?.sessionCompatibilityGroup;
+  const nextCompatibilityGroup = currentProvider?.models.find(
+    (model) => model.slug === input.nextModelSelection.model,
+  )?.sessionCompatibilityGroup;
+  return (
+    currentCompatibilityGroup !== undefined &&
+    nextCompatibilityGroup !== undefined &&
+    currentCompatibilityGroup !== nextCompatibilityGroup
+  );
 }
 
 export function createModelCapabilities(input: {

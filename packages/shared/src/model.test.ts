@@ -10,9 +10,66 @@ import {
   getProviderOptionDescriptors,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
+  modelChangeRequiresNewThread,
   normalizeCustomModelSlug,
   normalizeModelSlug,
 } from "./model.ts";
+
+describe("model session compatibility", () => {
+  const instanceId = ProviderInstanceId.make("grok");
+  const providers = [
+    {
+      instanceId,
+      models: [
+        {
+          slug: "grok-code",
+          name: "Grok Code",
+          isCustom: false,
+          sessionCompatibilityGroup: "code",
+          capabilities: null,
+        },
+        {
+          slug: "grok-code-fast",
+          name: "Grok Code Fast",
+          isCustom: false,
+          sessionCompatibilityGroup: "code",
+          capabilities: null,
+        },
+        {
+          slug: "grok-research",
+          name: "Grok Research",
+          isCustom: false,
+          sessionCompatibilityGroup: "research",
+          capabilities: null,
+        },
+      ],
+    },
+  ];
+
+  const requiresNewThread = (nextModel: string, hasConversationHistory: boolean) =>
+    modelChangeRequiresNewThread({
+      providers,
+      currentModelSelection: { instanceId, model: "grok-code" },
+      nextModelSelection: { instanceId, model: nextModel },
+      hasConversationHistory,
+    });
+
+  it("allows same-agent model changes after conversation history", () => {
+    expect(requiresNewThread("grok-code-fast", true)).toBe(false);
+  });
+
+  it("requires a new thread for cross-agent model changes after conversation history", () => {
+    expect(requiresNewThread("grok-research", true)).toBe(true);
+  });
+
+  it("allows cross-agent model changes before the first turn", () => {
+    expect(requiresNewThread("grok-research", false)).toBe(false);
+  });
+
+  it("allows changes when either model has unknown compatibility metadata", () => {
+    expect(requiresNewThread("custom-grok-model", true)).toBe(false);
+  });
+});
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [

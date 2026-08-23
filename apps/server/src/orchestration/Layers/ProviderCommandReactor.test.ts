@@ -9,6 +9,7 @@ import {
   ProviderSession,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
@@ -148,6 +149,7 @@ describe("ProviderCommandReactor", () => {
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
+    readonly models?: ServerProvider["models"];
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly operatorParentThreadId?: ThreadId;
@@ -302,6 +304,7 @@ describe("ProviderCommandReactor", () => {
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
+        models: input?.models ?? [],
         ...(input?.requiresNewThreadForModelChange === true
           ? { requiresNewThreadForModelChange: true }
           : {}),
@@ -1889,6 +1892,83 @@ describe("ProviderCommandReactor", () => {
           },
         });
       }),
+  );
+
+  effectIt.effect("allows a first cross-agent Grok choice and rejects the next one", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("grok");
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          threadModelSelection: { instanceId, model: "grok-code" },
+          models: [
+            {
+              slug: "grok-code",
+              name: "Grok Code",
+              isCustom: false,
+              sessionCompatibilityGroup: "code",
+              capabilities: null,
+            },
+            {
+              slug: "grok-research",
+              name: "Grok Research",
+              isCustom: false,
+              sessionCompatibilityGroup: "research",
+              capabilities: null,
+            },
+          ],
+        }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-grok-compatible-first"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-grok-compatible-first"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        modelSelection: { instanceId, model: "grok-research" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+        modelSelection: { instanceId, model: "grok-research" },
+      });
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-grok-incompatible-second"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-grok-incompatible-second"),
+          role: "user",
+          text: "second",
+          attachments: [],
+        },
+        modelSelection: { instanceId, model: "grok-code" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const readModel = await harness.readModel();
+          return (
+            readModel.threads
+              .find((thread) => thread.id === ThreadId.make("thread-1"))
+              ?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
+            false
+          );
+        }),
+      );
+
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    }),
   );
 
   it("starts a first turn on the requested provider instance even when it differs from the thread model", async () => {

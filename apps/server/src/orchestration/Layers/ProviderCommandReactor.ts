@@ -13,6 +13,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { modelChangeRequiresNewThread } from "@t3tools/shared/model";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -465,6 +466,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly currentModelSelection: ModelSelection;
     readonly requestedModelSelection: ModelSelection | undefined;
+    readonly hasConversationHistory: boolean;
   }) {
     const requestedModelSelection = input.requestedModelSelection;
     if (
@@ -475,11 +477,12 @@ const make = Effect.gen(function* () {
       return;
     }
     const providers = yield* providerRegistry.getProviders;
-    const requiresNewThread =
-      providers.find((snapshot) => snapshot.instanceId === input.currentModelSelection.instanceId)
-        ?.requiresNewThreadForModelChange === true ||
-      providers.find((snapshot) => snapshot.instanceId === requestedModelSelection.instanceId)
-        ?.requiresNewThreadForModelChange === true;
+    const requiresNewThread = modelChangeRequiresNewThread({
+      providers,
+      currentModelSelection: input.currentModelSelection,
+      nextModelSelection: requestedModelSelection,
+      hasConversationHistory: input.hasConversationHistory,
+    });
     if (!requiresNewThread) {
       return;
     }
@@ -601,6 +604,7 @@ const make = Effect.gen(function* () {
               }
             : thread.modelSelection,
         requestedModelSelection,
+        hasConversationHistory: thread.latestTurn !== null || thread.messages.length > 0,
       });
     }
     if (

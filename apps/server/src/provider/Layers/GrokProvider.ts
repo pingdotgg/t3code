@@ -172,11 +172,13 @@ export function buildGrokDiscoveredModelsFromSessionModelState(
         return undefined;
       }
       seen.add(slug);
+      const metadata = parseGrokAcpModelMetadata(model._meta);
       return {
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
         ...(slug === currentModelId ? { isDefault: true } : {}),
+        ...(metadata.agentType ? { sessionCompatibilityGroup: metadata.agentType } : {}),
         capabilities: buildGrokModelCapabilities(model),
       };
     })

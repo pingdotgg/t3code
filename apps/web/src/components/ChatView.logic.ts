@@ -21,6 +21,7 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
+import { modelChangeRequiresNewThread } from "@t3tools/shared/model";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -406,8 +407,11 @@ export function deriveLockedProvider(input: {
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
+  providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "models" | "requiresNewThreadForModelChange">
+  >;
   hasStartedSession: boolean;
+  hasConversationHistory: boolean;
   currentModelSelection: ModelSelection;
   currentProviderInstanceId?: ModelSelection["instanceId"] | null | undefined;
   nextModelSelection: ModelSelection;
@@ -425,15 +429,13 @@ export function getStartedThreadModelChangeBlockReason(input: {
   ) {
     return null;
   }
-  const currentProvider = input.providers.find(
-    (snapshot) => snapshot.instanceId === currentModelSelection.instanceId,
-  );
-  const nextProvider = input.providers.find(
-    (snapshot) => snapshot.instanceId === input.nextModelSelection.instanceId,
-  );
   if (
-    currentProvider?.requiresNewThreadForModelChange !== true &&
-    nextProvider?.requiresNewThreadForModelChange !== true
+    !modelChangeRequiresNewThread({
+      providers: input.providers,
+      currentModelSelection,
+      nextModelSelection: input.nextModelSelection,
+      hasConversationHistory: input.hasConversationHistory,
+    })
   ) {
     return null;
   }

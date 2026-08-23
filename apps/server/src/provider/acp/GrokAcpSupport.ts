@@ -98,6 +98,7 @@ export interface GrokAcpReasoningEffortOption {
 }
 
 export interface GrokAcpModelMetadata {
+  readonly agentType: string | undefined;
   readonly supportsReasoningEffort: boolean | undefined;
   readonly reasoningEffort: string | undefined;
   readonly reasoningEfforts: ReadonlyArray<GrokAcpReasoningEffortOption>;
@@ -107,6 +108,7 @@ export interface GrokAcpModelMetadata {
 export function parseGrokAcpModelMetadata(meta: unknown): GrokAcpModelMetadata {
   if (!isUnknownRecord(meta)) {
     return {
+      agentType: undefined,
       supportsReasoningEffort: undefined,
       reasoningEffort: undefined,
       reasoningEfforts: [],
@@ -139,6 +141,7 @@ export function parseGrokAcpModelMetadata(meta: unknown): GrokAcpModelMetadata {
   const totalContextTokens = meta.totalContextTokens;
 
   return {
+    agentType: trimmedString(meta.agentType),
     supportsReasoningEffort:
       typeof meta.supportsReasoningEffort === "boolean" ? meta.supportsReasoningEffort : undefined,
     reasoningEffort: trimmedString(meta.reasoningEffort),

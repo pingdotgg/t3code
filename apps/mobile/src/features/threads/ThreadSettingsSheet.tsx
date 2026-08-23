@@ -92,14 +92,21 @@ function ModelRow(props: {
   readonly isLast: boolean;
 }) {
   const checkmarkColor = useThemeColor("--color-icon");
+  const disabled = props.option.disabledReason !== undefined;
   return (
     <Pressable
-      accessibilityLabel={props.option.label}
+      accessibilityLabel={
+        props.option.disabledReason
+          ? `${props.option.label}. ${props.option.disabledReason}`
+          : props.option.label
+      }
       accessibilityRole="radio"
-      accessibilityState={{ checked: props.selected }}
+      accessibilityState={{ checked: props.selected, disabled }}
+      disabled={disabled}
       onPress={props.onPress}
       className={cn(
         "mx-4 min-h-11 flex-row items-center gap-2 bg-card px-4 py-2 active:bg-subtle",
+        disabled && "opacity-50",
         props.isFirst && "rounded-t-2xl",
         props.isLast ? "rounded-b-2xl" : "border-b border-border-subtle",
       )}
@@ -115,6 +122,11 @@ function ModelRow(props: {
       {props.option.isLegacy ? (
         <View className="rounded-md bg-subtle px-1.5 py-0.5">
           <Text className="text-3xs font-t3-bold text-foreground-muted">Legacy</Text>
+        </View>
+      ) : null}
+      {disabled ? (
+        <View className="rounded-md bg-subtle px-1.5 py-0.5">
+          <Text className="text-3xs font-t3-bold text-foreground-muted">New thread</Text>
         </View>
       ) : null}
       <View className="flex-1" />
@@ -436,6 +448,9 @@ function ThreadSettingsSessionProvider(
 
   const pressModel = useCallback(
     (option: ModelOption) => {
+      if (option.disabledReason) {
+        return;
+      }
       void Haptics.selectionAsync();
       setPendingModel((current) =>
         pendingModelAfterPress({

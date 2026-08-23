@@ -76,6 +76,7 @@ describe("buildGrokDiscoveredModelsFromSessionModelState", () => {
           modelId: "grok-4.6",
           name: "Grok 4.6",
           _meta: {
+            agentType: "code",
             supportsReasoningEffort: true,
             reasoningEffort: "high",
             reasoningEfforts: [
@@ -117,6 +118,7 @@ describe("buildGrokDiscoveredModelsFromSessionModelState", () => {
       slug: "grok-4.6",
       name: "Grok 4.6",
       isDefault: true,
+      sessionCompatibilityGroup: "code",
       capabilities: {
         optionDescriptors: [
           {
