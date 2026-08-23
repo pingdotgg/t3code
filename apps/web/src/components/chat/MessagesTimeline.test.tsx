@@ -973,6 +973,56 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Tool call failed"');
   });
 
+  it("keeps mixed work logs neutral after a later tool call succeeds", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-failed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-failed",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Run search",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "failed",
+            },
+          },
+          {
+            id: "entry-info",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-info",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Status updated",
+              tone: "info",
+            },
+          },
+          {
+            id: "entry-completed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "work-completed",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              label: "Run tests",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "completed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("+2 previous log entries");
+    expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
+  });
+
   it("shows the animated one-line label for a live tool group", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(
