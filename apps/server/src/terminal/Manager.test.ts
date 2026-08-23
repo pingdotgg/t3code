@@ -904,6 +904,45 @@ it.layer(
     }),
   );
 
+  it.effect("allows event subscribers to call terminal lifecycle methods", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager();
+      const eventTypes: TerminalEvent["type"][] = [];
+      let ranLifecycleMethods = false;
+      let reopened = false;
+
+      const unsubscribe = yield* manager.subscribe((event) =>
+        Effect.gen(function* () {
+          eventTypes.push(event.type);
+
+          if (event.type === "started" && ranLifecycleMethods === false) {
+            ranLifecycleMethods = true;
+            yield* manager.clear({
+              threadId: event.threadId,
+              terminalId: event.terminalId,
+            });
+            yield* manager.restart(restartInput());
+            yield* manager.close({
+              threadId: event.threadId,
+              terminalId: event.terminalId,
+            });
+            return;
+          }
+
+          if (event.type === "closed" && reopened === false) {
+            reopened = true;
+            yield* manager.open(openInput());
+          }
+        }).pipe(Effect.orDie),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      yield* manager.open(openInput());
+
+      expect(eventTypes).toEqual(["started", "cleared", "restarted", "closed", "started"]);
+    }),
+  );
+
   it.effect("restarts terminal with empty transcript and respawns pty", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir } = yield* createManager();

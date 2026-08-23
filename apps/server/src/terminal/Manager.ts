@@ -1299,6 +1299,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
     });
 
+  let terminalEventWorkerFiberId: number | null = null;
   const terminalEventWorker = yield* makeKeyedCoalescingWorker<
     string,
     Chunk.Chunk<TerminalEvent>,
@@ -1307,6 +1308,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   >({
     merge: Chunk.appendAll,
     process: Effect.fn("terminal.publishEventWorker")(function* (_threadId, events) {
+      terminalEventWorkerFiberId = yield* Effect.fiberId;
       yield* Effect.forEach(events, publishEvent, { discard: true });
     }),
   });
@@ -1314,7 +1316,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const enqueueTerminalEvent = (event: TerminalEvent) =>
     terminalEventWorker.enqueue(event.threadId, Chunk.of(event));
 
-  const drainTerminalEvents = (threadId: string) => terminalEventWorker.drainKey(threadId);
+  const drainTerminalEvents = Effect.fn("terminal.drainTerminalEvents")(function* (
+    threadId: string,
+  ) {
+    if ((yield* Effect.fiberId) === terminalEventWorkerFiberId) {
+      return;
+    }
+    yield* terminalEventWorker.drainKey(threadId);
+  });
 
   const historyPath = (threadId: string, terminalId: string) => {
     const threadPart = toSafeThreadId(threadId);
