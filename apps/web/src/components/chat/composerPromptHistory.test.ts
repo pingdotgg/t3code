@@ -17,6 +17,7 @@ import {
   findComposerPromptHistoryOffset,
   materializeComposerPromptHistoryAttachments,
   navigateComposerPromptHistory,
+  preserveComposerPromptHistoryAttachmentFiles,
   recallableComposerPrompt,
 } from "./composerPromptHistory";
 
@@ -323,17 +324,55 @@ describe("materializeComposerPromptHistoryAttachments", () => {
           file,
         },
       ]),
-    ).resolves.toEqual([
-      {
-        type: "image",
-        id: "image-1",
-        name: file.name,
-        mimeType: file.type,
-        sizeBytes: file.size,
-        previewUrl: "blob:recalled",
-        file,
-      },
-    ]);
+    ).resolves.toEqual({
+      attachments: [
+        {
+          type: "image",
+          id: "image-1",
+          name: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          previewUrl: "blob:recalled",
+          file,
+        },
+      ],
+      failedAttachmentCount: 0,
+    });
     expect(createObjectUrl).toHaveBeenCalledWith(file);
+  });
+
+  it("reports an unavailable image without rejecting text recall", async () => {
+    await expect(
+      materializeComposerPromptHistoryAttachments([
+        {
+          type: "image",
+          id: "missing-image",
+          name: "missing.png",
+          mimeType: "image/png",
+          sizeBytes: 10,
+        },
+      ]),
+    ).resolves.toEqual({ attachments: [], failedAttachmentCount: 1 });
+  });
+});
+
+describe("preserveComposerPromptHistoryAttachmentFiles", () => {
+  it("carries a local file onto the acknowledged server attachment", () => {
+    const file = new File(["image bytes"], "diagram.png", { type: "image/png" });
+    const serverAttachment = {
+      type: "image" as const,
+      id: "image-1",
+      name: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      previewUrl: "/api/assets/image-1",
+    };
+
+    expect(
+      preserveComposerPromptHistoryAttachmentFiles(
+        [serverAttachment],
+        [{ ...serverAttachment, previewUrl: "blob:optimistic", file }],
+      ),
+    ).toEqual([{ ...serverAttachment, file }]);
   });
 });

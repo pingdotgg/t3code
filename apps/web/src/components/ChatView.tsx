@@ -263,7 +263,10 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
-import { buildComposerPromptHistoryEntries } from "./chat/composerPromptHistory";
+import {
+  buildComposerPromptHistoryEntries,
+  preserveComposerPromptHistoryAttachmentFiles,
+} from "./chat/composerPromptHistory";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
@@ -2611,8 +2614,19 @@ function ChatViewContent(props: ChatViewProps) {
       optimisticUserMessages.map((message) => [message.id, message] as const),
     );
     const acknowledgedMessages = serverMessagesWithPreviewHandoff.map((message) => {
-      const promptHistoryText = optimisticMessagesById.get(message.id)?.promptHistoryText;
-      return promptHistoryText === undefined ? message : { ...message, promptHistoryText };
+      const optimisticMessage = optimisticMessagesById.get(message.id);
+      if (!optimisticMessage) return message;
+      const attachments = message.attachments
+        ? preserveComposerPromptHistoryAttachmentFiles(
+            message.attachments,
+            optimisticMessage.attachments ?? [],
+          )
+        : message.attachments;
+      return {
+        ...message,
+        promptHistoryText: optimisticMessage.promptHistoryText,
+        ...(attachments ? { attachments } : {}),
+      };
     });
     const serverIds = new Set(acknowledgedMessages.map((message) => message.id));
     const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));

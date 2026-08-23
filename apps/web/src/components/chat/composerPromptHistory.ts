@@ -2,6 +2,7 @@ import { extractTrailingElementContexts } from "../../lib/elementContext";
 import { extractTrailingPreviewAnnotation } from "../../lib/previewAnnotation";
 import { extractTrailingTerminalContexts } from "../../lib/terminalContext";
 import { parseReviewCommentMessageSegments } from "../../reviewCommentContext";
+import type { ChatImageAttachment } from "../../types";
 
 const CLAUDE_ULTRATHINK_PREFIX = "Ultrathink:\n";
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
@@ -115,6 +116,19 @@ export function findComposerPromptHistoryOffset(
   return entryIndex < 0 ? null : entries.length - 1 - entryIndex;
 }
 
+export function preserveComposerPromptHistoryAttachmentFiles(
+  attachments: ReadonlyArray<ChatImageAttachment>,
+  optimisticAttachments: ReadonlyArray<ChatImageAttachment>,
+): ChatImageAttachment[] {
+  const optimisticAttachmentsById = new Map(
+    optimisticAttachments.map((attachment) => [attachment.id, attachment] as const),
+  );
+  return attachments.map((attachment) => {
+    const file = optimisticAttachmentsById.get(attachment.id)?.file;
+    return file ? { ...attachment, file } : attachment;
+  });
+}
+
 export function navigateComposerPromptHistory(input: {
   readonly direction: "backward" | "forward";
   readonly entries: ReadonlyArray<ComposerPromptHistoryEntry>;
@@ -176,23 +190,25 @@ export function navigateComposerPromptHistory(input: {
 
 export async function materializeComposerPromptHistoryAttachments(
   attachments: ReadonlyArray<ComposerPromptHistoryAttachment>,
-): Promise<
-  Array<
+): Promise<{
+  readonly attachments: Array<
     ComposerPromptHistoryAttachment & {
       readonly previewUrl: string;
       readonly file: File;
     }
-  >
-> {
+  >;
+  readonly failedAttachmentCount: number;
+}> {
   const materialized: Array<
     ComposerPromptHistoryAttachment & {
       readonly previewUrl: string;
       readonly file: File;
     }
   > = [];
+  let failedAttachmentCount = 0;
 
-  try {
-    for (const attachment of attachments) {
+  for (const attachment of attachments) {
+    try {
       let file = attachment.file;
       if (!file) {
         if (!attachment.previewUrl) {
@@ -214,12 +230,9 @@ export async function materializeComposerPromptHistoryAttachments(
         previewUrl: URL.createObjectURL(file),
         file,
       });
+    } catch {
+      failedAttachmentCount += 1;
     }
-    return materialized;
-  } catch (error) {
-    for (const attachment of materialized) {
-      URL.revokeObjectURL(attachment.previewUrl);
-    }
-    throw error;
   }
+  return { attachments: materialized, failedAttachmentCount };
 }

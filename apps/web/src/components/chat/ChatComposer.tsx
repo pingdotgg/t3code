@@ -1387,36 +1387,44 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptHistoryApplyGenerationRef.current = generation;
       promptHistoryApplyPendingRef.current = true;
 
-      void materializeComposerPromptHistoryAttachments(nextAttachments)
-        .then((nextImages) => {
-          if (promptHistoryApplyGenerationRef.current !== generation) {
-            for (const image of nextImages) {
-              URL.revokeObjectURL(image.previewUrl);
-            }
-            return;
+      const commitHistorySnapshot = (
+        nextImages: ComposerImageAttachment[],
+        failedAttachmentCount: number,
+      ) => {
+        if (promptHistoryApplyGenerationRef.current !== generation) {
+          for (const image of nextImages) {
+            URL.revokeObjectURL(image.previewUrl);
           }
+          return;
+        }
 
-          promptHistoryApplyPendingRef.current = false;
-          promptHistoryDraftRef.current = nextDraft;
-          promptHistoryDraftAttachmentsRef.current = nextDraftAttachments;
-          promptHistoryEntryIdRef.current = nextEntryId;
-          promptHistoryRecallAttachmentIdsRef.current =
-            nextOffset === null ? null : nextImages.map((image) => image.id);
-          promptHistoryRecallRef.current = nextOffset === null ? null : nextPrompt;
-          setPromptHistoryOffset(nextOffset);
-          promptRef.current = nextPrompt;
-          replaceComposerPromptAndImages(nextPrompt, nextImages);
-          setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
-          setComposerTrigger(null);
+        promptHistoryApplyPendingRef.current = false;
+        promptHistoryDraftRef.current = nextDraft;
+        promptHistoryDraftAttachmentsRef.current = nextDraftAttachments;
+        promptHistoryEntryIdRef.current = nextEntryId;
+        promptHistoryRecallAttachmentIdsRef.current =
+          nextOffset === null ? null : nextImages.map((image) => image.id);
+        promptHistoryRecallRef.current = nextOffset === null ? null : nextPrompt;
+        setPromptHistoryOffset(nextOffset);
+        promptRef.current = nextPrompt;
+        replaceComposerPromptAndImages(nextPrompt, nextImages);
+        setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
+        setComposerTrigger(null);
+        if (failedAttachmentCount > 0) {
+          toastManager.add({
+            type: "warning",
+            title: "Some prompt attachments could not be restored",
+            description: "The prompt text and available images were restored.",
+          });
+        }
+      };
+
+      void materializeComposerPromptHistoryAttachments(nextAttachments)
+        .then(({ attachments, failedAttachmentCount }) => {
+          commitHistorySnapshot(attachments, failedAttachmentCount);
         })
         .catch(() => {
-          if (promptHistoryApplyGenerationRef.current !== generation) return;
-          promptHistoryApplyPendingRef.current = false;
-          toastManager.add({
-            type: "error",
-            title: "Could not restore prompt attachments",
-            description: "One or more images are no longer available.",
-          });
+          commitHistorySnapshot([], nextAttachments.length);
         });
     },
     [promptRef, replaceComposerPromptAndImages],
