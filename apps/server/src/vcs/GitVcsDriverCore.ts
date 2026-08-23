@@ -2802,13 +2802,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     for (const relativePath of splitNullSeparatedGitStdoutPaths(listed)) {
       const targetFilePath = path.join(worktreePath, relativePath);
-      // A path untracked in the source checkout can still be tracked in the
-      // checked-out branch; the checked-out version wins over the local copy.
-      if (yield* fileSystem.exists(targetFilePath)) {
-        continue;
-      }
-      yield* fileSystem.makeDirectory(path.dirname(targetFilePath), { recursive: true });
-      yield* fileSystem.copyFile(path.join(sourceRoot, relativePath), targetFilePath);
+      yield* Effect.gen(function* () {
+        // A path untracked in the source checkout can still be tracked in the
+        // checked-out branch; the checked-out version wins over the local copy.
+        if (yield* fileSystem.exists(targetFilePath)) {
+          return;
+        }
+        yield* fileSystem.makeDirectory(path.dirname(targetFilePath), { recursive: true });
+        yield* fileSystem.copyFile(path.join(sourceRoot, relativePath), targetFilePath);
+      }).pipe(
+        // Best effort per entry: one broken file must not block the rest.
+        Effect.catchCause((cause) =>
+          Effect.logWarning("failed to copy a .worktreeinclude file into the new worktree", {
+            relativePath,
+            worktreePath,
+            cause,
+          }),
+        ),
+      );
     }
   });
 

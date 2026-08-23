@@ -1497,11 +1497,12 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const pathService = yield* Path.Path;
 
-        yield* writeTextFile(cwd, ".worktreeinclude", ".env\n");
+        yield* writeTextFile(cwd, ".worktreeinclude", ".env\napp.local\n");
         yield* fileSystem.symlink(
           pathService.join(cwd, "missing-target"),
           pathService.join(cwd, ".env"),
         );
+        yield* writeTextFile(cwd, "app.local", "AFTER_FAILURE=1\n");
 
         const worktreePath = pathService.join(
           yield* makeTmpDir("git-worktrees-"),
@@ -1521,6 +1522,10 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           "feature/worktree-include-failure",
         );
         assert.equal(yield* fileSystem.exists(pathService.join(worktreePath, ".env")), false);
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(worktreePath, "app.local")),
+          "AFTER_FAILURE=1\n",
+        );
       }),
     );
   });
