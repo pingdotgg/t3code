@@ -6,9 +6,10 @@ multiple messages, then send again in the same thread.
 
 On desktop, press `Up` in an empty composer to recall the latest prompt from the active thread.
 Press `Up` again to move backward through earlier prompts. Press `Down` to move forward, or to
-return to the empty composer after the newest prompt. Arrow keys keep moving the caret inside a
-multiline prompt until the caret reaches the first or last visible line. Editing a recalled prompt
-turns it into a new draft without changing the sent message.
+return to the empty composer after the newest prompt. Recalled prompts include their image
+attachments. Arrow keys keep moving the caret inside a multiline prompt until the caret reaches the
+first or last visible line. Editing a recalled prompt turns it into a new draft without changing the
+sent message.
 
 On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux from a new thread to
 start it in the background. T3 Code opens another new thread and shows an **Open** action for the

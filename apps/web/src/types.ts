@@ -33,6 +33,8 @@ export interface ThreadTerminalGroup {
 
 export interface ChatImageAttachment extends ContractChatImageAttachment {
   readonly previewUrl?: string;
+  /** Present while the attachment still has a local composer source. */
+  readonly file?: File;
 }
 
 export type ChatAttachment = ChatImageAttachment;

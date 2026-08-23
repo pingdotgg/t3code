@@ -5308,6 +5308,7 @@ function ChatViewContent(props: ChatViewProps) {
       mimeType: image.mimeType,
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
+      file: image.file,
     }));
     const shouldAnchorFirstMessage =
       activeThread.latestTurn === null &&

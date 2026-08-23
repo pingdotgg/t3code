@@ -1,6 +1,6 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   appendElementContextsToPrompt,
@@ -15,6 +15,7 @@ import { appendReviewCommentsToPrompt, buildFileReviewComment } from "../../revi
 import {
   buildComposerPromptHistoryEntries,
   findComposerPromptHistoryOffset,
+  materializeComposerPromptHistoryAttachments,
   navigateComposerPromptHistory,
   recallableComposerPrompt,
 } from "./composerPromptHistory";
@@ -50,6 +51,10 @@ const previewAnnotation: PreviewAnnotationPayload = {
   screenshot: null,
   createdAt: "2026-08-22T12:00:00.000Z",
 };
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("recallableComposerPrompt", () => {
   it("removes send-only payloads from a stored user message", () => {
@@ -95,18 +100,83 @@ describe("buildComposerPromptHistoryEntries", () => {
         },
       ]),
     ).toEqual([
-      { id: "user-1", prompt: "First" },
-      { id: "user-2", prompt: "First" },
-      { id: "user-3", prompt: "Second as typed" },
+      { id: "user-1", prompt: "First", attachments: [] },
+      { id: "user-2", prompt: "First", attachments: [] },
+      { id: "user-3", prompt: "Second as typed", attachments: [] },
+    ]);
+  });
+
+  it("keeps image attachments with the sent prompt", () => {
+    const attachment = {
+      type: "image" as const,
+      id: "image-1",
+      name: "diagram.png",
+      mimeType: "image/png",
+      sizeBytes: 128,
+      previewUrl: "blob:diagram",
+    };
+
+    expect(
+      buildComposerPromptHistoryEntries([
+        {
+          id: "user-with-image",
+          role: "user",
+          text: "Explain this diagram",
+          attachments: [attachment],
+        },
+      ]),
+    ).toEqual([
+      {
+        id: "user-with-image",
+        prompt: "Explain this diagram",
+        attachments: [attachment],
+      },
+    ]);
+  });
+
+  it("keeps an image-only message in history", () => {
+    expect(
+      buildComposerPromptHistoryEntries([
+        {
+          id: "image-only",
+          role: "user",
+          text: "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]",
+          attachments: [
+            {
+              type: "image",
+              id: "image-only-1",
+              name: "photo.png",
+              mimeType: "image/png",
+              sizeBytes: 64,
+              previewUrl: "blob:photo",
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        id: "image-only",
+        prompt: "",
+        attachments: [
+          {
+            type: "image",
+            id: "image-only-1",
+            name: "photo.png",
+            mimeType: "image/png",
+            sizeBytes: 64,
+            previewUrl: "blob:photo",
+          },
+        ],
+      },
     ]);
   });
 });
 
 describe("navigateComposerPromptHistory", () => {
   const entries = [
-    { id: "first", prompt: "First" },
-    { id: "second", prompt: "Second" },
-    { id: "third", prompt: "Third" },
+    { id: "first", prompt: "First", attachments: [] },
+    { id: "second", prompt: "Second", attachments: [] },
+    { id: "third", prompt: "Third", attachments: [] },
   ];
 
   it("walks backward and restores the unsent draft when walking forward", () => {
@@ -117,7 +187,14 @@ describe("navigateComposerPromptHistory", () => {
       currentPrompt: "",
       draft: "",
     });
-    expect(latest).toEqual({ entryId: "third", offset: 0, draft: "", prompt: "Third" });
+    expect(latest).toEqual({
+      entryId: "third",
+      offset: 0,
+      draft: "",
+      draftAttachments: [],
+      prompt: "Third",
+      attachments: [],
+    });
 
     const older = navigateComposerPromptHistory({
       direction: "backward",
@@ -126,7 +203,14 @@ describe("navigateComposerPromptHistory", () => {
       currentPrompt: latest?.prompt ?? "",
       draft: latest?.draft ?? "",
     });
-    expect(older).toEqual({ entryId: "second", offset: 1, draft: "", prompt: "Second" });
+    expect(older).toEqual({
+      entryId: "second",
+      offset: 1,
+      draft: "",
+      draftAttachments: [],
+      prompt: "Second",
+      attachments: [],
+    });
 
     expect(
       navigateComposerPromptHistory({
@@ -136,7 +220,14 @@ describe("navigateComposerPromptHistory", () => {
         currentPrompt: "Third",
         draft: "unfinished draft",
       }),
-    ).toEqual({ entryId: null, offset: null, draft: "", prompt: "unfinished draft" });
+    ).toEqual({
+      entryId: null,
+      offset: null,
+      draft: "",
+      draftAttachments: [],
+      prompt: "unfinished draft",
+      attachments: [],
+    });
   });
 
   it("does not enter history when the composer contains text", () => {
@@ -162,16 +253,87 @@ describe("navigateComposerPromptHistory", () => {
       }),
     ).toBeNull();
   });
+
+  it("moves attachments through history and clears them past the newest entry", () => {
+    const attachment = {
+      type: "image" as const,
+      id: "history-image",
+      name: "history.png",
+      mimeType: "image/png",
+      sizeBytes: 32,
+      previewUrl: "blob:history",
+    };
+    const entry = { id: "with-image", prompt: "Look here", attachments: [attachment] };
+
+    const recalled = navigateComposerPromptHistory({
+      direction: "backward",
+      entries: [entry],
+      offset: null,
+      currentPrompt: "",
+      currentAttachments: [],
+      draft: "",
+      draftAttachments: [],
+    });
+    expect(recalled?.attachments).toEqual([attachment]);
+
+    expect(
+      navigateComposerPromptHistory({
+        direction: "forward",
+        entries: [entry],
+        offset: recalled?.offset ?? null,
+        currentPrompt: recalled?.prompt ?? "",
+        currentAttachments: recalled?.attachments ?? [],
+        draft: recalled?.draft ?? "",
+        draftAttachments: recalled?.draftAttachments ?? [],
+      }),
+    ).toMatchObject({
+      offset: null,
+      prompt: "",
+      attachments: [],
+    });
+  });
 });
 
 describe("findComposerPromptHistoryOffset", () => {
   it("tracks the recalled message when duplicate prompt text exists", () => {
     const entries = [
-      { id: "older-a", prompt: "A" },
-      { id: "middle-b", prompt: "B" },
-      { id: "newer-a", prompt: "A" },
+      { id: "older-a", prompt: "A", attachments: [] },
+      { id: "middle-b", prompt: "B", attachments: [] },
+      { id: "newer-a", prompt: "A", attachments: [] },
     ];
     expect(findComposerPromptHistoryOffset(entries, "older-a")).toBe(2);
     expect(findComposerPromptHistoryOffset(entries, "missing")).toBeNull();
+  });
+});
+
+describe("materializeComposerPromptHistoryAttachments", () => {
+  it("creates a fresh preview URL for an in-memory file", async () => {
+    const file = new File(["image bytes"], "diagram.png", { type: "image/png" });
+    const createObjectUrl = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:recalled");
+
+    await expect(
+      materializeComposerPromptHistoryAttachments([
+        {
+          type: "image",
+          id: "image-1",
+          name: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          previewUrl: "blob:sent",
+          file,
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "image",
+        id: "image-1",
+        name: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        previewUrl: "blob:recalled",
+        file,
+      },
+    ]);
+    expect(createObjectUrl).toHaveBeenCalledWith(file);
   });
 });

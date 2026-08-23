@@ -11,19 +11,33 @@ export interface ComposerPromptHistoryMessage {
   readonly id: string;
   readonly role: string;
   readonly text: string;
+  readonly attachments?: ReadonlyArray<ComposerPromptHistoryAttachment> | undefined;
   readonly promptHistoryText?: string | undefined;
+}
+
+export interface ComposerPromptHistoryAttachment {
+  readonly type: "image";
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly previewUrl?: string | undefined;
+  readonly file?: File | undefined;
 }
 
 export interface ComposerPromptHistoryEntry {
   readonly id: string;
   readonly prompt: string;
+  readonly attachments: ReadonlyArray<ComposerPromptHistoryAttachment>;
 }
 
 export interface ComposerPromptHistoryNavigation {
   readonly entryId: string | null;
   readonly offset: number | null;
   readonly draft: string;
+  readonly draftAttachments: ReadonlyArray<ComposerPromptHistoryAttachment>;
   readonly prompt: string;
+  readonly attachments: ReadonlyArray<ComposerPromptHistoryAttachment>;
 }
 
 function stripTrailingReviewComments(prompt: string): string {
@@ -86,8 +100,9 @@ export function buildComposerPromptHistoryEntries(
       message.promptHistoryText === undefined
         ? recallableComposerPrompt(message.text)
         : message.promptHistoryText.trim();
-    if (prompt.length === 0) continue;
-    entries.push({ id: message.id, prompt });
+    const attachments = message.attachments ?? [];
+    if (prompt.length === 0 && attachments.length === 0) continue;
+    entries.push({ id: message.id, prompt, attachments });
   }
   return entries;
 }
@@ -105,12 +120,21 @@ export function navigateComposerPromptHistory(input: {
   readonly entries: ReadonlyArray<ComposerPromptHistoryEntry>;
   readonly offset: number | null;
   readonly currentPrompt: string;
+  readonly currentAttachments?: ReadonlyArray<ComposerPromptHistoryAttachment>;
   readonly draft: string;
+  readonly draftAttachments?: ReadonlyArray<ComposerPromptHistoryAttachment>;
 }): ComposerPromptHistoryNavigation | null {
   if (input.entries.length === 0) return null;
+  const currentAttachments = input.currentAttachments ?? [];
+  const draftAttachments = input.draftAttachments ?? [];
 
   if (input.direction === "backward") {
-    if (input.offset === null && input.currentPrompt.length > 0) return null;
+    if (
+      input.offset === null &&
+      (input.currentPrompt.length > 0 || currentAttachments.length > 0)
+    ) {
+      return null;
+    }
     if (input.offset !== null && input.offset >= input.entries.length - 1) return null;
     const offset = (input.offset ?? -1) + 1;
     const entry = input.entries[input.entries.length - 1 - offset];
@@ -119,7 +143,9 @@ export function navigateComposerPromptHistory(input: {
       entryId: entry.id,
       offset,
       draft: input.offset === null ? input.currentPrompt : input.draft,
+      draftAttachments: input.offset === null ? currentAttachments : draftAttachments,
       prompt: entry.prompt,
+      attachments: entry.attachments,
     };
   }
 
@@ -129,7 +155,9 @@ export function navigateComposerPromptHistory(input: {
       entryId: null,
       offset: null,
       draft: "",
+      draftAttachments: [],
       prompt: input.draft,
+      attachments: draftAttachments,
     };
   }
 
@@ -140,6 +168,58 @@ export function navigateComposerPromptHistory(input: {
     entryId: entry.id,
     offset,
     draft: input.draft,
+    draftAttachments,
     prompt: entry.prompt,
+    attachments: entry.attachments,
   };
+}
+
+export async function materializeComposerPromptHistoryAttachments(
+  attachments: ReadonlyArray<ComposerPromptHistoryAttachment>,
+): Promise<
+  Array<
+    ComposerPromptHistoryAttachment & {
+      readonly previewUrl: string;
+      readonly file: File;
+    }
+  >
+> {
+  const materialized: Array<
+    ComposerPromptHistoryAttachment & {
+      readonly previewUrl: string;
+      readonly file: File;
+    }
+  > = [];
+
+  try {
+    for (const attachment of attachments) {
+      let file = attachment.file;
+      if (!file) {
+        if (!attachment.previewUrl) {
+          throw new Error(`Attachment ${attachment.id} has no readable source`);
+        }
+        const response = await fetch(attachment.previewUrl);
+        if (!response.ok) {
+          throw new Error(`Attachment ${attachment.id} could not be downloaded`);
+        }
+        const blob = await response.blob();
+        file = new File([blob], attachment.name, {
+          type: attachment.mimeType || blob.type,
+        });
+      }
+
+      materialized.push({
+        ...attachment,
+        sizeBytes: file.size,
+        previewUrl: URL.createObjectURL(file),
+        file,
+      });
+    }
+    return materialized;
+  } catch (error) {
+    for (const attachment of materialized) {
+      URL.revokeObjectURL(attachment.previewUrl);
+    }
+    throw error;
+  }
 }

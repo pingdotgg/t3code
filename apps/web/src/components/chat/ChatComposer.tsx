@@ -105,8 +105,10 @@ import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { ComposerControl, ComposerControlIcon, ComposerSelectControl } from "./ComposerControl";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import {
+  type ComposerPromptHistoryAttachment,
   type ComposerPromptHistoryEntry,
   findComposerPromptHistoryOffset,
+  materializeComposerPromptHistoryAttachments,
   navigateComposerPromptHistory,
 } from "./composerPromptHistory";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
@@ -325,6 +327,12 @@ const terminalContextIdListsEqual = (
   ids: ReadonlyArray<string>,
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
+
+const composerImageIdListsEqual = (
+  images: ReadonlyArray<ComposerImageAttachment>,
+  ids: ReadonlyArray<string>,
+): boolean =>
+  images.length === ids.length && images.every((image, index) => image.id === ids[index]);
 
 function isInsideComposerFloatingLayer(element: Element): boolean {
   return element.closest(COMPOSER_FLOATING_LAYER_SELECTOR) !== null;
@@ -1026,8 +1034,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const stashPulseKeyRef = useRef(0);
   const stashPulseTimeoutRef = useRef<number | null>(null);
   const promptHistoryDraftRef = useRef("");
+  const promptHistoryDraftAttachmentsRef = useRef<ReadonlyArray<ComposerPromptHistoryAttachment>>(
+    [],
+  );
   const promptHistoryEntryIdRef = useRef<string | null>(null);
+  const promptHistoryRecallAttachmentIdsRef = useRef<ReadonlyArray<string> | null>(null);
   const promptHistoryRecallRef = useRef<string | null>(null);
+  const promptHistoryApplyGenerationRef = useRef(0);
+  const promptHistoryApplyPendingRef = useRef(false);
   /**
    * Snapshots currently being encoded, keyed by target+prompt+image ids.
    * Keyed rather than boolean so a genuinely different prompt (or a different
@@ -1324,9 +1338,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [composerDraftTarget, setComposerDraftPrompt],
   );
 
+  const replaceComposerPromptAndImages = useCallback(
+    (nextPrompt: string, nextImages: ComposerImageAttachment[]) => {
+      clearComposerDraftPromptAndImages(composerDraftTarget);
+      if (nextPrompt.length > 0) {
+        setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      }
+      if (nextImages.length > 0) {
+        addComposerDraftImages(composerDraftTarget, nextImages);
+      }
+    },
+    [
+      addComposerDraftImages,
+      clearComposerDraftPromptAndImages,
+      composerDraftTarget,
+      setComposerDraftPrompt,
+    ],
+  );
+
   const leaveComposerPromptHistory = useCallback(() => {
+    promptHistoryApplyGenerationRef.current += 1;
+    promptHistoryApplyPendingRef.current = false;
     promptHistoryDraftRef.current = "";
+    promptHistoryDraftAttachmentsRef.current = [];
     promptHistoryEntryIdRef.current = null;
+    promptHistoryRecallAttachmentIdsRef.current = null;
     promptHistoryRecallRef.current = null;
     setPromptHistoryOffset(null);
   }, []);
@@ -1337,31 +1373,64 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       nextEntryId: string | null,
       nextOffset: number | null,
       nextDraft: string,
+      nextAttachments: ReadonlyArray<ComposerPromptHistoryAttachment>,
+      nextDraftAttachments: ReadonlyArray<ComposerPromptHistoryAttachment>,
     ) => {
-      promptHistoryDraftRef.current = nextDraft;
-      promptHistoryEntryIdRef.current = nextEntryId;
-      promptHistoryRecallRef.current = nextOffset === null ? null : nextPrompt;
-      setPromptHistoryOffset(nextOffset);
-      promptRef.current = nextPrompt;
-      setPrompt(nextPrompt);
-      setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
-      setComposerTrigger(null);
+      const generation = promptHistoryApplyGenerationRef.current + 1;
+      promptHistoryApplyGenerationRef.current = generation;
+      promptHistoryApplyPendingRef.current = true;
+
+      void materializeComposerPromptHistoryAttachments(nextAttachments)
+        .then((nextImages) => {
+          if (promptHistoryApplyGenerationRef.current !== generation) {
+            for (const image of nextImages) {
+              URL.revokeObjectURL(image.previewUrl);
+            }
+            return;
+          }
+
+          promptHistoryApplyPendingRef.current = false;
+          promptHistoryDraftRef.current = nextDraft;
+          promptHistoryDraftAttachmentsRef.current = nextDraftAttachments;
+          promptHistoryEntryIdRef.current = nextEntryId;
+          promptHistoryRecallAttachmentIdsRef.current =
+            nextOffset === null ? null : nextImages.map((image) => image.id);
+          promptHistoryRecallRef.current = nextOffset === null ? null : nextPrompt;
+          setPromptHistoryOffset(nextOffset);
+          promptRef.current = nextPrompt;
+          replaceComposerPromptAndImages(nextPrompt, nextImages);
+          setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
+          setComposerTrigger(null);
+        })
+        .catch(() => {
+          if (promptHistoryApplyGenerationRef.current !== generation) return;
+          promptHistoryApplyPendingRef.current = false;
+          toastManager.add({
+            type: "error",
+            title: "Could not restore prompt attachments",
+            description: "One or more images are no longer available.",
+          });
+        });
     },
-    [promptRef, setPrompt],
+    [promptRef, replaceComposerPromptAndImages],
   );
 
   useEffect(() => {
+    promptHistoryApplyGenerationRef.current += 1;
+    promptHistoryApplyPendingRef.current = false;
     promptHistoryDraftRef.current = "";
+    promptHistoryDraftAttachmentsRef.current = [];
     promptHistoryEntryIdRef.current = null;
+    promptHistoryRecallAttachmentIdsRef.current = null;
     promptHistoryRecallRef.current = null;
     setPromptHistoryOffset(null);
 
     return () => {
       if (promptHistoryEntryIdRef.current !== null) {
-        setComposerDraftPrompt(composerDraftTarget, promptHistoryDraftRef.current);
+        replaceComposerPromptAndImages(promptHistoryDraftRef.current, []);
       }
     };
-  }, [composerDraftTarget, setComposerDraftPrompt]);
+  }, [composerDraftTarget, replaceComposerPromptAndImages]);
 
   useEffect(() => {
     const recalledPrompt = promptHistoryRecallRef.current;
@@ -1370,11 +1439,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [leaveComposerPromptHistory, prompt]);
 
   useEffect(() => {
+    if (promptHistoryApplyPendingRef.current) {
+      promptHistoryApplyGenerationRef.current += 1;
+      promptHistoryApplyPendingRef.current = false;
+      return;
+    }
+    const recalledAttachmentIds = promptHistoryRecallAttachmentIdsRef.current;
+    if (
+      recalledAttachmentIds === null ||
+      composerImageIdListsEqual(composerImages, recalledAttachmentIds)
+    ) {
+      return;
+    }
+    leaveComposerPromptHistory();
+  }, [composerImages, leaveComposerPromptHistory]);
+
+  useEffect(() => {
     const entryId = promptHistoryEntryIdRef.current;
     if (entryId === null) return;
     const nextOffset = findComposerPromptHistoryOffset(promptHistoryEntries, entryId);
     if (nextOffset === null) {
-      applyComposerPromptHistory(promptHistoryDraftRef.current, null, null, "");
+      applyComposerPromptHistory(
+        promptHistoryDraftRef.current,
+        null,
+        null,
+        "",
+        promptHistoryDraftAttachmentsRef.current,
+        [],
+      );
       return;
     }
     setPromptHistoryOffset(nextOffset);
@@ -1676,6 +1768,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       cursorAdjacentToMention: boolean,
       terminalContextIds: string[],
     ) => {
+      if (promptHistoryApplyPendingRef.current) {
+        promptHistoryApplyGenerationRef.current += 1;
+        promptHistoryApplyPendingRef.current = false;
+      }
       if (
         promptHistoryRecallRef.current !== null &&
         nextPrompt !== promptHistoryRecallRef.current
@@ -2062,6 +2158,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     }
     if ((key === "ArrowUp" || key === "ArrowDown") && !composerMenuOpenRef.current) {
+      if (promptHistoryApplyPendingRef.current) {
+        return true;
+      }
+      const recalledAttachmentIds = promptHistoryRecallAttachmentIdsRef.current;
+      const composerImagesMatchHistory =
+        promptHistoryOffset === null
+          ? composerImages.length === 0
+          : recalledAttachmentIds !== null &&
+            composerImageIdListsEqual(composerImages, recalledAttachmentIds);
       if (
         !isComposerApprovalState &&
         !activePendingProgress &&
@@ -2071,7 +2176,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         !event.metaKey &&
         !event.ctrlKey &&
         !event.isComposing &&
-        composerImages.length === 0 &&
+        composerImagesMatchHistory &&
         composerTerminalContexts.length === 0 &&
         composerElementContexts.length === 0 &&
         composerPreviewAnnotations.length === 0 &&
@@ -2088,7 +2193,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             entries: promptHistoryEntries,
             offset: promptHistoryOffset,
             currentPrompt: promptRef.current,
+            currentAttachments: composerImages,
             draft: promptHistoryDraftRef.current,
+            draftAttachments: promptHistoryDraftAttachmentsRef.current,
           });
           if (navigation) {
             applyComposerPromptHistory(
@@ -2096,6 +2203,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               navigation.entryId,
               navigation.offset,
               navigation.draft,
+              navigation.attachments,
+              navigation.draftAttachments,
             );
             return true;
           }
