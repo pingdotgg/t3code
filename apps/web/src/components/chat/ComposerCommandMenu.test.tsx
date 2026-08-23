@@ -51,10 +51,12 @@ describe("ComposerCommandMenu", () => {
     expect(markup).not.toContain("<svg");
     expect(markup).toContain("font-sans text-xs font-medium");
     expect(markup).not.toContain("font-mono");
-    expect(markup).toContain("text-right");
+    expect(markup).not.toContain("grid-cols-");
+    expect(markup).toContain("max-w-[45%]");
+    expect(markup).toContain("text-left");
   });
 
-  it("renders a skill source icon with an accessible source label", () => {
+  it("renders the skill source icon inside its badge", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu
         items={[
@@ -82,40 +84,53 @@ describe("ComposerCommandMenu", () => {
     );
 
     expect(markup).toContain("Browser");
-    expect(markup).toContain('<span class="sr-only">App skill</span>');
+    expect(markup).toContain('data-slot="badge"');
+    expect(markup).toContain(">App Skill</span>");
+    expect(markup).toContain("Open and control the in-app browser");
+    expect(markup).toContain("max-w-[48ch]");
+    expect(markup).toContain("text-secondary-label text-xs");
+    expect(markup).toContain("ms-auto");
+    expect(markup).toContain("text-current");
+    expect(markup.indexOf("Open and control the in-app browser")).toBeLessThan(
+      markup.indexOf(">App Skill</span>"),
+    );
     expect(markup).toContain("<svg");
-    expect(markup).toContain("text-icon-muted");
+    expect(markup.indexOf('data-slot="badge"')).toBeLessThan(markup.indexOf("<svg"));
   });
 
-  it("renders slash skill results with only the skill prefix dimmed", () => {
+  it("keeps slash skills aligned with the source icon inside the badge", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu
         items={[
           {
-            id: "skill:codex:browser",
+            id: "skill:codex:ask-matt",
             type: "skill",
             provider: ProviderDriverKind.make("codex"),
             skill: {
-              name: "browser",
-              path: "/skills/browser/SKILL.md",
+              name: "ask-matt",
+              displayName: "Ask Matt",
+              path: "/skills/ask-matt/SKILL.md",
+              scope: "repo",
               enabled: true,
             },
-            label: "skill:browser",
-            description: "Open and control the in-app browser",
+            label: "/skill:ask-matt",
+            description: "Find the right skill or workflow",
           },
         ]}
         resolvedTheme="dark"
         isLoading={false}
         triggerKind="slash-command"
-        activeItemId="skill:codex:browser"
+        activeItemId="skill:codex:ask-matt"
         onHighlightedItemChange={() => {}}
         onSelect={() => {}}
       />,
     );
 
-    expect(markup).toContain('<span class="text-secondary-label">skill:</span>browser');
-    expect(markup).toContain("Open and control the in-app browser");
+    expect(markup).toContain('<span class="text-secondary-label">/skill:</span>Ask Matt');
+    expect(markup).toContain('data-slot="badge"');
+    expect(markup).toContain("lucide-folder");
+    expect(markup).toContain(">Repo</span>");
+    expect(markup).toContain("Find the right skill or workflow");
     expect(markup).not.toContain("font-medium text-secondary-label");
-    expect(markup).not.toContain("<svg");
   });
 });
