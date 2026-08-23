@@ -124,9 +124,14 @@ export type ProviderUploadFeedbackResult = typeof ProviderUploadFeedbackResult.T
 export class ProviderUploadFeedbackError extends Schema.TaggedErrorClass<ProviderUploadFeedbackError>()(
   "ProviderUploadFeedbackError",
   {
-    message: Schema.String,
+    threadId: ThreadId,
+    cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  override get message(): string {
+    return `Failed to upload feedback for thread ${this.threadId}.`;
+  }
+}
 
 const ProviderEventKind = Schema.Literals(["session", "notification", "request", "error"]);
 

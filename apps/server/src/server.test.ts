@@ -115,6 +115,7 @@ import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
+import { ProviderAdapterRequestError } from "./provider/Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -4482,6 +4483,40 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.deepStrictEqual(response, { feedbackId: "codex-thread-feedback" });
       assert.deepStrictEqual(uploadFeedback.mock.calls, [[input]]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps feedback errors structured across websocket rpc", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-feedback-failure");
+      yield* buildAppUnderTest({
+        layers: {
+          providerService: {
+            uploadFeedback: () =>
+              Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "codex",
+                  method: "feedback/upload",
+                  detail: "private provider detail",
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const error = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.providerUploadFeedback]({ threadId }).pipe(Effect.flip),
+        ),
+      );
+
+      assert.strictEqual(error._tag, "ProviderUploadFeedbackError");
+      if (error._tag === "ProviderUploadFeedbackError") {
+        assert.strictEqual(error.threadId, threadId);
+        assert.strictEqual(error.message, `Failed to upload feedback for thread ${threadId}.`);
+        assert.isDefined(error.cause);
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

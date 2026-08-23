@@ -1128,20 +1128,28 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const routed = yield* resolveRoutableSession({
         threadId: input.threadId,
         operation: "ProviderService.uploadFeedback",
-        allowRecovery: true,
+        allowRecovery: false,
       });
-      if (routed.adapter.uploadFeedback === undefined) {
+      const uploadFeedback = routed.adapter.uploadFeedback;
+      if (uploadFeedback === undefined) {
         return yield* toValidationError(
           "ProviderService.uploadFeedback",
           `Provider '${routed.adapter.provider}' does not support feedback uploads.`,
         );
+      }
+      if (!routed.isActive) {
+        yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.uploadFeedback",
+          allowRecovery: true,
+        });
       }
       yield* Effect.annotateCurrentSpan({
         "provider.operation": "upload-feedback",
         "provider.kind": routed.adapter.provider,
         "provider.thread_id": input.threadId,
       });
-      return yield* routed.adapter.uploadFeedback(input);
+      return yield* uploadFeedback(input);
     },
   );
 

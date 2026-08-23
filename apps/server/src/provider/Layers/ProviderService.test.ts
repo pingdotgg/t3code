@@ -1018,6 +1018,27 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("does not restart an unsupported provider before rejecting feedback", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-feedback-unsupported-stopped");
+      yield* provider.startSession(threadId, {
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* routing.claude.stopSession(threadId);
+      routing.claude.startSession.mockClear();
+
+      const error = yield* provider.uploadFeedback({ threadId }).pipe(Effect.flip);
+
+      assert.instanceOf(error, ProviderValidationError);
+      assert.include(error.issue, "does not support feedback uploads");
+      assert.strictEqual(routing.claude.startSession.mock.calls.length, 0);
+    }),
+  );
+
   it.effect("appends attachment file paths to the turn input text", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

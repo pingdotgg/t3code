@@ -1544,7 +1544,8 @@ const makeWsRpcLayer = (
               Effect.mapError(
                 (cause) =>
                   new ProviderUploadFeedbackError({
-                    message: cause.message,
+                    threadId: input.threadId,
+                    cause,
                   }),
               ),
             ),
