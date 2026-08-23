@@ -20,11 +20,6 @@ function normalizeSource(value: string): string {
   return trimmed.startsWith("<") && trimmed.endsWith(">") ? trimmed.slice(1, -1) : trimmed;
 }
 
-/**
- * Returns the client-side fragment to append to a signed asset URL. SVG view
- * references such as `icons.svg#logo` must survive the URL swap, while a query
- * addressed to the original server must not.
- */
 export function markdownImageSourceFragment(source: string): string {
   const normalizedSource = normalizeSource(source);
   const hashIndex = normalizedSource.indexOf("#");

@@ -216,13 +216,16 @@ describe("ChatMarkdown workspace images", () => {
     expect(copiedMarkdownFrom(html)).toBe("![diagram](images/diagram.png)");
   });
 
-  it("uses a static placeholder while a signed asset URL loads", () => {
+  it("uses a static bounded-width placeholder while a signed asset URL loads", () => {
     testState.assetState = "loading";
 
     const html = render("![loading](.t3/workspace-image.svg)");
+    const className = /<span[^>]*aria-label="Loading image"[^>]*class="([^"]*)"/.exec(html)?.[1];
 
     expect(html).toContain('aria-label="Loading image"');
     expect(html).not.toContain("animate-pulse");
+    expect(className?.split(" ")).toContain("w-64");
+    expect(className?.split(" ")).not.toContain("w-full");
   });
 
   it("never passes a workspace source to a raw image when thread context is unavailable", () => {

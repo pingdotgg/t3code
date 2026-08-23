@@ -79,7 +79,6 @@ function safeDecode(value: string): string {
   }
 }
 
-/** Returns whether a markdown href decodes to an absolute Windows drive path. */
 export function isWindowsDrivePathHref(href: string): boolean {
   return WINDOWS_DRIVE_PATH_PATTERN.test(safeDecode(href));
 }

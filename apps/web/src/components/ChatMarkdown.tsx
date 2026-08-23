@@ -128,10 +128,6 @@ interface ChatMarkdownProps {
   lineBreaks?: boolean;
   /** Parse sanitized raw HTML instead of displaying its source text. */
   parseRawHtml?: boolean;
-  /**
-   * Relative image sources resolve against this directory, defaulting to cwd.
-   * File previews pass the document's directory so nested READMEs find their images.
-   */
   imageBaseDir?: string | undefined;
 }
 
@@ -991,11 +987,6 @@ const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME = cn(
   CHAT_MARKDOWN_IMAGE_BOUNDS_CLASS_NAME,
 );
 
-/**
- * Applies authored image dimensions to rendered images and workspace placeholders.
- * When both axes are present, the authored ratio keeps either size cap from
- * distorting the box.
- */
 function authoredImageSizeStyle(
   width: string | number | undefined,
   height: string | number | undefined,
@@ -1008,14 +999,11 @@ function authoredImageSizeStyle(
   if (style.width !== undefined && style.height !== undefined) {
     style.aspectRatio = `${parsedWidth} / ${parsedHeight}`;
     style.height = "auto";
-    // Translate the height cap into the width axis so tall images shrink proportionally.
     style.maxWidth = `min(100%, 30rem, ${(30 * parsedWidth) / parsedHeight}rem)`;
   }
   return style.width === undefined && style.height === undefined ? undefined : style;
 }
 
-// Forced inline-block keeps authored alignment wrappers working despite stray display
-// overrides. align-bottom removes the baseline gap, and every image state shares this layout.
 const CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME = "inline-block! align-bottom";
 const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
@@ -1048,7 +1036,6 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
   readonly threadRef: ScopedThreadRef;
   readonly path: string;
   readonly alt: string;
-  /** The DOM src is signed or absent while loading, so copying uses the authored source. */
   readonly copyMarkdown: string;
   readonly srcFragment: string;
   readonly style?: CSSProperties | undefined;
@@ -1071,7 +1058,7 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
         aria-label="Loading image"
         className={cn(
           CHAT_MARKDOWN_WORKSPACE_IMAGE_LAYOUT_CLASS_NAME,
-          "my-1 aspect-video w-full rounded-lg bg-muted/60",
+          "my-1 aspect-video w-64 max-w-full rounded-lg bg-muted/60",
           CHAT_MARKDOWN_IMAGE_BOUNDS_CLASS_NAME,
         )}
         style={props.style}
@@ -1080,7 +1067,6 @@ const ChatMarkdownWorkspaceImage = memo(function ChatMarkdownWorkspaceImage(prop
   }
   return (
     <img
-      // The signed URL replaces the authored source, so restore client-side SVG fragments.
       src={assetUrl.url + props.srcFragment}
       alt={props.alt}
       data-markdown-copy={props.copyMarkdown}
@@ -1566,7 +1552,6 @@ function ChatMarkdown({
     return buildFileLinkParentSuffixByPath(filePaths);
   }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
   const markdownUrlTransform = useCallback((href: string) => {
-    // defaultUrlTransform clears drive paths because it reads the drive prefix as a scheme.
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
@@ -1882,7 +1867,6 @@ function ChatMarkdown({
         );
       },
       img({ node, title: _title, src, alt, ...props }) {
-        // The sanitizer removes a drive-path src, so prefer its allowlisted preserved value.
         const localSrc = node?.properties?.dataLocalSrc;
         const authoredSrc = typeof localSrc === "string" ? localSrc : src;
         const srcString =

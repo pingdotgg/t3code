@@ -138,7 +138,6 @@ export function ThreadMarkdownImage(props: {
   const isSvg = /\.svg$/i.test(props.path);
   const assetUrl = useAssetUrlState(
     props.environmentId,
-    // React Native's Image cannot decode SVG, so a signed URL would draw nothing.
     isSvg
       ? null
       : {
