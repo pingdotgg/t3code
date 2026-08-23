@@ -677,8 +677,15 @@ export function makeAntigravityAdapter(
 
             const stderrOutput = yield* Ref.get(stderrBufferRef);
             const recordedError = yield* Ref.get(resultErrorRef);
+            if (exitCode !== 0) {
+              yield* Effect.logWarning("Antigravity CLI turn exited with a non-zero status.", {
+                exitCode,
+                stderrLength: stderrOutput.length,
+              });
+            }
             const errorMessage =
-              recordedError ?? (exitCode !== 0 ? stderrOutput.trim() || "Turn failed" : undefined);
+              recordedError ??
+              (exitCode !== 0 ? `Antigravity CLI exited with code ${exitCode}.` : undefined);
             const isSuccess = exitCode === 0 && !recordedError;
 
             // Complete assistant message item

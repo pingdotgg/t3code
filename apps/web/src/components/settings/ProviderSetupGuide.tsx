@@ -4,10 +4,11 @@ import { CheckCircle2Icon, CopyIcon, DownloadIcon, KeyRoundIcon, TerminalIcon } 
 import { type ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { useState } from "react";
 
-import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
+import { ScrollArea } from "../ui/scroll-area";
 import { toastManager } from "../ui/toast";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
@@ -87,38 +88,26 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
             <span className="text-xs text-muted-foreground flex items-center gap-1.5 font-medium">
               <DownloadIcon className="size-3.5" /> Step 1: Install `agy` CLI
             </span>
-            <div className="flex gap-1">
-              <button
-                type="button"
-                onClick={() => setPlatformTab("unix")}
-                className={cn(
-                  "px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
-                  platformTab === "unix"
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                macOS / Linux
-              </button>
-              <button
-                type="button"
-                onClick={() => setPlatformTab("win")}
-                className={cn(
-                  "px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
-                  platformTab === "win"
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                Windows
-              </button>
-            </div>
+            <ToggleGroup
+              aria-label="Platform selection"
+              variant="segmented"
+              value={[platformTab]}
+              onValueChange={(next) => {
+                const value = next[0];
+                if (value === "unix" || value === "win") setPlatformTab(value);
+              }}
+            >
+              <Toggle value="unix">macOS / Linux</Toggle>
+              <Toggle value="win">Windows</Toggle>
+            </ToggleGroup>
           </div>
 
-          <div className="flex items-center gap-2 rounded-md border border-border/70 bg-background/80 px-2.5 py-1.5 font-mono text-[11px]">
-            <code className="flex-1 select-all overflow-x-auto text-foreground">
-              {platformTab === "unix" ? unixInstallCmd : winInstallCmd}
-            </code>
+          <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-background/80 py-0.5 pr-0.5 pl-2 font-mono text-[11px]">
+            <ScrollArea scrollFade className="h-8 min-w-0 flex-1 rounded-none">
+              <code className="flex h-full w-max select-all items-center whitespace-nowrap pr-3 font-mono text-[11px] text-foreground">
+                {platformTab === "unix" ? unixInstallCmd : winInstallCmd}
+              </code>
+            </ScrollArea>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -126,7 +115,7 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
                     type="button"
                     size="icon-xs"
                     variant="ghost"
-                    className="size-6 shrink-0"
+                    className="size-6 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
                     onClick={() =>
                       copyToClipboard(platformTab === "unix" ? unixInstallCmd : winInstallCmd, {
                         label: "Install",
@@ -153,8 +142,12 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
           Run <code className="rounded bg-muted px-1 py-0.5 font-mono text-foreground">agy</code> in
           your terminal and complete the Google login prompt in your browser:
         </p>
-        <div className="flex items-center gap-2 rounded-md border border-border/70 bg-background/80 px-2.5 py-1.5 font-mono text-[11px]">
-          <code className="flex-1 select-all text-foreground">{authCmd}</code>
+        <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-background/80 py-0.5 pr-0.5 pl-2 font-mono text-[11px]">
+          <ScrollArea scrollFade className="h-8 min-w-0 flex-1 rounded-none">
+            <code className="flex h-full w-max select-all items-center whitespace-nowrap pr-3 font-mono text-[11px] text-foreground">
+              {authCmd}
+            </code>
+          </ScrollArea>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -162,7 +155,7 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
                   type="button"
                   size="icon-xs"
                   variant="ghost"
-                  className="size-6 shrink-0"
+                  className="size-6 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
                   onClick={() => copyToClipboard(authCmd, { label: "Login" })}
                   aria-label="Copy login command"
                 >
