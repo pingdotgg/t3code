@@ -396,3 +396,128 @@ it("reports an update hint instead of unauthenticated when gh predates --json", 
     /2\.81\.0/,
   );
 });
+
+const authStatusJson = (
+  accounts: ReadonlyArray<{
+    readonly host: string;
+    readonly login: string;
+    readonly state?: string;
+    readonly active?: boolean;
+  }>,
+): string =>
+  JSON.stringify({
+    hosts: Object.fromEntries(
+      accounts.map((account) => [
+        account.host,
+        [
+          {
+            state: account.state ?? "success",
+            active: account.active ?? false,
+            host: account.host,
+            login: account.login,
+            tokenSource: "keyring",
+            gitProtocol: "https",
+          },
+        ],
+      ]),
+    ),
+  });
+
+const refineUnknownRemote = (input: { readonly host: string; readonly stdout: string }) =>
+  GitHubSourceControlProvider.discovery.refineUnknownRemote?.({
+    cwd: "/repo",
+    context: {
+      provider: {
+        kind: "unknown",
+        name: input.host,
+        baseUrl: `https://${input.host}`,
+      },
+      remoteName: "origin",
+      remoteUrl: `https://${input.host}/org/repo.git`,
+    },
+    auth: processResult(input.stdout),
+  });
+
+it("refines unknown remotes that gh is signed in to, whether or not the account is active", () => {
+  assert.deepStrictEqual(
+    refineUnknownRemote({
+      host: "git.example.edu",
+      stdout: authStatusJson([
+        { host: "github.com", login: "active-user", active: true },
+        { host: "git.example.edu", login: "enterprise-user" },
+      ]),
+    }),
+    {
+      kind: "github",
+      name: "GitHub Self-Hosted",
+      baseUrl: "https://git.example.edu",
+    },
+  );
+});
+
+it("leaves unknown remotes alone when gh has no working account for the host", () => {
+  assert.strictEqual(
+    refineUnknownRemote({
+      host: "git.example.edu",
+      stdout: authStatusJson([
+        { host: "git.example.edu", login: "enterprise-user", state: "failure" },
+      ]),
+    }),
+    null,
+  );
+
+  assert.strictEqual(
+    refineUnknownRemote({
+      host: "git.example.edu",
+      stdout: authStatusJson([{ host: "github.com", login: "active-user", active: true }]),
+    }),
+    null,
+  );
+});
+
+it("refuses a port-bearing remote when gh only knows the bare hostname", () => {
+  // One hostname can serve two forges on separate ports. Refinement takes the first
+  // provider that claims the remote, so a bare-hostname match here would beat another
+  // CLI's exact host:port match and route operations through the wrong provider.
+  assert.strictEqual(
+    refineUnknownRemote({
+      host: "git.example.edu:8443",
+      stdout: authStatusJson([{ host: "git.example.edu", login: "enterprise-user" }]),
+    }),
+    null,
+  );
+});
+
+it("refines port-bearing remotes when gh reports the same host and port", () => {
+  assert.deepStrictEqual(
+    refineUnknownRemote({
+      host: "git.example.edu:8443",
+      stdout: authStatusJson([{ host: "git.example.edu:8443", login: "enterprise-user" }]),
+    }),
+    {
+      kind: "github",
+      name: "GitHub Self-Hosted",
+      baseUrl: "https://git.example.edu:8443",
+    },
+  );
+});
+
+it("ignores stderr noise when refining, so gh warnings do not break host matching", () => {
+  const provider = GitHubSourceControlProvider.discovery.refineUnknownRemote?.({
+    cwd: "/repo",
+    context: {
+      provider: {
+        kind: "unknown",
+        name: "git.example.edu",
+        baseUrl: "https://git.example.edu",
+      },
+      remoteName: "origin",
+      remoteUrl: "https://git.example.edu/org/repo.git",
+    },
+    auth: processResult(authStatusJson([{ host: "git.example.edu", login: "enterprise-user" }]), {
+      stderr: "warning: ignored diagnostic from gh\n",
+    }),
+  });
+
+  assert.strictEqual(provider?.kind, "github");
+});
