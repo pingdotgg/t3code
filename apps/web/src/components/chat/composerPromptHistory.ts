@@ -116,7 +116,8 @@ export function navigateComposerPromptHistory(input: {
 
   if (input.direction === "backward") {
     if (input.offset === null && input.currentPrompt.length > 0) return null;
-    const offset = Math.min((input.offset ?? -1) + 1, input.entries.length - 1);
+    if (input.offset !== null && input.offset >= input.entries.length - 1) return null;
+    const offset = (input.offset ?? -1) + 1;
     const entry = input.entries[input.entries.length - 1 - offset];
     if (!entry) return null;
     return {

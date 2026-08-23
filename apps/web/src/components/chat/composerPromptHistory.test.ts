@@ -149,6 +149,18 @@ describe("navigateComposerPromptHistory", () => {
       }),
     ).toBeNull();
   });
+
+  it("leaves ArrowUp to the editor at the oldest recalled prompt", () => {
+    expect(
+      navigateComposerPromptHistory({
+        direction: "backward",
+        entries,
+        offset: entries.length - 1,
+        currentPrompt: "First",
+        draft: "",
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("findComposerPromptHistoryOffset", () => {
