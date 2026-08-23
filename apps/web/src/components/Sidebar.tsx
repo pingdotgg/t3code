@@ -246,7 +246,7 @@ const ProjectScopeMenuItem = memo(function ProjectScopeMenuItem(props: {
       aria-label={
         presentation ? `${project.displayName}, ${presentation.label}` : project.displayName
       }
-      className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+      className="h-8 min-h-8 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
     >
       <span className="relative inline-flex size-4 shrink-0">
         <ProjectFavicon
@@ -3635,7 +3635,7 @@ export default function Sidebar() {
                       <MenuRadioItem
                         value="all"
                         closeOnClick
-                        className="h-8 min-h-8 px-1 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                        className="h-8 min-h-8 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
                       >
                         <FolderIcon className="size-4 shrink-0" />
                         <span className="min-w-0 truncate text-sm">All projects</span>
