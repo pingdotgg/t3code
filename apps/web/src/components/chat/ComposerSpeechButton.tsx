@@ -5,6 +5,7 @@ import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 
 export function ComposerSpeechButton(props: {
   status: DesktopSpeechStatus | null;
@@ -15,6 +16,7 @@ export function ComposerSpeechButton(props: {
   onStop(): void;
   onCancel(): void;
 }) {
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   if (props.status?.supported === false) return null;
   const state = props.status?.supported ? props.status.state : "missing-model";
   const recording = state === "recording";
@@ -56,7 +58,11 @@ export function ComposerSpeechButton(props: {
                   <span
                     aria-hidden
                     className="absolute inset-0 rounded-[inherit] bg-white/20 transition-transform motion-reduce:transition-none"
-                    style={{ transform: `scale(${0.84 + Math.min(1, props.level) * 0.16})` }}
+                    style={
+                      prefersReducedMotion
+                        ? undefined
+                        : { transform: `scale(${0.84 + Math.min(1, props.level) * 0.16})` }
+                    }
                   />
                   <SquareIcon className="relative size-3 fill-current" />
                 </>
