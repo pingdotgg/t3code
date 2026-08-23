@@ -267,8 +267,17 @@ function tidyMarkdown(markdown: string): string {
     .trim();
 }
 
-export function serializeRenderedMarkdownFragment(container: Node): string {
-  return tidyMarkdown(serializeChildren(container));
+export function serializeRenderedMarkdownFragment(container: Element): string {
+  for (const pre of container.querySelectorAll("pre")) {
+    if (!pre.hasChildNodes()) pre.remove();
+  }
+  const markdown = tidyMarkdown(serializeChildren(container));
+  const codeBlocks = [...container.querySelectorAll("pre")].filter((pre) =>
+    pre.textContent?.trim(),
+  );
+  const codeBlock = codeBlocks.length === 1 ? codeBlocks[0] : null;
+  if (!codeBlock || markdown !== serializeCodeBlock(codeBlock).trim()) return markdown;
+  return (codeBlock.textContent ?? "").replace(/\n$/, "");
 }
 
 export function serializeTableElementToMarkdown(table: Element): string {
