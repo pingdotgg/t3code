@@ -12,7 +12,6 @@ import { useEffect, useRef } from "react";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadDetails } from "~/state/threads";
 
-
 interface ScannedCheckpoint {
   readonly completedAt: string;
   readonly files: ReadonlyArray<OrchestrationCheckpointFile>;
