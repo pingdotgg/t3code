@@ -2451,53 +2451,140 @@ describe("ProviderCommandReactor", () => {
 
   it("interrupts the provider and cancels pending user input", async () => {
     const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
+    // The interrupt command's timestamp predates every request below, so a
+    // synthetic cancellation carrying it would fold closed before the request
+    // it closes. The reactor must stamp cancellations with server time.
+    const now = "2025-12-31T00:00:00.000Z";
+
+    const appendUserInputActivity = (input: {
+      readonly commandId: string;
+      readonly activityId: string;
+      readonly kind:
+        | "user-input.requested"
+        | "user-input.resolved"
+        | "provider.user-input.respond.failed";
+      readonly payload: Record<string, unknown>;
+      readonly createdAt: string;
+    }) =>
+      harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make(input.commandId),
+        threadId: ThreadId.make("thread-1"),
+        activity: {
+          id: EventId.make(input.activityId),
+          tone: "info",
+          kind: input.kind,
+          summary:
+            input.kind === "user-input.requested"
+              ? "User input requested"
+              : input.kind === "user-input.resolved"
+                ? "User input resolved"
+                : "Provider user input response failed",
+          payload: input.payload,
+          turnId: asTurnId("turn-1"),
+          createdAt: input.createdAt,
+        },
+        createdAt: input.createdAt,
+      });
+
+    const questions = [
+      {
+        id: "continue",
+        header: "Continue",
+        question: "Continue?",
+        options: [{ label: "Yes", description: "Continue the turn." }],
+        multiSelect: false,
+      },
+    ];
 
     await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.session.set",
-        commandId: CommandId.make("cmd-session-set"),
-        threadId: ThreadId.make("thread-1"),
-        session: {
+      Effect.gen(function* () {
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set"),
           threadId: ThreadId.make("thread-1"),
-          status: "running",
-          providerName: "codex",
-          runtimeMode: "approval-required",
-          activeTurnId: asTurnId("turn-1"),
-          lastError: null,
-          updatedAt: now,
-        },
-        createdAt: now,
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("turn-1"),
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+
+        // Answered before the interrupt, so it must not be cancelled again.
+        yield* appendUserInputActivity({
+          commandId: "cmd-user-input-requested-1",
+          activityId: "activity-user-input-requested-1",
+          kind: "user-input.requested",
+          payload: { requestId: "user-input-request-1", questions },
+          createdAt: "2025-12-31T23:59:57.000Z",
+        });
+        yield* appendUserInputActivity({
+          commandId: "cmd-user-input-resolved-1",
+          activityId: "activity-user-input-resolved-1",
+          kind: "user-input.resolved",
+          payload: { requestId: "user-input-request-1", answers: { continue: "Yes" } },
+          createdAt: "2025-12-31T23:59:58.000Z",
+        });
+
+        // Response already failed as stale, so it is dead and must not be cancelled.
+        yield* appendUserInputActivity({
+          commandId: "cmd-user-input-requested-stale",
+          activityId: "activity-user-input-requested-stale",
+          kind: "user-input.requested",
+          payload: { requestId: "user-input-request-stale", questions },
+          createdAt: "2025-12-31T23:59:58.500Z",
+        });
+        yield* appendUserInputActivity({
+          commandId: "cmd-user-input-respond-failed-stale",
+          activityId: "activity-user-input-respond-failed-stale",
+          kind: "provider.user-input.respond.failed",
+          payload: {
+            requestId: "user-input-request-stale",
+            detail: `Stale pending user-input request: user-input-request-stale. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.`,
+          },
+          createdAt: "2025-12-31T23:59:58.750Z",
+        });
+
+        // Still open when the interrupt lands; the provider resolves it for
+        // real while handling the interrupt, so no cancelled duplicate may be
+        // appended on top of the real resolution.
+        yield* appendUserInputActivity({
+          commandId: "cmd-user-input-requested-2",
+          activityId: "activity-user-input-requested-2",
+          kind: "user-input.requested",
+          payload: { requestId: "user-input-request-2", questions },
+          createdAt: "2025-12-31T23:59:59.000Z",
+        });
+
+        // Still open when the interrupt lands and untouched by the provider,
+        // so the reactor must cancel it.
+        yield* appendUserInputActivity({
+          commandId: "cmd-user-input-requested-3",
+          activityId: "activity-user-input-requested-3",
+          kind: "user-input.requested",
+          payload: { requestId: "user-input-request-3", questions },
+          createdAt: "2025-12-31T23:59:59.500Z",
+        });
       }),
     );
 
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.activity.append",
-        commandId: CommandId.make("cmd-user-input-requested"),
-        threadId: ThreadId.make("thread-1"),
-        activity: {
-          id: EventId.make("activity-user-input-requested-before-interrupt"),
-          tone: "info",
-          kind: "user-input.requested",
-          summary: "User input requested",
-          payload: {
-            requestId: "user-input-request-1",
-            questions: [
-              {
-                id: "continue",
-                header: "Continue",
-                question: "Continue?",
-                options: [{ label: "Yes", description: "Continue the turn." }],
-                multiSelect: false,
-              },
-            ],
-          },
-          turnId: asTurnId("turn-1"),
-          createdAt: "2025-12-31T23:59:59.000Z",
-        },
-        createdAt: "2025-12-31T23:59:59.000Z",
-      }),
+    harness.interruptTurn.mockImplementation(() =>
+      Effect.asVoid(
+        Effect.orDie(
+          appendUserInputActivity({
+            commandId: "cmd-user-input-resolved-2-during-interrupt",
+            activityId: "activity-user-input-resolved-2",
+            kind: "user-input.resolved",
+            payload: { requestId: "user-input-request-2", answers: { continue: "Yes" } },
+            createdAt: "2026-01-01T00:00:01.000Z",
+          }),
+        ),
+      ),
     );
 
     await Effect.runPromise(
@@ -2521,23 +2608,67 @@ describe("ProviderCommandReactor", () => {
         thread?.activities.some(
           (activity) =>
             activity.kind === "user-input.resolved" &&
-            (activity.payload as { requestId?: unknown }).requestId === "user-input-request-1",
+            (activity.payload as { requestId?: unknown }).requestId === "user-input-request-3" &&
+            (activity.payload as { cancelled?: unknown }).cancelled === true,
         ) ?? false
       );
     });
 
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    const activities = thread?.activities ?? [];
+
+    // The real mid-interrupt resolution stands alone; appending a cancelled
+    // duplicate here would re-close a question the user actually answered.
     expect(
-      thread?.activities.find((activity) => activity.kind === "user-input.resolved"),
-    ).toMatchObject({
+      activities.filter(
+        (activity) =>
+          activity.kind === "user-input.resolved" &&
+          (activity.payload as { requestId?: unknown }).requestId === "user-input-request-2",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        summary: "User input resolved",
+        payload: { requestId: "user-input-request-2", answers: { continue: "Yes" } },
+      }),
+    ]);
+
+    // Only the still-open request folds closed, exactly once.
+    const cancelledRequestIds = activities
+      .filter(
+        (activity) =>
+          activity.kind === "user-input.resolved" &&
+          (activity.payload as { cancelled?: unknown }).cancelled === true,
+      )
+      .map((activity) => (activity.payload as { requestId?: unknown }).requestId)
+      .toSorted();
+    expect(cancelledRequestIds).toEqual(["user-input-request-3"]);
+
+    // Its cancellation carries server time, so it orders after the request
+    // despite the earlier interrupt command timestamp.
+    const request3Activity = activities.find(
+      (activity) =>
+        activity.kind === "user-input.requested" &&
+        (activity.payload as { requestId?: unknown }).requestId === "user-input-request-3",
+    );
+    const cancelledActivity = activities.find(
+      (activity) =>
+        activity.kind === "user-input.resolved" &&
+        (activity.payload as { requestId?: unknown }).requestId === "user-input-request-3" &&
+        (activity.payload as { cancelled?: unknown }).cancelled === true,
+    );
+    expect(request3Activity).toBeDefined();
+    expect(cancelledActivity).toMatchObject({
       summary: "User input cancelled",
       payload: {
-        requestId: "user-input-request-1",
+        requestId: "user-input-request-3",
         cancelled: true,
       },
       turnId: "turn-1",
     });
+    expect(Date.parse(cancelledActivity!.createdAt)).toBeGreaterThan(
+      Date.parse(request3Activity!.createdAt),
+    );
   });
 
   it("starts a fresh session when only projected session state exists", async () => {
