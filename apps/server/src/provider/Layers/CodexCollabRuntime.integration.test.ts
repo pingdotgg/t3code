@@ -13,7 +13,8 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { type ProviderEvent, ThreadId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
@@ -275,6 +276,108 @@ describe("CodexSessionRuntime collab integration", () => {
         "memory consolidation must be interrupted without appearing in chat",
       );
       assert.isTrue(interruptedThreads.has(ROOT), "parent turn must be interrupted last");
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // it.live: the runtime talks to a real child process; under it.effect's
+  // TestClock the internal timers freeze and the join never completes.
+  it.live("Stop answers a parked app-permission approval with a withheld grant", () =>
+    Effect.gen(function* () {
+      // Interrupting a turn whose app-permission prompt is still parked must
+      // settle that prompt: the handler resumes with "cancel", the peer gets
+      // an empty grant (permission withheld), and nothing hangs until close.
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        notifications: [],
+        serverRequests: [
+          {
+            method: "item/permissions/requestApproval",
+            label: "perm-1",
+            params: {
+              cwd: "/tmp/project",
+              itemId: "app_1",
+              permissions: { network: { enabled: true } },
+              reason: "Fetch data from api.example.com",
+              startedAtMs: 1_778_000_000_000,
+              threadId: "${threadId}",
+              turnId: "${turnId}",
+            },
+          },
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const responsesPath = `${scriptPath}.approvalResponses`;
+      NodeFS.rmSync(responsesPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(responsesPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-permission-stop"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      // One consumer for the whole stream: `events` is a plain queue stream,
+      // so two forks would compete for events and each could starve the
+      // other's filter. Signal the two milestones through Deferreds instead.
+      const requestedReady = yield* Deferred.make<ProviderEvent>();
+      const settledReady = yield* Deferred.make<ProviderEvent>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => {
+          if (event.method === "item/permissions/requestApproval") {
+            return Deferred.succeed(requestedReady, event);
+          }
+          if (event.method === "serverRequest/resolved" && event.requestKind === "permission") {
+            return Deferred.succeed(settledReady, event);
+          }
+          return Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "use the connected app" });
+      const requested = yield* Deferred.await(requestedReady).pipe(
+        Effect.timeoutOption("15 seconds"),
+      );
+      assert.isTrue(requested._tag === "Some", "permission approval request never arrived");
+
+      yield* runtime.interruptTurn();
+
+      // The peer emits serverRequest/resolved only AFTER recording the
+      // runtime's answer, so awaiting this receipt makes reading the sidecar
+      // race-free. The runtime correlates that receipt back to the canonical
+      // request (requestKind + requestId) — the same event chain the adapter
+      // folds into approval.resolved, so the card actually closes.
+      const settled = yield* Deferred.await(settledReady).pipe(Effect.timeoutOption("15 seconds"));
+      assert.isTrue(settled._tag === "Some", "interrupt did not settle the parked approval");
+      const settledEvent = settled._tag === "Some" ? settled.value : undefined;
+      assert.isDefined(settledEvent);
+      assert.isDefined(
+        settledEvent?.requestId,
+        "receipt must correlate back to the canonical approval request",
+      );
+
+      const recorded = NodeFS.readFileSync(responsesPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { id: number; label: string; result: unknown });
+      assert.equal(recorded.length, 1);
+      const answer = recorded[0];
+      assert.isDefined(answer);
+      assert.equal(answer.label, "perm-1");
+      // Cancelled approvals withhold the grant: an empty permission profile.
+      assert.deepEqual(answer.result, { permissions: {} });
 
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
