@@ -195,10 +195,12 @@ const OPEN_CODE_LEGACY_USAGE_QUERY = `
     json_extract(data, '$.tokens.cache.write') AS cacheWriteTokens,
     json_extract(data, '$.cost') AS costUsd
   FROM message
-  WHERE json_extract(data, '$.time.completed') >= ?
-    AND json_valid(data)
-    AND json_extract(data, '$.role') = 'assistant'
-    AND json_extract(data, '$.time.completed') IS NOT NULL
+  WHERE CASE
+      WHEN json_valid(data) THEN json_extract(data, '$.time.completed')
+    END >= ?
+    AND CASE
+      WHEN json_valid(data) THEN json_extract(data, '$.role')
+    END = 'assistant'
 `;
 
 // OpenCode writes this database while usage is being read. A short busy
@@ -218,9 +220,10 @@ const OPEN_CODE_CURRENT_USAGE_QUERY = `
     json_extract(data, '$.tokens.cache.write') AS cacheWriteTokens,
     json_extract(data, '$.cost') AS costUsd
   FROM session_message
-  WHERE json_extract(data, '$.time.completed') >= ?
+  WHERE CASE
+      WHEN json_valid(data) THEN json_extract(data, '$.time.completed')
+    END >= ?
     AND type = 'assistant'
-    AND json_valid(data)
 `;
 
 const OPEN_CODE_TABLE_QUERIES = {

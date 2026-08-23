@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import * as NodePerformance from "node:perf_hooks";
 import * as NodePath from "node:path";
+import * as NodePerfHooks from "node:perf_hooks";
 import * as NodeSqlite from "node:sqlite";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -98,14 +98,44 @@ describe("readOpenCodeRecords", () => {
     }
   });
 
+  it("skips malformed JSON rows without discarding valid usage", async () => {
+    const dbPath = createDatabase();
+    const database = new NodeSqlite.DatabaseSync(dbPath);
+    try {
+      database
+        .prepare(
+          "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run("legacy-malformed", "session-1", 5_000, 5_000, "{not-json");
+      database
+        .prepare(
+          "INSERT INTO session_message (id, session_id, type, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .run("current-malformed", "session-1", "assistant", 5_000, 5_000, "{not-json");
+    } finally {
+      database.close();
+    }
+
+    try {
+      const records = await readOpenCodeRecords(dbPath, 2_000);
+
+      expect(records?.map((record) => record.dedupeKey)).toEqual([
+        "current-completed",
+        "legacy-completed",
+      ]);
+    } finally {
+      NodeFS.rmSync(NodePath.dirname(dbPath), { recursive: true, force: true });
+    }
+  });
+
   it("waits briefly for a writer before reporting a locked database", async () => {
     const dbPath = createDatabase();
     const writer = new NodeSqlite.DatabaseSync(dbPath);
     writer.exec("BEGIN EXCLUSIVE");
-    const startedAt = NodePerformance.performance.now();
+    const startedAt = NodePerfHooks.performance.now();
     try {
       expect(await readOpenCodeRecords(dbPath, 2_000)).toBeNull();
-      expect(NodePerformance.performance.now() - startedAt).toBeGreaterThanOrEqual(500);
+      expect(NodePerfHooks.performance.now() - startedAt).toBeGreaterThanOrEqual(500);
     } finally {
       writer.exec("ROLLBACK");
       writer.close();
