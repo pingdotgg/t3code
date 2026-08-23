@@ -42,7 +42,7 @@ import {
 const GROK_PRESENTATION = {
   displayName: "Grok",
   badgeLabel: "Early Access",
-  showInteractionModeToggle: true,
+  showInteractionModeToggle: false,
   requiresNewThreadForModelChange: false,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({

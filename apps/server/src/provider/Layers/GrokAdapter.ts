@@ -3,14 +3,12 @@ import {
   type GrokSettings,
   EventId,
   type ProviderApprovalDecision,
-  type ProviderInteractionMode,
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderUserInputAnswers,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
-  type RuntimeMode,
   type ThreadId,
   type ThreadTokenUsageSnapshot,
   TurnId,
@@ -57,7 +55,7 @@ import {
   makeAcpThreadTokenUsageUpdatedEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
-import { parsePermissionRequest, resolveAcpSessionModeId } from "../acp/AcpRuntimeModel.ts";
+import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   applyGrokAcpModelSelection,
@@ -222,25 +220,6 @@ function completedStopReasonFromPromptResponse(
     return null;
   }
   return response.stopReason;
-}
-
-function applyGrokAcpModeSelection<E>(input: {
-  readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
-  readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: ProviderInteractionMode | undefined;
-  readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
-}): Effect.Effect<void, E> {
-  return Effect.gen(function* () {
-    const requestedModeId = resolveAcpSessionModeId({
-      interactionMode: input.interactionMode,
-      runtimeMode: input.runtimeMode,
-      modeState: yield* input.runtime.getModeState,
-    });
-    if (requestedModeId === undefined) {
-      return;
-    }
-    yield* input.runtime.setMode(requestedModeId).pipe(Effect.mapError(input.mapError));
-  });
 }
 
 export function grokPromptSettlementBelongsToContext(input: {
@@ -839,14 +818,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             mapError: (cause) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
           });
-          yield* applyGrokAcpModeSelection({
-            runtime: acp,
-            runtimeMode: input.runtimeMode,
-            interactionMode: undefined,
-            mapError: (cause) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_mode", cause),
-          });
-
           const now = yield* nowIso;
           const session: ProviderSession = {
             provider: PROVIDER,
@@ -1106,14 +1077,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 mapError: (cause) =>
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
-              yield* applyGrokAcpModeSelection({
-                runtime: ctx.acp,
-                runtimeMode: ctx.session.runtimeMode,
-                interactionMode: input.interactionMode,
-                mapError: (cause) =>
-                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_mode", cause),
-              });
-
               const text = input.input?.trim();
               if ((input.attachments?.length ?? 0) > 0 && !ctx.supportsImageInput) {
                 return yield* new ProviderAdapterValidationError({

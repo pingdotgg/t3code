@@ -18,11 +18,7 @@ same session, T3 Code follows the model and reasoning level reported by Grok Bui
 keeps the CLI's current model instead of forcing a model named `grok-build`. Refresh provider status
 after updating or signing in to Grok Build to load the current catalog and reasoning choices.
 
-## Plan, Build, And Permissions
-
-The composer Plan and Build control uses the modes advertised by Grok Build. Plan prefers a `plan`
-or `architect` mode. Build prefers `code`, `agent`, or another implementation mode. An
-approval-required T3 session prefers Grok Build's `ask` mode when it is available.
+## Permissions
 
 T3 Code still answers each ACP permission request according to the thread's permission setting. In
 Full Access, it selects an advertised allow option automatically. In Approval Required, it shows the

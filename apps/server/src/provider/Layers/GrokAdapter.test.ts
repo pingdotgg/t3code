@@ -250,59 +250,6 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
-  it.effect("maps Plan, Build, and approval settings onto Grok ACP modes", () =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make("grok-mode-selection");
-      const requestLogDir = yield* Effect.promise(() =>
-        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-mode-log-")),
-      );
-      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
-      );
-      const adapter = yield* makeTestAdapter(wrapperPath);
-
-      yield* adapter.startSession({
-        threadId,
-        provider: ProviderDriverKind.make("grok"),
-        cwd: process.cwd(),
-        runtimeMode: "full-access",
-        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
-      });
-      yield* adapter.sendTurn({
-        threadId,
-        input: "make a plan",
-        attachments: [],
-        interactionMode: "plan",
-      });
-      yield* adapter.sendTurn({
-        threadId,
-        input: "implement it",
-        attachments: [],
-        interactionMode: "default",
-      });
-
-      const modeRequests = (yield* Effect.promise(() => readJsonLines(requestLogPath))).filter(
-        (request) =>
-          request.method === "session/set_config_option" &&
-          typeof request.params === "object" &&
-          request.params !== null &&
-          "configId" in request.params &&
-          request.params.configId === "mode",
-      );
-      assert.deepStrictEqual(
-        modeRequests.map((request) => request.params),
-        [
-          { sessionId: "mock-session-1", configId: "mode", value: "code" },
-          { sessionId: "mock-session-1", configId: "mode", value: "architect" },
-          { sessionId: "mock-session-1", configId: "mode", value: "code" },
-        ],
-      );
-
-      yield* adapter.stopSession(threadId);
-    }),
-  );
-
   it.effect("maps Grok ACP thought chunks to canonical reasoning events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-thought-chunks");

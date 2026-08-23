@@ -85,7 +85,6 @@ extensions that have stable wire shapes and a direct canonical T3 meaning.
 | ---------------------------------- | -------------------------------------------------------------- |
 | ACP model state and model metadata | Provider models, context windows, and reasoning choices        |
 | `session/set_model`                | Atomic model plus `_meta.reasoningEffort` selection            |
-| ACP mode state                     | Plan, Build, and approval-mode selection                       |
 | `agent_thought_chunk`              | Canonical reasoning item and delta events                      |
 | `session_info_update`              | Thread title update                                            |
 | `usage_update`                     | Context-window update                                          |
@@ -107,6 +106,9 @@ Several Grok Build notifications do not yet have a truthful adapter-only mapping
   T3 are currently instance wide. This needs a per-session command contract before it can be shown.
 - xAI model-catalog update notifications arrive on a live adapter session, while provider snapshots
   are owned by the driver. Dynamic refresh needs an explicit adapter-to-driver invalidation channel.
+- Grok Build 1.0.5 does not advertise ACP modes. Newer source accepts `session/set_mode`, but its
+  `x.ai/exit_plan_mode` approval request needs a dedicated T3 plan-approval flow. The Plan control
+  stays hidden until both mode switching and exit approval can be represented truthfully.
 - Private xAI hooks, MCP status, queue, subagent, and workflow notifications need pinned schemas and
   canonical lifecycle semantics before ingestion. Unknown extension notifications remain available
   in native provider logs.

@@ -62,7 +62,7 @@ describe("buildInitialGrokProviderSnapshot", () => {
       expect(snapshot.version).toBeNull();
       expect(snapshot.message).toContain("Checking Grok");
       expect(snapshot.requiresNewThreadForModelChange).toBe(false);
-      expect(snapshot.showInteractionModeToggle).toBe(true);
+      expect(snapshot.showInteractionModeToggle).toBe(false);
     }),
   );
 });
