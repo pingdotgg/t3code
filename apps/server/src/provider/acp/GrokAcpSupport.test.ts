@@ -98,6 +98,22 @@ describe("applyGrokAcpModelSelection", () => {
     }),
   );
 
+  it.effect("never sends the legacy grok-build sentinel when only reasoning changes", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-build",
+        currentReasoningEffort: "medium",
+        requestedModelId: "grok-build",
+        requestedReasoningEffort: "high",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([]);
+      expect(result).toEqual({ modelId: "grok-build", reasoningEffort: "medium" });
+    }),
+  );
+
   it.effect("clears the tracked effort when changing models without an explicit effort", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();
