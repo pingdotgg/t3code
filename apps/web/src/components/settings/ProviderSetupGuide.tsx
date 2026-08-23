@@ -97,10 +97,9 @@ export function ProviderSetupGuide({ driverKind, provider }: ProviderSetupGuideP
             <span>Signed in as</span>
             <RedactedSensitiveText
               value={authEmail}
-              ariaLabel="Signed in Google account email"
-              revealTooltip="Click to reveal account email"
-              hideTooltip="Click to hide account email"
-              className="text-foreground"
+              ariaLabel="Toggle account email visibility"
+              revealTooltip="Click to reveal email"
+              hideTooltip="Click to hide email"
             />
           </AlertDescription>
         ) : null}
