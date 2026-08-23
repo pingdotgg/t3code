@@ -63,6 +63,11 @@ export async function downloadVerifiedModel(input: DownloadInput): Promise<strin
   if (!response.ok || !response.body) {
     throw new Error(`speech model download failed with status ${response.status}`);
   }
+  const contentLengthHeader = response.headers.get("content-length");
+  const contentLength = contentLengthHeader === null ? null : Number(contentLengthHeader);
+  if (contentLength !== null && Number.isFinite(contentLength) && contentLength !== size) {
+    throw new Error(`speech model download size mismatch: expected ${size}, got ${contentLength}`);
+  }
 
   const digest = NodeCrypto.createHash("sha256");
   let downloaded = 0;
@@ -70,6 +75,10 @@ export async function downloadVerifiedModel(input: DownloadInput): Promise<strin
   const progress = new NodeStream.Transform({
     transform(chunk: Buffer, _encoding, callback) {
       downloaded += chunk.length;
+      if (downloaded > size) {
+        callback(new Error("speech model download exceeded expected size"));
+        return;
+      }
       digest.update(chunk);
       const now = Date.now();
       if (now - lastReport >= 100 || downloaded === size) {

@@ -2,6 +2,7 @@ import type { DesktopSpeechStatus } from "@t3tools/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ensureLocalApi } from "../localApi";
+import { toastManager } from "../components/ui/toast";
 
 export function useDesktopSpeechInput(onTranscript: (text: string) => void, ownerKey: string) {
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge?.speech;
@@ -32,6 +33,12 @@ export function useDesktopSpeechInput(onTranscript: (text: string) => void, owne
       } else if (event.type === "transcript") {
         if (recordingOwnerRef.current === currentOwnerRef.current) {
           transcriptRef.current(event.text);
+        } else {
+          toastManager.add({
+            type: "info",
+            title: "Voice input finished in another draft",
+            description: event.text,
+          });
         }
         recordingOwnerRef.current = null;
       } else if (event.type === "error") {
@@ -49,10 +56,11 @@ export function useDesktopSpeechInput(onTranscript: (text: string) => void, owne
   useEffect(() => {
     if (!bridge || recordingOwnerRef.current === null) return;
     if (recordingOwnerRef.current === ownerKey) return;
+    if (status?.supported && status.state === "transcribing") return;
     recordingOwnerRef.current = null;
     activeRef.current = false;
     void bridge.cancel();
-  }, [bridge, ownerKey]);
+  }, [bridge, ownerKey, status]);
 
   useEffect(() => {
     if (!bridge || !status?.supported || status.state !== "recording") return;
@@ -87,6 +95,7 @@ export function useDesktopSpeechInput(onTranscript: (text: string) => void, owne
   const stop = useCallback(async () => {
     if (!bridge) return;
     activeRef.current = false;
+    setStatus({ supported: true, state: "transcribing" });
     setStatus(await bridge.stop());
   }, [bridge]);
 

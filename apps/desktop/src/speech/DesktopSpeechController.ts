@@ -59,10 +59,9 @@ export class DesktopSpeechController {
 
   start(): Promise<DesktopSpeechStatus> {
     return this.exclusive(async () => {
-      this.cancelRequested = false;
       const initial = await this.getStatus();
       if (!initial.supported) return initial;
-      if (this.capture) throw new Error("voice input is already recording");
+      if (this.capture) return { supported: true, state: this.state };
 
       if (await this.options.modelReady()) {
         this.modelPath = this.options.modelPath;

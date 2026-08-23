@@ -19,7 +19,7 @@ export function ComposerSpeechButton(props: {
   const state = props.status?.supported ? props.status.state : "missing-model";
   const recording = state === "recording";
   const busy = state === "downloading" || state === "transcribing";
-  const inactive = props.disabled || busy;
+  const inactive = !recording && (props.disabled || busy);
   const label = recording
     ? "Stop and transcribe"
     : state === "downloading"
@@ -54,7 +54,7 @@ export function ComposerSpeechButton(props: {
                   <span
                     aria-hidden
                     className="absolute inset-0 rounded-[inherit] bg-white/20 transition-transform"
-                    style={{ transform: `scale(${1 + Math.min(1, props.level) * 0.16})` }}
+                    style={{ transform: `scale(${0.84 + Math.min(1, props.level) * 0.16})` }}
                   />
                   <SquareIcon className="relative size-3 fill-current" />
                 </>

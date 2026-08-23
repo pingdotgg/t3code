@@ -60,6 +60,15 @@ describe("DesktopSpeechController", () => {
     expect(events.some((event) => (event as { type?: string }).type === "transcript")).toBe(false);
   });
 
+  it("keeps the active recording when start is requested twice", async () => {
+    const { controller, capture, events } = makeController();
+    await controller.start();
+    expect(await controller.start()).toMatchObject({ supported: true, state: "recording" });
+    expect(capture.start).toHaveBeenCalledOnce();
+    expect(events.some((event) => (event as { type?: string }).type === "error")).toBe(false);
+    await controller.cancel();
+  });
+
   it("automatically stops a recording at the duration limit", async () => {
     const { controller, backend } = makeController(1);
     await controller.start();

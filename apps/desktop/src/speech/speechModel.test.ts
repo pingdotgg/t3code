@@ -70,4 +70,35 @@ describe("downloadVerifiedModel", () => {
       );
     }
   });
+
+  it("stops an oversized response before publishing it", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-speech-model-"));
+    directories.push(directory);
+    const server = NodeHttp.createServer((_request, response) => {
+      response.write("12345678");
+      response.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing test server address");
+
+    try {
+      await expect(
+        downloadVerifiedModel({
+          directory,
+          filename: "model.gguf",
+          url: `http://127.0.0.1:${address.port}/model.gguf`,
+          size: 7,
+          sha256: "0".repeat(64),
+        }),
+      ).rejects.toThrow(/exceeded expected size|size mismatch/);
+      await expect(NodeFSP.stat(NodePath.join(directory, "model.gguf"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
 });
