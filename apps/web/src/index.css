@@ -1021,6 +1021,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   .chat-composer-glass-host {
+    background: var(--chat-composer-glass-surface);
     box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
 
     @variant dark {
