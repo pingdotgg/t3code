@@ -114,6 +114,7 @@ const SNOOZE_ACCENT_DARK = "#60a5fa";
 
 export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(props: {
   readonly count: number;
+  readonly disabled?: boolean;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
@@ -126,11 +127,12 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
       }
       accessibilityLabel={props.count === 1 ? "1 snoozed thread" : `${props.count} snoozed threads`}
       accessibilityRole="button"
-      accessibilityState={{ expanded: props.expanded }}
+      accessibilityState={{ disabled: props.disabled, expanded: props.expanded }}
       className={cn(
         "mb-1.5 mt-4 flex-row items-center gap-2.5",
         props.pane === "sidebar" ? "px-3" : "px-5",
       )}
+      disabled={props.disabled}
       onPress={props.onToggle}
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
@@ -151,6 +153,7 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
 
 export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(props: {
   readonly count: number;
+  readonly disabled?: boolean;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
@@ -163,11 +166,12 @@ export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledS
       }
       accessibilityLabel={props.count === 1 ? "1 settled thread" : `${props.count} settled threads`}
       accessibilityRole="button"
-      accessibilityState={{ expanded: props.expanded }}
+      accessibilityState={{ disabled: props.disabled, expanded: props.expanded }}
       className={cn(
         "mb-1.5 mt-4 flex-row items-center gap-2.5",
         props.pane === "sidebar" ? "px-3" : "px-5",
       )}
+      disabled={props.disabled}
       onPress={props.onToggle}
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
