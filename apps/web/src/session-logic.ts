@@ -155,6 +155,13 @@ export interface ActiveComposerTasks {
   steps: ActivePlanState["steps"];
 }
 
+export function resolveActivePlanTurnId(
+  latestTurnId: TurnId | null,
+  session: Pick<ThreadSession, "status" | "activeTurnId"> | null,
+): TurnId | null {
+  return session?.status === "running" ? session.activeTurnId : latestTurnId;
+}
+
 export function deriveActiveComposerTasks(input: {
   activities: ReadonlyArray<OrchestrationThreadActivity>;
   activeTurnId: TurnId | null;

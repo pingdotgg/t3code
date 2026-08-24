@@ -20,20 +20,29 @@ layer("042_ProjectionThreadPlanActivityIndex", (it) => {
         readonly detail: string;
       }>`
         EXPLAIN QUERY PLAN
-        WITH latest_unsettled_turn AS (
-          SELECT thread.latest_turn_id AS turn_id
+        WITH restorable_turn_candidate AS (
+          SELECT
+            CASE
+              WHEN session.status = 'running' THEN session.active_turn_id
+              ELSE thread.latest_turn_id
+            END AS turn_id,
+            session.status AS session_status
           FROM projection_threads AS thread
-          LEFT JOIN projection_turns AS turn
-            ON turn.thread_id = thread.thread_id
-            AND turn.turn_id = thread.latest_turn_id
           LEFT JOIN projection_thread_sessions AS session
             ON session.thread_id = thread.thread_id
           WHERE thread.thread_id = 'thread-1'
-            AND thread.latest_turn_id IS NOT NULL
+        ),
+        latest_unsettled_turn AS (
+          SELECT candidate.turn_id
+          FROM restorable_turn_candidate AS candidate
+          LEFT JOIN projection_turns AS turn
+            ON turn.thread_id = 'thread-1'
+            AND turn.turn_id = candidate.turn_id
+          WHERE candidate.turn_id IS NOT NULL
             AND (
-              turn.started_at IS NULL
+              candidate.session_status = 'running'
+              OR turn.started_at IS NULL
               OR turn.completed_at IS NULL
-              OR session.status = 'running'
             )
         ),
         active_plan_activities AS (

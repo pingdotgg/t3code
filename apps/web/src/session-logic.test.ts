@@ -20,6 +20,7 @@ import {
   findLatestProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  resolveActivePlanTurnId,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
@@ -594,6 +595,26 @@ describe("deriveActiveComposerTasks", () => {
         latestTurnSettled: true,
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveActivePlanTurnId", () => {
+  it("prefers the running session turn when latest turn projection diverges", () => {
+    expect(
+      resolveActivePlanTurnId(TurnId.make("turn-latest"), {
+        status: "running",
+        activeTurnId: TurnId.make("turn-active"),
+      }),
+    ).toBe(TurnId.make("turn-active"));
+  });
+
+  it("uses the latest projected turn when the session is not running", () => {
+    expect(
+      resolveActivePlanTurnId(TurnId.make("turn-latest"), {
+        status: "ready",
+        activeTurnId: null,
+      }),
+    ).toBe(TurnId.make("turn-latest"));
   });
 });
 

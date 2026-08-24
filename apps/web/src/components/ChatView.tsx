@@ -103,6 +103,7 @@ import {
   deriveWorkLogEntries,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  resolveActivePlanTurnId,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
@@ -2360,14 +2361,18 @@ function ChatViewContent(props: ChatViewProps) {
       activeLatestTurn?.turnId ?? null,
     );
   }, [activeLatestTurn?.turnId, activeThread?.proposedPlans, latestTurnSettled]);
+  const activePlanTurnId = resolveActivePlanTurnId(
+    activeLatestTurn?.turnId ?? null,
+    activeThread?.session ?? null,
+  );
   const activeComposerTasks = useMemo(
     () =>
       deriveActiveComposerTasks({
         activities: threadActivities,
-        activeTurnId: activeLatestTurn?.turnId ?? null,
+        activeTurnId: activePlanTurnId,
         latestTurnSettled,
       }),
-    [activeLatestTurn?.turnId, latestTurnSettled, threadActivities],
+    [activePlanTurnId, latestTurnSettled, threadActivities],
   );
   const workingStepLabel = activeComposerTasks?.progress.step ?? null;
   const showPlanFollowUpPrompt =
