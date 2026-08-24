@@ -1,5 +1,13 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
-import { ClaudeAI, CursorIcon, GrokIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import {
+  ClaudeAI,
+  CursorIcon,
+  GrokIcon,
+  Icon,
+  OpenAI,
+  OpenCodeIcon,
+  PiAgentIcon,
+} from "../Icons";
 import { PROVIDER_OPTIONS } from "../../session-logic";
 
 export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
@@ -8,6 +16,7 @@ export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>
   [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
   [ProviderDriverKind.make("cursor")]: CursorIcon,
   [ProviderDriverKind.make("grok")]: GrokIcon,
+  [ProviderDriverKind.make("ohMyPi")]: PiAgentIcon,
 };
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
@@ -35,10 +44,7 @@ function escapeRegExp(value: string): string {
 
 function stripLeadingQualifier(value: string, qualifier: string | null | undefined): string {
   const trimmedQualifier = qualifier?.trim();
-  if (!trimmedQualifier) {
-    return value;
-  }
-
+  if (!trimmedQualifier) return value;
   const pattern = new RegExp(`^${escapeRegExp(trimmedQualifier)}(?:\\s*[.:/-]\\s*|\\s+)`, "iu");
   return value.replace(pattern, "").trim() || value;
 }

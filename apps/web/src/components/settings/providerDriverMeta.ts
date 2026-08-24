@@ -3,11 +3,20 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
+  OhMyPiSettings,
   OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
-import { ClaudeAI, CursorIcon, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import {
+  ClaudeAI,
+  CursorIcon,
+  GrokIcon,
+  PiAgentIcon,
+  type Icon,
+  OpenAI,
+  OpenCodeIcon,
+} from "../Icons";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -24,13 +33,6 @@ export interface ProviderClientDefinition {
   readonly label: string;
   readonly icon: Icon;
   readonly settingsSchema: ProviderSettingsSchema;
-  /**
-   * Optional short label rendered as a `variant="warning"` badge next to
-   * the instance title. Used to flag drivers that still ship under an
-   * early-access or preview gate — the flag is a property of the driver
-   * kind (not a specific instance), so every instance of that driver —
-   * built-in default or custom — advertises the same marker.
-   */
   readonly badgeLabel?: string;
 }
 
@@ -67,6 +69,12 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
   },
+  {
+    value: ProviderDriverKind.make("ohMyPi"),
+    label: "Oh My Pi",
+    icon: PiAgentIcon,
+    settingsSchema: OhMyPiSettings,
+  },
 ];
 
 export const PROVIDER_CLIENT_DEFINITION_BY_VALUE: Partial<
@@ -79,11 +87,6 @@ export const DRIVER_OPTIONS = PROVIDER_CLIENT_DEFINITIONS;
 export const DRIVER_OPTION_BY_VALUE = PROVIDER_CLIENT_DEFINITION_BY_VALUE;
 export type DriverOption = ProviderClientDefinition;
 
-/**
- * Look up the driver metadata for an instance's `driver` field. Accepts
- * Returns `undefined` for fork / unknown drivers so callers can decide how
- * to render them — typically by falling back to a generic card.
- */
 export function getDriverOption(driver: ProviderDriverKind | undefined): DriverOption | undefined {
   if (driver === undefined) return undefined;
   return PROVIDER_CLIENT_DEFINITION_BY_VALUE[driver];
