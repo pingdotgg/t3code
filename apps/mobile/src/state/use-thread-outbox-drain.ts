@@ -275,10 +275,13 @@ export function useThreadOutboxDrain(): void {
           environmentId: queuedMessage.environmentId,
           input: { cwd: projectCwd },
         });
-        // The edit-lock guard ran before this await; the user may have opened
-        // the queued row meanwhile. Defer to the next drain pass (true skips
-        // the failure/backoff path) rather than sending a payload being edited.
-        if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
+        // The edit-lock and queued-payload guards ran before this await. Defer
+        // if editing started or a saved edit replaced the captured payload.
+        const messageStillCurrent = await confirmThreadOutboxMessageQueued(queuedMessage);
+        if (
+          !messageStillCurrent ||
+          appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]
+        ) {
           return true;
         }
         const isGitRepo =
