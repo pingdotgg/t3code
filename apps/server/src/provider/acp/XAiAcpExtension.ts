@@ -146,7 +146,7 @@ export function extractXAiModelChangedNotification(
   const sessionId = trimmedUnknownString(notification.sessionId);
   const update = isUnknownRecord(notification.update) ? notification.update : undefined;
   const modelId = trimmedUnknownString(update?.model_id);
-  const rawReasoningEffort = update?.reasoning_effort;
+  const rawReasoningEffort = update?.reasoning_effort ?? undefined;
   const reasoningEffort = trimmedUnknownString(rawReasoningEffort);
   if (
     sessionId === undefined ||

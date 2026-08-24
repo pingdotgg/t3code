@@ -163,6 +163,23 @@ describe("XAiAcpExtension", () => {
     ).toBeUndefined();
   });
 
+  it("keeps model changes with a nullable reasoning effort", () => {
+    expect(
+      extractXAiModelChangedNotification("x.ai/session_notification", {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "model_changed",
+          model_id: "grok-4.6",
+          reasoning_effort: null,
+        },
+      }),
+    ).toEqual({
+      sessionId: "session-1",
+      modelId: "grok-4.6",
+      reasoningEffort: undefined,
+    });
+  });
+
   it("extracts questions from the real xAI ask_user_question payload shape", () => {
     const questions = extractXAiAskUserQuestions({
       sessionId: "session-1",
