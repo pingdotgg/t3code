@@ -10,6 +10,7 @@ T3 Code works with the platforms your team already uses:
 - **GitLab** – Merge requests, repository publishing, and hosted clones
 - **Bitbucket** – Pull request workflows (via API token authentication)
 - **Azure DevOps** – Pull request support for Microsoft-hosted repositories
+- **Gitea** – Pull requests, repository publishing, and clones, including self-hosted instances
 
 ## What You Can Do
 
@@ -18,13 +19,14 @@ T3 Code works with the platforms your team already uses:
 **Clone repositories directly**
 
 - Open the Command Palette (`Cmd/Ctrl + K`) → **Add Project**
-- Choose **GitHub repository**, **GitLab repository**, **Bitbucket repository**, **Azure DevOps repository**, or paste any **Git URL**
+- Choose **GitHub repository**, **GitLab repository**, **Bitbucket repository**, **Azure DevOps repository**, **Gitea repository**, or paste any **Git URL**
 - Enter the repository path (`owner/repo`, `group/project`, `workspace/repository`, or `project/repository`) or a full Git URL, pick a destination, and start coding
+- For Gitea, a short `owner/repository` path resolves against your default `tea` login. To clone from a different Gitea instance, paste its full Git URL
 
 **Publish local projects to the cloud**
 
 - Have a local Git repository without a remote?
-- Use the **Publish Repository** action to create a new hosted repository (GitHub, GitLab, Bitbucket, or Azure DevOps), add it as your origin remote, and push, in one flow
+- Use the **Publish Repository** action to create a new hosted repository (GitHub, GitLab, Bitbucket, Azure DevOps, or Gitea), add it as your origin remote, and push, in one flow
 - If the local repository has no commits yet, publishing creates the remote and wires it up but does not push. Make a commit, then push normally.
 
 ### Manage Code Reviews Without Context Switching
@@ -33,7 +35,7 @@ T3 Code works with the platforms your team already uses:
 
 - Push a branch and create a pull request from the Git actions controls in the toolbar
 - T3 Code can suggest titles and descriptions based on your commits
-- Supports GitHub Pull Requests, GitLab Merge Requests, Bitbucket Pull Requests, and Azure DevOps Pull Requests
+- Supports GitHub Pull Requests, GitLab Merge Requests, Bitbucket Pull Requests, Azure DevOps Pull Requests, and Gitea Pull Requests
 
 **Stay on top of open reviews**
 
@@ -91,6 +93,26 @@ You can now clone, publish, and create pull requests.
    ```
 3. Check **Settings → Source Control** to confirm the connection
 
+### For Gitea
+
+Works with gitea.com and with self-hosted instances on any hostname.
+
+1. Install the Gitea CLI:
+   ```bash
+   brew install tea
+   ```
+2. Authenticate against your instance:
+   ```bash
+   tea login add
+   ```
+   You will be asked for the instance URL and a token. Repeat this for each Gitea instance you use.
+3. Check **Settings → Source Control** to confirm the connection
+
+Because a self-hosted Gitea can live on any hostname, T3 Code identifies your instance from the
+logins `tea` already holds. A remote is only treated as Gitea when `tea` is authenticated against
+that exact host, so unrelated Git remotes are never misidentified, and T3 Code never probes unknown
+hosts over the network to find out.
+
 ### For Bitbucket
 
 Bitbucket uses tokens instead of a CLI tool. Two options, both set as environment variables on the
@@ -142,6 +164,7 @@ Control settings**.
 - **Provider shows "Not authenticated"** – Run the login command for that provider (e.g., `gh auth login`) in a terminal on the server, then rescan in Settings
 - **GitHub says it could not verify sign-in status** – T3 Code needs GitHub CLI 2.81.0 or newer to check sign-in status. Update `gh` (e.g., `brew upgrade gh`), then rescan
 - **Bitbucket not connecting** – Double-check your environment variables are set in the correct shell profile and the server was restarted
+- **Gitea repository not recognized** – Run `tea logins list` on the server and confirm a login exists for that exact hostname. T3 Code matches the remote host against your `tea` logins, ignoring the port, so an instance reached over HTTPS on one port and SSH on another still matches
 - **Can't push to a remote** – Verify your Git remote URL matches the provider you've authenticated with (SSH vs HTTPS remotes may need different credentials)
 
 **Need more help?** Check your provider's CLI documentation:
@@ -149,3 +172,4 @@ Control settings**.
 - [GitHub CLI](https://cli.github.com/)
 - [GitLab CLI](https://gitlab.com/gitlab-org/cli)
 - [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/)
+- [Gitea CLI (tea)](https://gitea.com/gitea/tea)

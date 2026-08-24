@@ -25,7 +25,7 @@ import type { EnvironmentProject } from "../state/models.ts";
 
 export type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "bitbucket" | "azure-devops" | "gitea"
 >;
 export type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
@@ -61,6 +61,7 @@ const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "gitlab",
   "bitbucket",
   "azure-devops",
+  "gitea",
 ];
 
 const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
@@ -68,6 +69,7 @@ const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProvide
   "gitlab",
   "bitbucket",
   "azure-devops",
+  "gitea",
 ];
 
 export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): string {
@@ -80,6 +82,8 @@ export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): str
       return "Bitbucket";
     case "azure-devops":
       return "Azure DevOps";
+    case "gitea":
+      return "Gitea";
     case "url":
       return "Git URL";
   }
@@ -95,6 +99,9 @@ export function addProjectRemoteSourcePathHint(source: AddProjectRemoteSource): 
       return "workspace/repository";
     case "azure-devops":
       return "project/repository";
+    case "gitea":
+      // Resolved against tea's default login; other instances need a full URL.
+      return "owner/repository";
     case "url":
       return "URL";
   }
@@ -155,6 +162,7 @@ export function buildAddProjectRemoteSourceReadiness(
     gitlab: unavailable,
     bitbucket: unavailable,
     "azure-devops": unavailable,
+    gitea: unavailable,
   };
 
   if (!discovery) {
