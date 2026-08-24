@@ -155,12 +155,31 @@ export interface ActiveComposerTasks {
   steps: ActivePlanState["steps"];
 }
 
-export function deriveActiveComposerTasks(_input: {
+export function deriveActiveComposerTasks(input: {
   activePlan: ActivePlanState | null;
   activeTurnId: TurnId | null;
   latestTurnSettled: boolean;
 }): ActiveComposerTasks | null {
-  return null;
+  const { activePlan, activeTurnId, latestTurnSettled } = input;
+  if (latestTurnSettled || activeTurnId === null || activePlan?.turnId !== activeTurnId) {
+    return null;
+  }
+
+  const currentStep =
+    activePlan.steps.find((step) => step.status === "inProgress") ??
+    activePlan.steps.find((step) => step.status === "pending");
+  if (!currentStep) {
+    return null;
+  }
+
+  return {
+    progress: {
+      step: currentStep.step,
+      completedSteps: activePlan.steps.filter((step) => step.status === "completed").length,
+      totalSteps: activePlan.steps.length,
+    },
+    steps: activePlan.steps,
+  };
 }
 
 export interface LatestProposedPlanState {

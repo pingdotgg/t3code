@@ -541,6 +541,55 @@ describe("deriveActiveComposerTasks", () => {
       ],
     });
   });
+
+  it("hides a plan after every task completes", () => {
+    const activeTurnId = TurnId.make("turn-completed");
+
+    expect(
+      deriveActiveComposerTasks({
+        activePlan: {
+          createdAt: "2026-08-24T12:00:00.000Z",
+          turnId: activeTurnId,
+          steps: [
+            { step: "Inspect persistence", status: "completed" },
+            { step: "Restore Tasks tab", status: "completed" },
+          ],
+        },
+        activeTurnId,
+        latestTurnSettled: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not attach a previous turn's plan to the active composer", () => {
+    expect(
+      deriveActiveComposerTasks({
+        activePlan: {
+          createdAt: "2026-08-24T12:00:00.000Z",
+          turnId: TurnId.make("turn-previous"),
+          steps: [{ step: "Old task", status: "inProgress" }],
+        },
+        activeTurnId: TurnId.make("turn-active"),
+        latestTurnSettled: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("hides task progress after the active turn settles", () => {
+    const activeTurnId = TurnId.make("turn-settled");
+
+    expect(
+      deriveActiveComposerTasks({
+        activePlan: {
+          createdAt: "2026-08-24T12:00:00.000Z",
+          turnId: activeTurnId,
+          steps: [{ step: "Last task", status: "inProgress" }],
+        },
+        activeTurnId,
+        latestTurnSettled: true,
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("deriveTurnPlans", () => {

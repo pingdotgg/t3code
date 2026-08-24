@@ -96,6 +96,7 @@ import {
   derivePendingUserInputs,
   derivePhase,
   deriveTimelineEntries,
+  deriveActiveComposerTasks,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   deriveTurnPlans,
@@ -4295,14 +4296,17 @@ function ChatViewContent(props: ChatViewProps) {
   // partition (same shell, same capability gate, same PR auto-settle input)
   // so the banner and the sidebar row never disagree.
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
-  const activeComposerTasksProgress =
-    activeLatestTurn !== null && !latestTurnSettled
-      ? (activeThreadShell?.planProgress ?? null)
-      : null;
-  const activeComposerTaskSteps =
-    activeComposerTasksProgress && activePlan && activePlan.turnId === activeLatestTurn?.turnId
-      ? activePlan.steps
-      : null;
+  const activeComposerTasks = useMemo(
+    () =>
+      deriveActiveComposerTasks({
+        activePlan,
+        activeTurnId: activeLatestTurn?.turnId ?? null,
+        latestTurnSettled,
+      }),
+    [activeLatestTurn?.turnId, activePlan, latestTurnSettled],
+  );
+  const activeComposerTasksProgress = activeComposerTasks?.progress ?? null;
+  const activeComposerTaskSteps = activeComposerTasks?.steps ?? null;
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
   const activeThreadPr = resolveDisplayedThreadPr({
