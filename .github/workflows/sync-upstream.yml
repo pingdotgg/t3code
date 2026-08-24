@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
+    inputs:
+      publish_packages:
+        description: Publish preview packages even when upstream is already current
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: write
@@ -67,7 +73,7 @@ jobs:
           fi
 
       - name: Publish updated packages
-        if: steps.sync.outputs.changed == 'true'
+        if: steps.sync.outputs.changed == 'true' || inputs.publish_packages
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run pkg-pr-new.yml --ref main
+        run: gh workflow run pkg-pr-new.yml --repo "$GITHUB_REPOSITORY" --ref main
