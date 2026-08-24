@@ -15,6 +15,7 @@
     "@base-ui/react": "^1.4.1",
     "@clerk/electron": "catalog:",
     "@clerk/react": "catalog:",
+    "@copilotkit/react-core": "1.69.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
@@ -47,6 +48,7 @@
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.4.0",
+    "zod": "^3.25.76",
     "zustand": "^5.0.11"
   },
   "devDependencies": {

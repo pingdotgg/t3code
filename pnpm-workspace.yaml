@@ -9,6 +9,7 @@ packages:
 # true = allowed to run build scripts; false mirrors the pnpm 10 behavior
 # where anything outside onlyBuiltDependencies was silently not built.
 allowBuilds:
+  "@scarf/scarf": false
   browser-tabs-lock: false
   bufferutil: false
   core-js: false

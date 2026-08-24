@@ -467,6 +467,7 @@ const PreviewPanel = lazy(() =>
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const CopilotReviewAgent = lazy(() => import("./copilotkit/CopilotReviewAgent"));
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -7092,6 +7093,24 @@ function ChatViewContent(props: ChatViewProps) {
             {rightPanelContent}
           </RightPanelTabs>
         </RightPanelSheet>
+      ) : null}
+
+      {isServerThread && isGitRepo && activeProject && activeWorkspaceRoot ? (
+        <Suspense fallback={null}>
+          <CopilotReviewAgent
+            branch={activeThreadBranch}
+            cwd={activeWorkspaceRoot}
+            environmentId={activeThread.environmentId}
+            interactionMode={interactionMode}
+            isWorking={isWorking}
+            modelSelection={activeThread.modelSelection}
+            onOpenFile={openFileSurface}
+            projectName={activeProject.title}
+            runtimeMode={runtimeMode}
+            threadId={activeThread.id}
+            threadTitle={activeThread.title}
+          />
+        </Suspense>
       ) : null}
 
       {expandedImage && (
