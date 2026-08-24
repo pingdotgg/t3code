@@ -14,7 +14,12 @@
 import * as NodeOS from "node:os";
 
 import {
+  ClaudeSettings,
+  CodexSettings,
+  defaultInstanceIdForDriver,
+  ProviderDriverKind,
   USAGE_CONTRACT_VERSION,
+  type ServerSettings as ServerSettingsDocument,
   type UsageProviderKind,
   type UsageSource,
   type UsageSummary,
@@ -52,6 +57,64 @@ import {
   type ScanCache,
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
+
+/**
+ * A configured provider instance whose CLI writes transcripts this scanner can
+ * read. Cursor, Grok and OpenCode are absent because nothing parses their
+ * session files yet.
+ */
+type ScannableInstance =
+  | { readonly driver: "claudeAgent"; readonly settings: ClaudeSettings }
+  | { readonly driver: "codex"; readonly settings: CodexSettings };
+
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeCodexSettings = Schema.decodeUnknownSync(CodexSettings);
+
+function decodeOrUndefined<A>(decode: (input: unknown) => A, input: unknown): A | undefined {
+  try {
+    return decode(input ?? {});
+  } catch {
+    // The provider registry already surfaces undecodable instances as
+    // "unavailable"; usage just skips them rather than failing the whole scan.
+    return undefined;
+  }
+}
+
+/**
+ * Every instance whose transcripts should be scanned.
+ *
+ * Mirrors `deriveProviderInstanceConfigMap`: explicit `providerInstances`
+ * entries win, and a driver whose default instance id is not claimed by one
+ * falls back to the legacy `providers.<kind>` blob. Written here rather than
+ * reused from the provider layer because usage needs decoded per-driver
+ * settings, not the opaque envelopes the registry passes to drivers.
+ */
+export function scannableInstanceConfigs(
+  settings: ServerSettingsDocument,
+): ReadonlyArray<ScannableInstance> {
+  const instances: ScannableInstance[] = [];
+
+  for (const entry of Object.values(settings.providerInstances)) {
+    if (entry.driver === CLAUDE_DRIVER) {
+      const decoded = decodeOrUndefined(decodeClaudeSettings, entry.config);
+      if (decoded) instances.push({ driver: "claudeAgent", settings: decoded });
+    } else if (entry.driver === CODEX_DRIVER) {
+      const decoded = decodeOrUndefined(decodeCodexSettings, entry.config);
+      if (decoded) instances.push({ driver: "codex", settings: decoded });
+    }
+  }
+
+  if (!(defaultInstanceIdForDriver(CLAUDE_DRIVER) in settings.providerInstances)) {
+    instances.push({ driver: "claudeAgent", settings: settings.providers.claudeAgent });
+  }
+  if (!(defaultInstanceIdForDriver(CODEX_DRIVER) in settings.providerInstances)) {
+    instances.push({ driver: "codex", settings: settings.providers.codex });
+  }
+
+  return instances;
+}
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -215,14 +278,45 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
+    // One directory per configured instance, not one per driver: a second
+    // Claude or Codex points at its own home, and scanning only the default
+    // one silently under-reports every turn the other instance ran.
+    const dirs: Array<{ readonly provider: UsageProviderKind; readonly dir: string }> = [];
+    const seenDirs = new Set<string>();
+    const addDir = Effect.fn("UsageService.addTranscriptDir")(function* (
+      provider: UsageProviderKind,
+      dir: string,
+    ) {
+      // Two instances may legitimately share a home (differing only by binary
+      // or launch args), and two spellings can reach the same directory
+      // through a symlink. Either way the records are the same records, and
+      // cross-file de-duplication does not exist — `dedupeWithinFile` is the
+      // only guard — so scanning it twice doubles that home's reported cost.
+      //
+      // Canonicalize before comparing. A directory that does not exist yet has
+      // no real path; fall back to the resolved one, which still catches the
+      // plain duplicate case.
+      const canonical = yield* fileSystem
+        .realPath(dir)
+        .pipe(Effect.catchCause(() => Effect.succeed(dir)));
+      if (seenDirs.has(canonical)) return;
+      seenDirs.add(canonical);
+      // Scan the path we resolved, not the canonical one: the fingerprint a
+      // source reports should be the directory the instance is configured with.
+      dirs.push({ provider, dir });
+    });
 
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-    ];
+    for (const config of scannableInstanceConfigs(settings)) {
+      if (config.driver === "claudeAgent") {
+        const claudeHome = yield* resolveClaudeHomePath(config.settings);
+        yield* addDir("claude", yield* resolveClaudeTranscriptDir(claudeHome));
+        continue;
+      }
+      const codexLayout = yield* resolveCodexHomeLayout(config.settings);
+      yield* addDir("codex", path.join(codexLayout.sharedHomePath, "sessions"));
+    }
+
+    return dirs;
   });
 
   /**
