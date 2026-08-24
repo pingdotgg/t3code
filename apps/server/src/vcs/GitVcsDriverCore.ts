@@ -3044,13 +3044,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
       return;
     }
-    // GitCommandError deliberately drops stderr (it can carry secrets and
-    // crosses the wire), so surface git's reason in the server log instead.
-    if (result.stderr.trim().length > 0) {
-      yield* Effect.logWarning(
-        `GitVcsDriver.removeWorktree: git worktree remove exited with code ${result.exitCode} for ${input.path}: ${result.stderr.trim()}`,
-      );
-    }
+    // Raw stderr stays out of both the wire error and the log (it can carry
+    // secrets); log bounded diagnostics so a genuine failure is visible
+    // server-side.
+    yield* Effect.logWarning(
+      `GitVcsDriver.removeWorktree: git worktree remove exited with code ${result.exitCode} for ${input.path} (stderr length ${result.stderr.length}).`,
+    );
     return yield* new GitCommandError({
       ...gitCommandContext({ operation: "GitVcsDriver.removeWorktree", cwd: input.cwd, args }),
       detail: "git worktree remove failed",
