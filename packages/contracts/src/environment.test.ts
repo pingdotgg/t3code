@@ -26,4 +26,17 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.pullRequests,
     ).toBe(true);
   });
+
+  it("treats a missing preview-proxy capability as unsupported under version skew", () => {
+    expect(decodeDescriptor(descriptor).capabilities.previewProxy).toBeUndefined();
+  });
+
+  it("preserves an advertised preview-proxy capability", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, previewProxy: true },
+      }).capabilities.previewProxy,
+    ).toBe(true);
+  });
 });

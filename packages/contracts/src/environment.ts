@@ -80,6 +80,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       this is false — no update would ever repaint it. Absent on older
       servers, which may still publish, so only an explicit false skips. */
   agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
+  /** Server can mint preview proxy tickets and proxy localhost dev servers
+      to remote clients. Absent on older servers, so clients hide the mobile
+      preview entry point instead of sending the requests. */
+  previewProxy: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

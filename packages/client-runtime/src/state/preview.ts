@@ -45,6 +45,13 @@ export function createPreviewEnvironmentAtoms<R, E>(
       // unmounted projects stop contributing probe candidates on the server.
       idleTtlMs: 0,
     }),
+    // One-shot discovery snapshot for surfaces (the mobile preview picker)
+    // that don't hold the discovery subscription open.
+    localServers: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:preview:local-servers",
+      tag: WS_METHODS.previewListLocalServers,
+      staleTimeMs: 3_000,
+    }),
     automationRequests: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:preview:automation-requests",
       tag: WS_METHODS.previewAutomationConnect,
@@ -82,6 +89,15 @@ export function createPreviewEnvironmentAtoms<R, E>(
       tag: WS_METHODS.previewClose,
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
+    }),
+    createProxyTicket: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:create-proxy-ticket",
+      tag: WS_METHODS.previewCreateProxyTicket,
+      scheduler: lifecycleScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }: { environmentId: string }) => environmentId,
+      },
     }),
     reportStatus: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:report-status",

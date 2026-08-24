@@ -141,9 +141,13 @@ import {
   PreviewError,
   PreviewEvent,
   PreviewListInput,
+  PreviewListLocalServersInput,
   PreviewListResult,
   PreviewNavigateInput,
   PreviewOpenInput,
+  PreviewProxyTicketError,
+  PreviewProxyTicketInput,
+  PreviewProxyTicketResult,
   PreviewRefreshInput,
   PreviewReportStatusInput,
   PreviewResizeInput,
@@ -254,6 +258,8 @@ export const WS_METHODS = {
   previewRefresh: "preview.refresh",
   previewClose: "preview.close",
   previewList: "preview.list",
+  previewListLocalServers: "preview.listLocalServers",
+  previewCreateProxyTicket: "preview.createProxyTicket",
   previewReportStatus: "preview.reportStatus",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
@@ -841,6 +847,18 @@ export const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
   error: EnvironmentAuthorizationError,
 });
 
+export const WsPreviewListLocalServersRpc = Rpc.make(WS_METHODS.previewListLocalServers, {
+  payload: PreviewListLocalServersInput,
+  success: DiscoveredLocalServerList,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsPreviewCreateProxyTicketRpc = Rpc.make(WS_METHODS.previewCreateProxyTicket, {
+  payload: PreviewProxyTicketInput,
+  success: PreviewProxyTicketResult,
+  error: Schema.Union([PreviewProxyTicketError, EnvironmentAuthorizationError]),
+});
+
 export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
   payload: PreviewReportStatusInput,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
@@ -1078,6 +1096,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewRefreshRpc,
   WsPreviewCloseRpc,
   WsPreviewListRpc,
+  WsPreviewListLocalServersRpc,
+  WsPreviewCreateProxyTicketRpc,
   WsPreviewReportStatusRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,

@@ -499,7 +499,7 @@ type BootstrapExchangeResult = {
 
 const AUTHORIZATION_PREFIX = "Bearer ";
 const DPOP_AUTHORIZATION_PREFIX = "DPoP ";
-const WEBSOCKET_TICKET_QUERY_PARAM = "wsTicket";
+export const WEBSOCKET_TICKET_QUERY_PARAM = "wsTicket";
 
 const bySessionPriority = (left: AuthClientSession, right: AuthClientSession) => {
   const leftCanManage = left.scopes.includes(AuthAccessWriteScope);

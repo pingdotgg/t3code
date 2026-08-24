@@ -93,6 +93,7 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import * as PreviewProxyAccess from "./preview/ProxyAccess.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
@@ -2217,6 +2218,22 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewList, previewManager.list(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewListLocalServers]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewListLocalServers,
+            Effect.gen(function* () {
+              const servers = yield* portDiscovery.scan(input.configuredUrls ?? []);
+              const scannedAt = DateTime.formatIso(yield* DateTime.now);
+              return { servers, scannedAt, configuredUrlProbing: true as const };
+            }),
+            { "rpc.aggregate": "preview" },
+          ),
+        [WS_METHODS.previewCreateProxyTicket]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewCreateProxyTicket,
+            PreviewProxyAccess.issueProxyTicket(input),
+            { "rpc.aggregate": "preview" },
+          ),
         [WS_METHODS.previewReportStatus]: (input) =>
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
