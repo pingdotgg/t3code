@@ -1,5 +1,6 @@
 import { EnvironmentId, type EnvironmentId as EnvironmentIdType } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -72,6 +73,10 @@ export interface AtomCommandOptions {
   readonly label?: string;
   readonly reportFailure?: boolean;
   readonly reportDefect?: boolean;
+}
+
+export interface AtomQueryOptions extends AtomCommandOptions {
+  readonly timeoutMs?: number;
 }
 
 export interface AtomCommandReporter {
@@ -329,7 +334,7 @@ export async function executeAtomCommand<A, E>(
 export async function executeAtomQuery<A, E>(
   registry: AtomRegistry.AtomRegistry,
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
-  options: AtomCommandOptions = {},
+  options: AtomQueryOptions = {},
   reporter: AtomCommandReporter = console,
 ): Promise<AtomCommandResult<A, E>> {
   const query = Effect.scoped(
@@ -340,7 +345,19 @@ export async function executeAtomQuery<A, E>(
       });
     }),
   );
-  return executeAtomCommand(() => Effect.runPromiseExit(query), options, reporter);
+  const boundedQuery =
+    options.timeoutMs === undefined
+      ? query
+      : query.pipe(
+          Effect.timeoutOption(Duration.millis(options.timeoutMs)),
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.interrupt,
+              onSome: Effect.succeed,
+            }),
+          ),
+        );
+  return executeAtomCommand(() => Effect.runPromiseExit(boundedQuery), options, reporter);
 }
 
 export function createRuntimeCommand<R, ER, W, A, E>(

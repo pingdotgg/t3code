@@ -296,6 +296,21 @@ describe("executeAtomQuery", () => {
 
     registry.dispose();
   });
+
+  it("interrupts a query that exceeds its configured timeout", async () => {
+    const atom = Atom.make(Effect.never).pipe(Atom.withLabel("hung query"));
+    const registry = AtomRegistry.make();
+
+    const result = await executeAtomQuery(registry, atom, {
+      timeoutMs: 1,
+    });
+
+    expect(AsyncResult.isFailure(result)).toBe(true);
+    if (AsyncResult.isFailure(result)) {
+      expect(isAtomCommandInterrupted(result)).toBe(true);
+    }
+    registry.dispose();
+  });
 });
 
 describe("runtime command runner", () => {

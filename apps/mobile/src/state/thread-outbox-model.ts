@@ -15,6 +15,7 @@ import {
   type ProviderInteractionMode as ProviderInteractionModeType,
   type RuntimeMode as RuntimeModeType,
 } from "@t3tools/contracts";
+import { resolveSendableThreadEnvMode } from "@t3tools/shared/threadEnvMode";
 import * as Schema from "effect/Schema";
 
 import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema";
@@ -64,6 +65,12 @@ export interface QueuedThreadCreation {
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
+}
+
+export interface QueuedThreadCreationWorkspace {
+  readonly workspaceMode: "local" | "worktree";
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
 }
 
 export interface QueuedThreadMessage {
@@ -144,6 +151,24 @@ export function flattenQueuedThreadMessages(
 
 export function threadOutboxRetryDelayMs(attempt: number): number {
   return Math.min(1_000 * 2 ** Math.max(0, attempt - 1), THREAD_OUTBOX_MAX_RETRY_DELAY_MS);
+}
+
+export function resolveQueuedThreadCreationWorkspace(
+  creation: QueuedThreadCreationWorkspace,
+  isGitRepo: boolean | null,
+): QueuedThreadCreationWorkspace {
+  const workspaceMode = resolveSendableThreadEnvMode({
+    requestedMode: creation.workspaceMode,
+    // Unknown status preserves the queued mode and lets the server decide.
+    isGitRepo: isGitRepo !== false,
+  });
+  return workspaceMode === creation.workspaceMode
+    ? creation
+    : {
+        workspaceMode,
+        branch: null,
+        worktreePath: null,
+      };
 }
 
 export type ThreadOutboxDeliveryAction = "wait" | "remove" | "send";

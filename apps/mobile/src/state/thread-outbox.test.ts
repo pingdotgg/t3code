@@ -15,6 +15,7 @@ import {
   groupQueuedThreadMessages,
   isQueuedThreadCreationSendable,
   modelSelectionsEqual,
+  resolveQueuedThreadCreationWorkspace,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
@@ -589,6 +590,22 @@ describe("thread outbox", () => {
       false,
     );
     expect(isQueuedThreadCreationSendable(base)).toBe(false);
+  });
+
+  it("falls back queued worktree creation only for a known non-repository", () => {
+    const workspace = {
+      workspaceMode: "worktree",
+      branch: "main",
+      worktreePath: "/tmp/worktree",
+    } as const;
+
+    expect(resolveQueuedThreadCreationWorkspace(workspace, false)).toEqual({
+      workspaceMode: "local",
+      branch: null,
+      worktreePath: null,
+    });
+    expect(resolveQueuedThreadCreationWorkspace(workspace, true)).toBe(workspace);
+    expect(resolveQueuedThreadCreationWorkspace(workspace, null)).toBe(workspace);
   });
 
   it("retries transport failures but drops deterministic command failures", () => {

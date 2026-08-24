@@ -29,11 +29,13 @@ import {
 import {
   isQueuedThreadCreationSendable,
   modelSelectionsEqual,
+  resolveQueuedThreadCreationWorkspace,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
   threadOutboxRetryDelayMs,
   type QueuedThreadCreation,
+  type QueuedThreadCreationWorkspace,
   type QueuedThreadMessage,
   type ThreadOutboxCommandStage,
 } from "./thread-outbox-model";
@@ -89,7 +91,10 @@ function settingsCommandId(message: QueuedThreadMessage, setting: string): Comma
 
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  const readVcsStatus = useAtomQueryRunner(vcsEnvironment.status, { reportFailure: false });
+  const readVcsStatus = useAtomQueryRunner(vcsEnvironment.status, {
+    reportFailure: false,
+    timeoutMs: 10_000,
+  });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -264,10 +269,8 @@ export function useThreadOutboxDrain(): void {
       // re-check here and drain it as local, the same fallback the composer
       // applies online. An unreadable status keeps the queued mode and lets
       // the server decide.
-      let workspaceMode = creation.workspaceMode;
-      let branch = creation.branch;
-      let worktreePath = creation.worktreePath;
-      if (workspaceMode === "worktree") {
+      let workspace: QueuedThreadCreationWorkspace = creation;
+      if (workspace.workspaceMode === "worktree") {
         const status = await readVcsStatus({
           environmentId: queuedMessage.environmentId,
           input: { cwd: projectCwd },
@@ -278,11 +281,9 @@ export function useThreadOutboxDrain(): void {
         if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
           return true;
         }
-        if (AsyncResult.isSuccess(status) && status.value !== null && !status.value.isRepo) {
-          workspaceMode = "local";
-          branch = null;
-          worktreePath = null;
-        }
+        const isGitRepo =
+          AsyncResult.isSuccess(status) && status.value !== null ? status.value.isRepo : null;
+        workspace = resolveQueuedThreadCreationWorkspace(creation, isGitRepo);
       }
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
@@ -298,9 +299,9 @@ export function useThreadOutboxDrain(): void {
           modelSelection,
           runtimeMode: queuedMessage.runtimeMode ?? DEFAULT_RUNTIME_MODE,
           interactionMode: queuedMessage.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
-          workspaceMode,
-          branch,
-          worktreePath,
+          workspaceMode: workspace.workspaceMode,
+          branch: workspace.branch,
+          worktreePath: workspace.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
