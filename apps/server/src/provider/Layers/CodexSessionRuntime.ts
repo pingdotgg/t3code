@@ -74,46 +74,55 @@ const CodexUserInputAnswerObject = Schema.Struct({
 });
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 const isCodexUserInputAnswerObject = Schema.is(CodexUserInputAnswerObject);
+const NullableMcpElicitationString = Schema.NullOr(Schema.String);
 const McpElicitationMetadata = Schema.Struct({
-  app: Schema.optionalKey(Schema.String),
-  app_name: Schema.optionalKey(Schema.String),
-  appName: Schema.optionalKey(Schema.String),
-  connector_name: Schema.optionalKey(Schema.String),
-  connectorName: Schema.optionalKey(Schema.String),
-  allowPersistentApproval: Schema.optionalKey(Schema.Boolean),
-  persist: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+  app: Schema.optionalKey(NullableMcpElicitationString),
+  app_name: Schema.optionalKey(NullableMcpElicitationString),
+  appName: Schema.optionalKey(NullableMcpElicitationString),
+  connector_name: Schema.optionalKey(NullableMcpElicitationString),
+  connectorName: Schema.optionalKey(NullableMcpElicitationString),
+  allowPersistentApproval: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+  persist: Schema.optionalKey(
+    Schema.NullOr(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+  ),
   target: Schema.optionalKey(
-    Schema.Struct({
-      app: Schema.optionalKey(Schema.String),
-      name: Schema.optionalKey(Schema.String),
-    }),
+    Schema.NullOr(
+      Schema.Struct({
+        app: Schema.optionalKey(NullableMcpElicitationString),
+        name: Schema.optionalKey(NullableMcpElicitationString),
+      }),
+    ),
   ),
   tool_params: Schema.optionalKey(
-    Schema.Struct({
-      app: Schema.optionalKey(Schema.String),
-      app_name: Schema.optionalKey(Schema.String),
-    }),
+    Schema.NullOr(
+      Schema.Struct({
+        app: Schema.optionalKey(NullableMcpElicitationString),
+        app_name: Schema.optionalKey(NullableMcpElicitationString),
+      }),
+    ),
   ),
 });
 const McpElicitationFormField = Schema.Struct({
-  type: Schema.optionalKey(Schema.String),
-  title: Schema.optionalKey(Schema.String),
-  description: Schema.optionalKey(Schema.String),
+  type: Schema.optionalKey(NullableMcpElicitationString),
+  title: Schema.optionalKey(NullableMcpElicitationString),
+  description: Schema.optionalKey(NullableMcpElicitationString),
   default: Schema.optionalKey(Schema.Unknown),
-  enum: Schema.optionalKey(Schema.Array(Schema.String)),
-  enumNames: Schema.optionalKey(Schema.Array(Schema.String)),
+  enum: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
+  enumNames: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
   oneOf: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        const: Schema.String,
-        title: Schema.optionalKey(Schema.String),
-      }),
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          const: Schema.String,
+          title: Schema.optionalKey(NullableMcpElicitationString),
+        }),
+      ),
     ),
   ),
 });
 const McpElicitationForm = Schema.Struct({
   properties: Schema.optionalKey(Schema.Record(Schema.String, McpElicitationFormField)),
-  required: Schema.optionalKey(Schema.Array(Schema.String)),
+  required: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.String))),
 });
 const isMcpElicitationMetadata = Schema.is(McpElicitationMetadata);
 const isMcpElicitationForm = Schema.is(McpElicitationForm);
@@ -419,9 +428,13 @@ export function toMcpElicitationResponse(
       content[key] = chosenOption.value;
     } else if (field.type === "boolean" && isMcpElicitationPersistenceField(key, field)) {
       content[key] = decision === "acceptAlways";
-    } else if (field.default !== undefined) {
+    } else if (field.default !== undefined && field.default !== null) {
       content[key] = field.default;
     }
+  }
+
+  if (form?.required?.some((key) => !Object.hasOwn(content, key))) {
+    return { action: "decline" };
   }
 
   return {
@@ -1809,6 +1822,15 @@ export const makeCodexSessionRuntime = (
 
     yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
       Effect.gen(function* () {
+        if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
+          yield* Effect.logWarning("Declined an MCP elicitation that requires unsupported input.", {
+            serverName: payload.serverName,
+          });
+          return {
+            action: "decline",
+          } satisfies EffectCodexSchema.McpServerElicitationRequestResponse;
+        }
+
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4("mcp-elicitation-request"));
         const turnId = payload.turnId
           ? TurnId.make(payload.turnId)

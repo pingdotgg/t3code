@@ -354,6 +354,63 @@ describe("Codex MCP elicitation approvals", () => {
       content: { always: true },
     });
   });
+
+  it("preserves valid nullable MCP form fields and persistence choices", () => {
+    const nullableRequest = {
+      ...request,
+      _meta: {
+        app_name: null,
+        appName: "Safari",
+        connector_name: null,
+        persist: null,
+        target: null,
+        tool_params: null,
+      },
+      requestedSchema: {
+        type: "object",
+        properties: {
+          approval: {
+            type: "string",
+            title: null,
+            description: null,
+            default: null,
+            enum: ["once", "always"],
+            enumNames: null,
+          },
+        },
+        required: ["approval"],
+      },
+    } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
+
+    NodeAssert.equal(describeMcpElicitation(nullableRequest).appName, "Safari");
+    NodeAssert.ok(
+      describeMcpElicitation(nullableRequest).options.some(
+        (option) => option.decision === "acceptAlways",
+      ),
+    );
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(nullableRequest, "acceptAlways"), {
+      action: "accept",
+      _meta: { persist: "always" },
+      content: { approval: "always" },
+    });
+  });
+
+  it("declines required form fields that an approval prompt cannot collect", () => {
+    const inputRequest = {
+      ...request,
+      requestedSchema: {
+        type: "object",
+        properties: {
+          email: { type: "string", format: "email" },
+        },
+        required: ["email"],
+      },
+    } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
+
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(inputRequest, "accept"), {
+      action: "decline",
+    });
+  });
 });
 
 describe("buildCodexDeveloperInstructions", () => {
