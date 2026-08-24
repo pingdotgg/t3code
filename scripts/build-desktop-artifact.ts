@@ -2087,9 +2087,14 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     ];
   }
 
+  const targets = target
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
   if (platform === "mac") {
     buildConfig.mac = {
-      target: target === "dmg" ? [target, "zip"] : [target],
+      target: targets.includes("dmg") ? [...targets, "zip"] : targets,
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
       protocols: [
@@ -2107,7 +2112,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     };
   }
 
-  if (platform === "mac" && target === "dmg") {
+  if (platform === "mac" && targets.includes("dmg")) {
     buildConfig.dmg = {
       // Give the themed installer its own Finder volume name. Finder caches
       // DMG window backgrounds by volume name, so reusing a generic name can
@@ -2132,7 +2137,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 
   if (platform === "linux") {
     buildConfig.linux = {
-      target: [target],
+      target: targets,
       executableName: "t3code",
       icon: "icons",
       category: "Development",
@@ -2160,7 +2165,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // in trading update bandwidth for install speed.
     buildConfig.nsis = { differentialPackage: true };
     const winConfig: Record<string, unknown> = {
-      target: [target],
+      target: targets,
       icon: "icon.ico",
       // Resource editing applies the product metadata and icon independently
       // of code signing. Disabling it for local unsigned builds leaves the
@@ -3133,7 +3138,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   target: Flag.string("target").pipe(
     Flag.withDescription(
-      "Artifact target, for example dmg/AppImage/nsis (env: T3CODE_DESKTOP_TARGET).",
+      "Artifact target or comma-separated targets, for example dmg/AppImage,deb/nsis (env: T3CODE_DESKTOP_TARGET).",
     ),
     Flag.optional,
   ),
@@ -3153,10 +3158,6 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.withDescription(
       "Skip `vp run build:desktop` and use existing dist artifacts (env: T3CODE_DESKTOP_SKIP_BUILD).",
     ),
-    Flag.optional,
-  ),
-  keepStage: Flag.boolean("keep-stage").pipe(
-    Flag.withDescription("Keep temporary staging files (env: T3CODE_DESKTOP_KEEP_STAGE)."),
     Flag.optional,
   ),
   signed: Flag.boolean("signed").pipe(

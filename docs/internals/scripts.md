@@ -66,11 +66,12 @@ authenticated.
 
 ## Desktop artifacts
 
-- `vp run dist:desktop:artifact --platform <mac|linux|win> --target <target> --arch <arch>`: Builds a desktop artifact for a specific platform/target/arch.
+- `vp run dist:desktop:artifact --platform <mac|linux|win> --target <target[,target...]> --arch <arch>`: Builds one or more desktop artifact targets for a specific platform and architecture.
 - `vp run dist:desktop:dmg`: Builds a shareable macOS `.dmg` into `./release`. Architecture defaults
   to the host, so this produces an arm64 DMG on Apple Silicon. Use `dist:desktop:dmg:arm64` or
   `dist:desktop:dmg:x64`, or pass `--arch <arm64|x64|universal>`, to force one.
 - `vp run dist:desktop:linux`: Builds a Linux AppImage into `./release`.
+- `vp run dist:desktop:deb`: Builds a Linux `.deb` package into `./release`.
 - `vp run dist:desktop:win`: Builds a Windows NSIS installer into `./release`. `:arm64` and `:x64`
   variants exist.
 
