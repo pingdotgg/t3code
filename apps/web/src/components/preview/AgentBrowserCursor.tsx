@@ -7,9 +7,14 @@ import { useEffect, useState } from "react";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 
-import { agentBrowserCursorOpacity, type BrowserController } from "./agentBrowserCursorLogic";
+import {
+  AGENT_CURSOR_FOLLOW_MS,
+  agentBrowserCursorLabel,
+  agentBrowserCursorOpacity,
+  type BrowserController,
+} from "./agentBrowserCursorLogic";
 
-const CURSOR_ACTIVE_MS = 700;
+const CURSOR_ACTIVE_MS = 1400;
 
 export function AgentBrowserCursor(props: {
   readonly tabId: string;
@@ -23,8 +28,8 @@ export function AgentBrowserCursor(props: {
   if (!event) return null;
 
   return (
-    <AgentBrowserCursorEvent
-      key={event.sequence}
+    <AgentBrowserCursorMark
+      key={tabId}
       event={event}
       content={content}
       zoomFactor={zoomFactor}
@@ -33,7 +38,7 @@ export function AgentBrowserCursor(props: {
   );
 }
 
-function AgentBrowserCursorEvent(props: {
+function AgentBrowserCursorMark(props: {
   readonly event: DesktopPreviewPointerEvent;
   readonly content: {
     readonly x: number;
@@ -47,32 +52,70 @@ function AgentBrowserCursorEvent(props: {
 }) {
   const { event, content, zoomFactor, controller } = props;
   const [active, setActive] = useState(true);
+  const [trail, setTrail] = useState<ReadonlyArray<{ x: number; y: number; sequence: number }>>([]);
+  const [clickSequence, setClickSequence] = useState<number | null>(
+    event.phase === "click" ? event.sequence : null,
+  );
 
   useEffect(() => {
+    setActive(true);
+    setTrail((previous) => {
+      const last = previous.at(-1);
+      if (last?.sequence === event.sequence) return previous;
+      return [...previous, { x: event.x, y: event.y, sequence: event.sequence }].slice(-3);
+    });
     const timeout = window.setTimeout(() => setActive(false), CURSOR_ACTIVE_MS);
     return () => window.clearTimeout(timeout);
-  }, []);
+  }, [event.sequence, event.x, event.y]);
+
+  useEffect(() => {
+    if (event.phase === "click") {
+      setClickSequence(event.sequence);
+    }
+  }, [event.phase, event.sequence]);
+
+  const label = agentBrowserCursorLabel(event.phase, active);
+  const place = (x: number, y: number): string =>
+    `translate3d(${x * zoomFactor * (content?.scale ?? 1) + (content?.x ?? 0) - (content?.scrollLeft ?? 0)}px, ${y * zoomFactor * (content?.scale ?? 1) + (content?.y ?? 0) - (content?.scrollTop ?? 0)}px, 0)`;
 
   return (
-    <div
-      className="pointer-events-none absolute left-0 top-0 z-40 transition-[transform,opacity] duration-150 ease-out motion-reduce:transition-none"
-      style={{
-        opacity: agentBrowserCursorOpacity(active, controller),
-        transform: `translate3d(${event.x * zoomFactor * (content?.scale ?? 1) + (content?.x ?? 0) - (content?.scrollLeft ?? 0)}px, ${event.y * zoomFactor * (content?.scale ?? 1) + (content?.y ?? 0) - (content?.scrollTop ?? 0)}px, 0)`,
-      }}
-      aria-hidden="true"
-      data-agent-browser-cursor
-    >
-      {event.phase === "click" ? (
+    <div className="pointer-events-none absolute inset-0 z-40" aria-hidden="true">
+      {trail.slice(0, -1).map((point, index) => (
         <span
-          key={event.sequence}
-          className="absolute left-0.5 top-0.5 size-4 animate-status-ping rounded-full bg-primary/25 motion-reduce:animate-none"
+          key={point.sequence}
+          className="absolute top-0 left-0 size-2 rounded-full bg-primary motion-reduce:hidden"
+          style={{
+            opacity: 0.12 + index * 0.08,
+            transform: `${place(point.x, point.y)} translate(2px, 2px)`,
+          }}
         />
-      ) : null}
-      <MousePointer2
-        className="relative size-5 -translate-x-0.5 -translate-y-0.5 fill-background text-primary drop-shadow-sm"
-        strokeWidth={2}
-      />
+      ))}
+      <div
+        className="absolute top-0 left-0 transition-[transform,opacity] ease-out motion-reduce:transition-none"
+        style={{
+          opacity: agentBrowserCursorOpacity(active, controller),
+          transform: place(event.x, event.y),
+          transitionDuration: `${AGENT_CURSOR_FOLLOW_MS}ms`,
+        }}
+        data-agent-browser-cursor
+      >
+        {clickSequence !== null ? (
+          <span
+            key={clickSequence}
+            className="absolute top-0.5 left-0.5 size-5 rounded-full bg-primary/30 motion-reduce:hidden"
+            style={{ animation: "status-ping 0.55s ease-out 1 forwards" }}
+          />
+        ) : null}
+        <MousePointer2
+          className="relative size-5 -translate-x-0.5 -translate-y-0.5 fill-background text-primary drop-shadow-sm"
+          strokeWidth={2}
+        />
+        {label ? (
+          <span className="absolute top-4 left-3.5 rounded-sm bg-primary px-1 py-px font-sans text-[10px] font-medium text-primary-foreground shadow-sm">
+            {label}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
