@@ -817,7 +817,7 @@ export const makeAgyAdapter = Effect.fn("makeAgyAdapter")(function* (
       status: "running",
       activeTurnId: turnId,
       updatedAt: yield* nowIso,
-      ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+      ...(modelSelection?.model ? { model: modelSelection.model } : { model: undefined }),
     };
 
     yield* emit({
@@ -914,6 +914,7 @@ export const makeAgyAdapter = Effect.fn("makeAgyAdapter")(function* (
   ) {
     const context = yield* ensureSessionContext(threadId);
     const activeTurnId = turnId ?? context.activeTurnId;
+    if (turnId !== undefined && turnId !== context.activeTurnId) return;
 
     yield* stopChildProcess(context);
 

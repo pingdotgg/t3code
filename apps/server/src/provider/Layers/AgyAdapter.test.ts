@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/TestClock";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   AgySettings,
@@ -230,9 +230,18 @@ describe("AgyAdapter", () => {
           yield* Queue.take(turnCompletions);
           expect(switchedResult.turnId).not.toBe(secondResult.turnId);
 
+          yield* adapter.sendTurn({
+            threadId,
+            input: "Use the default model",
+            interactionMode: "plan",
+            modelSelection: { instanceId: ProviderInstanceId.make("agy"), model: "" },
+          });
+          yield* Queue.take(turnCompletions);
+          expect((yield* adapter.listSessions())[0]?.model).toBeUndefined();
+
           const snapshot = yield* adapter.readThread(threadId);
           expect(snapshot.threadId).toBe(threadId);
-          expect(snapshot.turns).toHaveLength(3);
+          expect(snapshot.turns).toHaveLength(4);
           expect(snapshot.turns.every((turn) => turn.items.length > 0)).toBe(true);
           const rollbackError = yield* adapter.rollbackThread(threadId, 1).pipe(Effect.flip);
           expect(rollbackError.message).toContain("do not support provider-side rollback");
@@ -336,6 +345,15 @@ describe("AgyAdapter", () => {
           const turn = yield* adapter.sendTurn({ threadId, input: "hang" });
           yield* adapter.interruptTurn(threadId, turn.turnId);
 
+          expect((yield* Queue.take(completions)).payload.state).toBe("interrupted");
+          expect((yield* adapter.listSessions())[0]?.status).toBe("ready");
+
+          const activeTurn = yield* adapter.sendTurn({ threadId, input: "hang" });
+          yield* adapter.interruptTurn(threadId, turn.turnId);
+          expect((yield* adapter.listSessions())[0]?.status).toBe("running");
+          expect((yield* adapter.listSessions())[0]?.activeTurnId).toBe(activeTurn.turnId);
+
+          yield* adapter.interruptTurn(threadId, activeTurn.turnId);
           expect((yield* Queue.take(completions)).payload.state).toBe("interrupted");
           expect((yield* adapter.listSessions())[0]?.status).toBe("ready");
 
