@@ -262,7 +262,7 @@ import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
-import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
+import { deriveLatestContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import {
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,

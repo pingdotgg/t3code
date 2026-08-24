@@ -67,6 +67,7 @@ import {
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useComposerPathSearch } from "../../state/use-composer-path-search";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
+import { ContextWindowDetail, ContextWindowRing } from "./ContextWindowRing";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
 import {
   type ExistingThreadSettingsRouteSession,
@@ -290,6 +291,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const { onExpandedChange } = props;
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  // Mobile has no hover, so the ring's numbers toggle open under the composer.
+  const [showsContextWindowDetail, setShowsContextWindowDetail] = useState(false);
+  const toggleContextWindowDetail = useCallback(() => {
+    setShowsContextWindowDetail((shown) => !shown);
+  }, []);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   // Opening and presentation count as active so the composer stays expanded
   // while focus moves between its native editor and the settings picker.
@@ -850,7 +856,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </View>
           ) : null}
           {!isExpanded ? (
-            <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)}>
+            <Animated.View
+              className="flex-row items-center"
+              entering={FadeIn.duration(180)}
+              exiting={FadeOut.duration(100)}
+            >
+              <ContextWindowRing
+                threadId={props.selectedThread.id}
+                onPress={toggleContextWindowDetail}
+              />
               {showStopAction ? (
                 <ControlPill icon="stop.fill" variant="danger" onPress={props.onStopThread} />
               ) : (
@@ -896,6 +910,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   />
                 ) : null}
               </ComposerToolbarScroller>
+              <ContextWindowRing
+                threadId={props.selectedThread.id}
+                onPress={toggleContextWindowDetail}
+              />
               <ComposerToolbarButton
                 accessibilityLabel={sendLabel}
                 icon="arrow.up"
@@ -907,6 +925,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             </ComposerToolbarRow>
           ) : null}
         </ComposerSurface>
+
+        <ContextWindowDetail
+          threadId={props.selectedThread.id}
+          visible={showsContextWindowDetail}
+        />
 
         {/* Queue count */}
         {props.queueCount > 0 ? (

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { EventId, type OrchestrationThreadActivity, TurnId } from "@t3tools/contracts";
 
-import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow";
+import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow.ts";
 
 function makeActivity(id: string, kind: string, payload: unknown): OrchestrationThreadActivity {
   return {

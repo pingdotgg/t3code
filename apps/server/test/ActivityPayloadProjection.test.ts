@@ -11,7 +11,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildThreadFeed, type ThreadFeedActivity } from "../../mobile/src/lib/threadActivity.ts";
-import { deriveLatestContextWindowSnapshot } from "../../web/src/lib/contextWindow.ts";
+import { deriveLatestContextWindowSnapshot } from "../../../packages/client-runtime/src/state/contextWindow.ts";
 import { deriveWorkLogEntries } from "../../web/src/session-logic.ts";
 import {
   projectActivityEvent,

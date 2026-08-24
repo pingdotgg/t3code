@@ -59,6 +59,10 @@
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
     },
+    "./state/context-window": {
+      "types": "./src/state/contextWindow.ts",
+      "default": "./src/state/contextWindow.ts"
+    },
     "./state/entities": {
       "types": "./src/state/entities.ts",
       "default": "./src/state/entities.ts"
