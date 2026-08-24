@@ -409,6 +409,29 @@ function refineWithSpec(input: {
     );
 }
 
+export const probeSourceControlProviderAvailability = Effect.fn(
+  "probeSourceControlProviderAvailability",
+)(function* (input: {
+  readonly spec: SourceControlProviderDiscoverySpec;
+  readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
+  readonly cwd: string;
+}) {
+  if (input.spec.type === "api") {
+    return true;
+  }
+
+  if (input.spec.type === "managed-cli") {
+    return yield* input.spec
+      .probe(input.cwd)
+      .pipe(Effect.map((item) => item.status === "available"));
+  }
+  return yield* probeCli({
+    spec: input.spec,
+    process: input.process,
+    cwd: input.cwd,
+  }).pipe(Effect.map((item) => item.status === "available"));
+});
+
 export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(
   function* (input: {
     readonly specs: ReadonlyArray<SourceControlProviderDiscoverySpec>;

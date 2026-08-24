@@ -488,3 +488,35 @@ it.effect("answers discovery without waiting on a hosting API that stalls", () =
     assert.strictEqual(items.find((item) => item.kind === "gitlab")?.status, "available");
   }),
 );
+
+it.effect("caches missing provider executables across availability checks", () =>
+  Effect.gen(function* () {
+    const probes: string[] = [];
+    const registry = yield* makeRegistry({
+      remotes: [],
+      discovery: [claimingCli("github")],
+      run: (input) =>
+        Effect.sync(() => probes.push(input.operation)).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new VcsProcessSpawnError({
+                operation: input.operation,
+                command: input.command,
+                cwd: input.cwd,
+                cause: PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                }),
+              }),
+            ),
+          ),
+        ),
+    });
+    assert.isFalse(yield* registry.isAvailable(kind("github")));
+    assert.isFalse(yield* registry.isAvailable(kind("github")));
+    yield* TestClock.adjust("31 seconds");
+    assert.isFalse(yield* registry.isAvailable(kind("github")));
+    assert.deepEqual(probes, ["source-control.discovery.probe", "source-control.discovery.probe"]);
+  }),
+);

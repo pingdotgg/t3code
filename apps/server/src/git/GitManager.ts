@@ -798,6 +798,15 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => UNKNOWN_SOURCE_CONTROL_CLIENT.changeRequest),
     );
   });
+  const sourceControlProviderForStatus = Effect.fn("GitManager.sourceControlProviderForStatus")(
+    function* (cwd: string) {
+      const provider = yield* sourceControlProvider(cwd);
+      if (provider.kind === "unknown") {
+        return null;
+      }
+      return (yield* sourceControlProviders.isAvailable(provider.kind)) ? provider : null;
+    },
+  );
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -1528,6 +1537,7 @@ export const make = Effect.gen(function* () {
         return Effect.logWarning("PR lookup failed.").pipe(
           Effect.annotateLogs({
             operation: "lookupStatusPr",
+            cwd,
             branch: details.branch,
             errorTag:
               typeof error === "object" && error !== null && "_tag" in error
@@ -2029,7 +2039,6 @@ export const make = Effect.gen(function* () {
       | "isCrossRepository"
     >,
   ) {
-    const provider = yield* sourceControlProvider(cwd);
     const probe = headBranchProbe(provider, headContext.headSelectors, "open");
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
@@ -2059,9 +2068,12 @@ export const make = Effect.gen(function* () {
     cwd: string,
     headContext: BranchHeadContext,
   ) {
+    const provider = yield* sourceControlProviderForStatus(cwd);
+    if (provider === null) {
+      return null;
+    }
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
-    const provider = yield* sourceControlProvider(cwd);
     const probe = headBranchProbe(provider, headContext.headSelectors, "all");
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({

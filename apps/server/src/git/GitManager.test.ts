@@ -16,6 +16,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
@@ -632,6 +633,7 @@ function makeManager(input?: {
   sourceControlProvider?: SourceControlProvider["Service"];
   resolvedSourceControlContext?: SourceControlProviderContext | null;
   sourceControlResolveCalls?: string[];
+  sourceControlProviderAvailable?: boolean;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -737,6 +739,7 @@ function makeManager(input?: {
               return { provider, context: input?.resolvedSourceControlContext ?? null };
             }),
           resolve: () => Effect.succeed(provider),
+          isAvailable: () => Effect.succeed(input?.sourceControlProviderAvailable ?? true),
           discover: Effect.succeed([]),
         }),
       ),
@@ -787,6 +790,56 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("status skips PR inspection when the provider executable is unavailable", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-no-gh-probe"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-no-gh-probe"]);
+
+      const { manager, providerCalls } = yield* makeManager({
+        sourceControlProviderAvailable: false,
+      });
+      const logs: string[] = [];
+      const logger = Logger.make<unknown, void>(({ message }) => {
+        logs.push(String(message));
+      });
+
+      const status = yield* manager
+        .status({ cwd: repoDir })
+        .pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+
+      expect(status.pr).toBeNull();
+      expect(providerCalls).toHaveLength(0);
+      expect(logs.some((message) => message.includes("PR lookup failed"))).toBe(false);
+    }),
+  );
+
+  it.effect("status quietly skips PR inspection when no hosting provider is resolved", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: { kind: "unknown" },
+      });
+      const logs: string[] = [];
+      const logger = Logger.make<unknown, void>(({ message }) => {
+        logs.push(String(message));
+      });
+
+      const status = yield* manager
+        .status({ cwd: repoDir })
+        .pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+
+      expect(status.hasPrimaryRemote).toBe(false);
+      expect(status.pr).toBeNull();
+      expect(providerCalls).toHaveLength(0);
+      expect(logs.some((message) => message.includes("PR lookup failed"))).toBe(false);
+    }),
+  );
+
   it.effect("regenerates multiple commit messages without changing source state", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
