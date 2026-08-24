@@ -82,7 +82,7 @@ reconciles.
 Command and event names live in [`orchestration.ts`][contracts]. Some commands are client
 dispatchable (`thread.create`, `thread.turn.start`, `thread.approval.respond`); others are internal
 and produced only by server-side reactors (`thread.message.assistant.delta`,
-`thread.turn.diff.complete`).
+`thread.message.import`, `thread.turn.diff.complete`).
 
 A turn is complete when its session leaves `running` status, projected by
 `settledTurnStateForSessionStatus` in [`projector.ts`][projector]. Checkpoint work settling later
@@ -99,6 +99,11 @@ Follow-up work runs asynchronously in queue-backed workers built on [`DrainableW
 `enqueue` atomically offers and increments; processing always decrements. `drain` retries until the
 count reaches zero, so a test can await "queue empty and current item finished" instead of sleeping.
 Each of the three services exposes `drain` for exactly this.
+
+[`ProviderThreadReconciler`][reconciler] is a separate background fiber, not a drainable worker. It
+discovers durable conversations from adapters that support persisted-thread listing, currently
+Codex, and imports missing messages through the same event-sourced command path. It matches threads
+to projects by working directory and keeps unmatched conversations in **Unassigned Codex threads**.
 
 Runtime receipts are a test-only mechanism. `RuntimeReceiptBusLive` in
 [`RuntimeReceiptBus.ts`][receipts] publishes nothing; only the test layer is PubSub-backed. Do not
@@ -147,6 +152,7 @@ already dispatch.
 [worker]: ../../packages/shared/src/DrainableWorker.ts
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
 [cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
+[reconciler]: ../../apps/server/src/provider/Layers/ProviderThreadReconciler.ts
 [checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
 [receipts]: ../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts

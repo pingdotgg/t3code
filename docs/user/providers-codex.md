@@ -32,7 +32,7 @@ T3 Code automatically discovers conversations created by Codex CLI and other Cod
 use the same `CODEX_HOME`. Conversations whose working directory matches a T3 Code project appear
 in that project. Other conversations remain available under **Unassigned Codex threads**. Opening
 an imported conversation shows its user and assistant history, and sending a message continues the
-original Codex thread.
+original Codex thread. New external conversations may take up to two minutes to appear.
 
 ## Send feedback to OpenAI
 
