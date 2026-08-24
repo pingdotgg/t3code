@@ -12,7 +12,13 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 
-import type { AcpPermissionRequest, AcpPlanUpdate, AcpToolCallState } from "./AcpRuntimeModel.ts";
+import type {
+  AcpPermissionRequest,
+  AcpPlanUpdate,
+  AcpTextItemType,
+  AcpTextStreamKind,
+  AcpToolCallState,
+} from "./AcpRuntimeModel.ts";
 
 type AcpAdapterRawSource = Extract<
   RuntimeEventRawSource,
@@ -197,7 +203,7 @@ export function makeAcpAssistantItemEvent(input: {
   readonly threadId: ThreadId;
   readonly turnId: TurnId | undefined;
   readonly itemId: string;
-  readonly itemType: "assistant_message" | "reasoning";
+  readonly itemType: AcpTextItemType;
   readonly lifecycle: "item.started" | "item.completed";
 }): ProviderRuntimeEvent {
   return {
@@ -220,7 +226,7 @@ export function makeAcpContentDeltaEvent(input: {
   readonly threadId: ThreadId;
   readonly turnId: TurnId | undefined;
   readonly itemId?: string;
-  readonly streamKind: "assistant_text" | "reasoning_text";
+  readonly streamKind: AcpTextStreamKind;
   readonly text: string;
   readonly rawPayload: unknown;
 }): ProviderRuntimeEvent {
