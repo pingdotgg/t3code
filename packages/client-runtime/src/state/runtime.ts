@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import type { ConnectionAttemptError } from "../connection/model.ts";
@@ -484,11 +485,18 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
 }) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
-  const connectionStateAtom = Atom.family((environmentId: EnvironmentIdType) =>
+  const connectionAtom = Atom.family((environmentId: EnvironmentIdType) =>
     runtime.atom(
-      Stream.unwrap(
-        EnvironmentRegistry.pipe(
-          Effect.map((registry) => registry.stateChanges(environmentId).pipe(Stream.changes)),
+      followStreamInEnvironment(
+        environmentId,
+        Stream.unwrap(
+          EnvironmentSupervisor.pipe(
+            Effect.map((supervisor) =>
+              SubscriptionRef.changes(supervisor.state).pipe(
+                Stream.zipLatest(SubscriptionRef.changes(supervisor.session)),
+              ),
+            ),
+          ),
         ),
       ),
       { initialValue: null },
@@ -502,15 +510,18 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         A,
         E | ConnectionAttemptError | EnvironmentNotRegisteredError | EnvironmentRpcUnavailableError
       >((get) => {
-        const connectionState = Option.getOrNull(
-          AsyncResult.value(get(connectionStateAtom(target.environmentId))),
+        const connection = Option.getOrNull(
+          AsyncResult.value(get(connectionAtom(target.environmentId))),
         );
-        if (connectionState === null) {
+        if (connection === null) {
           return Effect.never;
         }
+        const [connectionState, session] = connection;
         switch (connectionState.phase) {
           case "connected":
-            return runInEnvironment(target.environmentId, options.execute(target.input));
+            return Option.isSome(session)
+              ? runInEnvironment(target.environmentId, options.execute(target.input))
+              : Effect.never;
           case "connecting":
           case "backoff":
             return Effect.never;

@@ -22,6 +22,7 @@ import {
 } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type * as RpcSession from "../rpc/session.ts";
 import {
   environmentRpcKey,
@@ -45,6 +46,8 @@ const QUERY_ENVIRONMENT = new PrimaryConnectionTarget({
   httpBaseUrl: "https://query.example.test",
   wsBaseUrl: "wss://query.example.test",
 });
+
+const QUERY_RPC_SESSION = {} as RpcSession.RpcSession;
 
 class TestQueryError extends Schema.TaggedErrorClass<TestQueryError>()("TestQueryError", {
   message: Schema.String,
@@ -78,10 +81,11 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
   execute: Effect.Effect<A, E>,
 ) {
   const supervisorState = yield* SubscriptionRef.make(queryConnectionState());
+  const supervisorSession = yield* SubscriptionRef.make(Option.some(QUERY_RPC_SESSION));
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: QUERY_ENVIRONMENT,
     state: supervisorState,
-    session: yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(Option.none()),
+    session: supervisorSession,
     prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
     connect: Effect.void,
     disconnect: Effect.void,
@@ -89,8 +93,13 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
   } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
   const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (_environmentId, effect) =>
     Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+  const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
+    _environmentId,
+    stream,
+  ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
   const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
     run,
+    followStream,
     stateChanges: () => SubscriptionRef.changes(supervisorState),
   } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
   const runtime = Atom.runtime(
@@ -104,6 +113,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
 
   return {
     atom: family({ environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined }),
+    supervisorSession,
     supervisorState,
   };
 });
@@ -268,8 +278,12 @@ describe("environment query lifecycle", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const firstStarted = Latch.makeUnsafe();
-          const interruptFirst = Latch.makeUnsafe();
+          const failFirst = Latch.makeUnsafe();
           const firstSettled = Latch.makeUnsafe();
+          const unavailable = new EnvironmentRpcUnavailableError({
+            environmentId: QUERY_ENVIRONMENT.environmentId,
+            message: "Query environment is not connected.",
+          });
           let executions = 0;
           const execute = Effect.suspend(() => {
             executions += 1;
@@ -277,8 +291,8 @@ describe("environment query lifecycle", () => {
               return Effect.succeed("recovered");
             }
             firstStarted.openUnsafe();
-            return interruptFirst.await.pipe(
-              Effect.andThen(Effect.interrupt),
+            return failFirst.await.pipe(
+              Effect.andThen(Effect.fail(unavailable)),
               Effect.ensuring(
                 Effect.sync(() => {
                   firstSettled.openUnsafe();
@@ -304,6 +318,14 @@ describe("environment query lifecycle", () => {
           );
 
           yield* firstStarted.await;
+          yield* SubscriptionRef.set(harness.supervisorSession, Option.none());
+          yield* Effect.yieldNow;
+          failFirst.openUnsafe();
+          yield* firstSettled.await;
+          yield* Effect.yieldNow;
+
+          expect(observed.some(AsyncResult.isFailure)).toBe(false);
+
           yield* SubscriptionRef.set(
             harness.supervisorState,
             queryConnectionState({ phase: "connecting", stage: "preparing" }),
@@ -322,12 +344,8 @@ describe("environment query lifecycle", () => {
             }),
           );
           yield* Effect.yieldNow;
-          interruptFirst.openUnsafe();
-          yield* firstSettled.await;
-          yield* Effect.yieldNow;
 
-          expect(observed.some(AsyncResult.isFailure)).toBe(false);
-
+          yield* SubscriptionRef.set(harness.supervisorSession, Option.some(QUERY_RPC_SESSION));
           yield* SubscriptionRef.set(
             harness.supervisorState,
             queryConnectionState({ generation: 2 }),
