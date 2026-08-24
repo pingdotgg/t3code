@@ -12,6 +12,7 @@ import type {
   TurnId,
   UserInputQuestion,
 } from "@t3tools/contracts";
+import { isFoldableAssistantNarration } from "@t3tools/client-runtime/state/turn-fold";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 import * as Arr from "effect/Array";
@@ -1215,10 +1216,14 @@ function deriveThreadFeedTurnFolds(
     const terminalAssistantMessageId = terminalAssistantMessageIdByTurn.get(turnId);
     const hiddenEntryIds = new Set(
       entries
-        .filter(
-          (entry) =>
-            entry.id !== firstAssistantMessageId && entry.id !== terminalAssistantMessageId,
-        )
+        .filter((entry) => {
+          if (entry.id === firstAssistantMessageId || entry.id === terminalAssistantMessageId) {
+            return false;
+          }
+          // Mid-turn messages are stream segments of one reply, so anything
+          // longer than narration is answer text and must not fold away.
+          return entry.type !== "message" || isFoldableAssistantNarration(entry.message.text);
+        })
         .map((entry) => entry.id),
     );
     if (hiddenEntryIds.size === 0) {

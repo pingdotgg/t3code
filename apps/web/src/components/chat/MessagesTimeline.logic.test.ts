@@ -615,6 +615,92 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("keeps a multi-paragraph mid-turn message visible while its work still folds", () => {
+    const timelineEntries = [
+      {
+        id: "assistant-first-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:01Z",
+        message: {
+          id: "assistant-first" as never,
+          role: "assistant" as const,
+          text: "Looking around first.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:01Z",
+          updatedAt: "2026-01-01T00:00:02Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "work-entry-1",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:03Z",
+        entry: {
+          id: "work-1",
+          createdAt: "2026-01-01T00:00:03Z",
+          turnId: "turn-1" as never,
+          label: "Ran command",
+          tone: "tool" as const,
+        },
+      },
+      {
+        id: "assistant-analysis-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:04Z",
+        message: {
+          id: "assistant-analysis" as never,
+          role: "assistant" as const,
+          text: "The projector rebuilds the read model on every event.\n\nThat is why the timeline lags behind the socket by one frame.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:04Z",
+          updatedAt: "2026-01-01T00:00:05Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "work-entry-2",
+        kind: "work" as const,
+        createdAt: "2026-01-01T00:00:06Z",
+        entry: {
+          id: "work-2",
+          createdAt: "2026-01-01T00:00:06Z",
+          turnId: "turn-1" as never,
+          label: "Read files",
+          tone: "tool" as const,
+        },
+      },
+      {
+        id: "assistant-final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:07Z",
+        message: {
+          id: "assistant-final" as never,
+          role: "assistant" as const,
+          text: "Done.",
+          turnId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:07Z",
+          updatedAt: "2026-01-01T00:00:08Z",
+          streaming: false,
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "assistant-first-entry",
+      "turn-fold:turn-1",
+      "assistant-analysis-entry",
+      "assistant-final-entry",
+    ]);
+  });
+
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
     // A steer ends the previous turn early: its only message completes the
     // instant it is created, and trailing work entries land after it. The

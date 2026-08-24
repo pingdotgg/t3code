@@ -10,6 +10,7 @@ import {
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import { isFoldableAssistantNarration } from "@t3tools/client-runtime/state/turn-fold";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
@@ -521,10 +522,11 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
 }
 
 /**
- * Settled turns keep their first and terminal assistant messages visible.
- * Everything between them folds behind a "Worked for ..." row anchored at
- * the first hidden entry. Keeping both ends prevents a short follow-up from
- * hiding a substantive opening response while still bounding noisy turns.
+ * Settled turns keep their first and terminal assistant messages visible, plus
+ * any message between them that is too long to be narration. Everything else
+ * folds behind a "Worked for ..." row anchored at the first hidden entry.
+ * Keeping both ends prevents a short follow-up from hiding a substantive
+ * opening response while still bounding noisy turns.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -606,6 +608,11 @@ function deriveTurnFolds(input: {
       // turn (dynamic spawns, background execution), and folding the CTA
       // when the turn settles makes a still-running fleet invisible.
       if (entry.kind === "work" && entry.entry.agentSpawn !== undefined) {
+        continue;
+      }
+      // Mid-turn messages are stream segments of one reply, so anything longer
+      // than narration is answer text and must not fold away.
+      if (entry.kind === "message" && !isFoldableAssistantNarration(entry.message.text)) {
         continue;
       }
       hiddenEntryIds.add(entry.id);

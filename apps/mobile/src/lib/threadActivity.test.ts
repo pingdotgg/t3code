@@ -620,6 +620,77 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("keeps a multi-paragraph mid-turn message visible while its work still folds", () => {
+    const turnId = TurnId.make("turn-1");
+    const thread = makeThread({
+      id: ThreadId.make("thread-substantive-middle"),
+      projectId: ProjectId.make("project-1"),
+      title: "Substantive narration",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:08.000Z",
+        assistantMessageId: MessageId.make("assistant-final"),
+      },
+      messages: [
+        {
+          id: MessageId.make("assistant-first"),
+          role: "assistant",
+          text: "Looking around first.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:01.000Z",
+          updatedAt: "2026-04-01T00:00:02.000Z",
+        },
+        {
+          id: MessageId.make("assistant-analysis"),
+          role: "assistant",
+          text: "The projector rebuilds the read model on every event.\n\nThat is why the timeline lags behind the socket by one frame.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:04.000Z",
+          updatedAt: "2026-04-01T00:00:05.000Z",
+        },
+        {
+          id: MessageId.make("assistant-final"),
+          role: "assistant",
+          text: "Done.",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:07.000Z",
+          updatedAt: "2026-04-01T00:00:08.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-completed"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read files",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId,
+          payload: {
+            title: "Read files",
+            itemType: "file_read",
+            status: "completed",
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+
+    expect(collapsed.map((entry) => entry.id)).toEqual([
+      "assistant-first",
+      "turn-fold:turn-1",
+      "assistant-analysis",
+      "assistant-final",
+    ]);
+  });
+
   it("measures a steer-superseded turn from its user boundary through trailing work", () => {
     const firstTurnId = TurnId.make("turn-1");
     const secondTurnId = TurnId.make("turn-2");
