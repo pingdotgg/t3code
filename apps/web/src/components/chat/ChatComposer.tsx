@@ -743,7 +743,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         environmentId,
       })
     : null;
-  const sendDisabledReason = externalSendDisabledReason ?? attachmentBlockReason;
+  const sendDisabledReason =
+    externalSendDisabledReason ?? (activePendingProgress ? null : attachmentBlockReason);
   const isSendDisabled = sendDisabledReason !== null;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -3258,7 +3259,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               </Tooltip>
                             )}
                             {upload?.status === "uploading" && (
-                              <span className="absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-[10px] text-foreground">
+                              <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-[10px] text-foreground">
                                 {formatAttachmentUploadProgress(upload.progress)}
                               </span>
                             )}

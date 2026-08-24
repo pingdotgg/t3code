@@ -13,7 +13,10 @@ import {
 import {
   createAttachmentId,
   planAttachmentClaim,
+  PENDING_ATTACHMENT_THREAD_SEGMENT,
+  parseThreadSegmentFromAttachmentId,
   resolveAttachmentPath,
+  resolveAttachmentPathById,
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
@@ -240,3 +243,51 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       },
     } satisfies OrchestrationCommand;
   });
+
+export const cleanupFailedUploadedAttachments = Effect.fn(
+  "Normalizer.cleanupFailedUploadedAttachments",
+)(function* (command: ClientOrchestrationCommand, normalizedCommand: OrchestrationCommand) {
+  if (command.type !== "thread.turn.start" || normalizedCommand.type !== "thread.turn.start") {
+    return;
+  }
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const serverConfig = yield* ServerConfig;
+  yield* Effect.forEach(
+    normalizedCommand.message.attachments,
+    (attachment, index) =>
+      Effect.gen(function* () {
+        const original = command.message.attachments[index];
+        if (
+          !original ||
+          "dataUrl" in original ||
+          parseThreadSegmentFromAttachmentId(original.id) !== PENDING_ATTACHMENT_THREAD_SEGMENT
+        ) {
+          return;
+        }
+
+        const pendingPath = resolveAttachmentPathById({
+          attachmentsDir: serverConfig.attachmentsDir,
+          attachmentId: original.id,
+        });
+        const claimedPath = resolveAttachmentPath({
+          attachmentsDir: serverConfig.attachmentsDir,
+          attachment,
+        });
+        if (!pendingPath || !claimedPath || pendingPath === claimedPath) {
+          return;
+        }
+
+        yield* fileSystem.remove(claimedPath, { force: true }).pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("Failed to remove an unclaimed attachment copy.", {
+              attachmentId: attachment.id,
+              cause,
+            }),
+          ),
+          Effect.orElseSucceed(() => undefined),
+        );
+      }),
+    { concurrency: 1 },
+  );
+});

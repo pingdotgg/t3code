@@ -36,7 +36,7 @@ export function toSafeThreadAttachmentSegment(threadId: string): string | null {
   if (segment.length === 0) {
     return null;
   }
-  return segment === PENDING_ATTACHMENT_THREAD_SEGMENT ? "pending_thread" : segment;
+  return segment === PENDING_ATTACHMENT_THREAD_SEGMENT ? "_pending" : segment;
 }
 
 export function createPendingAttachmentId(): string {

@@ -15,7 +15,7 @@ import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { normalizeDispatchCommand } from "./Normalizer.ts";
+import { cleanupFailedUploadedAttachments, normalizeDispatchCommand } from "./Normalizer.ts";
 
 const testLayer = Layer.mergeAll(
   WorkspacePaths.layer,
@@ -148,6 +148,35 @@ describe("normalizeDispatchCommand attachments", () => {
         throw new Error("Expected a thread.turn.start command.");
       }
       expect(retried.message.attachments[0]?.id).toBe(`thread-retry-${attachmentUuid}`);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("removes failed attachment claims without deleting their pending uploads", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const pendingPath = NodePath.join(config.attachmentsDir, `pending-${attachmentUuid}.png`);
+      NodeFS.writeFileSync(pendingPath, Buffer.from("pixels"));
+      const command = turnStartCommand({
+        attachments: [
+          { dataUrl: "data:image/png;base64,cGl4ZWxz", sizeBytes: 6 },
+          { id: `pending-${attachmentUuid}`, sizeBytes: 6 },
+        ],
+      });
+      const normalized = yield* normalizeDispatchCommand(command);
+      if (normalized.type !== "thread.turn.start") {
+        throw new Error("Expected a thread.turn.start command.");
+      }
+
+      const inlinePath = NodePath.join(
+        config.attachmentsDir,
+        `${normalized.message.attachments[0]!.id}.png`,
+      );
+      const claimedPath = NodePath.join(config.attachmentsDir, `thread-1-${attachmentUuid}.png`);
+      yield* cleanupFailedUploadedAttachments(command, normalized);
+
+      expect(NodeFS.existsSync(pendingPath)).toBe(true);
+      expect(NodeFS.existsSync(claimedPath)).toBe(false);
+      expect(NodeFS.existsSync(inlinePath)).toBe(true);
     }).pipe(Effect.provide(testLayer)),
   );
 

@@ -52,7 +52,8 @@ describe("attachmentStore", () => {
     const pendingId = createPendingAttachmentId();
     expect(parseThreadSegmentFromAttachmentId(pendingId)).toBe("pending");
     expect(parseAttachmentUuid(pendingId)).toMatch(/^[a-f0-9-]{36}$/);
-    expect(parseThreadSegmentFromAttachmentId(createAttachmentId("pending")!)).toBe(
+    expect(parseThreadSegmentFromAttachmentId(createAttachmentId("pending")!)).toBe("_pending");
+    expect(parseThreadSegmentFromAttachmentId(createAttachmentId("pending_thread")!)).toBe(
       "pending_thread",
     );
   });
