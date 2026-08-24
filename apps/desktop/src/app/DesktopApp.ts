@@ -175,15 +175,21 @@ const bootstrap = Effect.gen(function* () {
   const serverExposureState = yield* serverExposure.configureFromSettings({ port: backendPort });
   const backendConfig = yield* serverExposure.backendConfig;
   const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
-  const rendererTarget = environment.isDevelopment
-    ? Option.getOrThrow(environment.devServerUrl)
-    : backendConfig.httpBaseUrl;
-  yield* electronProtocol.registerDesktopProtocol({
-    scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
-    targetOrigin: rendererTarget,
-    backendOrigin: backendConfig.httpBaseUrl,
-    clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
-  });
+  const desktopScheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
+  if (environment.isDevelopment) {
+    yield* electronProtocol.registerDesktopProtocol({
+      scheme: desktopScheme,
+      targetOrigin: Option.getOrThrow(environment.devServerUrl),
+      backendOrigin: backendConfig.httpBaseUrl,
+      clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+    });
+  } else {
+    yield* electronProtocol.registerDesktopFileProtocol({
+      scheme: desktopScheme,
+      rendererRootPath: environment.rendererRootPath,
+      clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+    });
+  }
   yield* logBootstrapInfo("bootstrap resolved backend endpoint", {
     baseUrl: backendConfig.httpBaseUrl.href,
   });
@@ -210,6 +216,16 @@ const bootstrap = Effect.gen(function* () {
     }
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
+    if (!environment.isDevelopment) {
+      const primaryConfig = yield* primaryBackend.currentConfig;
+      if (
+        Option.isSome(primaryConfig) &&
+        Option.isNone(primaryConfig.value.preflightFailure) &&
+        !(yield* Ref.get(state.quitting))
+      ) {
+        yield* desktopWindow.createMain;
+      }
+    }
     // Bring up the WSL backend if the user previously enabled it. The
     // primary is already starting; reconcile fires off the WSL register
     // in parallel rather than blocking primary readiness on a possibly

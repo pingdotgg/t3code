@@ -1,7 +1,12 @@
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as NodeTimersPromises from "node:timers/promises";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -55,16 +60,27 @@ export interface DesktopProtocolRegistrationInput {
   readonly clerkFrontendApiHostname: string | undefined;
 }
 
+export interface DesktopFileProtocolRegistrationInput {
+  readonly scheme: string;
+  readonly rendererRootPath: string;
+  readonly clerkFrontendApiHostname: string | undefined;
+}
+
 export class ElectronProtocol extends Context.Service<
   ElectronProtocol,
   {
     readonly registerDesktopProtocol: (
       input: DesktopProtocolRegistrationInput,
     ) => Effect.Effect<void, ElectronProtocolRegistrationError, Scope.Scope>;
+    readonly registerDesktopFileProtocol: (
+      input: DesktopFileProtocolRegistrationInput,
+    ) => Effect.Effect<void, ElectronProtocolRegistrationError, Scope.Scope>;
   }
 >()("@t3tools/desktop/electron/ElectronProtocol") {}
 
-export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInput): string {
+export function makeDesktopContentSecurityPolicy(
+  input: DesktopProtocolRegistrationInput | DesktopFileProtocolRegistrationInput,
+): string {
   const clerkOrigin = input.clerkFrontendApiHostname
     ? `https://${input.clerkFrontendApiHostname}`
     : undefined;
@@ -182,6 +198,71 @@ async function proxyRequest(
   return withContentSecurityPolicy(response, contentSecurityPolicy);
 }
 
+async function resolveRendererFilePath(
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  rootPath: string,
+  pathname: string,
+): Promise<string | null> {
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(pathname).replaceAll("\\", "/");
+  } catch {
+    return null;
+  }
+
+  const requestedPath = decodedPath.replace(/^\/+/, "");
+  const filePath = path.resolve(rootPath, requestedPath);
+  const relativeToRoot = path.relative(rootPath, filePath);
+  if (
+    relativeToRoot === ".." ||
+    relativeToRoot.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeToRoot)
+  ) {
+    return null;
+  }
+
+  if (requestedPath.length > 0) {
+    const fileInfo = await Effect.runPromise(fileSystem.stat(filePath).pipe(Effect.option));
+    if (Option.isSome(fileInfo) && fileInfo.value.type === "File") {
+      return filePath;
+    }
+  }
+
+  return path.join(rootPath, "index.html");
+}
+
+async function serveRendererFile(
+  request: Request,
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  rendererRootPath: string,
+  contentSecurityPolicy: string,
+): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  if (requestUrl.host !== DESKTOP_HOST) {
+    return new Response(null, { status: 404 });
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response(null, { status: 405 });
+  }
+
+  const filePath = await resolveRendererFilePath(
+    fileSystem,
+    path,
+    rendererRootPath,
+    requestUrl.pathname,
+  );
+  if (filePath === null) {
+    return new Response(null, { status: 404 });
+  }
+  const fileUrl = Effect.runSync(path.toFileUrl(filePath));
+  const response = await Electron.net.fetch(fileUrl.href, {
+    method: request.method,
+  });
+  return withContentSecurityPolicy(response, contentSecurityPolicy);
+}
+
 const TRANSIENT_FETCH_RETRY_DELAYS_MS = [0, 50, 150] as const;
 
 async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<Response> {
@@ -203,6 +284,8 @@ async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<
 }
 
 export const make = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const registered = yield* Ref.make(false);
 
   const registerDesktopProtocol = Effect.fn("desktop.electron.protocol.registerDesktopProtocol")(
@@ -233,7 +316,36 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return ElectronProtocol.of({ registerDesktopProtocol });
-});
+  const registerDesktopFileProtocol = Effect.fn(
+    "desktop.electron.protocol.registerDesktopFileProtocol",
+  )(function* (input: DesktopFileProtocolRegistrationInput) {
+    if (yield* Ref.get(registered)) return;
+
+    const contentSecurityPolicy = makeDesktopContentSecurityPolicy(input);
+    const rendererRootPath = path.resolve(input.rendererRootPath);
+
+    yield* Effect.acquireRelease(
+      Effect.try({
+        try: () => {
+          Electron.protocol.handle(input.scheme, (request) =>
+            serveRendererFile(request, fileSystem, path, rendererRootPath, contentSecurityPolicy),
+          );
+        },
+        catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),
+      }).pipe(Effect.andThen(Ref.set(registered, true))),
+      () =>
+        Effect.try({
+          try: () => Electron.protocol.unhandle(input.scheme),
+          catch: (cause) =>
+            new ElectronProtocolUnregistrationError({
+              scheme: input.scheme,
+              cause,
+            }),
+        }).pipe(Effect.andThen(Ref.set(registered, false)), Effect.orDie),
+    );
+  });
+
+  return ElectronProtocol.of({ registerDesktopProtocol, registerDesktopFileProtocol });
+}).pipe(Effect.provide(Layer.merge(NodeFileSystem.layer, NodePath.layer)));
 
 export const layer = Layer.effect(ElectronProtocol, make);
