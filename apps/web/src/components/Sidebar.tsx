@@ -3289,6 +3289,11 @@ export default function Sidebar() {
 
   // Thread jump (cmd+1..9) and prev/next traversal reuse the same commands as
   // v1 — the keybinding layer is shared, only the ordered list differs.
+  const routeTerminalOpen = useTerminalUiStateStore((state) =>
+    routeThreadRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+      : false,
+  );
   const getCurrentSidebarShortcutContext = useCallback((): ShortcutMatchContext => {
     const activeThreadRef = routeThreadRefForShortcuts.current;
     return {

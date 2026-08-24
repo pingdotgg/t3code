@@ -4194,6 +4194,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (
         activeElement instanceof HTMLElement &&
         activeElement.isConnected &&
+        activeElement.matches(":focus-visible") &&
         activeElement.closest("[data-thread-item]") !== null
       ) {
         return;
