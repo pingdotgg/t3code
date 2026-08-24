@@ -1118,6 +1118,8 @@ export interface DesktopBridge {
    * web callers fall back to a plain file input.
    */
   pickThemeFiles?: () => Promise<readonly PickedThemeFile[] | null>;
+  /** Theme files requested by the local desktop command line. */
+  onThemeFileApply?: (listener: (file: PickedThemeFile) => void) => () => void;
   setTheme: (theme: DesktopTheme) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],

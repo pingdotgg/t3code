@@ -24,6 +24,7 @@ vi.mock("@clerk/electron/storage", () => ({
 
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
@@ -52,6 +53,7 @@ const makeDesktopClerkLayer = (isDevelopment = true, events: string[] = []) => {
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
         FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
+        Path.layer,
       ),
     ),
   );
@@ -173,7 +175,7 @@ describe("DesktopClerk", () => {
 
       assert.isTrue(Exit.isSuccess(exit));
       assert.equal(quit.mock.calls.length, 0);
-      assert.deepEqual(registeredEvents, ["second-instance"]);
+      assert.deepEqual(registeredEvents, ["browser-window-created", "second-instance"]);
     }).pipe(
       Effect.provide(makeDesktopClerkLayer()),
       Effect.provideService(ElectronApp.ElectronApp, electronApp),

@@ -3,6 +3,7 @@ import type {
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
+  PickedThemeFile,
 } from "@t3tools/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
@@ -10,6 +11,27 @@ import { contextBridge, ipcRenderer } from "electron";
 import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
+
+let pendingThemeFile: PickedThemeFile | null = null;
+const themeFileListeners = new Set<(file: PickedThemeFile) => void>();
+
+ipcRenderer.on(IpcChannels.APPLY_THEME_FILE_CHANNEL, (_event, file: unknown) => {
+  if (typeof file !== "object" || file === null) return;
+  const candidate = file as Partial<PickedThemeFile>;
+  if (
+    typeof candidate.name !== "string" ||
+    typeof candidate.size !== "number" ||
+    typeof candidate.text !== "string"
+  ) {
+    return;
+  }
+  const picked = candidate as PickedThemeFile;
+  if (themeFileListeners.size === 0) {
+    pendingThemeFile = picked;
+    return;
+  }
+  for (const listener of themeFileListeners) listener(picked);
+});
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -104,6 +126,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   pickProjectFavicon: (initialPath) =>
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
+  onThemeFileApply: (listener) => {
+    themeFileListeners.add(listener);
+    if (pendingThemeFile) {
+      listener(pendingThemeFile);
+      pendingThemeFile = null;
+    }
+    return () => themeFileListeners.delete(listener);
+  },
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
