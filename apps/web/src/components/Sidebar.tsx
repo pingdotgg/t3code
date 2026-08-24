@@ -1958,19 +1958,6 @@ export default function Sidebar() {
       setProjectScopeKey(null);
     }
   }, [projectScopeKey, scopedProjectGroup]);
-  useEffect(() => {
-    if (routeThreadKey === null || scopedProjectKeys === null) return;
-    const routeThread = threads.find(
-      (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
-    );
-    if (
-      routeThread !== undefined &&
-      !scopedProjectKeys.has(`${routeThread.environmentId}:${routeThread.projectId}`)
-    ) {
-      setProjectScopeKey(null);
-    }
-  }, [routeThreadKey, scopedProjectKeys, threads]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -2042,7 +2029,8 @@ export default function Sidebar() {
       (thread) =>
         thread.archivedAt === null &&
         (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`) ||
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey),
     );
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
@@ -2113,6 +2101,7 @@ export default function Sidebar() {
     autoSettleOnMerge,
     changeRequestSnapshotByKey,
     nowMinute,
+    routeThreadKey,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
