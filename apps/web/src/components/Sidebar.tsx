@@ -1825,7 +1825,7 @@ export default function Sidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
-  const markSidebarThreadNavigation = useSidebarActiveThreadScroll(routeThreadKey);
+  const markSidebarThreadNavigation = useSidebarActiveThreadScroll(routeThreadKey, threads.length);
   const routeTargetRef = useRef(routeTarget);
   routeTargetRef.current = routeTarget;
   // Post-settle navigation validates against the CURRENT route, not the one

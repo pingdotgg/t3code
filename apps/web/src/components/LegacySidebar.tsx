@@ -3061,7 +3061,10 @@ export default function LegacySidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
-  const markSidebarThreadNavigation = useSidebarActiveThreadScroll(routeThreadKey);
+  const markSidebarThreadNavigation = useSidebarActiveThreadScroll(
+    routeThreadKey,
+    sidebarThreads.length,
+  );
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
