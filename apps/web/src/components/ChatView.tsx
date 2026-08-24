@@ -2553,9 +2553,15 @@ export default function ChatView(props: ChatViewProps) {
   const supportsConversationRollback =
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
+  const hasCodexGoalSession =
+    isServerThread &&
+    selectedProvider === "codex" &&
+    activeThread !== null &&
+    activeThread !== undefined &&
+    activeThread.session !== null;
   const codexGoal = useCodexGoal(
-    isServerThread && selectedProvider === "codex" ? environmentId : null,
-    isServerThread && selectedProvider === "codex" ? activeThreadId : null,
+    hasCodexGoalSession ? environmentId : null,
+    hasCodexGoalSession ? activeThreadId : null,
   );
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
