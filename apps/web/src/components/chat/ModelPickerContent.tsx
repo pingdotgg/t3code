@@ -63,6 +63,36 @@ function ModelListSeparator() {
   return <div className="h-0.5" />;
 }
 
+/** Collapsible section header row shared by the sub-provider and legacy folds. */
+function ModelPickerSectionRow(props: {
+  index: number;
+  value: string;
+  label: string;
+  count: number;
+  isExpanded: boolean;
+}) {
+  return (
+    <ComboboxItem
+      hideIndicator
+      index={props.index}
+      value={props.value}
+      aria-expanded={props.isExpanded}
+      className="group w-full cursor-pointer rounded-md px-2 py-2"
+      contentClassName="flex w-full items-center gap-3"
+    >
+      <div className="min-w-0 flex-1 text-left">
+        <div className="truncate text-xs font-medium leading-snug">{props.label}</div>
+        <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70">
+          {props.count} {props.count === 1 ? "model" : "models"}
+        </div>
+      </div>
+      <ChevronRightIcon
+        className={cn("size-4 transition-transform", props.isExpanded && "rotate-90")}
+      />
+    </ComboboxItem>
+  );
+}
+
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   /** The instance currently selected in the composer (combobox "value"). */
   activeInstanceId: ProviderInstanceId;
@@ -143,7 +173,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     const activeModel = modelOptionsByInstance
       .get(props.activeInstanceId)
       ?.find((model) => model.slug === props.model);
-    if (activeModel?.subProvider) {
+    if (activeModel?.subProvider && storedExpandedSections[props.activeInstanceId] === undefined) {
       keys.add(modelPickerSubProviderSectionKey(props.activeInstanceId, activeModel.subProvider));
     }
     return keys;
@@ -426,6 +456,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return null;
     }
     const ungrouped: ModelPickerItem[] = [];
+    // Count vendors across every eligible model, favorited or not: a fully
+    // favorited vendor still counts, so the other vendor keeps its section.
+    const subProviders = new Set<string>();
     const groups = new Map<
       string,
       { key: string; label: string; models: ModelPickerItem[]; isExpanded: boolean }
@@ -433,6 +466,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     for (const model of filteredModels) {
       if (model.isLegacy) {
         continue;
+      }
+      if (model.subProvider) {
+        subProviders.add(model.subProvider);
       }
       if (!model.subProvider || favoritesSet.has(providerModelKey(model.instanceId, model.slug))) {
         ungrouped.push(model);
@@ -451,7 +487,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         });
       }
     }
-    if (groups.size < 2) {
+    if (subProviders.size < 2) {
       return null;
     }
     const sections = [...groups.values()].toSorted((a, b) => a.label.localeCompare(b.label));
@@ -896,54 +932,24 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     const subProviderSection = subProviderSectionByKey.get(modelKey);
                     if (subProviderSection) {
                       return (
-                        <ComboboxItem
-                          hideIndicator
+                        <ModelPickerSectionRow
                           index={index}
                           value={modelKey}
-                          aria-expanded={subProviderSection.isExpanded}
-                          className="group w-full cursor-pointer rounded-md px-2 py-2"
-                          contentClassName="flex w-full items-center gap-3"
-                        >
-                          <div className="min-w-0 flex-1 text-left">
-                            <div className="truncate text-xs font-medium leading-snug">
-                              {subProviderSection.label}
-                            </div>
-                            <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70">
-                              {subProviderSection.models.length} models
-                            </div>
-                          </div>
-                          <ChevronRightIcon
-                            className={cn(
-                              "size-4 transition-transform",
-                              subProviderSection.isExpanded && "rotate-90",
-                            )}
-                          />
-                        </ComboboxItem>
+                          label={subProviderSection.label}
+                          count={subProviderSection.models.length}
+                          isExpanded={subProviderSection.isExpanded}
+                        />
                       );
                     }
                     if (legacySection?.key === modelKey) {
                       return (
-                        <ComboboxItem
-                          hideIndicator
+                        <ModelPickerSectionRow
                           index={index}
                           value={modelKey}
-                          aria-expanded={legacySection.isExpanded}
-                          className="group w-full cursor-pointer rounded-md px-2 py-2"
-                          contentClassName="flex w-full items-center gap-3"
-                        >
-                          <div className="min-w-0 flex-1 text-left">
-                            <div className="text-xs font-medium leading-snug">Legacy models</div>
-                            <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70">
-                              {legacySection.legacyModels.length} models
-                            </div>
-                          </div>
-                          <ChevronRightIcon
-                            className={cn(
-                              "size-4 transition-transform",
-                              legacySection.isExpanded && "rotate-90",
-                            )}
-                          />
-                        </ComboboxItem>
+                          label="Legacy models"
+                          count={legacySection.legacyModels.length}
+                          isExpanded={legacySection.isExpanded}
+                        />
                       );
                     }
                     const model = filteredModelByKey.get(modelKey);
