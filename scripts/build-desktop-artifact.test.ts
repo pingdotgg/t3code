@@ -40,6 +40,7 @@ import {
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
   resolveResourceMonitorRustTargets,
+  resolveWindowsServerAsarIgnoreGlobs,
   resourceMonitorExecutableName,
   resolveGitHubPublishConfig,
   resolveMockUpdateServerPort,
@@ -47,6 +48,7 @@ import {
   resolvePackageManagerUserAgent,
   stageLinuxIconSize,
   stageDesktopDmgBackground,
+  stageResourceMonitor,
   STAGE_INSTALL_ARGS,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
@@ -118,7 +120,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   yield* fs.writeFileString(nativePath, "native-binary");
 
   const generatedAsarPath = path.join(tempDir, WINDOWS_SERVER_ASAR_RESOURCE);
-  yield* packWindowsServerAsar({ sourceDir, asarPath: generatedAsarPath });
+  yield* packWindowsServerAsar({ sourceDir, asarPath: generatedAsarPath, arch: "x64" });
 
   const stageDistDir = path.join(tempDir, "dist");
   const packagedAppDir = path.join(stageDistDir, "win-unpacked");
@@ -488,6 +490,121 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
+  it("excludes node-pty binaries for the other Windows architecture", () => {
+    assert.deepStrictEqual(resolveWindowsServerAsarIgnoreGlobs("x64"), [
+      ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
+      "**/node_modules/node-pty/prebuilds/win32-arm64",
+      "**/node_modules/node-pty/prebuilds/win32-arm64/**",
+      "**/node_modules/node-pty/third_party/conpty/*/win10-arm64",
+      "**/node_modules/node-pty/third_party/conpty/*/win10-arm64/**",
+    ]);
+    assert.deepStrictEqual(resolveWindowsServerAsarIgnoreGlobs("arm64"), [
+      ...WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
+      "**/node_modules/node-pty/prebuilds/win32-x64",
+      "**/node_modules/node-pty/prebuilds/win32-x64/**",
+      "**/node_modules/node-pty/third_party/conpty/*/win10-x64",
+      "**/node_modules/node-pty/third_party/conpty/*/win10-x64/**",
+    ]);
+  });
+
+  it.effect(
+    "keeps target and WSL native files while excluding the other Windows architecture",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fs.makeTempDirectoryScoped({
+            prefix: "t3-windows-architecture-test-",
+          });
+          const sourceDir = path.join(tempDir, "server");
+          const nativeFiles = [
+            "node_modules/node-pty/prebuilds/win32-x64/conpty/OpenConsole.exe",
+            "node_modules/node-pty/prebuilds/win32-arm64/conpty/OpenConsole.exe",
+            "node_modules/node-pty/prebuilds/linux-x64/pty.node",
+            "node_modules/node-pty/third_party/conpty/1.0.0/win10-x64/OpenConsole.exe",
+            "node_modules/node-pty/third_party/conpty/1.0.0/win10-arm64/OpenConsole.exe",
+          ];
+
+          for (const nativeFile of nativeFiles) {
+            const nativePath = path.join(sourceDir, nativeFile);
+            yield* fs.makeDirectory(path.dirname(nativePath), { recursive: true });
+            yield* fs.writeFileString(nativePath, "native");
+          }
+
+          const asarPath = path.join(tempDir, "server.asar");
+          yield* packWindowsServerAsar({ sourceDir, asarPath, arch: "x64" });
+          const unpackedRoot = `${asarPath}.unpacked`;
+
+          assert.isTrue(
+            yield* fs.exists(
+              path.join(
+                unpackedRoot,
+                "node_modules/node-pty/prebuilds/win32-x64/conpty/OpenConsole.exe",
+              ),
+            ),
+          );
+          assert.isTrue(
+            yield* fs.exists(
+              path.join(unpackedRoot, "node_modules/node-pty/prebuilds/linux-x64/pty.node"),
+            ),
+          );
+          assert.isFalse(
+            yield* fs.exists(
+              path.join(unpackedRoot, "node_modules/node-pty/prebuilds/win32-arm64"),
+            ),
+          );
+          assert.isFalse(
+            yield* fs.exists(
+              path.join(unpackedRoot, "node_modules/node-pty/third_party/conpty/1.0.0/win10-arm64"),
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.effect("stages a cached resource monitor without invoking Cargo", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repoRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-resource-monitor-cache-test-",
+        });
+        const binaryPath = path.join(
+          repoRoot,
+          "native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor",
+        );
+        const stageResourcesDir = path.join(repoRoot, "stage");
+        yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
+        yield* fs.writeFileString(binaryPath, "cached monitor");
+
+        yield* stageResourceMonitor({
+          repoRoot,
+          stageResourcesDir,
+          platform: "linux",
+          arch: "x64",
+          verbose: false,
+        }).pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: { T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true" },
+              }),
+            ),
+          ),
+        );
+
+        assert.equal(
+          yield* fs.readFileString(
+            path.join(stageResourcesDir, "resource-monitor/t3-resource-monitor"),
+          ),
+          "cached monitor",
+        );
+      }),
+    ),
+  );
+
   it.effect("validates every ASAR-unpacked native in the packaged Windows payload", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -504,6 +621,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         yield* packWindowsServerAsar({
           sourceDir: fixture.sourceDir,
           asarPath: secondAsarPath,
+          arch: "x64",
         });
         const [firstAsar, secondAsar] = yield* Effect.all([
           fs.readFile(fixture.generatedAsarPath),
