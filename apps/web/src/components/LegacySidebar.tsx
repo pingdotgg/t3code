@@ -3061,10 +3061,10 @@ export default function LegacySidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
-  const markSidebarThreadNavigation = useSidebarActiveThreadScroll(
+  const markSidebarThreadNavigation = useSidebarActiveThreadScroll({
+    hasThreadRoute: routeTarget !== null,
     routeThreadKey,
-    sidebarThreads.length,
-  );
+  });
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
@@ -3235,20 +3235,12 @@ export default function LegacySidebar() {
       if (isMobile) {
         setOpenMobile(false);
       }
-      markSidebarThreadNavigation(scopedThreadKey(threadRef));
       void navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(threadRef),
       });
     },
-    [
-      clearSelection,
-      isMobile,
-      markSidebarThreadNavigation,
-      navigate,
-      setOpenMobile,
-      setSelectionAnchor,
-    ],
+    [clearSelection, isMobile, navigate, setOpenMobile, setSelectionAnchor],
   );
 
   const projectDnDSensors = useSensors(

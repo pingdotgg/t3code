@@ -1,13 +1,15 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
 
-import { useSidebar } from "../ui/sidebar";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useSidebarVisibility } from "../ui/sidebar";
 
-export function useSidebarActiveThreadScroll(
-  routeThreadKey: string | null,
-  sidebarThreadCount: number,
-) {
-  const { isMobile, open, openMobile } = useSidebar();
-  const sidebarIsVisible = isMobile ? openMobile : open;
+export function useSidebarActiveThreadScroll(input: {
+  hasThreadRoute: boolean;
+  routeThreadKey: string | null;
+}) {
+  const { hasThreadRoute, routeThreadKey } = input;
+  const sidebarIsVisible = useSidebarVisibility();
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const sidebarWasVisibleRef = useRef(false);
   const lastRouteThreadKeyRef = useRef(routeThreadKey);
   const initialScrollPendingRef = useRef(true);
@@ -23,40 +25,51 @@ export function useSidebarActiveThreadScroll(
       routeThreadKey !== null && lastRouteThreadKeyRef.current !== routeThreadKey;
     const routeChangedFromSidebar =
       routeThreadChanged && sidebarNavigationThreadKeyRef.current === routeThreadKey;
+
+    if (!hasThreadRoute) {
+      initialScrollPendingRef.current = false;
+    }
     const initialScrollPending = initialScrollPendingRef.current;
 
-    sidebarWasVisibleRef.current = sidebarIsVisible;
-    if (routeThreadKey !== null) {
+    if (!sidebarIsVisible) {
+      sidebarWasVisibleRef.current = false;
+      return;
+    }
+    if (!routeThreadKey) {
+      sidebarWasVisibleRef.current = true;
+      if (!hasThreadRoute) {
+        lastRouteThreadKeyRef.current = null;
+        sidebarNavigationThreadKeyRef.current = null;
+      }
+      return;
+    }
+    if (routeChangedFromSidebar) {
+      sidebarWasVisibleRef.current = true;
       lastRouteThreadKeyRef.current = routeThreadKey;
-    }
-    if (routeThreadChanged) {
+      initialScrollPendingRef.current = false;
       sidebarNavigationThreadKeyRef.current = null;
+      return;
     }
-
-    if (
-      !sidebarIsVisible ||
-      !routeThreadKey ||
-      (!initialScrollPending &&
-        !sidebarBecameVisible &&
-        (!routeThreadChanged || routeChangedFromSidebar))
-    ) {
+    if (!initialScrollPending && !sidebarBecameVisible && !routeThreadChanged) {
+      sidebarWasVisibleRef.current = true;
       return;
     }
 
     const activeThread = document.querySelector<HTMLElement>(
       `[data-sidebar-thread-key="${globalThis.CSS.escape(routeThreadKey)}"]`,
     );
-    if (!activeThread) {
-      return;
-    }
+    if (!activeThread) return;
 
-    const behavior = initialScrollPending || sidebarBecameVisible ? "instant" : "smooth";
-    initialScrollPendingRef.current = false;
     activeThread.scrollIntoView({
-      behavior,
+      behavior:
+        initialScrollPending || sidebarBecameVisible || prefersReducedMotion ? "instant" : "smooth",
       block: "center",
     });
-  }, [routeThreadKey, sidebarIsVisible, sidebarThreadCount]);
+    sidebarWasVisibleRef.current = true;
+    lastRouteThreadKeyRef.current = routeThreadKey;
+    initialScrollPendingRef.current = false;
+    sidebarNavigationThreadKeyRef.current = null;
+  });
 
   return markSidebarThreadNavigation;
 }

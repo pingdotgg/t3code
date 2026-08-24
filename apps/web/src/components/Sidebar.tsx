@@ -1825,7 +1825,10 @@ export default function Sidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
-  const markSidebarThreadNavigation = useSidebarActiveThreadScroll(routeThreadKey, threads.length);
+  const markSidebarThreadNavigation = useSidebarActiveThreadScroll({
+    hasThreadRoute: routeTarget !== null,
+    routeThreadKey,
+  });
   const routeTargetRef = useRef(routeTarget);
   routeTargetRef.current = routeTarget;
   // Post-settle navigation validates against the CURRENT route, not the one
@@ -1955,6 +1958,19 @@ export default function Sidebar() {
       setProjectScopeKey(null);
     }
   }, [projectScopeKey, scopedProjectGroup]);
+  useEffect(() => {
+    if (routeThreadKey === null || scopedProjectKeys === null) return;
+    const routeThread = threads.find(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+    );
+    if (
+      routeThread !== undefined &&
+      !scopedProjectKeys.has(`${routeThread.environmentId}:${routeThread.projectId}`)
+    ) {
+      setProjectScopeKey(null);
+    }
+  }, [routeThreadKey, scopedProjectKeys, threads]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
@@ -2309,20 +2325,19 @@ export default function Sidebar() {
       if (isMobile) {
         setOpenMobile(false);
       }
-      markSidebarThreadNavigation(scopedThreadKey(threadRef));
       void router.navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(threadRef),
       });
     },
-    [
-      clearSelection,
-      isMobile,
-      markSidebarThreadNavigation,
-      router,
-      setOpenMobile,
-      setSelectionAnchor,
-    ],
+    [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
+  );
+  const navigateToThreadFromSidebar = useCallback(
+    (threadRef: ScopedThreadRef) => {
+      markSidebarThreadNavigation(scopedThreadKey(threadRef));
+      navigateToThread(threadRef);
+    },
+    [markSidebarThreadNavigation, navigateToThread],
   );
 
   const navigateToDraft = useCallback(
@@ -2445,9 +2460,9 @@ export default function Sidebar() {
       if (isTrailingDoubleClick(event.detail)) {
         return;
       }
-      navigateToThread(threadRef);
+      navigateToThreadFromSidebar(threadRef);
     },
-    [navigateToThread, rangeSelectTo, toggleThreadSelection],
+    [navigateToThreadFromSidebar, rangeSelectTo, toggleThreadSelection],
   );
 
   // A settle per thread at a time: double clicks and repeated menu picks
@@ -3738,7 +3753,7 @@ export default function Sidebar() {
                         }
                         timestampFormat={timestampFormat}
                         onThreadClick={handleThreadClick}
-                        onThreadActivate={navigateToThread}
+                        onThreadActivate={navigateToThreadFromSidebar}
                         onStartRename={startThreadRename}
                         onRenameTitleChange={setRenamingTitle}
                         onCommitRename={commitThreadRename}
