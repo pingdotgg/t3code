@@ -1,4 +1,5 @@
 import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -236,6 +237,61 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders a feedback command and its pending response as normal thread messages", () => {
+    const submission = {
+      id: MessageId.make("feedback-command"),
+      command: "/feedback The agent stopped early.",
+      createdAt: MESSAGE_CREATED_AT,
+      status: "uploading" as const,
+    };
+    const messages = [
+      codexFeedbackMessage(submission),
+      codexFeedbackMessage(submission, "assistant"),
+    ];
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={messages.map((message) => ({
+          id: message.id,
+          kind: "message" as const,
+          createdAt: message.createdAt,
+          message,
+        }))}
+      />,
+    );
+
+    expect(markup).toContain("/feedback The agent stopped early.");
+    expect(markup).toContain("Sending feedback to OpenAI...");
+  });
+
+  it("renders the returned Codex thread ID in the feedback response", () => {
+    const submission = {
+      id: MessageId.make("feedback-command"),
+      command: "/feedback The agent stopped early.",
+      createdAt: MESSAGE_CREATED_AT,
+      status: "sent" as const,
+      feedbackId: "codex-thread-1",
+    };
+    const messages = [
+      codexFeedbackMessage(submission),
+      codexFeedbackMessage(submission, "assistant"),
+    ];
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={messages.map((message) => ({
+          id: message.id,
+          kind: "message" as const,
+          createdAt: message.createdAt,
+          message,
+        }))}
+      />,
+    );
+
+    expect(markup).toContain("Feedback sent to OpenAI.");
+    expect(markup).toContain("codex-thread-1");
+  });
+
   it("renders the worked-for row at assistant response text size", () => {
     const turnId = TurnId.make("turn-with-fold");
     const assistantEntry = buildAssistantTimelineEntry("Done.");
@@ -500,6 +556,49 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("data-anchor-index=");
     expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
     expect(onAnchorReady).not.toHaveBeenCalled();
+  });
+
+  it("keeps reserved end space when tool work starts while reading history", () => {
+    const turnId = TurnId.make("turn-with-active-tool");
+    const firstEntry = buildUserTimelineEntry("Run the command.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt={MESSAGE_CREATED_AT}
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        anchorMessageId={firstEntry.message.id}
+        liveFollowEnabled={false}
+        timelineEntries={[
+          firstEntry,
+          {
+            id: "entry-active-tool",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-active-tool",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              toolCallId: "call-active-tool",
+              label: "Run command",
+              tone: "tool",
+              itemType: "command_execution",
+              command: "git status",
+              toolLifecycleStatus: "inProgress",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-anchor-index="0"');
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
   });
 
   it("hands end-following back to the list once the send anchor is released", () => {
@@ -872,6 +971,56 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Ran 2 commands");
     expect(markup).not.toContain('aria-label="Tool call failed"');
+  });
+
+  it("keeps mixed work logs neutral after a later tool call succeeds", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-failed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-failed",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Run search",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "failed",
+            },
+          },
+          {
+            id: "entry-info",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-info",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Status updated",
+              tone: "info",
+            },
+          },
+          {
+            id: "entry-completed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "work-completed",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              label: "Run tests",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "completed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("+2 previous log entries");
+    expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
   it("shows the animated one-line label for a live tool group", () => {

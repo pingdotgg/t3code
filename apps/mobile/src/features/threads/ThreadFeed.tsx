@@ -209,8 +209,6 @@ function ThreadMarkdownImageView(props: {
   const [availableWidth, setAvailableWidth] = useState(0);
   const [sourceSize, setSourceSize] = useState<{ width: number; height: number } | null>(null);
   const [failedUri, setFailedUri] = useState<string | null>(null);
-  const activeUriRef = useRef(props.uri);
-  activeUriRef.current = props.uri;
 
   useEffect(() => {
     setSourceSize(null);
@@ -272,23 +270,12 @@ function ThreadMarkdownImageView(props: {
               overflow: "hidden",
             }}
           >
-            <Image
-              source={{ uri: props.uri }}
-              resizeMode="contain"
-              accessible={false}
-              onLoad={(event) => {
-                if (activeUriRef.current !== props.uri) return;
-                const { width, height } = event.nativeEvent.source;
-                setSourceSize({ width, height });
-              }}
+            <ThreadMarkdownImageRequest
+              key={props.uri}
+              uri={props.uri}
+              onLoad={setSourceSize}
               onError={() => setFailedUri(props.uri)}
-              style={{
-                width: "100%",
-                height: "100%",
-                opacity: displaySize === null ? 0 : 1,
-              }}
             />
-            {displaySize === null ? <ActivityIndicator style={StyleSheet.absoluteFill} /> : null}
           </View>
         </TouchableOpacity>
       )}
@@ -298,6 +285,38 @@ function ThreadMarkdownImageView(props: {
         </Text>
       ) : null}
     </View>
+  );
+}
+
+function ThreadMarkdownImageRequest(props: {
+  readonly uri: string;
+  readonly onLoad: (sourceSize: { width: number; height: number }) => void;
+  readonly onError: () => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+
+  return (
+    <>
+      <Image
+        source={{ uri: props.uri }}
+        resizeMode="contain"
+        accessible={false}
+        onLoad={(event) => {
+          setLoaded(true);
+          props.onLoad(event.nativeEvent.source);
+        }}
+        onError={props.onError}
+        style={{ width: "100%", height: "100%", opacity: loaded ? 1 : 0 }}
+      />
+      {loaded ? null : (
+        <View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}
+        >
+          <Text className="text-xs text-foreground-muted">Loading image…</Text>
+        </View>
+      )}
+    </>
   );
 }
 
