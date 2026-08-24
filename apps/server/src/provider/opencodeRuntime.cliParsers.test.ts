@@ -154,6 +154,30 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.equal(model.id, "qwen/qwen3-coder");
     NodeAssert.equal(model.providerID, "openrouter");
   });
+
+  it("strips OSC title escapes from model slugs (opencode CLI leak)", () => {
+    const stdout = [
+      "\x1b]0;t3code: ready\x07opencode/big-pickle",
+      JSON.stringify({ id: "big-pickle", providerID: "opencode", name: "Big Pickle" }),
+      "\x1b]0;tmp: ready\x07anthropic/claude-sonnet-4-5",
+      JSON.stringify({ id: "claude-sonnet-4-5", providerID: "anthropic", name: "Sonnet" }),
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    NodeAssert.equal(result.providers.size, 2);
+    NodeAssert.ok(result.providers.get("opencode")!.models["big-pickle"]);
+    NodeAssert.ok(result.providers.get("anthropic")!.models["claude-sonnet-4-5"]);
+  });
+
+  it("strips ANSI escapes from model slugs", () => {
+    const stdout = [
+      "\x1b[33mopencode/gpt-5.4\x1b[0m",
+      JSON.stringify({ id: "gpt-5.4", providerID: "opencode", name: "GPT-5.4" }),
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    NodeAssert.ok(result.providers.get("opencode")!.models["gpt-5.4"]);
+  });
 });
 
 describe("parseAgentListCliOutput", () => {
@@ -255,9 +279,47 @@ describe("parseAgentListCliOutput", () => {
     NodeAssert.equal(result[0]!.hidden, true);
     NodeAssert.equal(result[1]!.hidden, false);
   });
+
+  it("strips OSC title escapes leaked by opencode CLI", () => {
+    // opencode <=1.18 writes `ESC ]0;<cwd>: ready BEL` to stdout for every
+    // non-help command — even when stdout is a pipe. Without stripping, the
+    // agent name becomes `ESC]0;...BELbuild` and later fails with
+    // `Agent not found: "ESC]0;...build"`.
+    const stdout = [
+      "\x1b]0;t3code: ready\x07build (primary)",
+      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+      "\x1b]0;tmp: ready\x07explore (subagent)",
+      "  " + JSON.stringify([{ permission: "read", action: "allow", pattern: "*" }]),
+    ].join("\n");
+
+    const result = parseAgentListCliOutput(stdout);
+    NodeAssert.equal(result.length, 2);
+    NodeAssert.equal(result[0]!.name, "build");
+    NodeAssert.equal(result[0]!.mode, "primary");
+    NodeAssert.equal(result[1]!.name, "explore");
+    NodeAssert.equal(result[1]!.mode, "subagent");
+  });
+
+  it("strips ANSI CSI color escapes from agent headers", () => {
+    const stdout = [
+      "\x1b[31mbuild (primary)\x1b[0m",
+      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+    ].join("\n");
+
+    const result = parseAgentListCliOutput(stdout);
+    NodeAssert.equal(result.length, 1);
+    NodeAssert.equal(result[0]!.name, "build");
+  });
 });
 
 describe("parseSkillsCliOutput", () => {
+  it("strips OSC escapes before JSON parsing (opencode CLI leak)", () => {
+    const polluted = "\x1b]0;tmp: ready\x07" + JSON.stringify([{ name: "review-pr", location: "/tmp/x", description: "d", content: "c" }]);
+    const result = parseSkillsCliOutput(polluted);
+    NodeAssert.equal(result.length, 1);
+    NodeAssert.equal(result[0]!.name, "review-pr");
+  });
+
   it("parses skill metadata from the CLI JSON output", () => {
     const result = parseSkillsCliOutput(
       JSON.stringify([
