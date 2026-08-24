@@ -128,6 +128,7 @@ interface ChatMarkdownProps {
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
+const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
 const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
 
@@ -197,7 +198,7 @@ function rehypeNormalizeWindowsImageSrc() {
         node.type === "element" &&
         node.tagName === "img" &&
         typeof src === "string" &&
-        /^[A-Za-z]:[\\/]/.test(src)
+        WINDOWS_DRIVE_PATH_REGEX.test(src)
       ) {
         node.properties = {
           ...node.properties,
@@ -231,7 +232,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkPreserveCodeMeta,
-  remarkTagInlineCode,
+  remarkNormalizeLinksAndTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
@@ -240,7 +241,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkNormalizeListItemIndentation,
   remarkBreaks,
   remarkPreserveCodeMeta,
-  remarkTagInlineCode,
+  remarkNormalizeLinksAndTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
@@ -326,6 +327,7 @@ function extractPreCodeMeta(node: unknown): string | undefined {
 type MarkdownAstNode = {
   type?: string;
   meta?: unknown;
+  url?: string;
   data?: {
     hProperties?: Record<string, unknown>;
   };
@@ -352,15 +354,20 @@ function remarkPreserveCodeMeta() {
 }
 
 /**
- * Fenced code also lands on the `code` component, and inline vs block is no
- * longer distinguishable there once both render `<code>` — so inline spans are
- * tagged on the mdast, where the distinction still exists. Code inside a link
- * label stays untagged: linkifying it would nest an anchor inside the link's
- * anchor and steal its clicks.
+ * Preserve Windows drive links as allowed `file:` URLs before sanitization.
+ * The same traversal tags inline code while it can still be distinguished
+ * from fenced code. Code inside links stays untagged to avoid nested anchors.
  */
-function remarkTagInlineCode() {
+function remarkNormalizeLinksAndTagInlineCode() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode, insideLink: boolean) => {
+      if (
+        (node.type === "link" || node.type === "definition") &&
+        typeof node.url === "string" &&
+        WINDOWS_DRIVE_PATH_REGEX.test(node.url)
+      ) {
+        node.url = `file:///${node.url.replaceAll("\\", "/")}`;
+      }
       if (node.type === "inlineCode" && !insideLink) {
         node.data = {
           ...node.data,
@@ -875,14 +882,12 @@ function pathParentSegments(path: string): string[] {
 function buildFileLinkParentSuffixByPath(filePaths: ReadonlyArray<string>): Map<string, string> {
   const groups = new Map<string, Set<string>>();
   for (const filePath of filePaths) {
-    const pathSegments = filePath
-      .replaceAll("\\", "/")
-      .split("/")
-      .filter((segment) => segment.length > 0);
+    const normalizedPath = filePath.replaceAll("\\", "/");
+    const pathSegments = normalizedPath.split("/").filter((segment) => segment.length > 0);
     const basename = pathSegments[pathSegments.length - 1];
     if (!basename) continue;
     const group = groups.get(basename) ?? new Set<string>();
-    group.add(filePath);
+    group.add(normalizedPath);
     groups.set(basename, group);
   }
 
@@ -943,7 +948,10 @@ function extractInlineCodeSpans(text: string): string[] {
 
 function normalizeMarkdownLinkHrefKey(href: string): string {
   const normalizedHref = normalizeMarkdownLinkDestination(href);
-  return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
+  const rewrittenHref = rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
+  return WINDOWS_DRIVE_PATH_REGEX.test(rewrittenHref)
+    ? rewrittenHref.replaceAll("\\", "/")
+    : rewrittenHref;
 }
 
 const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
@@ -1605,7 +1613,9 @@ function ChatMarkdown({
       copyMarkdown: string,
       className?: string,
     ) => {
-      const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
+      const parentSuffix = fileLinkParentSuffixByPath.get(
+        fileLinkMeta.filePath.replaceAll("\\", "/"),
+      );
       const labelParts = [fileLinkMeta.basename];
       if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
         labelParts.push(parentSuffix);
