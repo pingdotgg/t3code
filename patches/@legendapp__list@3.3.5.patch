@@ -204,7 +204,7 @@ index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..3ccf6f16067152dfcb0c143371e2ec6a
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a306b293f797a8b338adfca3060c0f6db22b..89077be4d6833cfaabf9d6d6205d9551505e32b4 100644
+index b3c5a306b293f797a8b338adfca3060c0f6db22b..4227ed22da8865b7493f47f199f4d8f4a5493efb 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -954,7 +954,7 @@ function setInitialRenderState(ctx, {
@@ -513,14 +513,6 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..89077be4d6833cfaabf9d6d6205d9551
      estimatedItemSize = 100,
      estimatedListSize,
      extraData,
-@@ -7105,6 +7260,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
-     onLayout: onLayoutProp,
-     onLoad,
-     onMomentumScrollEnd,
-+    onScrollBeginDrag,
-     onRefresh,
-     onScroll: onScrollProp,
-     onScrollBeginDrag,
 @@ -7200,7 +7356,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    const combinedRef = useCombinedRef(refScroller, refScrollView);
    const keyExtractor = keyExtractorProp != null ? keyExtractorProp : ((_item, index) => index.toString());
