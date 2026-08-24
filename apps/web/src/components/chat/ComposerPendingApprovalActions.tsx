@@ -47,7 +47,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
           disabled={isResponding}
           onClick={() => void onRespondToApproval(requestId, option.decision)}
         >
-          {option.label}
+          <span className="max-w-40 truncate">{option.label}</span>
         </Button>
       ))}
     </>

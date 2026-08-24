@@ -40,4 +40,19 @@ describe("ComposerPendingApprovalActions", () => {
     expect(markup).toContain(">Approve<");
     expect(markup).not.toContain("Always allow this session");
   });
+
+  it("limits provider-supplied approval labels so narrow rows can wrap", () => {
+    const label = "Allow ".repeat(40).trim();
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalActions
+        requestId={ApprovalRequestId.make("approval-long-label")}
+        isResponding={false}
+        options={[{ decision: "acceptAlways", label }]}
+        onRespondToApproval={async () => undefined}
+      />,
+    );
+
+    expect(markup).toContain('class="max-w-40 truncate"');
+    expect(markup).toContain(label);
+  });
 });
