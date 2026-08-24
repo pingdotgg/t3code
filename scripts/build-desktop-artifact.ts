@@ -798,6 +798,7 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/windows-server/**/*",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
+  "!apps/desktop/prod-resources/wsl-runtime.tar.gz.content-id",
 ] as const;
 // Windows ships the server tree (bundle + node_modules) as a separate
 // resources/server.asar sidecar instead of loose files: the NSIS installer

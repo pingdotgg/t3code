@@ -429,12 +429,26 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("limits Electron locales and excludes separately packaged resources", () => {
     assert.deepStrictEqual(DESKTOP_ELECTRON_LANGUAGES, ["en-US"]);
+    // Every WSL staging input is emitted once at resources/, so adding one
+    // without its exclusion silently packs a second copy into app.asar. The
+    // snapshot below cannot catch that on its own: adding a resource and
+    // forgetting the exclusion leaves the exclusion list untouched, so it still
+    // matches. Assert the invariant first, where the failure names the culprit.
+    for (const resource of WSL_RUNTIME_EXTRA_RESOURCES) {
+      assert.include(
+        DESKTOP_FILE_EXCLUSIONS,
+        `!${resource.from}`,
+        `${resource.from} ships via extraResources and must be excluded from app.asar`,
+      );
+    }
+
     assert.deepStrictEqual(DESKTOP_FILE_EXCLUSIONS, [
       "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
       "!apps/desktop/prod-resources/windows-server",
       "!apps/desktop/prod-resources/windows-server/**/*",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
+      "!apps/desktop/prod-resources/wsl-runtime.tar.gz.content-id",
     ]);
     assert.equal(WINDOWS_SERVER_RESOURCE_SOURCE_DIR, "apps/desktop/prod-resources/windows-server");
     assert.deepStrictEqual(WINDOWS_SERVER_EXTRA_RESOURCES, [
