@@ -7,10 +7,33 @@ import {
   deriveFileInspectorPaneLayout,
   deriveLayout,
   deriveStableFormSheetDetent,
+  deriveThreadFeedInitialContentInset,
   deriveWorkspacePaneLayout,
   SPLIT_LAYOUT_MIN_HEIGHT,
   SPLIT_LAYOUT_MIN_WIDTH,
 } from "./layout";
+
+describe("deriveThreadFeedInitialContentInset", () => {
+  it("seeds Android scroll math with the composer overlay estimate", () => {
+    expect(
+      deriveThreadFeedInitialContentInset({
+        platform: "android",
+        usesNativeAutomaticInsets: false,
+        bottomContentInset: 174,
+      }),
+    ).toEqual({ bottom: 174 });
+  });
+
+  it("does not double native iOS insets", () => {
+    expect(
+      deriveThreadFeedInitialContentInset({
+        platform: "ios",
+        usesNativeAutomaticInsets: true,
+        bottomContentInset: 174,
+      }),
+    ).toBeUndefined();
+  });
+});
 
 describe("resizable pane constraints", () => {
   it("keeps a preferred sidebar width across large windows and clamps it in a narrow split view", () => {
