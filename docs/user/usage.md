@@ -5,7 +5,7 @@ the providers' local session history and shows API-equivalent token cost, proces
 savings, provider shares, and model breakdowns. Subscription billing is separate from the raw token
 cost shown here.
 
-On web and desktop, enable **Show plan usage in sidebar** under **Settings → General** to put the
+On web and desktop, enable **Plan usage indicator** under **Settings → General** to put the
 highest provider-reported subscription utilization beside the Usage icon. The number is muted below
 70%, amber from 70%, and red from 90%. Hover it to see every reported limit, including separate
 weekly model limits such as Claude Fable when the provider supplies them. Plan limits refresh with
