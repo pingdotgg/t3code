@@ -187,6 +187,26 @@ describe("reconcileScopeRefresh", () => {
     expect(result.action).toBe("none");
   });
 
+  it("refreshes once when a reverted scope settles with no checkpoints", () => {
+    const existingCheckpoint = snapshot(1, [{ completedAt: "T1", files: [file("src/main.tsx")] }]);
+
+    let result = reconcileScopeRefresh(undefined, existingCheckpoint, false, touchesOpenFile);
+    expect(result.state.marker).toBeDefined();
+
+    result = reconcileScopeRefresh(result.state, null, true, touchesOpenFile);
+    expect(result.action).toBe("none");
+    expect(result.state.marker).toBeDefined();
+
+    result = reconcileScopeRefresh(result.state, null, false, touchesOpenFile);
+    expect(result.action).toBe("refresh");
+    expect(result.state).toEqual(emptyReconciliationState());
+
+    result = reconcileScopeRefresh(result.state, null, true, touchesOpenFile);
+    expect(result.action).toBe("none");
+    result = reconcileScopeRefresh(result.state, null, false, touchesOpenFile);
+    expect(result.action).toBe("none");
+  });
+
   it("refreshes when a placeholder gains files without advancing its cursor", () => {
     const placeholder = snapshot(1, [{ completedAt: "T1", files: [] }]);
     const captured = snapshot(1, [{ completedAt: "T1", files: [file("src/main.tsx")] }]);
@@ -217,6 +237,13 @@ describe("reconcileScopeRefresh", () => {
       touchesOpenFile,
     );
     expect(result.action).toBe("refresh");
+
+    let emptyResult = reconcileScopeRefresh(cache.get("evicted"), null, false, touchesOpenFile);
+    expect(emptyResult.action).toBe("refresh");
+    cache.set("evicted", emptyResult.state);
+
+    emptyResult = reconcileScopeRefresh(cache.get("evicted"), null, false, touchesOpenFile);
+    expect(emptyResult.action).toBe("none");
   });
 });
 

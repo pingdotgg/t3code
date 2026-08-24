@@ -119,6 +119,7 @@ export function reconcileScopeRefresh(
   firstFetchInFlight: boolean,
   isRelevant: (files: ReadonlyArray<OrchestrationCheckpointFile>) => boolean,
 ): { readonly state: ScopeReconciliationState; readonly action: ScopeAction } {
+  const stateWasUndefined = state === undefined;
   const currentState =
     state ??
     ({
@@ -128,7 +129,19 @@ export function reconcileScopeRefresh(
     } satisfies ScopeReconciliationState);
 
   if (snapshot === null) {
-    return { state: currentState, action: "none" };
+    if (firstFetchInFlight) {
+      return { state: currentState, action: "none" };
+    }
+    const hasReconciliationState =
+      currentState.marker !== undefined || currentState.reconciledSnapshot !== undefined;
+    return {
+      state: {
+        marker: undefined,
+        reconciledSnapshot: undefined,
+        initialFetchSnapshot: undefined,
+      },
+      action: stateWasUndefined || hasReconciliationState ? "refresh" : "none",
+    };
   }
 
   const decision = evaluateScopeRefresh(
