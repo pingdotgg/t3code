@@ -428,13 +428,19 @@ describe("AcpSessionRuntime", () => {
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
       yield* runtime.start();
+      yield* runtime.setConfigOption("model", "gpt-5.4");
+      yield* runtime.setConfigOption("reasoning", "low");
 
       yield* runtime.prompt({
         prompt: [{ type: "text", text: "hi" }],
       });
 
       expect(yield* runtime.getConfigOptions).toMatchObject([
+        { id: "mode", currentValue: "ask" },
+        { id: "model", currentValue: "gpt-5.4" },
         { id: "reasoning", currentValue: "high" },
+        { id: "context", currentValue: "272k" },
+        { id: "fast", currentValue: "false" },
       ]);
       const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 6)));
       expect(notes.map((note) => note._tag)).toEqual([
@@ -467,6 +473,9 @@ describe("AcpSessionRuntime", () => {
             },
           },
           cwd: process.cwd(),
+          clientCapabilities: {
+            _meta: { parameterizedModelPicker: true },
+          },
           clientInfo: { name: "t3-test", version: "0.0.0" },
           authMethodId: "test",
         }),

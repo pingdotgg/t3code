@@ -919,23 +919,12 @@ const program = Effect.gen(function* () {
       }
 
       if (emitConfigOptionUpdate) {
+        currentReasoning = "high";
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "config_option_update",
-            configOptions: [
-              {
-                id: "reasoning",
-                name: "Reasoning",
-                category: "thought_level",
-                type: "select",
-                currentValue: "high",
-                options: [
-                  { value: "low", name: "Low" },
-                  { value: "high", name: "High" },
-                ],
-              },
-            ],
+            configOptions: configOptions(),
           },
         });
       }
