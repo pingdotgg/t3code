@@ -50,6 +50,9 @@ export function useSidebarActiveThreadScroll(input: {
     }
     if (!initialScrollPending && !sidebarBecameVisible && !routeThreadChanged) {
       sidebarWasVisibleRef.current = true;
+      if (sidebarNavigationThreadKeyRef.current === routeThreadKey) {
+        sidebarNavigationThreadKeyRef.current = null;
+      }
       return;
     }
 
