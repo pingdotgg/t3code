@@ -945,6 +945,16 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..06466096ceb96ef8773f7f7e202a19c9
    }
    return nextSize;
  }
+@@ -6448,8 +6455,8 @@ function ScrollAdjust() {
+               window.getComputedStyle(contentNode)[axis.paddingEndProp]
+             );
+             const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
+-            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: temporaryPaddingEnd };
+             contentNode.style[axis.paddingEndProp] = temporaryPaddingEnd;
++            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: contentNode.style[axis.paddingEndProp] };
+             void contentNode.offsetHeight;
+             scrollBy();
+             if (resetPaddingRafRef.current !== void 0) {
 diff --git a/react.mjs b/react.mjs
 index 95465f2ab89ce41a10553f58af83618f7310e83c..4b5f06c60f1e8bbd9035a49980d9e86820262da4 100644
 --- a/react.mjs
@@ -973,6 +983,16 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..4b5f06c60f1e8bbd9035a49980d9e868
    }
    return nextSize;
  }
+@@ -6427,8 +6434,8 @@ function ScrollAdjust() {
+               window.getComputedStyle(contentNode)[axis.paddingEndProp]
+             );
+             const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
+-            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: temporaryPaddingEnd };
+             contentNode.style[axis.paddingEndProp] = temporaryPaddingEnd;
++            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: contentNode.style[axis.paddingEndProp] };
+             void contentNode.offsetHeight;
+             scrollBy();
+             if (resetPaddingRafRef.current !== void 0) {
 diff --git a/reanimated.d.ts b/reanimated.d.ts
 index e5043320700b12f34f4c0babbc341f85ca8135c1..2ce63830a28636b21937a0741fd0e613dae950fe 100644
 --- a/reanimated.d.ts
