@@ -1,3 +1,4 @@
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -48,7 +49,7 @@ export function formatServiceStatus(
   cliVersion: string,
 ): string {
   if (!status.supported) {
-    return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd";
+    return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd";
   }
   if (!status.installed) {
     return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
@@ -152,12 +153,18 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     yield* Console.log("T3 Code is already set up to run in the background on this machine.");
     return true;
   }
+  // A LaunchAgent starts at login and dies at logout; there is no
+  // enable-linger equivalent on macOS. Do not promise more than that.
+  const platform = yield* HostProcessPlatform;
   const wanted = yield* Prompt.run(
     Prompt.confirm({
       message: installed
         ? "The installed T3 Code service needs an update or repair. Update it now?"
-        : "Run T3 Code in the background whenever this machine boots? " +
-          "It stays reachable through T3 Connect even after you log out.",
+        : platform === "darwin"
+          ? "Run T3 Code in the background whenever you log in to this Mac? " +
+            "It stays reachable through T3 Connect while you are logged in."
+          : "Run T3 Code in the background whenever this machine boots? " +
+            "It stays reachable through T3 Connect even after you log out.",
       initial: true,
     }),
   );

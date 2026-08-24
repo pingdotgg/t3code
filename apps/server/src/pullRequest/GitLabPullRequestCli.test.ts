@@ -1018,7 +1018,12 @@ layer("GitLabPullRequestCli.layer", (it) => {
         verdict: "approve",
         body: "Looks right.",
         comments: [
-          { path: "src/b.ts", oldPath: "src/a.ts", line: 4, side: "left", body: "why remove?" },
+          {
+            path: "src/b.ts",
+            oldPath: "src/a.ts",
+            position: { kind: "deleted", oldLine: 4 },
+            body: "why remove?",
+          },
         ],
       });
 
@@ -1197,7 +1202,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
           number: 7,
           verdict: "comment",
           body: "",
-          comments: [{ path: "src/a.ts", line: 4, side: "right", body: "nit" }],
+          comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 4 }, body: "nit" }],
         }),
       );
 
