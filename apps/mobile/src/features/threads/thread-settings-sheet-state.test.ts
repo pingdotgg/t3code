@@ -96,7 +96,7 @@ describe("thread settings sheet state", () => {
     );
   });
 
-  it("groups a multi-vendor catalog by vendor, keeping vendorless models flat", () => {
+  it("groups a multi-vendor catalog by vendor, keeping vendorless models flat on top", () => {
     const models = [
       modelOption("claude-haiku", [], "Anthropic"),
       modelOption("claude-sonnet", [], "Anthropic"),
@@ -107,9 +107,9 @@ describe("thread settings sheet state", () => {
     const runs = catalogVendorRuns(models);
 
     expect(runs).toEqual([
+      { subProvider: undefined, models: [models[3]] },
       { subProvider: "Anthropic", models: [models[0], models[1]] },
       { subProvider: "OpenAI", models: [models[2]] },
-      { subProvider: undefined, models: [models[3]] },
     ]);
   });
 

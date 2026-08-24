@@ -24,8 +24,9 @@ export function modelMatchesCatalogQuery(input: {
  * Group one provider's catalog by vendor, in first-seen order, keeping each
  * vendor's models in catalog order. The catalog itself stays name-sorted (its
  * order feeds the implicit default model), so grouping happens here; models
- * without a vendor form one flat group. Returns null when fewer than two
- * vendors are present — a single header is noise.
+ * without a vendor form one flat group placed first, matching the web
+ * picker's custom-models-above-sections layout. Returns null when fewer than
+ * two vendors are present — a single header is noise.
  */
 export function catalogVendorRuns(models: ReadonlyArray<ModelOption>): ReadonlyArray<{
   readonly subProvider: string | undefined;
@@ -44,7 +45,13 @@ export function catalogVendorRuns(models: ReadonlyArray<ModelOption>): ReadonlyA
     }
   }
   const vendors = new Set(runs.flatMap((run) => (run.subProvider ? [run.subProvider] : [])));
-  return vendors.size < 2 ? null : runs;
+  if (vendors.size < 2) {
+    return null;
+  }
+  return [
+    ...runs.filter((run) => run.subProvider === undefined),
+    ...runs.filter((run) => run.subProvider !== undefined),
+  ];
 }
 
 /** Preserve staged provider options when the highlighted model is tapped again. */
