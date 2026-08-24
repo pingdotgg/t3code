@@ -119,7 +119,6 @@ export type AttachmentClaimPlan =
       readonly finalId: string;
       readonly currentPath: string;
       readonly finalPath: string;
-      readonly alreadyScoped: boolean;
     }
   | { readonly ok: false; readonly reason: string };
 
@@ -134,15 +133,11 @@ export function planAttachmentClaim(input: {
     return { ok: false, reason: "invalid attachment id" };
   }
 
-  const threadSegment = toSafeThreadAttachmentSegment(input.threadId);
-  if (!threadSegment) {
+  if (!toSafeThreadAttachmentSegment(input.threadId)) {
     return { ok: false, reason: "invalid thread id" };
   }
-  if (
-    requestedSegment !== PENDING_ATTACHMENT_THREAD_SEGMENT &&
-    requestedSegment !== threadSegment
-  ) {
-    return { ok: false, reason: "attachment belongs to another thread" };
+  if (requestedSegment !== PENDING_ATTACHMENT_THREAD_SEGMENT) {
+    return { ok: false, reason: "attachment must be a pending upload" };
   }
 
   const currentPath = resolveAttachmentPathById({
@@ -152,16 +147,6 @@ export function planAttachmentClaim(input: {
   if (!currentPath) {
     return { ok: false, reason: "attachment not found (removed or expired)" };
   }
-  if (requestedSegment === threadSegment) {
-    return {
-      ok: true,
-      finalId: input.attachmentId,
-      currentPath,
-      finalPath: currentPath,
-      alreadyScoped: true,
-    };
-  }
-
   const finalId = createAttachmentId(input.threadId);
   if (!finalId) {
     return { ok: false, reason: "failed to create attachment id" };
@@ -179,7 +164,6 @@ export function planAttachmentClaim(input: {
     finalId,
     currentPath,
     finalPath: expectedFinalPath,
-    alreadyScoped: false,
   };
 }
 

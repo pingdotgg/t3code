@@ -269,7 +269,7 @@ describe("normalizeDispatchCommand attachments", () => {
           attachments: [{ id: `another-thread-${attachmentUuid}`, sizeBytes: 6 }],
         }),
       ).pipe(Effect.flip);
-      expect(wrongThread.message).toContain("another thread");
+      expect(wrongThread.message).toContain("pending upload");
 
       const mismatchedTypeCommand = turnStartCommand({
         attachments: [{ id: `pending-${attachmentUuid}`, sizeBytes: 6 }],

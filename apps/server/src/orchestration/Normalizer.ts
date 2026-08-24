@@ -181,20 +181,18 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
               });
             }
 
-            if (!claim.alreadyScoped) {
-              // Keep the pending copy until the turn succeeds. A failed thread
-              // bootstrap can then retry with a fresh thread id.
-              yield* fileSystem.copyFile(claim.currentPath, claim.finalPath).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationDispatchCommandError({
-                      message: `Failed to claim attachment '${attachment.name}' for this thread.`,
-                      cause,
-                    }),
-                ),
-              );
-              claimedAttachmentPaths.push(claim.finalPath);
-            }
+            // Keep the pending copy until the turn succeeds. A failed thread
+            // bootstrap can then retry with a fresh thread id.
+            yield* fileSystem.copyFile(claim.currentPath, claim.finalPath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationDispatchCommandError({
+                    message: `Failed to claim attachment '${attachment.name}' for this thread.`,
+                    cause,
+                  }),
+              ),
+            );
+            claimedAttachmentPaths.push(claim.finalPath);
 
             return normalizedAttachment;
           }
