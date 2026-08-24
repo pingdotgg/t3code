@@ -132,6 +132,14 @@ private enum TerminalInputSequence {
       return input
     }
   }
+
+  /// Pasted text can carry many line endings; each must arrive as Enter, not
+  /// as the Ctrl+J a bare line feed means to a raw-mode TUI.
+  static func normalizingNewlines(_ input: String) -> String {
+    input
+      .replacingOccurrences(of: "\r\n", with: carriageReturn)
+      .replacingOccurrences(of: "\n", with: carriageReturn)
+  }
 }
 
 private final class TerminalInputField: UITextField {
@@ -409,7 +417,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     UIMenu(title: "", children: [
       UIAction(title: "Paste") { [weak self] _ in
         guard let text = UIPasteboard.general.string else { return }
-        self?.emitInput(TerminalInputSequence.normalizingReturn(text))
+        self?.emitInput(TerminalInputSequence.normalizingNewlines(text))
       },
     ])
   }
