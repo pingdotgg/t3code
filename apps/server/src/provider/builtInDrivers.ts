@@ -15,8 +15,7 @@
  *
  * The aggregated `BuiltInDriversEnv` type is the union of every driver's
  * env requirement — the registry layer's `R` is this type, and the runtime
- * layer (ChildProcessSpawner, FileSystem, Path, ServerConfig,
- * OpenCodeRuntime, …) must satisfy it.
+ * layer must provide every service in this union.
  *
  * @module provider/builtInDrivers
  */
@@ -24,6 +23,7 @@ import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "./Drivers/CursorDriver.ts";
 import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
+import { OhMyPiDriver, type OhMyPiDriverEnv } from "./Drivers/OhMyPiDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
 import type { AnyProviderDriver } from "./ProviderDriver.ts";
 
@@ -37,6 +37,7 @@ export type BuiltInDriversEnv =
   | CodexDriverEnv
   | CursorDriverEnv
   | GrokDriverEnv
+  | OhMyPiDriverEnv
   | OpenCodeDriverEnv;
 
 /**
@@ -50,4 +51,5 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   CursorDriver,
   GrokDriver,
   OpenCodeDriver,
+  OhMyPiDriver,
 ];
