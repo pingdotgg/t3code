@@ -17,11 +17,10 @@ export interface ThreadSearchResultsState {
   readonly isLoading: boolean;
 }
 
-const ThreadSearchKey = Schema.Tuple([
-  Schema.Array(EnvironmentId),
-  OrchestrationSearchThreadsInput.fields.query,
-]);
-const decodeThreadSearchKey = Schema.decodeUnknownSync(ThreadSearchKey);
+const ThreadSearchKey = Schema.fromJsonString(
+  Schema.Tuple([Schema.Array(EnvironmentId), OrchestrationSearchThreadsInput.fields.query]),
+);
+const decodeThreadSearchKey = Schema.decodeUnknownOption(ThreadSearchKey);
 
 export function makeThreadSearchKey(
   environmentIds: ReadonlyArray<EnvironmentId>,
@@ -34,7 +33,7 @@ export function makeThreadSearchKey(
 }
 
 function parseThreadSearchKey(key: string) {
-  return decodeThreadSearchKey(JSON.parse(key));
+  return decodeThreadSearchKey(key);
 }
 
 export function threadSearchMatchKey(
@@ -44,9 +43,9 @@ export function threadSearchMatchKey(
 }
 
 /**
- * Combines one search query atom per environment. Failed and disconnected
- * environments contribute no content matches, preserving local title search
- * as the compatibility fallback.
+ * Combines one search query atom per environment. Invalid search keys, failed
+ * requests, and disconnected environments contribute no content matches,
+ * preserving local title search as the compatibility fallback.
  */
 export function createThreadSearchResultsAtomFamily<E>(options: {
   readonly getSearchAtom: (
@@ -57,7 +56,12 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
 }) {
   return Atom.family((key: string) =>
     Atom.make((get): ThreadSearchResultsState => {
-      const [environmentIds, query] = parseThreadSearchKey(key);
+      const parsedKey = parseThreadSearchKey(key);
+      if (Option.isNone(parsedKey)) {
+        return { matches: [], isLoading: false };
+      }
+
+      const [environmentIds, query] = parsedKey.value;
       const matches: EnvironmentThreadSearchMatch[] = [];
       let isLoading = false;
 
