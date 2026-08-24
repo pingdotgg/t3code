@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
+import { ProjectId, ThreadId, TurnId, ProviderInstanceId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -7,13 +7,16 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
 import { ProjectionProjectRepositoryLive } from "./ProjectionProjects.ts";
+import { ProjectionThreadSessionRepositoryLive } from "./ProjectionThreadSessions.ts";
 import { ProjectionThreadRepositoryLive } from "./ProjectionThreads.ts";
 import { ProjectionProjectRepository } from "../Services/ProjectionProjects.ts";
+import { ProjectionThreadSessionRepository } from "../Services/ProjectionThreadSessions.ts";
 import { ProjectionThreadRepository } from "../Services/ProjectionThreads.ts";
 
 const projectionRepositoriesLayer = it.layer(
   Layer.mergeAll(
     ProjectionProjectRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+    ProjectionThreadSessionRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
     ProjectionThreadRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
     SqlitePersistenceMemory,
   ),
@@ -199,6 +202,54 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.strictEqual(updated?.snoozedUntil, null);
       assert.strictEqual(updated?.snoozedAt, null);
       assert.strictEqual(updated?.pinnedAt, null);
+    }),
+  );
+
+  it.effect("normalizes blank active turn ids when reading thread sessions", () =>
+    Effect.gen(function* () {
+      const sessions = yield* ProjectionThreadSessionRepository;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`
+        INSERT INTO projection_thread_sessions (
+          thread_id,
+          status,
+          provider_name,
+          runtime_mode,
+          active_turn_id,
+          last_error,
+          updated_at
+        )
+        VALUES
+          (
+            'thread-session-blank',
+            'ready',
+            'codex',
+            'full-access',
+            '   ',
+            NULL,
+            '2026-08-11T00:00:00.000Z'
+          ),
+          (
+            'thread-session-valid',
+            'running',
+            'codex',
+            'full-access',
+            'turn-valid',
+            NULL,
+            '2026-08-11T00:00:01.000Z'
+          )
+      `;
+
+      const blank = yield* sessions.getByThreadId({
+        threadId: ThreadId.make("thread-session-blank"),
+      });
+      assert.strictEqual(Option.getOrNull(blank)?.activeTurnId, null);
+
+      const valid = yield* sessions.getByThreadId({
+        threadId: ThreadId.make("thread-session-valid"),
+      });
+      assert.strictEqual(Option.getOrNull(valid)?.activeTurnId, TurnId.make("turn-valid"));
     }),
   );
 });

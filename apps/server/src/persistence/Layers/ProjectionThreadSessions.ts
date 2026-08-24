@@ -63,7 +63,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
           provider_name AS "providerName",
           provider_instance_id AS "providerInstanceId",
           runtime_mode AS "runtimeMode",
-          active_turn_id AS "activeTurnId",
+          CASE WHEN TRIM(active_turn_id) = '' THEN NULL ELSE active_turn_id END AS "activeTurnId",
           last_error AS "lastError",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions

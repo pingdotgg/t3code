@@ -471,6 +471,213 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("normalizes blank session active turn ids at every snapshot read boundary", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-blank-active-turn',
+          'Blank Active Turn',
+          '/tmp/blank-active-turn',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-08-11T00:00:00.000Z',
+          '2026-08-11T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES
+          (
+            'thread-active-blank',
+            'project-blank-active-turn',
+            'Active Blank',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-08-11T00:00:02.000Z',
+            '2026-08-11T00:00:03.000Z',
+            NULL,
+            NULL
+          ),
+          (
+            'thread-active-valid',
+            'project-blank-active-turn',
+            'Active Valid',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-08-11T00:00:04.000Z',
+            '2026-08-11T00:00:05.000Z',
+            NULL,
+            NULL
+          ),
+          (
+            'thread-archived-whitespace',
+            'project-blank-active-turn',
+            'Archived Whitespace',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            0,
+            0,
+            0,
+            '2026-08-11T00:00:06.000Z',
+            '2026-08-11T00:00:07.000Z',
+            '2026-08-11T00:00:08.000Z',
+            NULL
+          )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_sessions (
+          thread_id,
+          status,
+          provider_name,
+          runtime_mode,
+          active_turn_id,
+          last_error,
+          updated_at
+        )
+        VALUES
+          (
+            'thread-active-blank',
+            'ready',
+            'codex',
+            'full-access',
+            '',
+            NULL,
+            '2026-08-11T00:00:09.000Z'
+          ),
+          (
+            'thread-active-valid',
+            'running',
+            'codex',
+            'full-access',
+            'turn-valid',
+            NULL,
+            '2026-08-11T00:00:10.000Z'
+          ),
+          (
+            'thread-archived-whitespace',
+            'ready',
+            'codex',
+            'full-access',
+            '   ',
+            NULL,
+            '2026-08-11T00:00:11.000Z'
+          )
+      `;
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.equal(
+        commandReadModel.threads.find((thread) => thread.id === "thread-active-blank")?.session
+          ?.activeTurnId,
+        null,
+      );
+      assert.equal(
+        commandReadModel.threads.find((thread) => thread.id === "thread-archived-whitespace")
+          ?.session?.activeTurnId,
+        null,
+      );
+      assert.equal(
+        commandReadModel.threads.find((thread) => thread.id === "thread-active-valid")?.session
+          ?.activeTurnId,
+        asTurnId("turn-valid"),
+      );
+
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      assert.equal(
+        shellSnapshot.threads.find((thread) => thread.id === "thread-active-blank")?.session
+          ?.activeTurnId,
+        null,
+      );
+      assert.equal(
+        shellSnapshot.threads.find((thread) => thread.id === "thread-active-valid")?.session
+          ?.activeTurnId,
+        asTurnId("turn-valid"),
+      );
+
+      const archivedShellSnapshot = yield* snapshotQuery.getArchivedShellSnapshot();
+      assert.equal(
+        archivedShellSnapshot.threads.find((thread) => thread.id === "thread-archived-whitespace")
+          ?.session?.activeTurnId,
+        null,
+      );
+
+      const threadShell = yield* snapshotQuery.getThreadShellById(
+        ThreadId.make("thread-active-blank"),
+      );
+      assert.equal(threadShell._tag, "Some");
+      if (threadShell._tag === "Some") {
+        assert.equal(threadShell.value.session?.activeTurnId, null);
+      }
+
+      const threadDetail = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("thread-active-blank"),
+      );
+      assert.equal(threadDetail._tag, "Some");
+      if (threadDetail._tag === "Some") {
+        assert.equal(threadDetail.value.session?.activeTurnId, null);
+      }
+    }),
+  );
+
   it.effect("keeps archived threads out of the main shell snapshot", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
