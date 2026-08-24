@@ -83,6 +83,8 @@ export const discoverSkillsFromRoots = Effect.fn("discoverSkillsFromRoots")(func
       }
 
       const frontmatter = parseSkillFrontmatter(contents);
+      // Malformed frontmatter means the provider will not load the skill
+      // either, so skip it rather than publishing a broken inventory entry.
       if (frontmatter.kind === "malformed") {
         continue;
       }

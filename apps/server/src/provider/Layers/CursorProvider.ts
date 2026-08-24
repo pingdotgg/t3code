@@ -991,7 +991,6 @@ const runCursorAboutCommand = (cursorSettings: CursorSettings, environment?: Nod
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
-  cwd?: string,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -1106,7 +1105,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveredModels = discoveryExit.value;
     }
   }
-  const skills = yield* discoverCursorSkills(cwd, environment?.HOME);
+  const skills = yield* discoverCursorSkills(environment?.HOME);
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,

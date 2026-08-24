@@ -22,19 +22,17 @@ const writeSkill = Effect.fn(function* (
 });
 
 it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
-  it.effect("discovers Cursor's user and project skill roots with native precedence", () =>
+  it.effect("discovers Cursor's global skill roots with native precedence", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-home-" });
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-workspace-" });
 
       yield* writeSkill(path.join(home, ".agents", "skills"), "review", "User review.");
       yield* writeSkill(path.join(home, ".cursor", "skills"), "deploy", "User deploy.");
-      yield* writeSkill(path.join(cwd, ".agents", "skills"), "review", "Project review.");
-      yield* writeSkill(path.join(cwd, ".cursor", "skills"), "review", "Cursor review.");
+      yield* writeSkill(path.join(home, ".cursor", "skills"), "review", "Cursor review.");
 
-      const skills = yield* discoverCursorSkills(cwd, home);
+      const skills = yield* discoverCursorSkills(home);
 
       assert.deepEqual(skills, [
         {
@@ -46,9 +44,9 @@ it.layer(NodeServices.layer)("discoverCursorSkills", (it) => {
         },
         {
           name: "review",
-          path: path.join(cwd, ".cursor", "skills", "review", "SKILL.md"),
+          path: path.join(home, ".cursor", "skills", "review", "SKILL.md"),
           enabled: true,
-          scope: "project",
+          scope: "user",
           description: "Cursor review.",
         },
       ]);
