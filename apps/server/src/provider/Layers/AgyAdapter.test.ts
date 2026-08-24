@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/TestClock";
 
 import {
   AgySettings,
@@ -25,7 +26,7 @@ import { makeAgyAdapter } from "./AgyAdapter.ts";
 
 const decodeAgySettings = Schema.decodeSync(AgySettings);
 
-async function makeMockAgyWrapper() {
+async function makeMockAgyWrapper(options?: { readonly emitInit?: boolean }) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "agy-mock-"));
   const wrapperPath = NodePath.join(dir, "fake-agy.mjs");
   const script = `
@@ -34,11 +35,13 @@ import readline from "node:readline";
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
 
 console.log("malformed native event");
-console.log(JSON.stringify({
-  event: "init",
-  conversation_id: "conv-12345",
-  init: { cwd: process.cwd(), tools: ["run_command", "write_to_file"] }
-}));
+if (${JSON.stringify(options?.emitInit !== false)}) {
+  console.log(JSON.stringify({
+    event: "init",
+    conversation_id: "conv-12345",
+    init: { cwd: process.cwd(), tools: ["run_command", "write_to_file"] }
+  }));
+}
 
 rl.on("line", (line) => {
   if (!line.trim()) return;
@@ -270,6 +273,46 @@ describe("AgyAdapter", () => {
           expect(invocation).not.toContain("--dangerously-skip-permissions");
 
           yield* adapter.stopSession(threadId);
+          yield* Effect.promise(() => NodeFSP.rm(mock.dir, { recursive: true, force: true }));
+        }),
+      );
+
+      it.effect("closes the turn and restores the session when initialization times out", () =>
+        Effect.gen(function* () {
+          const mock = yield* Effect.promise(() => makeMockAgyWrapper({ emitInit: false }));
+          const adapter = yield* makeAgyAdapter(decodeAgySettings({ binaryPath: mock.binaryPath }));
+          const threadId = ThreadId.make("thread-init-timeout");
+          const receivedEvents: Array<ProviderRuntimeEvent> = [];
+          const eventFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+            Effect.sync(() => receivedEvents.push(event)),
+          ).pipe(Effect.forkChild);
+
+          yield* adapter.startSession({
+            threadId,
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+          });
+          const sendFiber = yield* adapter
+            .sendTurn({ threadId, input: "Wait for initialization" })
+            .pipe(Effect.flip, Effect.forkChild);
+          yield* TestClock.adjust("10 seconds");
+          const error = yield* Fiber.join(sendFiber);
+
+          expect(error.message).toContain("did not initialize");
+          expect((yield* adapter.listSessions())[0]?.status).toBe("ready");
+          expect(
+            receivedEvents.some(
+              (event) => event.type === "turn.completed" && event.payload.state === "failed",
+            ),
+          ).toBe(true);
+          expect(
+            receivedEvents.some(
+              (event) => event.type === "session.state.changed" && event.payload.state === "ready",
+            ),
+          ).toBe(true);
+
+          yield* adapter.stopSession(threadId);
+          yield* Fiber.interrupt(eventFiber);
           yield* Effect.promise(() => NodeFSP.rm(mock.dir, { recursive: true, force: true }));
         }),
       );
