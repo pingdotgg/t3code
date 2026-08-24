@@ -2,6 +2,7 @@ import type { Locale } from "../../i18n/locale";
 import { useI18n } from "../../i18n/I18nProvider";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 export const LANGUAGE_OPTIONS: ReadonlyArray<{
   readonly value: Locale;
@@ -26,6 +27,7 @@ export function LanguageSettings() {
 
   return (
     <SettingsRow
+      id={searchableSetting("interface-language").id}
       title={t("settings.language.title")}
       description={t("settings.language.description")}
       resetAction={

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 
 describe("deriveProviderInstanceConfigMap", () => {
-  it("materializes a default Pi instance without a legacy provider settings slot", () => {
+  it("materializes the default Pi instance from legacy provider settings", () => {
     const config = deriveProviderInstanceConfigMap(DEFAULT_SERVER_SETTINGS);
 
     expect(config[ProviderInstanceId.make("piAgent")]).toEqual({

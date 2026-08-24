@@ -68,12 +68,16 @@ describe("bundled Skills", () => {
       );
       assert.equal(
         yield* resolveBundledPiMcpExtensionPath("/opt/t3/apps/server/dist"),
-        "/opt/t3/apps/server/dist/bundled-pi-extension/index.ts",
+        "/opt/t3/apps/server/dist/bundled-pi-extension/index.mjs",
+      );
+      assert.equal(
+        yield* resolveBundledPiMcpExtensionPath("/opt/t3/apps/server/src"),
+        "/opt/t3/apps/server/src/bundled-pi-extension/index.ts",
       );
     }).pipe(Effect.provide(NodePath.layer)),
   );
 
-  it("maps packaged Electron paths to the unpacked filesystem copy", () => {
+  it("keeps ASAR unpacking available for bundled files that require it", () => {
     assert.equal(
       resolveAsarUnpackedPath(
         "/Applications/T3 Code.app/Contents/Resources/app.asar/apps/server/dist/bundled-skills",
@@ -88,19 +92,54 @@ describe("bundled Skills", () => {
     );
   });
 
-  it.effect("joins and maps a packaged Windows module directory", () =>
+  it.effect("maps packaged macOS Skills to the external resources directory", () =>
+    Effect.gen(function* () {
+      assert.equal(
+        yield* resolveBundledSkillsRoot(
+          "/Applications/T3 Code.app/Contents/Resources/app.asar/apps/server/dist",
+        ),
+        "/Applications/T3 Code.app/Contents/Resources/bundled-skills",
+      );
+      assert.equal(
+        yield* resolveBundledMidsceneSkillPath(
+          "/Applications/T3 Code.app/Contents/Resources/app.asar/apps/server/dist",
+        ),
+        "/Applications/T3 Code.app/Contents/Resources/bundled-skills/midscene-preview/SKILL.md",
+      );
+      assert.equal(
+        yield* resolveBundledPiMcpExtensionPath(
+          "/Applications/T3 Code.app/Contents/Resources/app.asar/apps/server/dist",
+        ),
+        "/Applications/T3 Code.app/Contents/Resources/bundled-pi-extension/index.mjs",
+      );
+    }).pipe(Effect.provide(NodePath.layer)),
+  );
+
+  it.effect("maps packaged Windows Skills outside app.asar and server.asar", () =>
     Effect.gen(function* () {
       assert.equal(
         yield* resolveBundledSkillsRoot(
           String.raw`C:\Program Files\T3 Code\resources\app.asar\apps\server\dist`,
         ),
-        String.raw`C:\Program Files\T3 Code\resources\app.asar.unpacked\apps\server\dist\bundled-skills`,
+        String.raw`C:\Program Files\T3 Code\resources\bundled-skills`,
+      );
+      assert.equal(
+        yield* resolveBundledSkillsRoot(
+          String.raw`C:\Program Files\T3 Code\resources\server.asar\apps\server\dist`,
+        ),
+        String.raw`C:\Program Files\T3 Code\resources\bundled-skills`,
       );
       assert.equal(
         yield* resolveBundledPiMcpExtensionPath(
           String.raw`C:\Program Files\T3 Code\resources\app.asar\apps\server\dist`,
         ),
-        String.raw`C:\Program Files\T3 Code\resources\app.asar.unpacked\apps\server\dist\bundled-pi-extension\index.ts`,
+        String.raw`C:\Program Files\T3 Code\resources\bundled-pi-extension\index.mjs`,
+      );
+      assert.equal(
+        yield* resolveBundledPiMcpExtensionPath(
+          String.raw`C:\Program Files\T3 Code\resources\server.asar\apps\server\dist`,
+        ),
+        String.raw`C:\Program Files\T3 Code\resources\bundled-pi-extension\index.mjs`,
       );
     }).pipe(Effect.provide(NodePath.layerWin32)),
   );

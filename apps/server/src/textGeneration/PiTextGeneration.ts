@@ -209,9 +209,8 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           detail: "Pi returned empty text generation output.",
         });
       }
-      return yield* Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson))(
-        extractJsonObject(output),
-      ).pipe(
+      const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson));
+      return yield* decodeOutput(extractJsonObject(output)).pipe(
         Effect.mapError(
           (cause) =>
             new TextGenerationError({
@@ -241,6 +240,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         stagedSummary: input.stagedSummary,
         stagedPatch: input.stagedPatch,
         includeBranch: input.includeBranch === true,
+        policy: input.policy,
       });
       const generated = yield* runPiJson({
         operation: "generateCommitMessage",

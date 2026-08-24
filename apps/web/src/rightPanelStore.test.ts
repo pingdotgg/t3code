@@ -377,8 +377,12 @@ describe("rightPanelStore", () => {
 
   it("toggle to a different kind switches active", () => {
     useRightPanelStore.getState().toggle(refA, "preview");
-    useRightPanelStore.getState().toggle(refA, "agents");
-    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("agents");
+    useRightPanelStore.getState().toggle(refA, "context");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("context");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "context",
+      kind: "context",
+    });
   });
 
   it("removeThread clears persisted state", () => {
@@ -563,24 +567,6 @@ describe("rightPanelStore", () => {
       },
     ]);
     expect(state.activeSurfaceId).toBe("terminal:term-2");
-  });
-
-  it("opens and refreshes a subagent detail surface", () => {
-    useRightPanelStore.getState().openSubagent(refA, "call/agent-1", "Inspect events");
-    useRightPanelStore.getState().openSubagent(refA, "call/agent-1", "Inspect event routing");
-
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
-      isOpen: true,
-      activeSurfaceId: "subagent:call%2Fagent-1",
-      surfaces: [
-        {
-          id: "subagent:call%2Fagent-1",
-          kind: "subagent",
-          resourceId: "call/agent-1",
-          title: "Inspect event routing",
-        },
-      ],
-    });
   });
 
   it("tracks split panes and the active pane within a terminal surface", () => {

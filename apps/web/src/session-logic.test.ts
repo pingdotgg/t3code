@@ -22,7 +22,6 @@ import {
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
-  workEntryShouldBeVisible,
 } from "./session-logic";
 
 let nextActivityId = 0;
@@ -868,23 +867,6 @@ describe("workEntryIndicatesToolFailure", () => {
         detail: "ok",
       }),
     ).toBe(false);
-  });
-
-  it("keeps an in-progress subagent visible while ordinary neutral tools stay hidden", () => {
-    const inProgressTool = {
-      ...base,
-      tone: "tool" as const,
-      toolLifecycleStatus: "inProgress" as const,
-      detail: "Working",
-    };
-
-    expect(workEntryShouldBeVisible(inProgressTool)).toBe(false);
-    expect(
-      workEntryShouldBeVisible({
-        ...inProgressTool,
-        itemType: "collab_agent_tool_call",
-      }),
-    ).toBe(true);
   });
 
   it("does not run heuristics on non-tool info rows", () => {

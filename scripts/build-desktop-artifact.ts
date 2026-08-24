@@ -45,6 +45,7 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import type { PlatformError } from "effect/PlatformError";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
@@ -53,6 +54,21 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
+const ELECTRON_BUILDER_NETWORK_RETRY_LIMIT = 2;
+const ELECTRON_BUILDER_NETWORK_RETRY_DELAY = "2 seconds";
+const TRANSIENT_ELECTRON_BUILDER_NETWORK_PATTERNS = [
+  /client network socket disconnected before secure tls connection was established/iu,
+  /socket hang up/iu,
+  /tls handshake timeout/iu,
+  /\bEAI_AGAIN\b/u,
+  /\bECONNRESET\b/u,
+  /\bECONNREFUSED\b/u,
+  /\bENETUNREACH\b/u,
+  /\bEHOSTUNREACH\b/u,
+  /\bETIMEDOUT\b/u,
+  /\bESOCKETTIMEDOUT\b/u,
+  /\b(?:http|status(?: code)?)\s*(?:429|502|503|504)\b/iu,
+] as const;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
@@ -66,6 +82,7 @@ const WorkspaceConfig = Schema.Struct({
 type WorkspaceConfig = typeof WorkspaceConfig.Type;
 
 const StageWorkspaceConfig = Schema.Struct({
+  fetchTimeout: Schema.Number,
   supportedArchitectures: Schema.Struct({
     os: Schema.Array(Schema.String),
     cpu: Schema.Array(Schema.String),
@@ -286,6 +303,24 @@ export class BuildCommandFailedError extends Schema.TaggedErrorClass<BuildComman
   }
 }
 
+const isBuildCommandFailedError = Schema.is(BuildCommandFailedError);
+
+export function isTransientElectronBuilderNetworkFailure(error: unknown): boolean {
+  if (!isBuildCommandFailedError(error)) return false;
+  const output = `${error.stdoutTail ?? ""}\n${error.stderrTail ?? ""}`;
+  return TRANSIENT_ELECTRON_BUILDER_NETWORK_PATTERNS.some((pattern) => pattern.test(output));
+}
+
+export function shouldRetryElectronBuilderFailure(
+  error: unknown,
+  retriesAttempted: number,
+): boolean {
+  return (
+    retriesAttempted < ELECTRON_BUILDER_NETWORK_RETRY_LIMIT &&
+    isTransientElectronBuilderNetworkFailure(error)
+  );
+}
+
 export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedErrorClass<ResourceMonitorBuildOutputMissingError>()(
   "ResourceMonitorBuildOutputMissingError",
   {
@@ -395,6 +430,8 @@ const DesktopBuildInputArtifact = Schema.Literals([
   "desktop-resources",
   "server-dist",
   "bundled-server-client",
+  "bundled-midscene-skill",
+  "bundled-pi-extension",
 ]);
 type DesktopBuildInputArtifact = typeof DesktopBuildInputArtifact.Type;
 const desktopBuildInputArtifactNames = {
@@ -402,6 +439,8 @@ const desktopBuildInputArtifactNames = {
   "desktop-resources": "desktopResources",
   "server-dist": "serverDist",
   "bundled-server-client": "bundled server client",
+  "bundled-midscene-skill": "bundled Midscene Skill",
+  "bundled-pi-extension": "bundled Pi extension",
 } satisfies Record<DesktopBuildInputArtifact, string>;
 
 /**
@@ -478,6 +517,19 @@ export class MissingDesktopBuildInputError extends Schema.TaggedErrorClass<Missi
 ) {
   override get message(): string {
     return `Missing ${desktopBuildInputArtifactNames[this.artifact]} at ${this.artifactPath}. Run '${this.buildCommand}' first.`;
+  }
+}
+
+export class DesktopStageRuntimeArtifactMissingError extends Schema.TaggedErrorClass<DesktopStageRuntimeArtifactMissingError>()(
+  "DesktopStageRuntimeArtifactMissingError",
+  {
+    artifact: Schema.String,
+    stageAppDir: Schema.String,
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Desktop stage is missing required runtime artifact '${this.artifact}'.`;
   }
 }
 
@@ -783,7 +835,15 @@ interface StagePackageJson {
   };
 }
 
+export const STAGE_FETCH_TIMEOUT_MS = 10 * 60 * 1_000;
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
+const MIDSCENE_BUNDLED_SKILL_PATH = "bundled-skills/midscene-preview/SKILL.md";
+const PI_MCP_BUNDLED_EXTENSION_PATH = "bundled-pi-extension/index.mjs";
+const MIDSCENE_RUNTIME_ENTRYPOINTS = [
+  "@midscene/core/agent",
+  "@midscene/core/ai-model",
+  "@midscene/core/device",
+] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
 export const DESKTOP_FILE_EXCLUSIONS = [
   // T3 Code always passes the user's installed Claude executable to the SDK,
@@ -851,6 +911,14 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+  {
+    from: "apps/desktop/prod-resources/bundled-skills",
+    to: "bundled-skills",
+  },
+  {
+    from: "apps/desktop/prod-resources/bundled-pi-extension",
+    to: "bundled-pi-extension",
   },
 ] as const;
 
@@ -1197,6 +1265,9 @@ export function createStageWorkspaceConfig(input: {
           };
 
   return {
+    // Native provider packages can exceed 70 MB. pnpm's 60-second default aborts
+    // healthy but slower registry downloads before they can complete.
+    fetchTimeout: STAGE_FETCH_TIMEOUT_MS,
     supportedArchitectures,
     ...(allowBuilds && Object.keys(allowBuilds).length > 0 ? { allowBuilds } : {}),
     ...(patchedDependencies && Object.keys(patchedDependencies).length > 0
@@ -1206,6 +1277,104 @@ export function createStageWorkspaceConfig(input: {
     ...(linuxServerBackend ? { nodeLinker: "hoisted" as const } : {}),
   };
 }
+
+interface DesktopStageRuntimeValidationInput {
+  readonly stageAppDir: string;
+  readonly serverDistDir: string;
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+}
+
+export function resolveMidsceneSharpRuntimeModules(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+): ReadonlyArray<string> {
+  const architectures = arch === "universal" ? (["arm64", "x64"] as const) : [arch];
+  const targets = architectures.flatMap((architecture) =>
+    platform === "win"
+      ? [
+          { runtime: `win32-${architecture}`, libvips: false },
+          { runtime: `linux-${architecture}`, libvips: true },
+        ]
+      : [
+          {
+            runtime: `${platform === "mac" ? "darwin" : "linux"}-${architecture}`,
+            libvips: true,
+          },
+        ],
+  );
+
+  return targets.flatMap(({ runtime, libvips }) => [
+    `@img/sharp-${runtime}/sharp.node`,
+    ...(libvips ? [`@img/sharp-libvips-${runtime}/lib`] : []),
+  ]);
+}
+
+const resolveStageRuntimeModule = Effect.fn("resolveStageRuntimeModule")(function* (
+  stageAppDir: string,
+  loadedFrom: string,
+  specifier: string,
+) {
+  return yield* Effect.try({
+    try: () => NodeModule.createRequire(loadedFrom).resolve(specifier),
+    catch: (cause) =>
+      new DesktopStageRuntimeArtifactMissingError({
+        artifact: `module:${specifier}`,
+        stageAppDir,
+        cause,
+      }),
+  });
+});
+
+export const validateDesktopStageRuntime = Effect.fn("validateDesktopStageRuntime")(function* (
+  input: DesktopStageRuntimeValidationInput,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const artifact of [MIDSCENE_BUNDLED_SKILL_PATH, PI_MCP_BUNDLED_EXTENSION_PATH]) {
+    if (!(yield* fs.exists(path.join(input.serverDistDir, artifact)))) {
+      return yield* new DesktopStageRuntimeArtifactMissingError({
+        artifact,
+        stageAppDir: input.stageAppDir,
+      });
+    }
+  }
+
+  const stagePackageJsonPath = path.join(input.stageAppDir, "package.json");
+  const coreEntryPath = yield* resolveStageRuntimeModule(
+    input.stageAppDir,
+    stagePackageJsonPath,
+    MIDSCENE_RUNTIME_ENTRYPOINTS[0],
+  );
+  for (const specifier of MIDSCENE_RUNTIME_ENTRYPOINTS.slice(1)) {
+    yield* resolveStageRuntimeModule(input.stageAppDir, stagePackageJsonPath, specifier);
+  }
+
+  const sharedEntryPath = yield* resolveStageRuntimeModule(
+    input.stageAppDir,
+    coreEntryPath,
+    "@midscene/shared/img",
+  );
+  const photonEntryPath = yield* resolveStageRuntimeModule(
+    input.stageAppDir,
+    sharedEntryPath,
+    "@silvia-odwyer/photon-node",
+  );
+  if (!(yield* fs.exists(path.join(path.dirname(photonEntryPath), "photon_rs_bg.wasm")))) {
+    return yield* new DesktopStageRuntimeArtifactMissingError({
+      artifact: "module:@silvia-odwyer/photon-node/photon_rs_bg.wasm",
+      stageAppDir: input.stageAppDir,
+    });
+  }
+  const sharpEntryPath = yield* resolveStageRuntimeModule(
+    input.stageAppDir,
+    sharedEntryPath,
+    "sharp",
+  );
+  for (const specifier of resolveMidsceneSharpRuntimeModules(input.platform, input.arch)) {
+    yield* resolveStageRuntimeModule(input.stageAppDir, sharpEntryPath, specifier);
+  }
+});
 
 export function createStagePatchedDependencies(
   patchedDependencies: Record<string, string>,
@@ -1390,6 +1559,31 @@ const runCommand = Effect.fn("runCommand")(function* (
       ...(stderr.trim() ? { stderrTail: stderr } : {}),
     });
   }
+});
+
+const runElectronBuilderCommand = Effect.fn("runElectronBuilderCommand")(function* (
+  command: ChildProcess.Command,
+  options: {
+    readonly label: string;
+    readonly verbose: boolean;
+  },
+) {
+  let retriesAttempted = 0;
+  yield* runCommand(command, options).pipe(
+    Effect.retry({
+      schedule: Schedule.exponential(ELECTRON_BUILDER_NETWORK_RETRY_DELAY),
+      while: (error) => {
+        if (!shouldRetryElectronBuilderFailure(error, retriesAttempted)) return false;
+        retriesAttempted += 1;
+        return Effect.as(
+          Effect.logWarning(
+            `[desktop-artifact] electron-builder download failed due to a transient network error; retrying (${retriesAttempted}/${ELECTRON_BUILDER_NETWORK_RETRY_LIMIT})...`,
+          ),
+          true,
+        );
+      },
+    }),
+  );
 });
 
 /**
@@ -1740,6 +1934,28 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
     yield* fs.chmod(destinationPath, 0o755);
   }
 });
+
+export const stageBundledSkillsResource = Effect.fn("stageBundledSkillsResource")(
+  function* (input: { readonly serverDistDir: string; readonly stageResourcesDir: string }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.copy(
+      path.join(input.serverDistDir, "bundled-skills"),
+      path.join(input.stageResourcesDir, "bundled-skills"),
+    );
+  },
+);
+
+export const stageBundledPiExtensionResource = Effect.fn("stageBundledPiExtensionResource")(
+  function* (input: { readonly serverDistDir: string; readonly stageResourcesDir: string }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.copy(
+      path.join(input.serverDistDir, "bundled-pi-extension"),
+      path.join(input.stageResourcesDir, "bundled-pi-extension"),
+    );
+  },
+);
 
 function generateMacIconSet(
   sourcePng: string,
@@ -2369,6 +2585,12 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     }),
     { label: "vp install --prod (server sidecar)", verbose: input.verbose },
   );
+  yield* validateDesktopStageRuntime({
+    stageAppDir: serverStageDir,
+    serverDistDir: path.join(serverStageDir, "apps/server/dist"),
+    platform: "win",
+    arch: input.arch,
+  });
 
   yield* stageWslNodePtyPrebuild({
     stageAppDir: serverStageDir,
@@ -2724,6 +2946,11 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     serverDist: path.join(repoRoot, "apps/server/dist"),
   };
   const bundledClientEntry = path.join(distDirs.serverDist, "client/index.html");
+  const bundledMidsceneSkill = path.join(
+    distDirs.serverDist,
+    "bundled-skills/midscene-preview/SKILL.md",
+  );
+  const bundledPiExtension = path.join(distDirs.serverDist, "bundled-pi-extension/index.mjs");
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
@@ -2741,6 +2968,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     { artifact: "desktop-dist", artifactPath: distDirs.desktopDist },
     { artifact: "desktop-resources", artifactPath: distDirs.desktopResources },
     { artifact: "server-dist", artifactPath: distDirs.serverDist },
+    { artifact: "bundled-midscene-skill", artifactPath: bundledMidsceneSkill },
+    { artifact: "bundled-pi-extension", artifactPath: bundledPiExtension },
   ] as const;
   for (const input of requiredBuildInputs) {
     if (!(yield* fs.exists(input.artifactPath))) {
@@ -2846,6 +3075,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   if (options.platform !== "win") {
     yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
   }
+  yield* stageBundledSkillsResource({
+    serverDistDir: distDirs.serverDist,
+    stageResourcesDir,
+  });
+  yield* stageBundledPiExtensionResource({
+    serverDistDir: distDirs.serverDist,
+    stageResourcesDir,
+  });
   yield* stageResourceMonitor({
     repoRoot,
     stageResourcesDir,
@@ -2981,6 +3218,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     { label: "vp install --prod", verbose: options.verbose },
   );
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
+  if (options.platform !== "win") {
+    yield* validateDesktopStageRuntime({
+      stageAppDir,
+      serverDistDir: path.join(stageAppDir, "apps/server/dist"),
+      platform: options.platform,
+      arch: options.arch,
+    });
+  }
 
   // WSL is Windows-only, so only the Windows artifact carries the server
   // sidecar (which embeds the Linux node-pty prebuild); other platforms
@@ -3057,7 +3302,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     "never",
   ];
   const builderCommand = yield* resolveSpawnCommand("vp", builderArgs, { env: buildEnv });
-  yield* runCommand(
+  yield* runElectronBuilderCommand(
     ChildProcess.make(builderCommand.command, builderCommand.args, {
       cwd: repoRoot,
       env: buildEnv,

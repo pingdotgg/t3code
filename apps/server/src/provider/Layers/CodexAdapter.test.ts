@@ -360,6 +360,49 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     }),
   );
 
+  it.effect("maps Codex thread items into provider context messages", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-context");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.readThreadImpl.mockResolvedValueOnce({
+        threadId: "provider-thread-context",
+        turns: [
+          {
+            id: asTurnId("turn-context"),
+            items: [
+              { id: "user-item", type: "userMessage", content: [{ type: "text", text: "Hi" }] },
+              { id: "assistant-item", type: "agentMessage", text: "Hello" },
+              { type: "commandExecution", command: "pwd" },
+            ],
+          },
+        ],
+      } as unknown as CodexThreadSnapshot);
+
+      const result = yield* adapter.readThreadContext!(threadId);
+
+      NodeAssert.equal(runtime.readThreadImpl.mock.calls.length, 1);
+      NodeAssert.deepStrictEqual(
+        result.messages.map(({ id, role }) => ({ id, role })),
+        [
+          { id: "user-item", role: "user" },
+          { id: "assistant-item", role: "assistant" },
+          { id: "turn-context:2", role: null },
+        ],
+      );
+      NodeAssert.deepStrictEqual(result.messages[2]?.content, {
+        type: "commandExecution",
+        command: "pwd",
+      });
+    }),
+  );
+
   it.effect("rejects feedback for an unknown Codex thread", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

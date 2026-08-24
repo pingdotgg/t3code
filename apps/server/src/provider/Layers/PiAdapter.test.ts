@@ -51,6 +51,7 @@ const makeHarness = Effect.fn("makePiAdapterTestHarness")(function* (options?: {
   const commands: PiRpcCommand[] = [];
   const factoryInputs: PiClientFactoryInput[] = [];
   const bindings: unknown[] = [];
+  const nativeLogs = yield* Queue.unbounded<{ event: unknown; threadId: ThreadId | null }>();
   let closeCalls = 0;
   let turnSequence = 0;
 
@@ -109,6 +110,11 @@ const makeHarness = Effect.fn("makePiAdapterTestHarness")(function* (options?: {
       }),
     now: () => "2026-07-12T00:00:00.000Z",
     nextTurnId: () => `turn-pi-${++turnSequence}`,
+    nativeEventLogger: {
+      filePath: "memory://pi-native-events",
+      write: (event, threadId) => Queue.offer(nativeLogs, { event, threadId }).pipe(Effect.asVoid),
+      close: () => Effect.void,
+    },
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -126,6 +132,7 @@ const makeHarness = Effect.fn("makePiAdapterTestHarness")(function* (options?: {
     commands,
     factoryInputs,
     bindings,
+    nativeLogs,
     emit: (event: PiAgentEvent | PiExtensionUIRequest) => Queue.offer(nativeEvents, event),
     terminate: (detail: string) =>
       Deferred.succeed(terminated, new PiRpcClientError({ operation: "process-exit", detail })),
@@ -383,6 +390,40 @@ describe("PiAdapter", () => {
         expect(events.some((event) => event.type === "content.delta")).toBe(true);
         expect(events.some((event) => event.type === "turn.completed")).toBe(true);
         expect((yield* harness.adapter.listSessions())[0]).toMatchObject({ status: "ready" });
+      }),
+    ),
+  );
+
+  it.effect("writes Pi RPC events to the shared native event logger", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.adapter.startSession({
+          threadId: THREAD_ID,
+          providerInstanceId: INSTANCE_ID,
+          cwd: "/tmp/project",
+          runtimeMode: "full-access",
+        });
+
+        yield* harness.emit({ type: "agent_start" });
+        const logged = yield* Queue.take(harness.nativeLogs);
+
+        expect(logged).toEqual({
+          threadId: THREAD_ID,
+          event: {
+            observedAt: "2026-07-12T00:00:00.000Z",
+            event: {
+              id: expect.any(String),
+              kind: "notification",
+              provider: "piAgent",
+              providerInstanceId: INSTANCE_ID,
+              createdAt: "2026-07-12T00:00:00.000Z",
+              method: "agent_start",
+              threadId: THREAD_ID,
+              payload: { type: "agent_start" },
+            },
+          },
+        });
       }),
     ),
   );

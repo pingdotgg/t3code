@@ -60,6 +60,8 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const MIDSCENE_MODEL_API_KEY_SECRET_NAME = "midscene-model-api-key";
+const MIDSCENE_MODEL_API_KEY_ENVIRONMENT_VARIABLE = "MIDSCENE_MODEL_API_KEY";
 
 /**
  * Fold the legacy in-config `enabled` flag into the envelope-level
@@ -158,7 +160,16 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  return {
+    ...settings,
+    providerInstances,
+    midscene: {
+      ...settings.midscene,
+      modelApiKey: "",
+      modelApiKeyRedacted:
+        settings.midscene.modelApiKey.length > 0 || settings.midscene.modelApiKeyRedacted,
+    },
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -407,12 +418,42 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const materializeMidsceneModelApiKey = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> => {
+    if (!settings.midscene.modelApiKeyRedacted) return Effect.succeed(settings);
+
+    return secretStore.get(MIDSCENE_MODEL_API_KEY_SECRET_NAME).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath,
+            operation: "read-secret",
+            environmentVariable: MIDSCENE_MODEL_API_KEY_ENVIRONMENT_VARIABLE,
+            cause,
+          }),
+      ),
+      Effect.map((secret) => ({
+        ...settings,
+        midscene: {
+          ...settings.midscene,
+          modelApiKey: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+        },
+      })),
+    );
+  };
+
+  const materializeServerSecrets = (settings: ServerSettings) =>
+    materializeProviderEnvironmentSecrets(settings).pipe(
+      Effect.flatMap(materializeMidsceneModelApiKey),
+    );
+
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
     changes.pipe(
       Stream.mapEffect((settings) =>
-        materializeProviderEnvironmentSecrets(settings).pipe(
+        materializeServerSecrets(settings).pipe(
           Effect.catch((error: ServerSettingsError) =>
-            Effect.logWarning("failed to materialize provider environment secrets", {
+            Effect.logWarning("failed to materialize server settings secrets", {
               operation: error.operation,
               providerInstanceId: error.providerInstanceId,
               environmentVariable: error.environmentVariable,
@@ -525,6 +566,38 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const persistMidsceneModelApiKey = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> => {
+    if (settings.midscene.modelApiKeyRedacted) return Effect.succeed(settings);
+
+    const modelApiKey = settings.midscene.modelApiKey;
+    const persistSecret =
+      modelApiKey.length > 0
+        ? secretStore.set(MIDSCENE_MODEL_API_KEY_SECRET_NAME, textEncoder.encode(modelApiKey))
+        : secretStore.remove(MIDSCENE_MODEL_API_KEY_SECRET_NAME);
+
+    return persistSecret.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerSettingsError({
+            settingsPath,
+            operation: modelApiKey.length > 0 ? "write-secret" : "remove-secret",
+            environmentVariable: MIDSCENE_MODEL_API_KEY_ENVIRONMENT_VARIABLE,
+            cause,
+          }),
+      ),
+      Effect.as({
+        ...settings,
+        midscene: {
+          ...settings.midscene,
+          modelApiKey: "",
+          modelApiKeyRedacted: modelApiKey.length > 0,
+        },
+      }),
+    );
+  };
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -621,22 +694,23 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
-      Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeServerSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
+          const nextWithProviderSecrets = yield* persistProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
           );
+          const nextPersisted = yield* persistMidsceneModelApiKey(nextWithProviderSecrets);
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
+          const materialized = yield* materializeServerSecrets(next);
           return resolveTextGenerationProvider(materialized);
         }),
       ),

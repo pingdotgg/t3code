@@ -398,6 +398,7 @@ interface BrowserControlSession {
   readonly webContentsId: number;
   readonly semaphore: Semaphore.Semaphore;
   readonly scope: Scope.Closeable;
+  readonly activeOperations: number;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -967,25 +968,26 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const detachControlSession = Effect.fn("PreviewManager.detachControlSession")(function* (
     webContentsId: number,
   ) {
-    const control = yield* SynchronizedRef.modify(controlSessionsRef, (sessions) => [
-      sessions.get(webContentsId),
-      replaceMap(sessions, (copy) => {
+    yield* SynchronizedRef.modifyEffect(controlSessionsRef, (sessions) => {
+      const control = sessions.get(webContentsId);
+      const remaining = replaceMap(sessions, (copy) => {
         copy.delete(webContentsId);
-      }),
-    ]);
-    if (control) {
-      yield* Scope.close(control.scope, Exit.void).pipe(Effect.ignore);
-      return;
-    }
-    yield* Ref.update(diagnosticsRef, (diagnostics) =>
-      replaceMap(diagnostics, (copy) => {
-        copy.delete(webContentsId);
-      }),
-    );
+      });
+      return (
+        control
+          ? Scope.close(control.scope, Exit.void).pipe(Effect.ignore)
+          : Ref.update(diagnosticsRef, (diagnostics) =>
+              replaceMap(diagnostics, (copy) => {
+                copy.delete(webContentsId);
+              }),
+            )
+      ).pipe(Effect.as([undefined, remaining] as const));
+    });
   });
 
   const ensureControlSession = Effect.fn("PreviewManager.ensureControlSession")(function* (
     wc: Electron.WebContents,
+    acquireOperation = false,
   ) {
     return yield* SynchronizedRef.modifyEffect(
       controlSessionsRef,
@@ -996,7 +998,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         PreviewManagerError
       > => {
         const existing = sessions.get(wc.id);
-        if (existing) return Effect.succeed([existing, sessions] as const);
+        if (existing) {
+          if (!acquireOperation) return Effect.succeed([existing, sessions] as const);
+          const acquired = {
+            ...existing,
+            activeOperations: existing.activeOperations + 1,
+          };
+          return Effect.succeed([
+            acquired,
+            replaceMap(sessions, (copy) => {
+              copy.set(wc.id, acquired);
+            }),
+          ] as const);
+        }
         if (wc.isDevToolsOpened()) {
           return Effect.fail(
             new PreviewAutomationDevToolsOpenError({
@@ -1085,6 +1099,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             webContentsId: wc.id,
             semaphore,
             scope,
+            activeOperations: acquireOperation ? 1 : 0,
             onMessage,
           };
           const initialize = Effect.fn("PreviewManager.initializeControlSession")(function* () {
@@ -1125,6 +1140,47 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         return createControlSession();
       },
     );
+  });
+
+  const releaseIdleControlSession = Effect.fn("PreviewManager.releaseIdleControlSession")(
+    function* (tabId: string, webContentsId: number) {
+      const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+      const retainForColorScheme =
+        tab?.webContentsId === webContentsId && tab.colorScheme !== "system";
+      if (retainForColorScheme) return;
+      yield* SynchronizedRef.modifyEffect(controlSessionsRef, (sessions) => {
+        const control = sessions.get(webContentsId);
+        if (!control || control.activeOperations > 0) {
+          return Effect.succeed([undefined, sessions] as const);
+        }
+        return Scope.close(control.scope, Exit.void).pipe(
+          Effect.ignore,
+          Effect.as([
+            undefined,
+            replaceMap(sessions, (copy) => {
+              copy.delete(webContentsId);
+            }),
+          ] as const),
+        );
+      });
+    },
+  );
+
+  const releaseControlSession = Effect.fn("PreviewManager.releaseControlSession")(function* (
+    tabId: string,
+    webContentsId: number,
+  ) {
+    yield* SynchronizedRef.update(controlSessionsRef, (sessions) => {
+      const control = sessions.get(webContentsId);
+      if (!control || control.activeOperations === 0) return sessions;
+      return replaceMap(sessions, (copy) => {
+        copy.set(webContentsId, {
+          ...control,
+          activeOperations: control.activeOperations - 1,
+        });
+      });
+    });
+    yield* releaseIdleControlSession(tabId, webContentsId);
   });
 
   const pushAction = (tabId: string, event: PreviewAutomationActionEvent) =>
@@ -1180,7 +1236,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     };
     yield* pushAction(tabId, actionEvent);
     const epoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
-    const control = yield* ensureControlSession(wc);
+    const control = yield* ensureControlSession(wc, true);
     const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
       yield* update(tabId, { controller: "agent" });
       const send: SendCommand = Effect.fn("PreviewManager.sendCommand")(
@@ -1257,7 +1313,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const tabs = yield* SynchronizedRef.get(tabsRef);
       if (tabs.has(tabId)) yield* update(tabId, { controller: "none" });
     });
-    return yield* control.semaphore.withPermit(execute().pipe(Effect.onExit(finalize)));
+    return yield* control.semaphore.withPermit(execute().pipe(Effect.onExit(finalize))).pipe(
+      // A persistent debugger attachment is observable by bot protection such
+      // as Turnstile. Keep it only while another operation or a non-system
+      // color-scheme override still needs CDP.
+      Effect.onExit(() => releaseControlSession(tabId, wc.id)),
+    );
   });
 
   const evaluateWithDebugger = <A = unknown>(
@@ -2348,18 +2409,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     wc: Electron.WebContents,
     colorScheme: DesktopPreviewColorScheme,
   ) {
-    yield* ensureControlSession(wc);
-    yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
-      wc.debugger.sendCommand("Emulation.setEmulatedMedia", {
-        features: [
-          {
-            name: "prefers-color-scheme",
-            // An empty value clears the override so the page follows the OS.
-            value: colorScheme === "system" ? "" : colorScheme,
-          },
-        ],
-      }),
-    );
+    const control = yield* ensureControlSession(wc, true);
+    yield* control.semaphore
+      .withPermit(
+        attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
+          wc.debugger.sendCommand("Emulation.setEmulatedMedia", {
+            features: [
+              {
+                name: "prefers-color-scheme",
+                // An empty value clears the override so the page follows the OS.
+                value: colorScheme === "system" ? "" : colorScheme,
+              },
+            ],
+          }),
+        ),
+      )
+      .pipe(Effect.ensuring(releaseControlSession(tabId, wc.id)));
   });
 
   // Re-establish the control session after a detach, restoring any
@@ -2370,14 +2435,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     Effect.gen(function* () {
       const beforeAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
       if (beforeAttach?.webContentsId !== wc.id) return;
-      yield* ensureControlSession(wc);
+      if (beforeAttach.colorScheme === "system") {
+        yield* releaseIdleControlSession(tabId, wc.id);
+        return;
+      }
+      const control = yield* ensureControlSession(wc);
       const afterAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
       if (afterAttach?.webContentsId !== wc.id) {
         yield* detachControlSession(wc.id);
         return;
       }
-      if (afterAttach.colorScheme !== "system") {
-        yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
+      if (afterAttach.colorScheme === "system") {
+        yield* releaseIdleControlSession(tabId, wc.id);
+        return;
+      }
+      yield* control.semaphore.withPermit(
+        attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
           wc.debugger.sendCommand("Emulation.setEmulatedMedia", {
             features: [
               {
@@ -2386,8 +2459,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               },
             ],
           }),
-        );
-      }
+        ),
+      );
     }).pipe(Effect.ignore);
 
   const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
@@ -3503,6 +3576,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     input: PreviewAutomationScrollInput,
     send: SendCommand,
   ) {
+    const deltaX = input.deltaX ?? 0;
+    const deltaY = input.deltaY ?? 0;
+    if (input.x !== undefined && input.y !== undefined) {
+      yield* prepareAutomationInput(send, false);
+      yield* send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x: input.x,
+        y: input.y,
+        deltaX,
+        deltaY,
+      });
+      return;
+    }
+
     yield* send("Runtime.enable");
     const locator = automationLocator(input);
     if (locator) yield* ensurePlaywrightInjected(tabId, send);
@@ -3518,7 +3605,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         try {
           const target = ${locatorJson ? `(() => { const injected = globalThis.__t3PlaywrightInjected; return injected.querySelector(injected.parseSelector(${locatorJson}), document, true); })()` : "window"};
           if (!target) return { notFound: true };
-          target.scrollBy({ left: ${input.deltaX ?? 0}, top: ${input.deltaY ?? 0}, behavior: "instant" });
+          target.scrollBy({ left: ${deltaX}, top: ${deltaY}, behavior: "instant" });
           return { ok: true };
         } catch (error) {
           return { invalidSelector: true, message: String(error) };

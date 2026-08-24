@@ -51,6 +51,16 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
 ] as const;
 
 /**
+ * Direct dependency roots that must remain intact on disk at runtime.
+ *
+ * Unlike the native-loader list above, the bundler stops at these roots and
+ * the production install carries their complete dependency tree. Midscene's
+ * image pipeline needs both sharp's platform package and Photon's adjacent
+ * WASM file, neither of which survives being folded into the server ESM bundle.
+ */
+export const CLI_RUNTIME_EXTERNAL_ROOT_PREFIXES = ["@midscene/core"] as const;
+
+/**
  * External only so the bundler never has to resolve them.
  *
  * These are reached through a runtime-conditional dynamic import that Node
@@ -65,11 +75,14 @@ export const CLI_BUILD_ONLY_EXTERNAL_PREFIXES = [
 
 export const CLI_EXTERNAL_PACKAGE_PREFIXES = [
   ...CLI_RUNTIME_EXTERNAL_PREFIXES,
+  ...CLI_RUNTIME_EXTERNAL_ROOT_PREFIXES,
   ...CLI_BUILD_ONLY_EXTERNAL_PREFIXES,
 ] as const;
 
 export function isRuntimeExternalCliDependency(id: string): boolean {
-  return CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return [...CLI_RUNTIME_EXTERNAL_PREFIXES, ...CLI_RUNTIME_EXTERNAL_ROOT_PREFIXES].some((prefix) =>
+    id.startsWith(prefix),
+  );
 }
 
 /**

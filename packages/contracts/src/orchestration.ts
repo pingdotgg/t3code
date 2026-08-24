@@ -29,6 +29,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getWorkflowScript: "orchestration.getWorkflowScript",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
+  getThreadContext: "orchestration.getThreadContext",
   searchThreads: "orchestration.searchThreads",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
@@ -257,6 +258,7 @@ export const OrchestrationMessage = Schema.Struct({
   id: MessageId,
   role: OrchestrationMessageRole,
   text: Schema.String,
+  reasoningText: Schema.optional(Schema.String),
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
@@ -992,6 +994,16 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadMessageAssistantReasoningDeltaCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.assistant.reasoning.delta"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  delta: Schema.String,
+  turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -1042,6 +1054,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
+  ThreadMessageAssistantReasoningDeltaCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
@@ -1238,6 +1251,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   messageId: MessageId,
   role: OrchestrationMessageRole,
   text: Schema.String,
+  reasoning: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
@@ -1604,6 +1618,26 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
 
+export const OrchestrationThreadContextMessage = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  role: Schema.NullOr(TrimmedNonEmptyString),
+  createdAt: Schema.NullOr(TrimmedNonEmptyString),
+  content: Schema.Unknown,
+});
+export type OrchestrationThreadContextMessage = typeof OrchestrationThreadContextMessage.Type;
+
+export const OrchestrationGetThreadContextInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationGetThreadContextInput = typeof OrchestrationGetThreadContextInput.Type;
+
+export const OrchestrationGetThreadContextResult = Schema.Struct({
+  threadId: ThreadId,
+  provider: TrimmedNonEmptyString,
+  messages: Schema.Array(OrchestrationThreadContextMessage),
+});
+export type OrchestrationGetThreadContextResult = typeof OrchestrationGetThreadContextResult.Type;
+
 export const OrchestrationThreadSearchSource = Schema.Literals(["user", "assistant"]);
 export type OrchestrationThreadSearchSource = typeof OrchestrationThreadSearchSource.Type;
 
@@ -1694,6 +1728,10 @@ export const OrchestrationRpcSchemas = {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
   },
+  getThreadContext: {
+    input: OrchestrationGetThreadContextInput,
+    output: OrchestrationGetThreadContextResult,
+  },
   searchThreads: {
     input: OrchestrationSearchThreadsInput,
     output: OrchestrationSearchThreadsResult,
@@ -1739,6 +1777,14 @@ export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<Orche
 
 export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass<OrchestrationGetFullThreadDiffError>()(
   "OrchestrationGetFullThreadDiffError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export class OrchestrationGetThreadContextError extends Schema.TaggedErrorClass<OrchestrationGetThreadContextError>()(
+  "OrchestrationGetThreadContextError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

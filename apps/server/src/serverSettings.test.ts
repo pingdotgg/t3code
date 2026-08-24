@@ -205,6 +205,35 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("stores the Midscene API key outside settings.json and redacts it for clients", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const updated = yield* serverSettings.updateSettings({
+        midscene: {
+          modelApiKey: "midscene-secret",
+          modelApiKeyRedacted: false,
+          modelName: "gpt-4o",
+        },
+      });
+      assert.strictEqual(updated.midscene.modelApiKey, "midscene-secret");
+      assert.isTrue(updated.midscene.modelApiKeyRedacted);
+
+      const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(persisted, "midscene-secret");
+      assert.include(persisted, '"modelApiKeyRedacted": true');
+
+      const redacted = ServerSettingsModule.redactServerSettingsForClient(updated);
+      assert.strictEqual(redacted.midscene.modelApiKey, "");
+      assert.isTrue(redacted.midscene.modelApiKeyRedacted);
+
+      const reread = yield* serverSettings.getSettings;
+      assert.strictEqual(reread.midscene.modelApiKey, "midscene-secret");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("buffers changes after a subscription is acquired but before it is consumed", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -223,6 +252,39 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         assert.equal(
           Option.getOrUndefined(firstChange)?.providers.codex.binaryPath,
           "/usr/local/bin/codex-next",
+        );
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("materializes provider secrets for pre-acquired subscriptions", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        const changes = yield* serverSettings.subscribeChanges;
+
+        yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "OPENROUTER_API_KEY", value: "sk-or-secret", sensitive: true }],
+              config: {},
+            },
+          },
+        });
+
+        const observed = yield* changes.pipe(Stream.runHead, Effect.timeout("1 second"));
+        assert.deepEqual(
+          Option.getOrUndefined(observed)?.providerInstances[instanceId]?.environment,
+          [
+            {
+              name: "OPENROUTER_API_KEY",
+              value: "sk-or-secret",
+              sensitive: true,
+              valueRedacted: true,
+            },
+          ],
         );
       }),
     ).pipe(Effect.provide(makeServerSettingsLayer())),

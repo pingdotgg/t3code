@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { I18nProvider } from "../../i18n";
 import { ComposerCommandMenu } from "./ComposerCommandMenu";
 
 describe("ComposerCommandMenu", () => {
@@ -132,5 +133,23 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain(">Repo</span>");
     expect(markup).toContain("Find the right skill or workflow");
     expect(markup).not.toContain("font-medium text-secondary-label");
+  });
+
+  it("renders the Simplified Chinese skills empty state", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider initialLocale="zh-CN">
+        <ComposerCommandMenu
+          items={[]}
+          resolvedTheme="dark"
+          isLoading={false}
+          triggerKind="skill"
+          activeItemId={null}
+          onHighlightedItemChange={() => {}}
+          onSelect={() => {}}
+        />
+      </I18nProvider>,
+    );
+
+    expect(markup).toContain("未找到技能。可输入 / 浏览供应商命令。");
   });
 });

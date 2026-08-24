@@ -45,10 +45,12 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
     <div className="mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant="error" controlAlignment="first-line">
         <CircleAlertIcon />
-        <AlertDescription>
+        <AlertDescription className="min-w-0">
           <Tooltip>
-            <TooltipTrigger render={<div className="line-clamp-3" />}>{error}</TooltipTrigger>
-            <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap">
+            <TooltipTrigger render={<div className="line-clamp-3 min-w-0 break-words" />}>
+              {error}
+            </TooltipTrigger>
+            <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap break-words">
               {error}
             </TooltipPopup>
           </Tooltip>

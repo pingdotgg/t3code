@@ -421,12 +421,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         presentation: OPENCODE_PRESENTATION,
         enabled: openCodeSettings.enabled,
         checkedAt,
-        models: providerModelsFromSettings(
-          [],
-          PROVIDER,
-          customModels,
-          DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-        ),
+        models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
         probe: {
           installed: true,
           version,

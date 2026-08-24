@@ -100,6 +100,10 @@ import {
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
 
+type ProviderRefreshTarget =
+  | { readonly kind: "all" }
+  | { readonly kind: "instance"; readonly instanceId: ProviderInstanceId };
+
 function withoutProviderInstanceKey<V>(
   record: Readonly<Record<ProviderInstanceId, V>> | undefined,
   key: ProviderInstanceId,
@@ -378,7 +382,9 @@ export function EnvironmentProviderSettings({
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
-  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
+  const [providerRefreshTarget, setProviderRefreshTarget] = useState<ProviderRefreshTarget | null>(
+    null,
+  );
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
     ReadonlySet<ProviderDriverKind>
@@ -421,26 +427,35 @@ export function EnvironmentProviderSettings({
         )
       : null;
 
-  const refreshProviders = useCallback(() => {
-    if (refreshingRef.current) return;
-    refreshingRef.current = true;
-    setIsRefreshingProviders(true);
-    void (async () => {
-      const result = await refreshServerProviders({
-        environmentId,
-        input: {},
-      });
-      refreshingRef.current = false;
-      setIsRefreshingProviders(false);
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        console.warn("Failed to refresh providers", {
-          operation: "refresh-providers",
-          environmentId,
-          ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
-        });
-      }
-    })();
-  }, [environmentId, refreshServerProviders]);
+  const refreshProviders = useCallback(
+    (instanceId?: ProviderInstanceId) => {
+      if (refreshingRef.current) return;
+      refreshingRef.current = true;
+      setProviderRefreshTarget(instanceId ? { kind: "instance", instanceId } : { kind: "all" });
+      void (async () => {
+        try {
+          const result = await refreshServerProviders({
+            environmentId,
+            input: instanceId === undefined ? {} : { instanceId },
+          });
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            console.warn("Failed to refresh providers", {
+              operation: instanceId === undefined ? "refresh-providers" : "retry-provider-status",
+              environmentId,
+              ...(instanceId === undefined ? {} : { providerInstanceId: instanceId }),
+              ...safeErrorLogAttributes(squashAtomCommandFailure(result)),
+            });
+          }
+        } finally {
+          refreshingRef.current = false;
+          setProviderRefreshTarget(null);
+        }
+      })();
+    },
+    [environmentId, refreshServerProviders],
+  );
+  const isRefreshingProviders = providerRefreshTarget !== null;
+  const isRefreshingAllProviders = providerRefreshTarget?.kind === "all";
 
   const runProviderUpdate = useCallback(
     async (candidate: ProviderUpdateCandidate) => {
@@ -700,7 +715,7 @@ export function EnvironmentProviderSettings({
                         onClick={() => void refreshProviders()}
                         aria-label="Refresh provider status"
                       >
-                        {isRefreshingProviders ? (
+                        {isRefreshingAllProviders ? (
                           <LoaderIcon className="size-3 animate-spin" />
                         ) : (
                           <RefreshCwIcon className="size-3" />
@@ -890,6 +905,12 @@ export function EnvironmentProviderSettings({
                     : undefined
                 }
                 isUpdating={showInlineUpdateButton ? isDriverUpdateRunning : undefined}
+                onRetryStatusCheck={readOnly ? undefined : () => refreshProviders(row.instanceId)}
+                isRetryingStatusCheck={
+                  providerRefreshTarget?.kind === "instance" &&
+                  providerRefreshTarget.instanceId === row.instanceId
+                }
+                isRetryStatusCheckDisabled={isRefreshingProviders}
               />
             );
           })}

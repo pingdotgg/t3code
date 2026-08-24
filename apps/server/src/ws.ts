@@ -29,6 +29,7 @@ import {
   type OrchestrationShellStreamItem,
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
+  OrchestrationGetThreadContextError,
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
@@ -1247,6 +1248,20 @@ const makeWsRpcLayer = (
                 (cause) =>
                   new OrchestrationGetFullThreadDiffError({
                     message: "Failed to load full thread diff",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getThreadContext]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getThreadContext,
+            providerService.readThreadContext(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetThreadContextError({
+                    message: "Failed to load thread context",
                     cause,
                   }),
               ),

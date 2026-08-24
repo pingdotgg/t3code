@@ -7,6 +7,7 @@ import {
   ClientSettingsPatch,
   DEFAULT_SERVER_SETTINGS,
   defaultEnabledForDriver,
+  PiAgentSettings,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -17,6 +18,30 @@ const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const decodePiAgentSettings = Schema.decodeUnknownSync(PiAgentSettings);
+
+describe("PiAgentSettings", () => {
+  it("defaults to the system pi binary and standard agent home", () => {
+    expect(decodePiAgentSettings({})).toEqual({
+      enabled: true,
+      binaryPath: "pi",
+      homePath: "",
+      customModels: [],
+    });
+  });
+
+  it("trims explicit binary and agent home paths", () => {
+    expect(
+      decodePiAgentSettings({
+        binaryPath: "  /opt/homebrew/bin/pi  ",
+        homePath: "  ~/.pi/work  ",
+      }),
+    ).toMatchObject({
+      binaryPath: "/opt/homebrew/bin/pi",
+      homePath: "~/.pi/work",
+    });
+  });
+});
 
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
@@ -203,12 +228,14 @@ describe("provider enabled defaults", () => {
     expect(decoded.providers.cursor.enabled).toBe(true);
     expect(decoded.providers.grok.enabled).toBe(false);
     expect(decoded.providers.opencode.enabled).toBe(false);
+    expect(decoded.providers.piAgent.enabled).toBe(true);
   });
 
   it("derives per-driver defaults from the settings schemas", () => {
     expect(defaultEnabledForDriver(ProviderDriverKind.make("codex"))).toBe(true);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(true);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(false);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("piAgent"))).toBe(true);
     // Unknown fork drivers stay enabled; their own build decides otherwise.
     expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
   });
@@ -245,6 +272,36 @@ describe("ServerSettings worktree defaults", () => {
     expect(
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
+  });
+});
+
+describe("ServerSettings.midscene", () => {
+  it("defaults to an unconfigured model", () => {
+    expect(decodeServerSettings({}).midscene).toEqual({
+      modelApiKey: "",
+      modelApiKeyRedacted: false,
+      modelName: "",
+      modelFamily: "",
+      modelBaseUrl: "",
+    });
+  });
+
+  it("trims partial Midscene updates", () => {
+    expect(
+      decodeServerSettingsPatch({
+        midscene: {
+          modelApiKey: "  secret  ",
+          modelName: "  gpt-4o  ",
+          modelFamily: "  openai  ",
+          modelBaseUrl: "  https://example.test/v1  ",
+        },
+      }).midscene,
+    ).toEqual({
+      modelApiKey: "secret",
+      modelName: "gpt-4o",
+      modelFamily: "openai",
+      modelBaseUrl: "https://example.test/v1",
+    });
   });
 });
 
@@ -319,6 +376,10 @@ describe("ServerSettingsPatch string normalization", () => {
           homePath: "  ~/.codex  ",
           launchArgs: "  --strict-config --enable foo  ",
         },
+        piAgent: {
+          binaryPath: "  /opt/homebrew/bin/pi  ",
+          homePath: "  ~/.pi/agent  ",
+        },
       },
       providerInstances: {
         codex_personal: {
@@ -335,6 +396,8 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(patch.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
     expect(patch.providers?.codex?.homePath).toBe("~/.codex");
     expect(patch.providers?.codex?.launchArgs).toBe("--strict-config --enable foo");
+    expect(patch.providers?.piAgent?.binaryPath).toBe("/opt/homebrew/bin/pi");
+    expect(patch.providers?.piAgent?.homePath).toBe("~/.pi/agent");
     expect(patch.providerInstances?.[ProviderInstanceId.make("codex_personal")]?.driver).toBe(
       "codex",
     );

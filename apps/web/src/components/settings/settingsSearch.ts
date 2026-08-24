@@ -1,4 +1,5 @@
 import { isElectron } from "~/env";
+import type { MessageKey } from "~/i18n/messages";
 
 export type SettingsPath =
   | "/settings/general"
@@ -20,10 +21,7 @@ export interface SettingsSearchItem {
   readonly desktopOnly?: boolean;
 }
 
-/**
- * Section labels in sidebar order. The sidebar nav and the search-result
- * subtitles both render from this record, so each label exists once.
- */
+/** Section labels in sidebar order; the key record keeps localized consumers in sync. */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
   "/settings/appearance": "Appearance",
@@ -33,6 +31,17 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
+};
+
+export const SETTINGS_SECTION_LABEL_KEYS: Readonly<Record<SettingsPath, MessageKey>> = {
+  "/settings/general": "settings.nav.general",
+  "/settings/appearance": "settings.nav.appearance",
+  "/settings/keybindings": "settings.nav.keybindings",
+  "/settings/providers": "settings.nav.providers",
+  "/settings/integrations": "settings.nav.integrations",
+  "/settings/source-control": "settings.nav.sourceControl",
+  "/settings/connections": "settings.nav.connections",
+  "/settings/archived": "settings.nav.archive",
 };
 
 /**
@@ -105,6 +114,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "word-wrap",
     title: "Word wrap",
     to: "/settings/appearance",
+  },
+  {
+    id: "interface-language",
+    title: "Interface language",
+    to: "/settings/general",
   },
   {
     id: "project-grouping",

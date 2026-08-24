@@ -52,6 +52,12 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
+  {
+    value: ProviderDriverKind.make("piAgent"),
+    label: "Pi",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
 ];
 
 export type WorkLogToolLifecycleStatus =
@@ -1464,7 +1470,12 @@ function extractToolTitle(payload: Record<string, unknown> | null): string | nul
 
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {
   const data = asRecord(payload?.data);
-  return asTrimmedString(payload?.toolCallId) ?? asTrimmedString(data?.toolCallId);
+  const item = asRecord(data?.item);
+  return (
+    asTrimmedString(payload?.toolCallId) ??
+    asTrimmedString(data?.toolCallId) ??
+    asTrimmedString(item?.id)
+  );
 }
 
 function normalizeInlinePreview(value: string): string {
@@ -1614,6 +1625,7 @@ function extractToolDetail(
   const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
   const normalizedHeading = normalizePreviewForComparison(heading);
   const normalizedDetail = normalizePreviewForComparison(detail);
+  const itemType = extractWorkLogItemType(payload);
   const commandTool = isCommandToolDetail(payload, heading);
   const commandPreview = commandTool
     ? extractToolCommand(payload)
@@ -1624,9 +1636,10 @@ function extractToolDetail(
 
   if (
     detail &&
-    normalizedHeading !== normalizedDetail &&
-    (!commandTool ||
-      (normalizedCommand !== normalizedDetail && normalizedRawCommand !== normalizedDetail))
+    (itemType === "collab_agent_tool_call" ||
+      (normalizedHeading !== normalizedDetail &&
+        (!commandTool ||
+          (normalizedCommand !== normalizedDetail && normalizedRawCommand !== normalizedDetail))))
   ) {
     return detail;
   }

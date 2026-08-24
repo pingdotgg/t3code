@@ -856,6 +856,36 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }).pipe(Effect.provide(adapterLayer));
   });
 
+  it.effect("omits OpenCode's default build agent while preserving variant", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: asThreadId("thread-default-build-agent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("thread-default-build-agent"),
+        input: "Fix it",
+        modelSelection: createModelSelection(ProviderInstanceId.make("opencode"), "openai/gpt-5", [
+          { id: "agent", value: "build" },
+          { id: "variant", value: "high" },
+        ]),
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.promptCalls.at(-1), {
+        sessionID: "http://127.0.0.1:9999/session",
+        model: {
+          providerID: "openai",
+          modelID: "gpt-5",
+        },
+        variant: "high",
+        parts: [{ type: "text", text: "Fix it" }],
+      });
+    }),
+  );
+
   it.effect("uses the bound custom instance id for fallback sendTurn model selection", () => {
     const instanceId = ProviderInstanceId.make("opencode_zen");
     const adapterLayer = Layer.effect(

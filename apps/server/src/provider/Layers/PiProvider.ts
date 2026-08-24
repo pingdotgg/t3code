@@ -1,7 +1,6 @@
 import {
   type ModelCapabilities,
   type PiAgentSettings,
-  ProviderDriverKind,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -23,7 +22,6 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 
-const PROVIDER = ProviderDriverKind.make("piAgent");
 // Pi loads most of its CLI dependency graph before handling `--version` and
 // starting RPC mode. Cold starts can exceed 15 seconds on Windows, especially
 // while antivirus scanning is active, so these probes need a larger startup
@@ -92,11 +90,11 @@ export function mapPiAvailableModels(
     });
   }
 
-  return providerModelsFromSettings(discovered, PROVIDER, customModels, EMPTY_CAPABILITIES);
+  return providerModelsFromSettings(discovered, customModels, EMPTY_CAPABILITIES);
 }
 
 function fallbackModels(settings: PiAgentSettings): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings([], PROVIDER, settings.customModels, EMPTY_CAPABILITIES);
+  return providerModelsFromSettings([], settings.customModels, EMPTY_CAPABILITIES);
 }
 
 export function buildInitialPiProviderSnapshot(
@@ -162,7 +160,6 @@ const discoverPiModels = (settings: PiAgentSettings, cwd: string, environment: N
       return {
         models: providerModelsFromSettings(
           availableModels,
-          PROVIDER,
           settings.customModels,
           EMPTY_CAPABILITIES,
         ),

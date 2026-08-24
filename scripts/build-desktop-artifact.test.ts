@@ -14,6 +14,7 @@ import {
   BundleNotSelfContainedError,
   BuildCommandFailedError,
   DesktopDmgBackgroundSourceMissingError,
+  DesktopStageRuntimeArtifactMissingError,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
@@ -24,6 +25,7 @@ import {
   InvalidMacPasskeyPublishableKeyError,
   InvalidMockUpdateServerPortError,
   UnsupportedDesktopBuildArchitectureError,
+  isTransientElectronBuilderNetworkFailure,
   isMacPasskeySigningConfigurationError,
   LinuxIconResizeError,
   MacPasskeySigningConfigurationResolutionError,
@@ -45,11 +47,17 @@ import {
   resolveGitHubPublishConfig,
   resolveMockUpdateServerPort,
   resolveMockUpdateServerUrl,
+  resolveMidsceneSharpRuntimeModules,
   resolvePackageManagerUserAgent,
+  shouldRetryElectronBuilderFailure,
   stageLinuxIconSize,
   stageDesktopDmgBackground,
+  stageBundledPiExtensionResource,
+  stageBundledSkillsResource,
   stageResourceMonitor,
+  STAGE_FETCH_TIMEOUT_MS,
   STAGE_INSTALL_ARGS,
+  validateDesktopStageRuntime,
   ancestorNodeModulesPaths,
   copyDirectoryPreservingSymlinks,
   validateWindowsPackagedPayload,
@@ -282,12 +290,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("installs optional native dependencies for the target desktop architecture", () => {
     assert.deepStrictEqual(STAGE_INSTALL_ARGS, ["install", "--prod"]);
     assert.deepStrictEqual(createStageWorkspaceConfig({ platform: "mac", arch: "x64" }), {
+      fetchTimeout: STAGE_FETCH_TIMEOUT_MS,
       supportedArchitectures: {
         os: ["darwin"],
         cpu: ["x64"],
       },
     });
     assert.deepStrictEqual(createStageWorkspaceConfig({ platform: "linux", arch: "x64" }), {
+      fetchTimeout: STAGE_FETCH_TIMEOUT_MS,
       supportedArchitectures: {
         os: ["linux"],
         cpu: ["x64"],
@@ -297,6 +307,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     // The Windows app stage only serves the desktop main process; the server
     // sidecar stage is the one that needs Linux natives (below).
     assert.deepStrictEqual(createStageWorkspaceConfig({ platform: "win", arch: "x64" }), {
+      fetchTimeout: STAGE_FETCH_TIMEOUT_MS,
       supportedArchitectures: {
         os: ["win32"],
         cpu: ["x64"],
@@ -309,6 +320,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(
       createStageWorkspaceConfig({ platform: "win", arch: "x64", linuxServerBackend: true }),
       {
+        fetchTimeout: STAGE_FETCH_TIMEOUT_MS,
         supportedArchitectures: {
           os: ["win32", "linux"],
           cpu: ["x64"],
@@ -320,6 +332,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.deepStrictEqual(
       createStageWorkspaceConfig({ platform: "win", arch: "arm64", linuxServerBackend: true }),
       {
+        fetchTimeout: STAGE_FETCH_TIMEOUT_MS,
         supportedArchitectures: {
           os: ["win32", "linux"],
           cpu: ["arm64"],
@@ -329,12 +342,99 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       },
     );
     assert.deepStrictEqual(createStageWorkspaceConfig({ platform: "mac", arch: "universal" }), {
+      fetchTimeout: STAGE_FETCH_TIMEOUT_MS,
       supportedArchitectures: {
         os: ["darwin"],
         cpu: ["arm64", "x64"],
       },
     });
   });
+
+  it("requires sharp native runtimes for the desktop target and Windows WSL backend", () => {
+    assert.deepStrictEqual(resolveMidsceneSharpRuntimeModules("mac", "universal"), [
+      "@img/sharp-darwin-arm64/sharp.node",
+      "@img/sharp-libvips-darwin-arm64/lib",
+      "@img/sharp-darwin-x64/sharp.node",
+      "@img/sharp-libvips-darwin-x64/lib",
+    ]);
+    assert.deepStrictEqual(resolveMidsceneSharpRuntimeModules("win", "x64"), [
+      "@img/sharp-win32-x64/sharp.node",
+      "@img/sharp-linux-x64/sharp.node",
+      "@img/sharp-libvips-linux-x64/lib",
+    ]);
+  });
+
+  it.effect("rejects a desktop stage without the bundled Midscene Skill", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stageAppDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3code-desktop-runtime-stage-test-",
+      });
+      const error = yield* validateDesktopStageRuntime({
+        stageAppDir,
+        serverDistDir: stageAppDir,
+        platform: "mac",
+        arch: "arm64",
+      }).pipe(Effect.flip);
+
+      assert.instanceOf(error, DesktopStageRuntimeArtifactMissingError);
+      assert.equal(error.artifact, "bundled-skills/midscene-preview/SKILL.md");
+      assert.equal(error.stageAppDir, stageAppDir);
+      assert.notProperty(error, "cause");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rejects a desktop stage without the bundled Pi MCP extension", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stageAppDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3code-desktop-runtime-stage-test-",
+      });
+      const skillPath = path.join(stageAppDir, "bundled-skills/midscene-preview/SKILL.md");
+      yield* fs.makeDirectory(path.dirname(skillPath), { recursive: true });
+      yield* fs.writeFileString(skillPath, "---\nname: midscene-preview\n---\n");
+
+      const error = yield* validateDesktopStageRuntime({
+        stageAppDir,
+        serverDistDir: stageAppDir,
+        platform: "mac",
+        arch: "arm64",
+      }).pipe(Effect.flip);
+
+      assert.instanceOf(error, DesktopStageRuntimeArtifactMissingError);
+      assert.equal(error.artifact, "bundled-pi-extension/index.mjs");
+      assert.equal(error.stageAppDir, stageAppDir);
+      assert.notProperty(error, "cause");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("resolves the installed Midscene, Photon WASM, and native sharp runtime chain", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const hostPlatform = yield* HostProcessPlatform;
+      const hostArchitecture = yield* HostProcessArchitecture;
+      const repoRoot = yield* path.fromFileUrl(new URL("..", import.meta.url));
+      const serverDir = path.join(repoRoot, "apps/server");
+      const serverDistDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3code-desktop-runtime-resources-test-",
+      });
+      const skillPath = path.join(serverDistDir, "bundled-skills/midscene-preview/SKILL.md");
+      const piExtensionPath = path.join(serverDistDir, "bundled-pi-extension/index.mjs");
+      yield* fs.makeDirectory(path.dirname(skillPath), { recursive: true });
+      yield* fs.makeDirectory(path.dirname(piExtensionPath), { recursive: true });
+      yield* fs.writeFileString(skillPath, "---\nname: midscene-preview\n---\n");
+      yield* fs.writeFileString(piExtensionPath, "export default () => {};\n");
+
+      yield* validateDesktopStageRuntime({
+        stageAppDir: serverDir,
+        serverDistDir,
+        platform: hostPlatform === "darwin" ? "mac" : hostPlatform === "win32" ? "win" : "linux",
+        arch: hostArchitecture === "arm64" ? "arm64" : "x64",
+      });
+    }).pipe(Effect.scoped),
+  );
 
   it("stages pnpm 11 allowBuilds and patchedDependencies in the workspace yaml", () => {
     assert.deepStrictEqual(
@@ -354,6 +454,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         },
       }),
       {
+        fetchTimeout: STAGE_FETCH_TIMEOUT_MS,
         supportedArchitectures: {
           os: ["linux"],
           cpu: ["x64"],
@@ -385,6 +486,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         overrides: {},
       }),
       {
+        fetchTimeout: STAGE_FETCH_TIMEOUT_MS,
         supportedArchitectures: {
           os: ["darwin"],
           cpu: ["arm64"],
@@ -451,8 +553,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           from: "apps/desktop/prod-resources/resource-monitor",
           to: "resource-monitor",
         },
+        {
+          from: "apps/desktop/prod-resources/bundled-skills",
+          to: "bundled-skills",
+        },
+        {
+          from: "apps/desktop/prod-resources/bundled-pi-extension",
+          to: "bundled-pi-extension",
+        },
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
+      assert.deepStrictEqual(mac.extraResources, DESKTOP_EXTRA_RESOURCES);
+      assert.deepStrictEqual(linux.extraResources, DESKTOP_EXTRA_RESOURCES);
       assert.deepStrictEqual(win.nsis, { differentialPackage: true });
       // Native binaries and helper executables cannot load from inside an
       // asar; everything else stays packed. The Claude SDK platform packages
@@ -603,6 +715,40 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         );
       }),
     ),
+  );
+
+  it.effect("stages bundled provider resources outside Electron ASARs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-bundled-skills-stage-test-",
+        });
+        const serverDistDir = path.join(root, "server-dist");
+        const stageResourcesDir = path.join(root, "resources");
+        const sourceSkill = path.join(serverDistDir, "bundled-skills/midscene-preview/SKILL.md");
+        const sourcePiExtension = path.join(serverDistDir, "bundled-pi-extension/index.mjs");
+        yield* fs.makeDirectory(path.dirname(sourceSkill), { recursive: true });
+        yield* fs.makeDirectory(path.dirname(sourcePiExtension), { recursive: true });
+        yield* fs.writeFileString(sourceSkill, "# Midscene Preview\n");
+        yield* fs.writeFileString(sourcePiExtension, "export default () => {};\n");
+
+        yield* stageBundledSkillsResource({ serverDistDir, stageResourcesDir });
+        yield* stageBundledPiExtensionResource({ serverDistDir, stageResourcesDir });
+
+        assert.equal(
+          yield* fs.readFileString(
+            path.join(stageResourcesDir, "bundled-skills/midscene-preview/SKILL.md"),
+          ),
+          "# Midscene Preview\n",
+        );
+        assert.equal(
+          yield* fs.readFileString(path.join(stageResourcesDir, "bundled-pi-extension/index.mjs")),
+          "export default () => {};\n",
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("validates every ASAR-unpacked native in the packaged Windows payload", () =>
@@ -1156,11 +1302,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
-  it("stages the resource monitor as an external executable resource", () => {
+  it("stages executable and Skill resources outside Electron ASARs", () => {
     assert.deepStrictEqual(DESKTOP_EXTRA_RESOURCES, [
       {
         from: "apps/desktop/prod-resources/resource-monitor",
         to: "resource-monitor",
+      },
+      {
+        from: "apps/desktop/prod-resources/bundled-skills",
+        to: "bundled-skills",
+      },
+      {
+        from: "apps/desktop/prod-resources/bundled-pi-extension",
+        to: "bundled-pi-extension",
       },
     ]);
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
@@ -1226,6 +1380,35 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolvePackageManagerUserAgent("pnpm@11.10.0"), "pnpm/11.10.0");
     assert.equal(resolvePackageManagerUserAgent(" yarn@4.9.2 "), "yarn/4.9.2");
     assert.equal(resolvePackageManagerUserAgent("pnpm"), "pnpm");
+  });
+
+  it("retries only transient electron-builder network failures within the retry limit", () => {
+    const tlsFailure = new BuildCommandFailedError({
+      command: "electron-builder",
+      exitCode: 1,
+      stdoutTail:
+        "RequestError: Client network socket disconnected before secure TLS connection was established",
+    });
+    const timeoutFailure = new BuildCommandFailedError({
+      command: "electron-builder",
+      exitCode: 1,
+      stderrTail: "download failed: read ECONNRESET",
+    });
+    const packagingFailure = new BuildCommandFailedError({
+      command: "electron-builder",
+      exitCode: 1,
+      stdoutTail:
+        "Invalid configuration object. electron-builder has been initialized incorrectly.",
+    });
+
+    assert.isTrue(isTransientElectronBuilderNetworkFailure(tlsFailure));
+    assert.isTrue(isTransientElectronBuilderNetworkFailure(timeoutFailure));
+    assert.isFalse(isTransientElectronBuilderNetworkFailure(packagingFailure));
+    assert.isFalse(isTransientElectronBuilderNetworkFailure(new Error("ETIMEDOUT")));
+    assert.isTrue(shouldRetryElectronBuilderFailure(tlsFailure, 0));
+    assert.isTrue(shouldRetryElectronBuilderFailure(tlsFailure, 1));
+    assert.isFalse(shouldRetryElectronBuilderFailure(tlsFailure, 2));
+    assert.isFalse(shouldRetryElectronBuilderFailure(packagingFailure, 0));
   });
 
   it.effect("normalizes mock update server ports from env-style strings", () =>

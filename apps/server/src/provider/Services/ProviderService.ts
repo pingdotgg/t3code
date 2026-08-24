@@ -32,6 +32,7 @@ import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
 import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
+import type { ProviderThreadContextSnapshot } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
@@ -106,6 +107,11 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
+
+  /** Read the provider-native messages currently used as thread context. */
+  readonly readThreadContext: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<ProviderThreadContextSnapshot, ProviderServiceError>;
 
   /**
    * Upload a thread and return the provider's shareable feedback identifier.

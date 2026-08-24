@@ -14,7 +14,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
-  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -191,6 +190,21 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
       }),
   );
 
+  const readThreadContext = vi.fn((threadId: ThreadId) =>
+    Effect.succeed({
+      threadId,
+      provider,
+      messages: [
+        {
+          id: "context-message-1",
+          role: "user",
+          createdAt: null,
+          content: { type: "userMessage", text: "hello" },
+        },
+      ],
+    }),
+  );
+
   const rollbackThread = vi.fn(
     (
       threadId: ThreadId,
@@ -227,6 +241,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     listSessions,
     hasSession,
     readThread,
+    ...(provider === CODEX_DRIVER ? { readThreadContext } : {}),
     rollbackThread,
     ...(provider === CODEX_DRIVER ? { uploadFeedback } : {}),
     stopAll,
@@ -263,6 +278,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     listSessions,
     hasSession,
     readThread,
+    readThreadContext,
     rollbackThread,
     uploadFeedback,
     stopAll,
@@ -928,6 +944,35 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("routes active thread context inspection to the owning adapter", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-context-route");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      routing.codex.readThreadContext.mockClear();
+
+      const result = yield* provider.readThreadContext({ threadId });
+
+      assert.strictEqual(result.threadId, threadId);
+      assert.strictEqual(result.provider, CODEX_DRIVER);
+      assert.deepStrictEqual(result.messages, [
+        {
+          id: "context-message-1",
+          role: "user",
+          createdAt: null,
+          content: { type: "userMessage", text: "hello" },
+        },
+      ]);
+      assert.deepStrictEqual(routing.codex.readThreadContext.mock.calls, [[threadId]]);
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

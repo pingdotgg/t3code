@@ -1,6 +1,5 @@
 import { PiAgentSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -8,12 +7,14 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makePiTextGeneration } from "../../textGeneration/PiTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makePiAdapter } from "../Layers/PiAdapter.ts";
 import { buildInitialPiProviderSnapshot, checkPiProviderStatus } from "../Layers/PiProvider.ts";
+import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -35,7 +36,6 @@ import {
 
 const decodePiSettings = Schema.decodeSync(PiAgentSettings);
 const DRIVER_KIND = ProviderDriverKind.make("piAgent");
-const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@earendil-works/pi-coding-agent",
@@ -44,11 +44,13 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 });
 
 export type PiDriverEnv =
+  | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
+  | ProviderEventLoggers
   | ServerConfig
   | ServerSettingsService;
 
@@ -82,6 +84,7 @@ export const PiDriver: ProviderDriver<PiAgentSettings, PiDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
+      const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const effectiveConfig = { ...config, enabled } satisfies PiAgentSettings;
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -101,6 +104,7 @@ export const PiDriver: ProviderDriver<PiAgentSettings, PiDriverEnv> = {
       const adapter = yield* makePiAdapter(effectiveConfig, {
         instanceId,
         environment: processEnv,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makePiTextGeneration(effectiveConfig, processEnv);
       const checkProvider = checkPiProviderStatus(
@@ -127,7 +131,6 @@ export const PiDriver: ProviderDriver<PiAgentSettings, PiDriverEnv> = {
             Effect.provideService(HttpClient.HttpClient, httpClient),
             Effect.flatMap(publishSnapshot),
           ),
-        refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(
         Effect.mapError(
           (cause) =>

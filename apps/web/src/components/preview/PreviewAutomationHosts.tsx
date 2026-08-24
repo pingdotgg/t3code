@@ -47,7 +47,7 @@ import { previewEnvironment } from "~/state/preview";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { previewBridge } from "./previewBridge";
+import { previewBridge, readPreviewAutomationSupportedFeatures } from "./previewBridge";
 import {
   PreviewAutomationOperationError,
   PreviewAutomationOverlayTimeoutError,
@@ -273,6 +273,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       clientId: automationClientId,
       environmentId,
       supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
+      supportedFeatures: [...readPreviewAutomationSupportedFeatures(previewBridge?.automation)],
     }),
     [automationClientId, environmentId],
   );

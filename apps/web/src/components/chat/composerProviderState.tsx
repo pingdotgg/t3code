@@ -48,6 +48,7 @@ type TraitsRenderInput = {
   prompt: string;
   onPromptChange: (prompt: string) => void;
   planModeEnabled: boolean;
+  triggerClassName?: string;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -104,6 +105,7 @@ function renderTraitsControl(
     prompt,
     onPromptChange,
     planModeEnabled,
+    triggerClassName,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   if (
@@ -131,6 +133,7 @@ function renderTraitsControl(
       prompt={prompt}
       onPromptChange={onPromptChange}
       planModeEnabled={planModeEnabled}
+      {...(triggerClassName ? { triggerClassName } : {})}
     />
   );
 }

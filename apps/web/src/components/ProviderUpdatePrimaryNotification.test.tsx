@@ -16,7 +16,7 @@ describe("getProviderUpdateToastUpdate", () => {
     });
 
     expect(Object.hasOwn(update, "actionProps")).toBe(true);
-    expect(update.actionProps).toBeUndefined();
+    expect(update.actionProps).toEqual({ children: null });
     expect(update.type).toBe("loading");
   });
 

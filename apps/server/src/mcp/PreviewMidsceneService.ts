@@ -82,8 +82,9 @@ class PreviewMidsceneStageFailure extends Error {
 
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
 const isPreviewMidsceneResultTooLargeError = Schema.is(PreviewMidsceneResultTooLargeError);
-const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
-const decodeUnknownJson = Schema.decodeUnknownSync(Schema.UnknownFromJsonString);
+const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
+const encodeUnknownJson = Schema.encodeUnknownSync(UnknownFromJsonString);
+const decodeUnknownJson = Schema.decodeUnknownSync(UnknownFromJsonString);
 
 export function missingMidsceneModelVariables(
   environment: Readonly<Record<string, string | undefined>>,
@@ -293,7 +294,7 @@ export const makeWithEnvironment = (
         status = yield* invokeBroker<PreviewAutomationStatus>(
           scope,
           "open",
-          { show: true, reuseExistingTab: true },
+          { open: true, reuseExistingTab: true },
           resolvedTabId,
         );
       }

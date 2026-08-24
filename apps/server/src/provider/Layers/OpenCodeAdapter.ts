@@ -1685,7 +1685,7 @@ export function makeOpenCodeAdapter(
     const readThreadContext: OpenCodeAdapterShape["readThreadContext"] = Effect.fn(
       "readThreadContext",
     )(function* (threadId) {
-      const context = ensureSessionContext(sessions, threadId);
+      const context = yield* ensureSessionContext(sessions, threadId);
       const messages = yield* runOpenCodeSdk("session.messages", () =>
         context.client.session.messages({
           sessionID: context.openCodeSessionId,

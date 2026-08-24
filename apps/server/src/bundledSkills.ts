@@ -17,11 +17,17 @@ export function resolveAsarUnpackedPath(filePath: string): string {
   return filePath.replace(/([\\/])app\.asar(?=[\\/])/, "$1app.asar.unpacked");
 }
 
+function resolveElectronResourcesDirectory(moduleDirectory: string): string | undefined {
+  const asarBoundary = /[\\/](?:app|server)\.asar(?=[\\/]|$)/u.exec(moduleDirectory);
+  return asarBoundary ? moduleDirectory.slice(0, asarBoundary.index) : undefined;
+}
+
 export const resolveBundledSkillsRoot = Effect.fn("resolveBundledSkillsRoot")(function* (
   moduleDirectory: string = import.meta.dirname,
 ) {
   const path = yield* Path.Path;
-  return resolveAsarUnpackedPath(path.join(moduleDirectory, "bundled-skills"));
+  const electronResourcesDirectory = resolveElectronResourcesDirectory(moduleDirectory);
+  return path.join(electronResourcesDirectory ?? moduleDirectory, "bundled-skills");
 });
 
 export const resolveBundledMidsceneSkillPath = Effect.fn("resolveBundledMidsceneSkillPath")(
@@ -35,7 +41,16 @@ export const resolveBundledMidsceneSkillPath = Effect.fn("resolveBundledMidscene
 export const resolveBundledPiMcpExtensionPath = Effect.fn("resolveBundledPiMcpExtensionPath")(
   function* (moduleDirectory: string = import.meta.dirname) {
     const path = yield* Path.Path;
-    return resolveAsarUnpackedPath(path.join(moduleDirectory, "bundled-pi-extension", "index.ts"));
+    const electronResourcesDirectory = resolveElectronResourcesDirectory(moduleDirectory);
+    const entryFileName =
+      electronResourcesDirectory === undefined && path.basename(moduleDirectory) === "src"
+        ? "index.ts"
+        : "index.mjs";
+    return path.join(
+      electronResourcesDirectory ?? moduleDirectory,
+      "bundled-pi-extension",
+      entryFileName,
+    );
   },
 );
 

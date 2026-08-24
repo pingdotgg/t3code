@@ -69,6 +69,18 @@ describe("ThreadErrorBanner", () => {
   it("never shows a null error", () => {
     expect(shouldShowThreadErrorBanner("env:thread-e", null, false)).toBe(false);
   });
+
+  it("wraps long provider errors without widening the alert", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="ProviderModelNotFoundError: openai/gpt-5.6-some-very-long-model-name"
+        onDismiss={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain("line-clamp-3 min-w-0 break-words");
+  });
+
   it("aligns the warning and dismiss icons with the first line of a multi-line error", () => {
     const markup = renderToStaticMarkup(
       <ThreadErrorBanner

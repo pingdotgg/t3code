@@ -95,6 +95,28 @@ interface CodexAdapterSessionContext {
   stopped: boolean;
 }
 
+function asItemRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function contextItemId(value: unknown): string | null {
+  const id = asItemRecord(value)?.id;
+  return typeof id === "string" && id.trim().length > 0 ? id : null;
+}
+
+function contextItemRole(value: unknown): string | null {
+  switch (asItemRecord(value)?.type) {
+    case "userMessage":
+      return "user";
+    case "agentMessage":
+      return "assistant";
+    default:
+      return null;
+  }
+}
+
 function mapCodexRuntimeError(
   threadId: ThreadId,
   method: string,
@@ -1866,6 +1888,28 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       })),
     );
 
+  const readThreadContext: CodexAdapterShape["readThreadContext"] = (threadId) =>
+    requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.readThread),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "thread/read", cause),
+      ),
+      Effect.map((snapshot) => ({
+        threadId,
+        provider: PROVIDER,
+        messages: snapshot.turns.flatMap((turn) =>
+          turn.items.map((item, index) => ({
+            id: contextItemId(item) ?? `${turn.id}:${index}`,
+            role: contextItemRole(item),
+            createdAt: null,
+            content: item,
+          })),
+        ),
+      })),
+    );
+
   const rollbackThread: CodexAdapterShape["rollbackThread"] = (threadId, numTurns) => {
     if (!Number.isInteger(numTurns) || numTurns < 1) {
       return Effect.fail(
@@ -1988,6 +2032,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     sendTurn,
     interruptTurn,
     readThread,
+    readThreadContext,
     rollbackThread,
     uploadFeedback,
     respondToRequest,

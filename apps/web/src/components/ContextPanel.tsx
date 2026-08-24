@@ -20,6 +20,7 @@ import { formatTimestamp } from "~/timestampFormat";
 import { useClientSettings } from "~/hooks/useSettings";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
 import { ScrollArea } from "./ui/scroll-area";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 type BreakdownCategory = "user" | "assistant" | "tool" | "other";
 
@@ -66,12 +67,23 @@ function InfoCell(props: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-muted-foreground/70 text-xs">{props.label}</span>
-      <span
-        className={cn("truncate text-sm font-medium text-foreground", props.mono && "tabular-nums")}
-        title={props.value}
-      >
-        {props.value}
-      </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              className={cn(
+                "truncate text-sm font-medium text-foreground",
+                props.mono && "tabular-nums",
+              )}
+            />
+          }
+        >
+          {props.value}
+        </TooltipTrigger>
+        <TooltipPopup side="top" className="max-w-sm break-all">
+          {props.value}
+        </TooltipPopup>
+      </Tooltip>
     </div>
   );
 }

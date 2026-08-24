@@ -18,6 +18,10 @@
     "./relay": {
       "types": "./src/relay.ts",
       "import": "./src/relay.ts"
+    },
+    "./preview-automation-features": {
+      "types": "./src/previewAutomationFeatures.ts",
+      "import": "./src/previewAutomationFeatures.ts"
     }
   },
   "scripts": {

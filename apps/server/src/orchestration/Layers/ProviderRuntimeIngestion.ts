@@ -223,6 +223,43 @@ function hasRenderableAssistantText(text: string | undefined): boolean {
   return (text?.trim().length ?? 0) > 0;
 }
 
+function createBufferedTextStore(input: {
+  cache: Cache.Cache<MessageId, string>;
+  maxChars: number;
+}) {
+  const append = (messageId: MessageId, delta: string) =>
+    Cache.getOption(input.cache, messageId).pipe(
+      Effect.flatMap((existingText) =>
+        Effect.gen(function* () {
+          const nextText = Option.match(existingText, {
+            onNone: () => delta,
+            onSome: (text) => `${text}${delta}`,
+          });
+          if (nextText.length <= input.maxChars) {
+            yield* Cache.set(input.cache, messageId, nextText);
+            return "";
+          }
+
+          yield* Cache.invalidate(input.cache, messageId);
+          return nextText;
+        }),
+      ),
+    );
+
+  const take = (messageId: MessageId) =>
+    Cache.getOption(input.cache, messageId).pipe(
+      Effect.flatMap((existingText) =>
+        Cache.invalidate(input.cache, messageId).pipe(
+          Effect.as(Option.getOrElse(existingText, () => "")),
+        ),
+      ),
+    );
+
+  const clear = (messageId: MessageId) => Cache.invalidate(input.cache, messageId);
+
+  return { append, take, clear };
+}
+
 function proposedPlanIdForTurn(threadId: ThreadId, turnId: TurnId): string {
   return `plan:${threadId}:turn:${turnId}`;
 }
@@ -907,6 +944,12 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(""),
   });
 
+  const bufferedReasoningTextByMessageId = yield* Cache.make<MessageId, string>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(""),
+  });
+
   const assistantSegmentStateByTurnKey = yield* Cache.make<string, AssistantSegmentState>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
     timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
@@ -1076,37 +1119,14 @@ const make = Effect.gen(function* () {
       });
     });
 
-  const appendBufferedAssistantText = (messageId: MessageId, delta: string) =>
-    Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
-      Effect.flatMap((existingText) =>
-        Effect.gen(function* () {
-          const nextText = Option.match(existingText, {
-            onNone: () => delta,
-            onSome: (text) => `${text}${delta}`,
-          });
-          if (nextText.length <= MAX_BUFFERED_ASSISTANT_CHARS) {
-            yield* Cache.set(bufferedAssistantTextByMessageId, messageId, nextText);
-            return "";
-          }
-
-          // Safety valve: flush full buffered text as an assistant delta to cap memory.
-          yield* Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
-          return nextText;
-        }),
-      ),
-    );
-
-  const takeBufferedAssistantText = (messageId: MessageId) =>
-    Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
-      Effect.flatMap((existingText) =>
-        Cache.invalidate(bufferedAssistantTextByMessageId, messageId).pipe(
-          Effect.as(Option.getOrElse(existingText, () => "")),
-        ),
-      ),
-    );
-
-  const clearBufferedAssistantText = (messageId: MessageId) =>
-    Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
+  const assistantTextBuffer = createBufferedTextStore({
+    cache: bufferedAssistantTextByMessageId,
+    maxChars: MAX_BUFFERED_ASSISTANT_CHARS,
+  });
+  const reasoningTextBuffer = createBufferedTextStore({
+    cache: bufferedReasoningTextByMessageId,
+    maxChars: MAX_BUFFERED_ASSISTANT_CHARS,
+  });
 
   const appendBufferedProposedPlan = (planId: string, delta: string, createdAt: string) =>
     Cache.getOption(bufferedProposedPlanById, planId).pipe(
@@ -1133,7 +1153,9 @@ const make = Effect.gen(function* () {
     Cache.invalidate(bufferedProposedPlanById, planId);
 
   const clearAssistantMessageState = (messageId: MessageId) =>
-    clearBufferedAssistantText(messageId);
+    Effect.all([assistantTextBuffer.clear(messageId), reasoningTextBuffer.clear(messageId)]).pipe(
+      Effect.asVoid,
+    );
 
   const flushBufferedAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -1144,20 +1166,37 @@ const make = Effect.gen(function* () {
     commandTag: string;
   }) =>
     Effect.gen(function* () {
-      const bufferedText = yield* takeBufferedAssistantText(input.messageId);
-      if (!hasRenderableAssistantText(bufferedText)) {
+      const bufferedText = yield* assistantTextBuffer.take(input.messageId);
+      const bufferedReasoning = yield* reasoningTextBuffer.take(input.messageId);
+      const hasText = hasRenderableAssistantText(bufferedText);
+      const hasReasoning = hasRenderableAssistantText(bufferedReasoning);
+      if (!hasText && !hasReasoning) {
         return false;
       }
 
-      yield* orchestrationEngine.dispatch({
-        type: "thread.message.assistant.delta",
-        commandId: yield* providerCommandId(input.event, input.commandTag),
-        threadId: input.threadId,
-        messageId: input.messageId,
-        delta: bufferedText,
-        ...(input.turnId ? { turnId: input.turnId } : {}),
-        createdAt: input.createdAt,
-      });
+      if (hasText) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: yield* providerCommandId(input.event, input.commandTag),
+          threadId: input.threadId,
+          messageId: input.messageId,
+          delta: bufferedText,
+          ...(input.turnId ? { turnId: input.turnId } : {}),
+          createdAt: input.createdAt,
+        });
+      }
+
+      if (hasReasoning) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.message.assistant.reasoning.delta",
+          commandId: yield* providerCommandId(input.event, `${input.commandTag}:reasoning`),
+          threadId: input.threadId,
+          messageId: input.messageId,
+          delta: bufferedReasoning,
+          ...(input.turnId ? { turnId: input.turnId } : {}),
+          createdAt: input.createdAt,
+        });
+      }
       return true;
     });
 
@@ -1206,7 +1245,8 @@ const make = Effect.gen(function* () {
     hasProjectedMessage?: boolean;
   }) =>
     Effect.gen(function* () {
-      const bufferedText = yield* takeBufferedAssistantText(input.messageId);
+      const bufferedText = yield* assistantTextBuffer.take(input.messageId);
+      const bufferedReasoning = yield* reasoningTextBuffer.take(input.messageId);
       const text =
         bufferedText.length > 0
           ? bufferedText
@@ -1214,6 +1254,7 @@ const make = Effect.gen(function* () {
             ? input.fallbackText!
             : "";
       const hasRenderableText = hasRenderableAssistantText(text);
+      const hasRenderableReasoning = hasRenderableAssistantText(bufferedReasoning);
 
       if (hasRenderableText) {
         yield* orchestrationEngine.dispatch({
@@ -1227,7 +1268,22 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (input.hasProjectedMessage || hasRenderableText) {
+      if (hasRenderableReasoning) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.message.assistant.reasoning.delta",
+          commandId: yield* providerCommandId(
+            input.event,
+            `${input.finalDeltaCommandTag}:reasoning`,
+          ),
+          threadId: input.threadId,
+          messageId: input.messageId,
+          delta: bufferedReasoning,
+          ...(input.turnId ? { turnId: input.turnId } : {}),
+          createdAt: input.createdAt,
+        });
+      }
+
+      if (input.hasProjectedMessage || hasRenderableText || hasRenderableReasoning) {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.complete",
           commandId: yield* providerCommandId(input.event, input.commandTag),
@@ -1660,6 +1716,12 @@ const make = Effect.gen(function* () {
         event.type === "content.delta" && event.payload.streamKind === "assistant_text"
           ? event.payload.delta
           : undefined;
+      const reasoningDelta =
+        event.type === "content.delta" &&
+        (event.payload.streamKind === "reasoning_text" ||
+          event.payload.streamKind === "reasoning_summary_text")
+          ? event.payload.delta
+          : undefined;
       const proposedPlanDelta =
         event.type === "turn.proposed.delta" ? event.payload.delta : undefined;
 
@@ -1679,7 +1741,7 @@ const make = Effect.gen(function* () {
           (settings) => (settings.enableLegacyTokenStreaming ? "streaming" : "buffered"),
         );
         if (assistantDeliveryMode === "buffered") {
-          const spillChunk = yield* appendBufferedAssistantText(assistantMessageId, assistantDelta);
+          const spillChunk = yield* assistantTextBuffer.append(assistantMessageId, assistantDelta);
           if (spillChunk.length > 0) {
             yield* orchestrationEngine.dispatch({
               type: "thread.message.assistant.delta",
@@ -1698,6 +1760,47 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             messageId: assistantMessageId,
             delta: assistantDelta,
+            ...(turnId ? { turnId } : {}),
+            createdAt: now,
+          });
+        }
+      }
+
+      if (reasoningDelta && reasoningDelta.length > 0) {
+        const turnId = toTurnId(event.turnId);
+        const assistantMessageId = yield* getOrCreateAssistantMessageId({
+          threadId: thread.id,
+          event,
+          ...(turnId ? { turnId } : {}),
+        });
+        if (turnId) {
+          yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
+        }
+
+        const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
+          serverSettingsService.getSettings,
+          (settings) => (settings.enableLegacyTokenStreaming ? "streaming" : "buffered"),
+        );
+        if (assistantDeliveryMode === "buffered") {
+          const spillChunk = yield* reasoningTextBuffer.append(assistantMessageId, reasoningDelta);
+          if (spillChunk.length > 0) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.message.assistant.reasoning.delta",
+              commandId: yield* providerCommandId(event, "reasoning-delta-buffer-spill"),
+              threadId: thread.id,
+              messageId: assistantMessageId,
+              delta: spillChunk,
+              ...(turnId ? { turnId } : {}),
+              createdAt: now,
+            });
+          }
+        } else {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.message.assistant.reasoning.delta",
+            commandId: yield* providerCommandId(event, "reasoning-delta"),
+            threadId: thread.id,
+            messageId: assistantMessageId,
+            delta: reasoningDelta,
             ...(turnId ? { turnId } : {}),
             createdAt: now,
           });

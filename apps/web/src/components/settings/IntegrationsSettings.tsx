@@ -53,6 +53,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { MidsceneSettingsSection } from "./MidsceneSettingsSection";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
@@ -477,6 +478,7 @@ export function IntegrationsSettingsPanel() {
           previewDefaults
         )}
       </SettingsSection>
+      <MidsceneSettingsSection />
     </SettingsPageContainer>
   );
 }

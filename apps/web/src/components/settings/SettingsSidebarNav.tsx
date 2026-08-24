@@ -34,10 +34,14 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3ConnectSidebarSignIn";
+import { useI18n } from "../../i18n";
+import type { MessageKey, Translate } from "../../i18n/messages";
 import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
+  SETTINGS_SEARCH_ITEMS,
+  SETTINGS_SECTION_LABEL_KEYS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
@@ -56,15 +60,19 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/archived": ArchiveIcon,
 };
 
-export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
-  label: string;
+const SETTINGS_NAV_ITEMS: ReadonlyArray<{
+  labelKey: MessageKey;
   to: SettingsPath;
   icon: ComponentType<{ className?: string }>;
 }> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[]).map((to) => ({
   to,
-  label: SETTINGS_SECTION_LABELS[to],
+  labelKey: SETTINGS_SECTION_LABEL_KEYS[to],
   icon: SETTINGS_SECTION_ICONS[to],
 }));
+
+export function getSettingsNavItems(t: Translate) {
+  return SETTINGS_NAV_ITEMS.map(({ labelKey, ...item }) => ({ ...item, label: t(labelKey) }));
+}
 
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
@@ -72,13 +80,28 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const results = useMemo(() => searchSettings(query), [query]);
+  const searchItems = useMemo(
+    () =>
+      SETTINGS_SEARCH_ITEMS.map((item) => {
+        if (item.id === "interface-language") {
+          return { ...item, title: t("settings.language.title") };
+        }
+        if (item.id === "skills-in-slash-menu") {
+          return { ...item, title: t("settings.skillsMenu.title") };
+        }
+        return item;
+      }),
+    [t],
+  );
+  const results = useMemo(() => searchSettings(query, searchItems), [query, searchItems]);
+  const navigationItems = useMemo(() => getSettingsNavItems(t), [t]);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
 
@@ -194,8 +217,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 setActiveResultIndex(0);
               }}
               onKeyDown={handleSearchKeyDown}
-              placeholder="Search"
-              aria-label="Search settings"
+              placeholder={t("settings.search.placeholder")}
+              aria-label={t("settings.search.aria")}
               role="combobox"
               aria-autocomplete="list"
               aria-expanded={isSearching && hasResults}
@@ -213,7 +236,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 size="icon-micro"
                 variant="ghost"
                 className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
-                aria-label="Clear settings search"
+                aria-label={t("settings.search.clear")}
                 onClick={() => {
                   clearSearch();
                   searchInputRef.current?.focus();
@@ -230,14 +253,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               role="status"
               className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
             >
-              No settings found
+              {t("settings.search.empty")}
             </p>
           ) : null}
           <SidebarMenu
             className="ps-px"
             id={isSearching && hasResults ? "settings-search-results" : undefined}
             role={isSearching && hasResults ? "listbox" : undefined}
-            aria-label={isSearching && hasResults ? "Settings search results" : undefined}
+            aria-label={isSearching && hasResults ? t("settings.search.results") : undefined}
           >
             {isSearching
               ? results.map((item, index) => (
@@ -259,13 +282,13 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                           {item.title}
                         </span>
                         <span className="block truncate text-[11px] text-sidebar-muted-foreground/75">
-                          {SETTINGS_SECTION_LABELS[item.to]}
+                          {t(SETTINGS_SECTION_LABEL_KEYS[item.to])}
                         </span>
                       </span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))
-              : SETTINGS_NAV_ITEMS.map((item) => {
+              : navigationItems.map((item) => {
                   const Icon = item.icon;
                   const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`);
                   return (

@@ -23,6 +23,8 @@ import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../compo
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
+import { useI18n } from "../../i18n";
+import type { MessageKey } from "../../i18n/messages";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 
 export type ComposerCommandItem =
@@ -68,6 +70,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const { t } = useI18n();
   const listRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
@@ -114,14 +117,14 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             <p className="text-secondary-label text-xs">
               {props.isLoading
                 ? props.triggerKind === "skill"
-                  ? "Searching workspace skills..."
-                  : "Searching workspace files..."
+                  ? t("chat.skills.searching")
+                  : t("chat.command.searchingFiles")
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
-                    ? "No skills found. Try / to browse provider commands."
+                    ? t("chat.skills.empty")
                     : props.triggerKind === "path"
-                      ? "No matching files or folders."
-                      : "No matching command."))}
+                      ? t("chat.command.noMatchingPaths")
+                      : t("chat.command.noMatchingCommand")))}
             </p>
           </div>
         )}
@@ -202,22 +205,23 @@ const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
   other: PackageIcon,
 };
 
-const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
-  app: "App",
-  repo: "Repo",
-  project: "Project",
-  personal: "Personal",
-  system: "System",
-  other: "Provider",
+const SKILL_SOURCE_LABEL_KEY_BY_KIND: Record<ProviderSkillSourceKind, MessageKey> = {
+  app: "chat.skills.source.app",
+  repo: "chat.skills.source.repo",
+  project: "chat.skills.source.project",
+  personal: "chat.skills.source.personal",
+  system: "chat.skills.source.system",
+  other: "chat.skills.source.provider",
 };
 
 function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffix: boolean }) {
+  const { t } = useI18n();
   const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
   return (
     <Badge className="ms-auto" variant="secondary">
       <Icon aria-hidden="true" className="text-current" />
-      {SKILL_SOURCE_LABEL_BY_KIND[props.kind]}
-      {props.showSkillSuffix ? " Skill" : null}
+      {t(SKILL_SOURCE_LABEL_KEY_BY_KIND[props.kind])}
+      {props.showSkillSuffix ? t("chat.skills.badgeSuffix") : null}
     </Badge>
   );
 }

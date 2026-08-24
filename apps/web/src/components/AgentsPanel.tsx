@@ -29,6 +29,8 @@ import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Button } from "~/components/ui/button";
+import { useI18n } from "~/i18n";
+import type { MessageKey } from "~/i18n/messages";
 
 /**
  * In-flight states all present as Working (one steady state, per the
@@ -36,17 +38,20 @@ import { Button } from "~/components/ui/button";
  * stalled/waiting/queued subagent is still the fleet doing its job, not a
  * user problem). Only settled states differentiate.
  */
-const STATUS_VISUALS: Record<RuntimeSubagent["status"], { dotClass: string; label: string }> = {
-  pending: { dotClass: "bg-info", label: "Working" },
-  running: { dotClass: "bg-info", label: "Working" },
-  waiting: { dotClass: "bg-info", label: "Working" },
+const STATUS_VISUALS: Record<
+  RuntimeSubagent["status"],
+  { dotClass: string; labelKey: MessageKey }
+> = {
+  pending: { dotClass: "bg-info", labelKey: "agents.status.working" },
+  running: { dotClass: "bg-info", labelKey: "agents.status.working" },
+  waiting: { dotClass: "bg-info", labelKey: "agents.status.working" },
   // Idle reads as settled (muted, not sky): a resting Codex child looks done
   // unless resumed — live-test: sky idle dots read as stuck in-progress.
-  idle: { dotClass: "bg-muted-foreground/50", label: "Idle · resumable" },
-  completed: { dotClass: "bg-success", label: "Completed" },
-  failed: { dotClass: "bg-destructive", label: "Failed" },
-  cancelled: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
-  interrupted: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
+  idle: { dotClass: "bg-muted-foreground/50", labelKey: "agents.status.idleResumable" },
+  completed: { dotClass: "bg-success", labelKey: "agents.status.completed" },
+  failed: { dotClass: "bg-destructive", labelKey: "agents.status.failed" },
+  cancelled: { dotClass: "bg-muted-foreground/60", labelKey: "agents.status.stopped" },
+  interrupted: { dotClass: "bg-muted-foreground/60", labelKey: "agents.status.stopped" },
 };
 
 function StatusDot({ status }: { status: RuntimeSubagent["status"] }) {
@@ -139,6 +144,7 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
 
 /** Flat, non-interactive agent status line. No unfold. */
 function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+  const { t } = useI18n();
   const visuals = STATUS_VISUALS[agent.status];
   const activity = agentActivityText(agent);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
@@ -148,9 +154,13 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
       : agent.role;
   const metadata = [
     modelLabel,
-    agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
-    agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
-    agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
+    t("agents.tokens.short", {
+      count: agent.usage ? formatSubagentTokenCount(agent.usage.totalTokens) : "—",
+    }),
+    agent.usage?.toolUses !== undefined
+      ? t("agents.tools.count", { count: agent.usage.toolUses })
+      : null,
+    agent.activationCount > 1 ? t("agents.run.count", { count: agent.activationCount }) : null,
   ].filter((value): value is string => value !== null);
 
   return (
@@ -180,12 +190,12 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
           agent.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
         )}
       >
-        {activity ?? visuals.label}
+        {activity ?? t(visuals.labelKey)}
       </span>
       <span className="col-start-2 col-end-4 row-start-3 truncate font-mono text-[.7rem] tabular-nums text-muted-foreground/70">
         {metadata.join(" · ")}
       </span>
-      <span className="sr-only">{visuals.label}</span>
+      <span className="sr-only">{t(visuals.labelKey)}</span>
     </div>
   );
 }
@@ -273,6 +283,7 @@ function WorkflowScriptView({
   scriptPath: string;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const result = useAtomValue(
     orchestrationEnvironment.workflowScript({ environmentId, input: { threadId, scriptPath } }),
   );
@@ -287,7 +298,7 @@ function WorkflowScriptView({
           size="icon-micro"
           variant="ghost-muted"
           onClick={onClose}
-          aria-label="Close script"
+          aria-label={t("agents.script.close")}
           className="ml-auto"
         >
           <X aria-hidden className="size-3" />
@@ -297,12 +308,12 @@ function WorkflowScriptView({
         {result._tag === "Success" ? (
           <pre className="whitespace-pre-wrap break-words font-mono text-[.7rem] leading-relaxed text-foreground/90">
             {result.value.contents}
-            {result.value.truncated ? "\n… (truncated)" : ""}
+            {result.value.truncated ? `\n${t("agents.script.truncated")}` : ""}
           </pre>
         ) : result._tag === "Failure" ? (
-          <p className="text-xs text-destructive-foreground">Could not load the script.</p>
+          <p className="text-xs text-destructive-foreground">{t("agents.script.loadFailed")}</p>
         ) : (
-          <p className="text-xs text-muted-foreground">Loading…</p>
+          <p className="text-xs text-muted-foreground">{t("agents.script.loading")}</p>
         )}
       </div>
     </div>
@@ -321,6 +332,7 @@ function PhaseSection({
   phase: AgentPanelWorkflowGroup["phases"][number];
   defaultOpen?: boolean;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(defaultOpen || phase.state === "running");
   const previousState = useRef(phase.state);
 
@@ -355,10 +367,13 @@ function PhaseSection({
         <span>{phase.title}</span>
         <span className="font-normal normal-case text-muted-foreground/70">
           {phase.state === "pending" && phase.members.length === 0
-            ? "pending"
+            ? t("agents.phase.pending")
             : phase.state === "done"
-              ? `${phase.settledCount} done`
-              : `${phase.activeCount} active · ${phase.settledCount} done`}
+              ? t("agents.phase.done", { count: phase.settledCount })
+              : t("agents.phase.activeDone", {
+                  active: phase.activeCount,
+                  done: phase.settledCount,
+                })}
         </span>
         {!open && phase.members.length > 0 ? (
           <span className="ml-auto flex items-center gap-0.5">
@@ -385,6 +400,7 @@ function ExpandedWorkflowSection({
   threadId: ThreadId | null;
   onCollapse: () => void;
 }) {
+  const { t } = useI18n();
   const [scriptOpen, setScriptOpen] = useState(false);
   const members = workflowMembers(group);
   const settled = members.filter(
@@ -413,17 +429,17 @@ function ExpandedWorkflowSection({
             )}
             aria-expanded={scriptOpen}
           >
-            {"{}"} script
+            {"{}"} {t("agents.script.label")}
           </button>
         ) : null}
         <span className="ml-auto font-mono normal-case text-muted-foreground/80">
-          {settled}/{members.length} settled
+          {t("agents.workflow.settledProgress", { settled, total: members.length })}
         </span>
         <Button
           size="icon-micro"
           variant="ghost-muted"
           onClick={onCollapse}
-          aria-label="Collapse workflow"
+          aria-label={t("agents.workflow.collapse")}
         >
           <ChevronDown aria-hidden className="size-3" />
         </Button>
@@ -461,6 +477,7 @@ function CollapsedWorkflowSection({
   group: AgentPanelWorkflowGroup;
   onExpand: () => void;
 }) {
+  const { t } = useI18n();
   const members = workflowMembers(group);
   const failed = members.filter((member) => member.status === "failed").length;
   // Coordinator usage may already aggregate members (panel-footer rule):
@@ -486,9 +503,15 @@ function CollapsedWorkflowSection({
           {group.workflow.workflowName ?? group.workflow.title}
         </span>
         <span className="ml-auto flex items-center gap-1.5 font-mono text-[.7rem] text-muted-foreground/80">
-          {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
-          <span>{members.length} agents</span>
-          <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
+          {failed > 0 ? (
+            <span className="text-destructive-foreground">
+              {t("agents.workflow.failed", { count: failed })}
+            </span>
+          ) : null}
+          <span>{t("agents.workflow.agents", { count: members.length })}</span>
+          <span className="tabular-nums">
+            · {t("agents.tokens.short", { count: formatSubagentTokenCount(totalTokens) })}
+          </span>
           {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
           <ChevronRight aria-hidden className="size-3" />
         </span>
@@ -529,15 +552,13 @@ export function AgentsPanel({
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
 }) {
+  const { t } = useI18n();
   if (!model.hasAgents) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <Bot aria-hidden className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">No agents yet</p>
-        <p className="max-w-56 text-xs text-muted-foreground">
-          When this thread spawns subagents or runs a workflow, they show up here with live status,
-          activity, and token usage.
-        </p>
+        <p className="text-sm font-medium">{t("agents.empty.title")}</p>
+        <p className="max-w-56 text-xs text-muted-foreground">{t("agents.empty.description")}</p>
       </div>
     );
   }
@@ -557,7 +578,7 @@ export function AgentsPanel({
           {model.directAgents.length > 0 ? (
             <section>
               <div className="px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
-                Direct spawns
+                {t("agents.directSpawns")}
               </div>
               {model.directAgents.map((agent) => (
                 <AgentRow key={agent.id} agent={agent} />
@@ -570,13 +591,19 @@ export function AgentsPanel({
         <span className="flex items-center gap-2">
           {model.runningCount + model.waitingCount > 0 ? (
             <span className="text-info-foreground">
-              ● {model.runningCount + model.waitingCount} working
+              ● {t("agents.summary.working", { count: model.runningCount + model.waitingCount })}
             </span>
           ) : null}
-          {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
-          {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
+          {model.idleCount > 0 ? (
+            <span>{t("agents.summary.idle", { count: model.idleCount })}</span>
+          ) : null}
+          {model.settledCount > 0 ? (
+            <span>{t("agents.summary.settled", { count: model.settledCount })}</span>
+          ) : null}
         </span>
-        <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
+        <span className="tabular-nums">
+          Σ {t("agents.tokens.short", { count: formatSubagentTokenCount(model.totalTokens) })}
+        </span>
       </footer>
     </div>
   );

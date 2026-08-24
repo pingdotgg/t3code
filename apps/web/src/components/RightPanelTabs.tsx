@@ -6,6 +6,7 @@ import {
   Files,
   GitPullRequest,
   Globe2,
+  Gauge,
   Plus,
   TerminalSquare,
   Volume2,
@@ -74,12 +75,14 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddContext: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
+  contextAvailable: boolean;
   pullRequestStatuses?: Readonly<Record<string, PullRequestTabStatus>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
@@ -101,6 +104,7 @@ const SURFACE_DISABLED_REASONS = {
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   agents: "Agents are only available from a thread.",
+  context: "Context inspection is not available for this provider.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -123,6 +127,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   diff: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
   agents: "Available from a thread.",
+  context: "Available for supported provider sessions.",
 } as const;
 
 type TabContextMenuAction =
@@ -252,12 +257,14 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddContext: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
+  contextAvailable: boolean;
   liveAgentCount: number;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
@@ -323,6 +330,16 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.agents,
       onClick: props.onAddAgents,
       badgeCount: props.liveAgentCount,
+    },
+    {
+      label: "Context",
+      description: "Inspect the provider's active context.",
+      icon: Gauge,
+      shortcut: "C",
+      available: props.contextAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.context,
+      onClick: props.onAddContext,
+      badgeCount: 0,
     },
   ] as const;
 
@@ -508,6 +525,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "agents":
       return "Agents";
+    case "context":
+      return "Context";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -593,6 +612,8 @@ function SurfaceIcon({
     }
     case "agents":
       return <Bot className="size-3 shrink-0" />;
+    case "context":
+      return <Gauge className="size-3 shrink-0" />;
   }
 }
 
@@ -650,6 +671,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.agentsAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.agents,
       onClick: props.onAddAgents,
+    },
+    {
+      label: "Context",
+      icon: Gauge,
+      shortcut: "C",
+      available: props.contextAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.context,
+      onClick: props.onAddContext,
     },
   ] as const;
 
@@ -943,12 +972,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddAgents={props.onAddAgents}
+            onAddContext={props.onAddContext}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             agentsAvailable={props.agentsAvailable}
+            contextAvailable={props.contextAvailable}
             liveAgentCount={props.liveAgentCount}
           />
         ) : (

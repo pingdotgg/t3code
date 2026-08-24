@@ -1202,8 +1202,17 @@ describe("PreviewManager", () => {
     withManager((manager) =>
       Effect.gen(function* () {
         const makeWebContents = (id: number) => {
+          let debuggerAttached = false;
+          const attach = vi.fn(() => {
+            debuggerAttached = true;
+          });
+          const detach = vi.fn(() => {
+            debuggerAttached = false;
+          });
           const sendCommand = vi.fn(async () => undefined);
           return {
+            attach,
+            detach,
             sendCommand,
             wc: {
               id,
@@ -1224,8 +1233,9 @@ describe("PreviewManager", () => {
               navigationHistory: { canGoBack: () => false, canGoForward: () => false },
               setWindowOpenHandler: vi.fn(),
               debugger: {
-                isAttached: () => false,
-                attach: vi.fn(),
+                isAttached: () => debuggerAttached,
+                attach,
+                detach,
                 sendCommand,
                 on: vi.fn(),
                 off: vi.fn(),
@@ -1245,9 +1255,12 @@ describe("PreviewManager", () => {
         yield* manager.createTab("tab_scheme");
         yield* manager.registerWebview("tab_scheme", 42);
         yield* Effect.yieldNow;
+        expect(first.attach).not.toHaveBeenCalled();
 
         yield* manager.setColorScheme("tab_scheme", "dark");
 
+        expect(first.attach).toHaveBeenCalledOnce();
+        expect(first.detach).not.toHaveBeenCalled();
         expect(first.sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
           features: [{ name: "prefers-color-scheme", value: "dark" }],
         });
@@ -1258,6 +1271,9 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_scheme", 43);
         yield* Effect.yieldNow;
 
+        expect(first.detach).toHaveBeenCalledOnce();
+        expect(replacement.attach).toHaveBeenCalledOnce();
+        expect(replacement.detach).not.toHaveBeenCalled();
         expect(replacement.sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
           features: [{ name: "prefers-color-scheme", value: "dark" }],
         });
@@ -1268,7 +1284,174 @@ describe("PreviewManager", () => {
         expect(replacement.sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
           features: [{ name: "prefers-color-scheme", value: "" }],
         });
+        expect(replacement.detach).toHaveBeenCalledOnce();
         expect(states.at(-1)?.colorScheme).toBe("system");
+      }),
+    ),
+  );
+
+  effectIt.effect("detaches after a snapshot while background recording keeps capturing", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let debuggerAttached = false;
+        const attach = vi.fn(() => {
+          debuggerAttached = true;
+        });
+        const detach = vi.fn(() => {
+          debuggerAttached = false;
+        });
+        const image = {
+          getSize: () => ({ width: 800, height: 600 }),
+          resize: vi.fn(),
+          toJPEG: () => Buffer.from("recording-frame"),
+          toPNG: () => Buffer.from("snapshot-frame"),
+        };
+        const capturePage = vi.fn(async () => image);
+        const sendCommand = vi.fn(async (method: string) => {
+          if (method === "Runtime.evaluate") {
+            return {
+              result: {
+                value: {
+                  url: "https://example.com",
+                  title: "Example",
+                  loading: false,
+                  visibleText: "Example",
+                  interactiveElements: [],
+                },
+              },
+            };
+          }
+          if (method === "Accessibility.getFullAXTree") return { nodes: [] };
+          return undefined;
+        });
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => debuggerAttached,
+            attach,
+            detach,
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+          capturePage,
+        } as never);
+
+        yield* manager.createTab("tab_snapshot_recording");
+        yield* manager.registerWebview("tab_snapshot_recording", 42);
+        yield* Effect.yieldNow;
+        expect(attach).not.toHaveBeenCalled();
+
+        yield* manager.startRecording("tab_snapshot_recording");
+        expect(capturePage).toHaveBeenCalledOnce();
+        expect(attach).not.toHaveBeenCalled();
+
+        const snapshot = yield* manager.automationSnapshot("tab_snapshot_recording");
+        expect(snapshot.screenshot.data).toBe(Buffer.from("snapshot-frame").toString("base64"));
+        expect(attach).toHaveBeenCalledOnce();
+        expect(detach).toHaveBeenCalledOnce();
+        expect(debuggerAttached).toBe(false);
+
+        yield* TestClock.adjust(100);
+        expect(capturePage).toHaveBeenCalledTimes(3);
+        yield* manager.stopRecording("tab_snapshot_recording");
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps a shared debugger attached until concurrent operations finish", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let debuggerAttached = false;
+        let releaseFirstEvaluation: () => void = () => void 0;
+        const firstEvaluationReleased = new Promise<void>((resolve) => {
+          releaseFirstEvaluation = resolve;
+        });
+        let markFirstEvaluationStarted: () => void = () => void 0;
+        const firstEvaluationStarted = new Promise<void>((resolve) => {
+          markFirstEvaluationStarted = resolve;
+        });
+        let evaluationCount = 0;
+        const attach = vi.fn(() => {
+          debuggerAttached = true;
+        });
+        const detach = vi.fn(() => {
+          debuggerAttached = false;
+        });
+        const sendCommand = vi.fn(async (method: string) => {
+          if (method !== "Runtime.evaluate") return undefined;
+          evaluationCount += 1;
+          if (evaluationCount === 1) {
+            markFirstEvaluationStarted();
+            await firstEvaluationReleased;
+          }
+          return { result: { value: evaluationCount } };
+        });
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => debuggerAttached,
+            attach,
+            detach,
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_concurrent_control");
+        yield* manager.registerWebview("tab_concurrent_control", 42);
+        const first = yield* manager
+          .automationEvaluate("tab_concurrent_control", { expression: "1" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => firstEvaluationStarted);
+        const second = yield* manager
+          .automationEvaluate("tab_concurrent_control", { expression: "2" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+
+        expect(attach).toHaveBeenCalledOnce();
+        expect(detach).not.toHaveBeenCalled();
+        releaseFirstEvaluation();
+        yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+
+        expect(
+          sendCommand.mock.calls.filter(([method]) => method === "Runtime.evaluate"),
+        ).toHaveLength(2);
+        expect(detach).toHaveBeenCalledOnce();
+        expect(debuggerAttached).toBe(false);
       }),
     ),
   );
@@ -3147,6 +3330,95 @@ describe("PreviewManager", () => {
           unmodifiedText: "!",
         });
         expect(restoreFocus).toHaveBeenCalledTimes(3);
+      }),
+    ),
+  );
+
+  effectIt.effect("uses CDP wheel scrolling for coordinates and DOM scrolling for selectors", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const sendCommand = vi.fn(async (method: string, _params?: Record<string, unknown>) =>
+          method === "Runtime.evaluate" ? { result: { value: { ok: true } } } : undefined,
+        );
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_scroll");
+        yield* manager.registerWebview("tab_scroll", 42);
+        yield* manager.automationScroll("tab_scroll", {
+          x: 160,
+          y: 240,
+          deltaX: 15,
+          deltaY: -20,
+        });
+
+        expect(sendCommand).toHaveBeenCalledWith("Input.setIgnoreInputEvents", {
+          ignore: false,
+        });
+        expect(sendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", {
+          type: "mouseWheel",
+          x: 160,
+          y: 240,
+          deltaX: 15,
+          deltaY: -20,
+        });
+        expect(sendCommand.mock.calls.some(([method]) => method === "Runtime.evaluate")).toBe(
+          false,
+        );
+
+        sendCommand.mockClear();
+        yield* manager.automationScroll("tab_scroll", {
+          selector: "#scroll-area",
+          deltaX: 5,
+          deltaY: 30,
+        });
+
+        const scrollEvaluation = sendCommand.mock.calls.find(
+          ([method, params]) =>
+            method === "Runtime.evaluate" &&
+            typeof params === "object" &&
+            params !== null &&
+            "expression" in params &&
+            typeof params.expression === "string" &&
+            params.expression.includes('injected.parseSelector("css=#scroll-area")'),
+        );
+        expect(scrollEvaluation).toBeDefined();
+        expect(scrollEvaluation?.[1]).toEqual(
+          expect.objectContaining({
+            expression: expect.stringMatching(
+              /target\.scrollBy\(\{ left: 5, top: 30, behavior: "instant" \}\)/,
+            ),
+            awaitPromise: true,
+            returnByValue: true,
+          }),
+        );
+        expect(
+          sendCommand.mock.calls.some(([method]) => method === "Input.dispatchMouseEvent"),
+        ).toBe(false);
       }),
     ),
   );

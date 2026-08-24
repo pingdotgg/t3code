@@ -32,7 +32,6 @@ const scope: McpInvocationScope = {
   providerInstanceId,
   capabilities: new Set(["preview"]),
   issuedAt: 1,
-  expiresAt: Number.MAX_SAFE_INTEGER,
 };
 
 const configuredEnvironment: NodeJS.ProcessEnv = {
@@ -286,7 +285,7 @@ it.effect("reveals a hidden target tab before creating the Midscene agent", () =
     expect(requests[1]).toMatchObject({
       operation: "open",
       tabId,
-      input: { show: true, reuseExistingTab: true },
+      input: { open: true, reuseExistingTab: true },
     });
   });
 });

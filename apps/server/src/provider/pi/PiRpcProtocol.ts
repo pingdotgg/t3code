@@ -10,8 +10,9 @@ export class PiRpcProtocolError extends Error {
   }
 }
 
-const decodeUnknownJsonString = Schema.decodeUnknownSync(Schema.UnknownFromJsonString);
-const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
+const decodeUnknownJsonString = Schema.decodeUnknownSync(UnknownFromJsonString);
+const encodeUnknownJsonString = Schema.encodeUnknownSync(UnknownFromJsonString);
 
 export function encodePiRpcJsonString(value: unknown): string {
   return encodeUnknownJsonString(value);

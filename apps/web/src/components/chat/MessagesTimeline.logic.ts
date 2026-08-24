@@ -1023,7 +1023,7 @@ export function deriveMessagesTimelineRows(input: {
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantTurnStillInProgress,
       assistantTurnDiffSummary:
-        timelineEntry.message.role === "assistant"
+        timelineEntry.message.role === "assistant" && !assistantTurnStillInProgress
           ? input.turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
           : undefined,
       revertTurnCount:

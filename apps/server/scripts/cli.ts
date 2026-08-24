@@ -162,6 +162,29 @@ const buildCmd = Command.make(
         }),
       );
 
+      yield* Effect.log("[cli] Bundling Pi extension...");
+      const piExtensionBuild = yield* resolveSpawnCommand("vp", [
+        "pack",
+        "src/bundled-pi-extension/index.ts",
+        "--out-dir",
+        "dist/bundled-pi-extension",
+        "--no-clean",
+      ]);
+      yield* runCommand(
+        ChildProcess.make(piExtensionBuild.command, piExtensionBuild.args, {
+          cwd: serverDir,
+          stdout: config.verbose ? "inherit" : "ignore",
+          stderr: "inherit",
+          shell: piExtensionBuild.shell,
+        }),
+      );
+      yield* Effect.log("[cli] Bundled Pi extension into dist/bundled-pi-extension/index.mjs");
+
+      const bundledSkillsSource = path.join(serverDir, "src/bundled-skills");
+      const bundledSkillsTarget = path.join(serverDir, "dist/bundled-skills");
+      yield* fs.copy(bundledSkillsSource, bundledSkillsTarget);
+      yield* Effect.log("[cli] Bundled provider Skills into dist/bundled-skills");
+
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");
 
@@ -227,6 +250,8 @@ const publishCmd = Command.make(
         "dist/bin.mjs",
         "dist/service-launcher.mjs",
         "dist/client/index.html",
+        "dist/bundled-skills/midscene-preview/SKILL.md",
+        "dist/bundled-pi-extension/index.mjs",
       ]) {
         const abs = path.join(serverDir, relPath);
         if (!(yield* fs.exists(abs))) {

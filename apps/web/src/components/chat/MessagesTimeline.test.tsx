@@ -788,6 +788,31 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("&lt;details&gt;");
   });
 
+  it("shows live reasoning in an expanded assistant thinking block", () => {
+    const assistantEntry = buildAssistantTimelineEntry("");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...assistantEntry,
+            message: {
+              ...assistantEntry.message,
+              reasoningText: "Inspecting the current state",
+              streaming: true,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("assistant-reasoning-block");
+    expect(markup).toContain('data-reasoning-streaming="true"');
+    expect(markup).toContain('data-reasoning-open="true"');
+    expect(markup).toContain("Thinking");
+    expect(markup).toContain("Inspecting the current state");
+  });
+
   it("sanitizes executable HTML while preserving supported assistant markup", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

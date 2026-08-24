@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -1493,6 +1494,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   cursor: { enabled: false },
                   grok: { enabled: false },
                   opencode: { enabled: false },
+                  piAgent: { enabled: false },
                 },
               }),
             ),
@@ -1592,6 +1594,110 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual(spawnedCommands, [firstMissing, secondMissing]);
             assert.strictEqual(reprobedCodex?.status, "error");
             assert.strictEqual(reprobedCodex?.installed, false);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("does not miss settings changes published during initial hydration", () =>
+        Effect.gen(function* () {
+          const ghostInstanceId = ProviderInstanceId.make("ghost_after_boot");
+          const disabledPiInstance = {
+            driver: ProviderDriverKind.make("piAgent"),
+            enabled: false,
+            config: {},
+          };
+          const initialSettings = decodeServerSettings(
+            deepMerge(encodedDefaultServerSettings, {
+              providers: {
+                codex: { enabled: false },
+                claudeAgent: { enabled: false },
+                cursor: { enabled: false },
+                grok: { enabled: false },
+                opencode: { enabled: false },
+              },
+              providerInstances: {
+                piAgent: disabledPiInstance,
+              } as unknown as ContractServerSettings["providerInstances"],
+            }),
+          );
+          const updatedSettings = applyServerSettingsPatch(initialSettings, {
+            providerInstances: {
+              piAgent: disabledPiInstance,
+              [ghostInstanceId]: {
+                driver: ProviderDriverKind.make("ghostDriver"),
+                enabled: false,
+                config: { source: "startup-race" },
+              },
+            } as unknown as ContractServerSettings["providerInstances"],
+          });
+          const settingsChanges = yield* PubSub.unbounded<ContractServerSettings>();
+          const releaseDelivery = yield* Deferred.make<void>();
+          let isInitialRead = true;
+          const serverSettings = {
+            start: Effect.void,
+            ready: Effect.void,
+            getSettings: Effect.suspend(() => {
+              if (!isInitialRead) {
+                return Effect.succeed(updatedSettings);
+              }
+              isInitialRead = false;
+              return PubSub.publish(settingsChanges, updatedSettings).pipe(
+                Effect.as(initialSettings),
+              );
+            }),
+            updateSettings: () => Effect.succeed(updatedSettings),
+            get streamChanges() {
+              return Stream.fromPubSub(settingsChanges);
+            },
+            get subscribeChanges() {
+              return PubSub.subscribe(settingsChanges).pipe(
+                Effect.map((subscription) =>
+                  Stream.fromSubscription(subscription).pipe(
+                    Stream.tap(() => Deferred.await(releaseDelivery)),
+                  ),
+                ),
+              );
+            },
+          } satisfies ServerSettingsModule.ServerSettingsService["Service"];
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const hydrationLayer = ProviderInstanceRegistryHydrationLive.pipe(
+            Layer.provideMerge(
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+            ),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-hydration-",
+              }),
+            ),
+            Layer.provideMerge(TestHttpClientLive),
+            Layer.provideMerge(
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+            Layer.provideMerge(NodeServices.layer),
+            Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+          );
+          const runtimeServices = yield* Layer.build(hydrationLayer).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+            const registryChanges = yield* registry.subscribeChanges.pipe(Scope.provide(scope));
+            const beforeRelease = yield* registry.listUnavailable;
+            assert.isUndefined(
+              beforeRelease.find((provider) => provider.instanceId === ghostInstanceId),
+            );
+
+            yield* Deferred.succeed(releaseDelivery, undefined);
+            yield* PubSub.take(registryChanges);
+
+            const afterRelease = yield* registry.listUnavailable;
+            const ghost = afterRelease.find((provider) => provider.instanceId === ghostInstanceId);
+            assert.strictEqual(ghost?.availability, "unavailable");
+            assert.strictEqual(ghost?.driver, ProviderDriverKind.make("ghostDriver"));
           }).pipe(Effect.provide(runtimeServices));
         }),
       );
@@ -1746,6 +1852,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "cursor",
                 "grok",
                 "opencode",
+                "piAgent",
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);
               assert.strictEqual(cursorProvider?.status, "disabled");

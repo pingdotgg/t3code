@@ -452,6 +452,59 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
+  it("withholds assistant diff summaries until the active turn settles", () => {
+    const assistantMessageId = "assistant-running" as never;
+    const turnId = "turn-running" as never;
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "assistant-running-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:20Z",
+          message: {
+            id: assistantMessageId,
+            role: "assistant",
+            text: "Still working.",
+            turnId,
+            createdAt: "2026-01-01T00:00:20Z",
+            updatedAt: "2026-01-01T00:00:30Z",
+            streaming: false,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId,
+        state: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map([
+        [
+          assistantMessageId,
+          {
+            turnId,
+            completedAt: "2026-01-01T00:00:30Z",
+            assistantMessageId,
+            checkpointTurnCount: 1,
+            checkpointRef: "checkpoint-running" as never,
+            status: "ready" as const,
+            files: [{ path: "src/index.ts", kind: "modified", additions: 3, deletions: 1 }],
+          },
+        ],
+      ]),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const assistantRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "message" }> =>
+        row.kind === "message" && row.message.role === "assistant",
+    );
+
+    expect(assistantRow?.assistantTurnDiffSummary).toBeUndefined();
+  });
+
   it("keeps the first and terminal assistant messages visible around settled work", () => {
     const timelineEntries = [
       {

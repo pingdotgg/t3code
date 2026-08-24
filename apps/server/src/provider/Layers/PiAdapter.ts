@@ -11,6 +11,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -43,6 +44,7 @@ import {
 } from "../pi/PiRuntimeEvents.ts";
 import type { PiRpcOutput, PiRpcResponse } from "../pi/PiRpcProtocol.ts";
 import type { PiAdapterShape } from "../Services/PiAdapter.ts";
+import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = ProviderDriverKind.make("piAgent");
 
@@ -65,6 +67,7 @@ export interface PiAdapterOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
   readonly createClient?: PiClientFactory;
+  readonly nativeEventLogger?: EventNdjsonLogger;
   readonly now?: () => string;
   readonly nextTurnId?: () => string;
 }
@@ -191,6 +194,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
   const serverConfig = yield* ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const crypto = yield* Crypto.Crypto;
   const bundledPiMcpExtensionPath = yield* resolveBundledPiMcpExtensionPath();
   const bundledMidsceneSkillPath = yield* resolveBundledMidsceneSkillPath();
   const instanceId = options.instanceId ?? ProviderInstanceId.make("piAgent");
@@ -203,6 +207,36 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
 
   const emit = (events: ReadonlyArray<ProviderRuntimeEvent>) =>
     events.length === 0 ? Effect.void : Queue.offerAll(runtimeEvents, events).pipe(Effect.asVoid);
+
+  const logNative = (threadId: ThreadId, raw: PiRpcOutput) =>
+    Effect.gen(function* () {
+      if (!options.nativeEventLogger) return;
+      const observedAt = now();
+      yield* options.nativeEventLogger.write(
+        {
+          observedAt,
+          event: {
+            id: yield* crypto.randomUUIDv4,
+            kind: "notification",
+            provider: PROVIDER,
+            providerInstanceId: instanceId,
+            createdAt: observedAt,
+            method: raw.type,
+            threadId,
+            payload: raw,
+          },
+        },
+        threadId,
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to write native Pi RPC event log.", {
+          cause,
+          threadId,
+          method: raw.type,
+        }),
+      ),
+    );
 
   const updateSession = (
     context: PiSessionContext,
@@ -388,6 +422,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         raw: PiRpcOutput,
       ) {
         if (context.processFailed) return;
+        yield* logNative(input.threadId, raw);
         if (raw.type === "extension_ui_request") {
           const record = raw as Record<string, unknown>;
           if (typeof record.id === "string" && typeof record.method === "string") {

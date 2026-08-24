@@ -2,6 +2,7 @@ import { Button } from "../ui/button";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
+import { useI18n } from "~/i18n";
 
 function formatPercentage(value: number | null): string | null {
   if (value === null || !Number.isFinite(value)) {
@@ -16,7 +17,9 @@ function formatPercentage(value: number | null): string | null {
 export function ContextWindowMeter(props: {
   usage: ContextWindowSnapshot;
   modelDisplayName?: string | null;
+  onOpenContextPanel?: (() => void) | undefined;
 }) {
+  const { t } = useI18n();
   const { usage, modelDisplayName } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
@@ -38,6 +41,7 @@ export function ContextWindowMeter(props: {
         closeDelay={0}
         render={
           <Button
+            onClick={props.onOpenContextPanel}
             size="icon-sm"
             variant="ghost-muted"
             className="size-7 rounded-full hover:text-muted-foreground data-pressed:text-muted-foreground"
@@ -87,7 +91,9 @@ export function ContextWindowMeter(props: {
       >
         <div className="flex flex-col gap-2 p-[var(--floating-content-inset)]">
           <div className="flex items-center justify-between gap-3">
-            <div className="font-medium text-muted-foreground text-xs">Context Window</div>
+            <div className="font-medium text-muted-foreground text-xs">
+              {t("chat.context.title")}
+            </div>
             {usage.maxTokens !== null && usedPercentage ? (
               <div className="text-secondary-label text-[11px] tabular-nums">
                 <span>{usedPercentage}</span>
@@ -129,6 +135,11 @@ export function ContextWindowMeter(props: {
           {usage.compactsAutomatically ? (
             <div className="mt-1 text-pretty text-secondary-label text-[11px] font-medium">
               {formatContextWindowCompactionMessage(modelDisplayName)}
+            </div>
+          ) : null}
+          {props.onOpenContextPanel ? (
+            <div className="mt-1 border-t border-border/60 pt-2 text-[11px] font-medium text-muted-foreground/60">
+              {t("chat.context.viewDetails")}
             </div>
           ) : null}
         </div>

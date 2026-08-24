@@ -17,7 +17,7 @@ import {
 import { encodePiRpcJsonString } from "./PiRpcProtocol.ts";
 
 const encoder = new TextEncoder();
-const decodeUnknownJsonString = Schema.decodeUnknownSync(Schema.UnknownFromJsonString);
+const decodeUnknownJsonString = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const makeHarness = Effect.fn("makePiRpcClientTestHarness")(function* () {
   const output = yield* Queue.unbounded<Uint8Array>();

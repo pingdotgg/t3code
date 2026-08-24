@@ -169,6 +169,12 @@ describe("EnvironmentProviderSettings routing", () => {
         element.props.instanceId === codexId && typeof element.props.onRunUpdate === "function",
     );
     expect(providerCard).not.toBeNull();
+    (providerCard?.props.onRetryStatusCheck as (() => void) | undefined)?.();
+    await flushPromises();
+    expect(commands.refresh).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { instanceId: codexId },
+    });
     (providerCard?.props.onRunUpdate as (() => void) | undefined)?.();
     await flushPromises();
 

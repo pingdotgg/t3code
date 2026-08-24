@@ -71,4 +71,14 @@ describe("translated messages", () => {
     expect(t("providerUpdate.action.update")).toBe("更新");
     expect(t("providerUpdate.action.settings")).toBe("设置");
   });
+
+  it("localizes the native agents and skills surfaces", () => {
+    const t = createTranslator("zh-CN");
+
+    expect(t("agents.empty.title")).toBe("暂无 Agent");
+    expect(t("agents.phase.activeDone", { active: 2, done: 3 })).toBe("执行中 2 · 已完成 3");
+    expect(t("chat.skills.empty")).toBe("未找到技能。可输入 / 浏览供应商命令。");
+    expect(t("chat.skills.source.repo")).toBe("仓库");
+    expect(t("settings.skillsMenu.title")).toBe("在斜杠命令菜单中显示技能");
+  });
 });
