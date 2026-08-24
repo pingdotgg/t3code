@@ -74,6 +74,17 @@ function fromCliError(operation: string) {
   };
 }
 
+/**
+ * How one repository's own failure reads beside the ones that answered. An unauthenticated host
+ * is named with the command that fixes it, since a workspace spanning github.com and an
+ * Enterprise install is signed in to each separately.
+ */
+function projectErrorMessage(project: GitHubProject, error: GitHubIssueError): string {
+  return error._tag === "GitHubIssueUnavailableError" && error.reason === "cli-unauthenticated"
+    ? `${project.repository} could not be read. Run \`gh auth login --hostname ${project.host}\` and retry.`
+    : `${project.repository} could not be read.`;
+}
+
 function decodeError(operation: string, cause: unknown): GitHubIssueOperationError {
   return new GitHubIssueOperationErrorClass({
     operation,
@@ -155,10 +166,17 @@ export const make = Effect.gen(function* () {
         { concurrency: PROJECT_CONCURRENCY },
       );
 
-      const unavailable = batches.find(
-        (batch) => "error" in batch && batch.error._tag === "GitHubIssueUnavailableError",
-      );
-      if (unavailable && "error" in unavailable) return yield* unavailable.error;
+      // `gh` missing is the whole workspace's problem: it is one executable, and without it no
+      // repository could have been read. A host refusing the sign-in is only that host's problem,
+      // so it is carried as that project's own error and the repositories that did answer still
+      // render — unless none did, in which case signing in is the only thing between the reader
+      // and a list, and saying so beats a page of "could not be read".
+      const answered = batches.some((batch) => !("error" in batch));
+      for (const batch of batches) {
+        if (!("error" in batch)) continue;
+        if (batch.error._tag !== "GitHubIssueUnavailableError") continue;
+        if (batch.error.reason === "cli-missing" || !answered) return yield* batch.error;
+      }
 
       const entries: GitHubIssueListEntry[] = [];
       const errors: GitHubIssueListResult["errors"][number][] = [];
@@ -168,7 +186,7 @@ export const make = Effect.gen(function* () {
           errors.push({
             projectId: batch.project.project.id,
             projectTitle: batch.project.project.title,
-            message: `${batch.project.repository} could not be read.`,
+            message: projectErrorMessage(batch.project, batch.error),
           });
           continue;
         }

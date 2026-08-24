@@ -14,17 +14,19 @@ function project(input: {
   workspaceRoot: string;
   repository: string;
   provider?: string;
+  host?: string;
 }): OrchestrationProjectShell {
+  const host = input.host ?? "github.com";
   return {
     id: input.id as ProjectId,
     title: input.title,
     workspaceRoot: input.workspaceRoot,
     repositoryIdentity: {
-      canonicalKey: `github.com/${input.repository}`,
+      canonicalKey: `${host}/${input.repository}`,
       locator: {
         source: "git-remote",
         remoteName: "origin",
-        remoteUrl: `https://github.com/${input.repository}.git`,
+        remoteUrl: `https://${host}/${input.repository}.git`,
       },
       provider: input.provider ?? "github",
       displayName: input.repository,
@@ -152,6 +154,91 @@ it.effect("applies the result limit across repositories after sorting", () =>
       [2],
     );
     assert.strictEqual(result.truncated, true);
+  }),
+);
+
+function authenticationError(cwd: string) {
+  return new GitHubCli.GitHubCliAuthenticationError({
+    command: "gh",
+    cwd,
+    cause: new Error("gh auth status: not logged in"),
+  });
+}
+
+function mixedHostProjects() {
+  return [
+    project({ id: "p1", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+    project({
+      id: "p2",
+      title: "api",
+      workspaceRoot: "/api",
+      repository: "acme/api",
+      host: "ghe.example.com",
+    }),
+  ];
+}
+
+it.effect("keeps the repositories that answered when one host is unauthenticated", () =>
+  Effect.gen(function* () {
+    const execute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>((input) =>
+      input.cwd === "/web"
+        ? Effect.succeed(output(JSON.stringify([issue(1)])))
+        : Effect.fail(authenticationError(input.cwd)),
+    );
+    const service = yield* makeService(mixedHostProjects(), execute);
+
+    const result = yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual(
+      result.entries.map((entry) => entry.number),
+      [1],
+    );
+    assert.strictEqual(result.errors.length, 1);
+    assert.strictEqual(result.errors[0]?.projectId, "p2");
+    // The host is named alongside the command, since each install is signed in to separately.
+    assert.include(result.errors[0]?.message ?? "", "gh auth login --hostname ghe.example.com");
+  }),
+);
+
+it.effect("fails the whole list when no host could be read", () =>
+  Effect.gen(function* () {
+    const execute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>((input) =>
+      Effect.fail(authenticationError(input.cwd)),
+    );
+    const service = yield* makeService(mixedHostProjects(), execute);
+
+    const error = yield* service.list({ state: "open" }).pipe(Effect.flip);
+
+    assert.strictEqual(error._tag, "GitHubIssueUnavailableError");
+    assert.strictEqual(
+      error._tag === "GitHubIssueUnavailableError" ? error.reason : null,
+      "cli-unauthenticated",
+    );
+  }),
+);
+
+it.effect("fails the whole list when the GitHub CLI is missing", () =>
+  Effect.gen(function* () {
+    const execute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>((input) =>
+      input.cwd === "/web"
+        ? Effect.succeed(output(JSON.stringify([issue(1)])))
+        : Effect.fail(
+            new GitHubCli.GitHubCliUnavailableError({
+              command: "gh",
+              cwd: input.cwd,
+              cause: new Error("spawn gh ENOENT"),
+            }),
+          ),
+    );
+    const service = yield* makeService(mixedHostProjects(), execute);
+
+    const error = yield* service.list({ state: "open" }).pipe(Effect.flip);
+
+    assert.strictEqual(error._tag, "GitHubIssueUnavailableError");
+    assert.strictEqual(
+      error._tag === "GitHubIssueUnavailableError" ? error.reason : null,
+      "cli-missing",
+    );
   }),
 );
 
