@@ -1242,15 +1242,18 @@ struct DailyUXNewTaskTests {
 
         #expect(!retry.isInProgress)
         #expect(retry.buttonTitle == "Try again")
-        #expect(retry.begin())
+        let didBegin = retry.begin()
+        #expect(didBegin)
         #expect(retry.isInProgress)
         #expect(retry.buttonTitle == "Trying again…")
-        #expect(!retry.begin())
+        let duplicateBegin = retry.begin()
+        #expect(!duplicateBegin)
 
         retry.finish()
 
         #expect(!retry.isInProgress)
-        #expect(retry.begin())
+        let didRestart = retry.begin()
+        #expect(didRestart)
     }
 
     @Test
