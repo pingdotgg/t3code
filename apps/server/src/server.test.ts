@@ -8139,13 +8139,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isTrue(
         yield* fileSystem.exists(path.join(config.attachmentsDir, `${pendingAttachmentId}.png`)),
       );
-      const claimedAttachmentId = pendingAttachmentId!.replace(
-        /^pending-/,
-        "thread-bootstrap-defect-",
-      );
-      assert.isFalse(
-        yield* fileSystem.exists(path.join(config.attachmentsDir, `${claimedAttachmentId}.png`)),
-      );
+      assert.deepEqual(yield* fileSystem.readDirectory(config.attachmentsDir), [
+        `${pendingAttachmentId}.png`,
+      ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -145,25 +145,31 @@ export function planAttachmentClaim(input: {
     return { ok: false, reason: "attachment belongs to another thread" };
   }
 
-  const finalId = `${threadSegment}-${uuid}`;
-  const finalPath = resolveAttachmentPathById({
+  const currentPath = resolveAttachmentPathById({
     attachmentsDir: input.attachmentsDir,
-    attachmentId: finalId,
+    attachmentId: input.attachmentId,
   });
-  const pendingPath = resolveAttachmentPathById({
-    attachmentsDir: input.attachmentsDir,
-    attachmentId: `${PENDING_ATTACHMENT_THREAD_SEGMENT}-${uuid}`,
-  });
-  if (finalPath && !pendingPath) {
-    return { ok: true, finalId, currentPath: finalPath, finalPath, alreadyScoped: true };
-  }
-  if (!pendingPath) {
+  if (!currentPath) {
     return { ok: false, reason: "attachment not found (removed or expired)" };
+  }
+  if (requestedSegment === threadSegment) {
+    return {
+      ok: true,
+      finalId: input.attachmentId,
+      currentPath,
+      finalPath: currentPath,
+      alreadyScoped: true,
+    };
+  }
+
+  const finalId = createAttachmentId(input.threadId);
+  if (!finalId) {
+    return { ok: false, reason: "failed to create attachment id" };
   }
 
   const expectedFinalPath = resolveAttachmentRelativePath({
     attachmentsDir: input.attachmentsDir,
-    relativePath: `${finalId}${NodePath.extname(pendingPath)}`,
+    relativePath: `${finalId}${NodePath.extname(currentPath)}`,
   });
   if (!expectedFinalPath) {
     return { ok: false, reason: "failed to resolve attachment path" };
@@ -171,7 +177,7 @@ export function planAttachmentClaim(input: {
   return {
     ok: true,
     finalId,
-    currentPath: pendingPath,
+    currentPath,
     finalPath: expectedFinalPath,
     alreadyScoped: false,
   };

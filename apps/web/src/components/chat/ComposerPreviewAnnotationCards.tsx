@@ -147,15 +147,21 @@ export function ComposerPreviewAnnotationCards({
                     </span>
                   ) : null}
                   {upload?.status === "failed" && image && onRetryUpload ? (
-                    <Button
-                      size="icon-micro"
-                      variant="ghost-muted"
-                      aria-label={`Retry upload for ${image.name}`}
-                      title={upload.reason}
-                      onClick={() => onRetryUpload(image)}
-                    >
-                      <RotateCcw className="size-3" />
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            size="icon-micro"
+                            variant="ghost-muted"
+                            aria-label={`Retry upload for ${image.name}`}
+                            onClick={() => onRetryUpload(image)}
+                          />
+                        }
+                      >
+                        <RotateCcw className="size-3" />
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">{upload.reason}</TooltipPopup>
+                    </Tooltip>
                   ) : null}
                 </div>
               </div>

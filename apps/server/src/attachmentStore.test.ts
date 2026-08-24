@@ -101,19 +101,22 @@ describe("attachmentStore", () => {
       const pendingPath = NodePath.join(attachmentsDir, `pending-${uuid}.png`);
       NodeFS.writeFileSync(pendingPath, Buffer.from("pixels"));
 
-      expect(
-        planAttachmentClaim({
-          attachmentsDir,
-          threadId: "thread-1",
-          attachmentId: `pending-${uuid}`,
-        }),
-      ).toEqual({
+      const claim = planAttachmentClaim({
+        attachmentsDir,
+        threadId: "thread-1",
+        attachmentId: `pending-${uuid}`,
+      });
+      expect(claim).toMatchObject({
         ok: true,
-        finalId: `thread-1-${uuid}`,
         currentPath: pendingPath,
-        finalPath: NodePath.join(attachmentsDir, `thread-1-${uuid}.png`),
         alreadyScoped: false,
       });
+      if (!claim.ok) {
+        return;
+      }
+      expect(parseThreadSegmentFromAttachmentId(claim.finalId)).toBe("thread-1");
+      expect(parseAttachmentUuid(claim.finalId)).not.toBe(uuid);
+      expect(claim.finalPath).toBe(NodePath.join(attachmentsDir, `${claim.finalId}.png`));
     } finally {
       NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
     }

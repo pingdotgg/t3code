@@ -3264,16 +3264,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               </span>
                             )}
                             {upload?.status === "failed" && (
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                className="absolute bottom-1 left-1 bg-background/85 hover:bg-background/95"
-                                onClick={() => retryAttachmentUpload({ environmentId, image })}
-                                aria-label={`Retry upload for ${image.name}`}
-                                title={upload.reason}
-                              >
-                                <RotateCcwIcon />
-                              </Button>
+                              <Tooltip>
+                                <TooltipTrigger
+                                  render={
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-xs"
+                                      className="absolute bottom-1 left-1 bg-background/85 hover:bg-background/95"
+                                      onClick={() =>
+                                        retryAttachmentUpload({ environmentId, image })
+                                      }
+                                      aria-label={`Retry upload for ${image.name}`}
+                                    />
+                                  }
+                                >
+                                  <RotateCcwIcon />
+                                </TooltipTrigger>
+                                <TooltipPopup
+                                  side="top"
+                                  className="max-w-64 whitespace-normal leading-tight"
+                                >
+                                  {upload.reason}
+                                </TooltipPopup>
+                              </Tooltip>
                             )}
                             <Button
                               variant="ghost"

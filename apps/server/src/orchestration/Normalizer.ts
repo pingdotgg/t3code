@@ -50,6 +50,29 @@ export const canonicalizeClientCommandTimestamps = (
   };
 };
 
+const removeClaimedAttachmentPaths = Effect.fn("Normalizer.removeClaimedAttachmentPaths")(
+  function* (attachmentPaths: ReadonlyArray<string>) {
+    if (attachmentPaths.length === 0) {
+      return;
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* Effect.forEach(
+      attachmentPaths,
+      (attachmentPath) =>
+        fileSystem.remove(attachmentPath, { force: true }).pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("Failed to remove an unclaimed attachment copy.", {
+              attachmentPath,
+              cause,
+            }),
+          ),
+          Effect.orElseSucceed(() => undefined),
+        ),
+      { concurrency: 1 },
+    );
+  },
+);
+
 export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
   Effect.gen(function* () {
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
@@ -111,6 +134,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       return canonicalCommand as OrchestrationCommand;
     }
 
+    const claimedAttachmentPaths: string[] = [];
     const normalizedAttachments = yield* Effect.forEach(
       canonicalCommand.message.attachments,
       (attachment) =>
@@ -169,6 +193,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
                     }),
                 ),
               );
+              claimedAttachmentPaths.push(claim.finalPath);
             }
 
             return normalizedAttachment;
@@ -233,7 +258,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           return persistedAttachment;
         }),
       { concurrency: 1 },
-    );
+    ).pipe(Effect.tapError(() => removeClaimedAttachmentPaths(claimedAttachmentPaths)));
 
     return {
       ...canonicalCommand,
@@ -251,43 +276,29 @@ export const cleanupFailedUploadedAttachments = Effect.fn(
     return;
   }
 
-  const fileSystem = yield* FileSystem.FileSystem;
   const serverConfig = yield* ServerConfig;
-  yield* Effect.forEach(
-    normalizedCommand.message.attachments,
-    (attachment, index) =>
-      Effect.gen(function* () {
-        const original = command.message.attachments[index];
-        if (
-          !original ||
-          "dataUrl" in original ||
-          parseThreadSegmentFromAttachmentId(original.id) !== PENDING_ATTACHMENT_THREAD_SEGMENT
-        ) {
-          return;
-        }
+  const claimedPaths: string[] = [];
+  for (const [index, attachment] of normalizedCommand.message.attachments.entries()) {
+    const original = command.message.attachments[index];
+    if (
+      !original ||
+      "dataUrl" in original ||
+      parseThreadSegmentFromAttachmentId(original.id) !== PENDING_ATTACHMENT_THREAD_SEGMENT
+    ) {
+      continue;
+    }
 
-        const pendingPath = resolveAttachmentPathById({
-          attachmentsDir: serverConfig.attachmentsDir,
-          attachmentId: original.id,
-        });
-        const claimedPath = resolveAttachmentPath({
-          attachmentsDir: serverConfig.attachmentsDir,
-          attachment,
-        });
-        if (!pendingPath || !claimedPath || pendingPath === claimedPath) {
-          return;
-        }
-
-        yield* fileSystem.remove(claimedPath, { force: true }).pipe(
-          Effect.tapError((cause) =>
-            Effect.logWarning("Failed to remove an unclaimed attachment copy.", {
-              attachmentId: attachment.id,
-              cause,
-            }),
-          ),
-          Effect.orElseSucceed(() => undefined),
-        );
-      }),
-    { concurrency: 1 },
-  );
+    const pendingPath = resolveAttachmentPathById({
+      attachmentsDir: serverConfig.attachmentsDir,
+      attachmentId: original.id,
+    });
+    const claimedPath = resolveAttachmentPath({
+      attachmentsDir: serverConfig.attachmentsDir,
+      attachment,
+    });
+    if (pendingPath && claimedPath && pendingPath !== claimedPath) {
+      claimedPaths.push(claimedPath);
+    }
+  }
+  yield* removeClaimedAttachmentPaths(claimedPaths);
 });

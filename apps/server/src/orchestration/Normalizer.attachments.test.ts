@@ -89,11 +89,13 @@ describe("normalizeDispatchCommand attachments", () => {
         throw new Error("Expected a thread.turn.start command.");
       }
 
-      expect(normalized.message.attachments[0]?.id).toBe(`thread-1-${attachmentUuid}`);
+      const attachmentId = normalized.message.attachments[0]!.id;
+      expect(attachmentId.startsWith("thread-1-")).toBe(true);
+      expect(attachmentId).not.toBe(`thread-1-${attachmentUuid}`);
       expect(NodeFS.existsSync(pendingPath)).toBe(true);
-      expect(
-        NodeFS.existsSync(NodePath.join(config.attachmentsDir, `thread-1-${attachmentUuid}.png`)),
-      ).toBe(true);
+      expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${attachmentId}.png`))).toBe(
+        true,
+      );
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -118,7 +120,7 @@ describe("normalizeDispatchCommand attachments", () => {
       }
 
       expect(normalized.message.attachments).toHaveLength(2);
-      expect(normalized.message.attachments[1]?.id).toBe(`thread-1-${attachmentUuid}`);
+      expect(normalized.message.attachments[1]?.id.startsWith("thread-1-")).toBe(true);
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -131,12 +133,17 @@ describe("normalizeDispatchCommand attachments", () => {
         bytes,
       );
 
-      yield* normalizeDispatchCommand(
+      const first = yield* normalizeDispatchCommand(
         turnStartCommand({
           attachments: [{ id: `pending-${attachmentUuid}`, sizeBytes: bytes.byteLength }],
         }),
       );
-      NodeFS.rmSync(NodePath.join(config.attachmentsDir, `thread-1-${attachmentUuid}.png`));
+      if (first.type !== "thread.turn.start") {
+        throw new Error("Expected a thread.turn.start command.");
+      }
+      NodeFS.rmSync(
+        NodePath.join(config.attachmentsDir, `${first.message.attachments[0]!.id}.png`),
+      );
 
       const retried = yield* normalizeDispatchCommand(
         turnStartCommand({
@@ -147,7 +154,7 @@ describe("normalizeDispatchCommand attachments", () => {
       if (retried.type !== "thread.turn.start") {
         throw new Error("Expected a thread.turn.start command.");
       }
-      expect(retried.message.attachments[0]?.id).toBe(`thread-retry-${attachmentUuid}`);
+      expect(retried.message.attachments[0]?.id.startsWith("thread-retry-")).toBe(true);
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -171,12 +178,74 @@ describe("normalizeDispatchCommand attachments", () => {
         config.attachmentsDir,
         `${normalized.message.attachments[0]!.id}.png`,
       );
-      const claimedPath = NodePath.join(config.attachmentsDir, `thread-1-${attachmentUuid}.png`);
+      const claimedPath = NodePath.join(
+        config.attachmentsDir,
+        `${normalized.message.attachments[1]!.id}.png`,
+      );
       yield* cleanupFailedUploadedAttachments(command, normalized);
 
       expect(NodeFS.existsSync(pendingPath)).toBe(true);
       expect(NodeFS.existsSync(claimedPath)).toBe(false);
       expect(NodeFS.existsSync(inlinePath)).toBe(true);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps concurrent claims independent when one dispatch fails", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const pendingPath = NodePath.join(config.attachmentsDir, `pending-${attachmentUuid}.png`);
+      NodeFS.writeFileSync(pendingPath, Buffer.from("pixels"));
+      const command = turnStartCommand({
+        attachments: [{ id: `pending-${attachmentUuid}`, sizeBytes: 6 }],
+      });
+
+      const [failed, succeeded] = yield* Effect.all(
+        [normalizeDispatchCommand(command), normalizeDispatchCommand(command)],
+        { concurrency: 2 },
+      );
+      if (failed.type !== "thread.turn.start" || succeeded.type !== "thread.turn.start") {
+        throw new Error("Expected thread.turn.start commands.");
+      }
+
+      const failedPath = NodePath.join(
+        config.attachmentsDir,
+        `${failed.message.attachments[0]!.id}.png`,
+      );
+      const succeededPath = NodePath.join(
+        config.attachmentsDir,
+        `${succeeded.message.attachments[0]!.id}.png`,
+      );
+      expect(failedPath).not.toBe(succeededPath);
+
+      yield* cleanupFailedUploadedAttachments(command, failed);
+
+      expect(NodeFS.existsSync(pendingPath)).toBe(true);
+      expect(NodeFS.existsSync(failedPath)).toBe(false);
+      expect(NodeFS.existsSync(succeededPath)).toBe(true);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("removes earlier claimed copies when a later attachment cannot be normalized", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const pendingId = `pending-${attachmentUuid}`;
+      const pendingPath = NodePath.join(config.attachmentsDir, `${pendingId}.png`);
+      NodeFS.writeFileSync(pendingPath, Buffer.from("pixels"));
+
+      const failure = yield* normalizeDispatchCommand(
+        turnStartCommand({
+          attachments: [
+            { id: pendingId, sizeBytes: 6 },
+            {
+              id: "pending-00000000-0000-4000-8000-0000000000ff",
+              sizeBytes: 6,
+            },
+          ],
+        }),
+      ).pipe(Effect.flip);
+
+      expect(failure.message).toContain("not found");
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([`${pendingId}.png`]);
     }).pipe(Effect.provide(testLayer)),
   );
 
