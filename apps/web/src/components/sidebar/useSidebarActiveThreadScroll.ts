@@ -38,7 +38,6 @@ export function useSidebarActiveThreadScroll(input: {
       if (!hasThreadRoute) {
         initialScrollPendingRef.current = true;
         lastRouteThreadKeyRef.current = null;
-        sidebarNavigationThreadKeyRef.current = null;
       }
       return;
     }
