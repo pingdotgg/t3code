@@ -199,7 +199,7 @@ function ComposerBannerStackAlert({
       variant={item.variant}
       className={cn(
         attached
-          ? "chat-composer-drawer-surface chat-composer-drawer-attached px-3 pt-2 pb-[calc(var(--chat-composer-attachment-overlap)_+_0.375rem)] text-xs before:mask-none sm:px-4"
+          ? "chat-composer-drawer-surface chat-composer-drawer-attached px-3 pt-2 pb-[calc(var(--chat-composer-attachment-overlap)_+_0.375rem)] text-xs sm:px-4"
           : "alert-glass rounded-[22px]",
         item.className,
       )}
