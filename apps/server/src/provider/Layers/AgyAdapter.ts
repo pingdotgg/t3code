@@ -138,7 +138,7 @@ interface AgySessionContext {
   session: ProviderSession;
   cwd: string;
   conversationId: string | undefined;
-  readonly conversationReady: Deferred.Deferred<string>;
+  conversationReady: Deferred.Deferred<string>;
   activeTurnId: TurnId | undefined;
   currentTurnState: AgyTurnState | undefined;
   childProcess: ChildProcessSpawnerTypes.ChildProcessHandle | undefined;
@@ -514,6 +514,7 @@ export const makeAgyAdapter = Effect.fn("makeAgyAdapter")(function* (
   ) =>
     Effect.gen(function* () {
       yield* stopChildProcess(context);
+      context.conversationReady = yield* Deferred.make<string>();
 
       const commandName = agySettings.binaryPath || "agy";
       const effort = modelSelection
@@ -691,10 +692,6 @@ export const makeAgyAdapter = Effect.fn("makeAgyAdapter")(function* (
     const conversationId = resumeInfo?.conversationId;
     const modelSelection =
       input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
-    if (conversationId !== undefined) {
-      yield* Deferred.succeed(conversationReady, conversationId);
-    }
-
     const session: ProviderSession = {
       threadId: input.threadId,
       provider: PROVIDER,

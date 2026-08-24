@@ -18,7 +18,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   resolveProviderInstanceEnabled,
   type ModelSelection,
-  type ProviderDriverKind,
+  ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
@@ -27,6 +27,15 @@ import {
 } from "@t3tools/contracts";
 
 import { formatProviderDriverKindLabel } from "./providerModels";
+
+const BUILT_IN_PROVIDER_ORDER: ReadonlyArray<ProviderDriverKind> = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "opencode",
+  "agy",
+].map((driverKind) => ProviderDriverKind.make(driverKind));
 
 /**
  * Local-only placeholder used while a draft has no provider it can safely
@@ -260,8 +269,8 @@ export function applyProviderInstanceSettings(
  * Sort instance entries so the default instance of each driver kind appears
  * before any custom instances of the same kind. Within a kind, custom
  * instances keep their settings-author order (which is how the server
- * emits them). Stable across kinds: entries retain the server's
- * cross-driver ordering.
+ * emits them). Built-in kinds follow the explicit provider display order;
+ * unknown fork kinds retain their first-seen server order afterward.
  */
 export function sortProviderInstanceEntries(
   entries: ReadonlyArray<ProviderInstanceEntry>,
@@ -280,7 +289,7 @@ export function sortProviderInstanceEntries(
     }
   }
   const driverOrder = new Map(
-    Object.keys(PROVIDER_DISPLAY_NAMES).map((driverKind, index) => [driverKind, index] as const),
+    BUILT_IN_PROVIDER_ORDER.map((driverKind, index) => [driverKind, index] as const),
   );
   const firstSeenOrder = new Map(
     [...byKind.keys()].map((driverKind, index) => [driverKind, index] as const),

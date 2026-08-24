@@ -50,6 +50,8 @@ interface ProviderModelsSectionProps {
    * and custom entries, distinguished by `isCustom`.
    */
   readonly models: ReadonlyArray<ServerProviderModel>;
+  /** Built-in effort variants represented by a grouped model row. */
+  readonly groupedVariantSlugs: ReadonlySet<string>;
   /**
    * The persisted custom-model slug list for this instance. Drives dedup,
    * and is the array we hand back verbatim (with the new slug appended /
@@ -88,6 +90,7 @@ export function ProviderModelsSection({
   instanceId,
   driverKind,
   models,
+  groupedVariantSlugs,
   customModels,
   hiddenModels,
   favoriteModels,
@@ -116,7 +119,10 @@ export function ProviderModelsSection({
       setError("Enter a model slug.");
       return;
     }
-    if (models.some((model) => !model.isCustom && model.slug === normalized)) {
+    if (
+      groupedVariantSlugs.has(normalized) ||
+      models.some((model) => !model.isCustom && model.slug === normalized)
+    ) {
       setError("That model is already built in.");
       return;
     }

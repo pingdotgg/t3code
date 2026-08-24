@@ -296,6 +296,7 @@ describe("AgyAdapter", () => {
             threadId,
             cwd: process.cwd(),
             runtimeMode: "full-access",
+            resumeCursor: { schemaVersion: 1, conversationId: "conv-resumed" },
           });
           const sendFiber = yield* adapter
             .sendTurn({ threadId, input: "Wait for initialization" })

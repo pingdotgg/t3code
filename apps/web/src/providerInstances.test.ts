@@ -143,11 +143,15 @@ describe("sortProviderInstanceEntries", () => {
       provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
       provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claudeAgent" }),
       provider({ provider: ProviderDriverKind.make("opencode"), instanceId: "opencode" }),
+      provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" }),
+      provider({ provider: ProviderDriverKind.make("cursor"), instanceId: "cursor" }),
     ]);
 
     expect(sortProviderInstanceEntries(entries).map((entry) => entry.driverKind)).toEqual([
       "codex",
       "claudeAgent",
+      "cursor",
+      "grok",
       "opencode",
       "agy",
     ]);

@@ -465,6 +465,10 @@ export function ProviderInstanceCard({
     customModels,
     driverKind,
   });
+  const groupedVariantSlugs = getGroupedProviderModelVariantSlugs(
+    liveProvider?.models ?? [],
+    driverKind,
+  );
 
   const updateDisplayName = (value: string) => {
     const trimmed = value.trim();
@@ -792,6 +796,7 @@ export function ProviderInstanceCard({
                 instanceId={instanceId}
                 driverKind={driverKind}
                 models={modelsForDisplay}
+                groupedVariantSlugs={groupedVariantSlugs}
                 customModels={customModels}
                 hiddenModels={hiddenModels}
                 favoriteModels={favoriteModels}
