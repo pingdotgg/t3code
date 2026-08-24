@@ -1,11 +1,13 @@
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import { trimmedUnknownString } from "./AcpUnknownPayload.ts";
 
 const XAiPromptCompleteNotification = Schema.Struct({
   sessionId: Schema.String,
@@ -25,8 +27,6 @@ interface PendingXAiPromptCompletion {
 const completedXAiPromptIdLimit = 128;
 const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
 const usdTicksPerUsd = 10_000_000_000;
-const UnknownRecord = Schema.Record(Schema.String, Schema.Unknown);
-const isUnknownRecord = Schema.is(UnknownRecord);
 
 const XAiAskUserQuestionOption = Schema.Struct({
   label: Schema.String,
@@ -67,10 +67,6 @@ function trimmed(value: string | undefined): string | undefined {
   return text && text.length > 0 ? text : undefined;
 }
 
-function trimmedUnknownString(value: unknown): string | undefined {
-  return typeof value === "string" ? trimmed(value) : undefined;
-}
-
 function nonNegativeSafeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
@@ -93,9 +89,9 @@ export interface XAiPromptResponseMetadata {
 export function extractXAiPromptResponseMetadata(
   response: EffectAcpSchema.PromptResponse,
 ): XAiPromptResponseMetadata {
-  const meta = isUnknownRecord(response._meta) ? response._meta : undefined;
-  const usage = isUnknownRecord(meta?.usage) ? meta.usage : undefined;
-  const modelUsage = isUnknownRecord(usage?.modelUsage) ? usage.modelUsage : undefined;
+  const meta = Predicate.isObject(response._meta) ? response._meta : undefined;
+  const usage = Predicate.isObject(meta?.usage) ? meta.usage : undefined;
+  const modelUsage = Predicate.isObject(usage?.modelUsage) ? usage.modelUsage : undefined;
   const costUsdTicks = nonNegativeSafeInteger(usage?.costUsdTicks);
   const totalCostUsd =
     costUsdTicks !== undefined &&
@@ -129,7 +125,7 @@ export function extractXAiModelChangedNotification(
   method: string,
   payload: unknown,
 ): XAiModelChangedNotification | undefined {
-  if (!isUnknownRecord(payload)) {
+  if (!Predicate.isObject(payload)) {
     return undefined;
   }
   const notification =
@@ -137,14 +133,14 @@ export function extractXAiModelChangedNotification(
       ? payload
       : method === "_x.ai/session_notification" &&
           payload.method === "x.ai/session_notification" &&
-          isUnknownRecord(payload.params)
+          Predicate.isObject(payload.params)
         ? payload.params
         : undefined;
   if (!notification) {
     return undefined;
   }
   const sessionId = trimmedUnknownString(notification.sessionId);
-  const update = isUnknownRecord(notification.update) ? notification.update : undefined;
+  const update = Predicate.isObject(notification.update) ? notification.update : undefined;
   const modelId = trimmedUnknownString(update?.model_id);
   const rawReasoningEffort = update?.reasoning_effort ?? undefined;
   const reasoningEffort = trimmedUnknownString(rawReasoningEffort);

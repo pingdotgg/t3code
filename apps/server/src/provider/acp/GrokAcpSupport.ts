@@ -2,7 +2,7 @@ import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schema from "effect/Schema";
+import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -10,6 +10,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import { trimmedUnknownString } from "./AcpUnknownPayload.ts";
 import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
 
 const GROK_API_KEY_ENV = "XAI_API_KEY";
@@ -21,8 +22,6 @@ const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const GROK_LEGACY_DEFAULT_MODEL_ID = "grok-build";
 const GROK_STOCK_SESSION_COMPATIBILITY_GROUP = "grok-stock";
 const GROK_STRICT_AGENT_TYPES = new Set(["codex", "grok-build-orchestrator"]);
-const UnknownRecord = Schema.Record(Schema.String, Schema.Unknown);
-const isUnknownRecord = Schema.is(UnknownRecord);
 
 type GrokAcpRuntimeGrokSettings = Pick<GrokSettings, "binaryPath">;
 
@@ -88,10 +87,6 @@ export function resolveGrokAcpBaseModelId(model: string | null | undefined): str
   return normalizeModelSlug(base, GROK_DRIVER_KIND) ?? GROK_LEGACY_DEFAULT_MODEL_ID;
 }
 
-function trimmedString(value: unknown): string | undefined {
-  return typeof value === "string" ? value.trim() || undefined : undefined;
-}
-
 export function grokAcpSessionCompatibilityGroup(
   agentType: string | undefined,
 ): string | undefined {
@@ -121,7 +116,7 @@ export interface GrokAcpModelMetadata {
 }
 
 export function parseGrokAcpModelMetadata(meta: unknown): GrokAcpModelMetadata {
-  if (!isUnknownRecord(meta)) {
+  if (!Predicate.isObject(meta)) {
     return {
       agentType: undefined,
       supportsReasoningEffort: undefined,
@@ -134,19 +129,19 @@ export function parseGrokAcpModelMetadata(meta: unknown): GrokAcpModelMetadata {
   const seen = new Set<string>();
   const reasoningEfforts = Array.isArray(meta.reasoningEfforts)
     ? meta.reasoningEfforts.flatMap((raw) => {
-        if (!isUnknownRecord(raw)) {
+        if (!Predicate.isObject(raw)) {
           return [];
         }
-        const value = trimmedString(raw.value);
+        const value = trimmedUnknownString(raw.value);
         if (!value || seen.has(value)) {
           return [];
         }
         seen.add(value);
-        const description = trimmedString(raw.description);
+        const description = trimmedUnknownString(raw.description);
         return [
           {
             value,
-            label: trimmedString(raw.label) ?? value,
+            label: trimmedUnknownString(raw.label) ?? value,
             ...(description ? { description } : {}),
             isDefault: raw.default === true,
           } satisfies GrokAcpReasoningEffortOption,
@@ -156,10 +151,10 @@ export function parseGrokAcpModelMetadata(meta: unknown): GrokAcpModelMetadata {
   const totalContextTokens = meta.totalContextTokens;
 
   return {
-    agentType: trimmedString(meta.agentType),
+    agentType: trimmedUnknownString(meta.agentType),
     supportsReasoningEffort:
       typeof meta.supportsReasoningEffort === "boolean" ? meta.supportsReasoningEffort : undefined,
-    reasoningEffort: trimmedString(meta.reasoningEffort),
+    reasoningEffort: trimmedUnknownString(meta.reasoningEffort),
     reasoningEfforts,
     totalContextTokens:
       typeof totalContextTokens === "number" &&
