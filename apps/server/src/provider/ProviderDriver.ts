@@ -25,6 +25,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
   ProviderInstanceId,
+  ServerProviderSkill,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
@@ -71,6 +72,17 @@ export interface ProviderInstance {
   readonly snapshot: ServerProviderShape;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
+  /**
+   * Skills for this instance, resolved against a project cwd. The broadcast
+   * snapshot keeps upstream's server-cwd list so snapshot-only clients
+   * (official mobile builds, older web) are unaffected; project scope depends
+   * on the directory a thread runs in. Drivers that support cwd-aware
+   * discovery supply this closure — it should cache per resolved cwd so
+   * switching projects does not rescan on every picker keystroke.
+   */
+  readonly resolveSkills?: (
+    cwd?: string | undefined,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
 }
 
 export interface ProviderContinuationIdentity {

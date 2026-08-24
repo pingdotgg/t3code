@@ -508,6 +508,24 @@ export const ProviderRegistryLive = Layer.effect(
       );
     });
 
+    const getProviderSkills = Effect.fn("getProviderSkills")(function* (
+      instanceId: ProviderInstanceId,
+      cwd?: string | undefined,
+    ) {
+      const instance = Array.from((yield* Ref.get(liveSubsRef)).values()).find(
+        (candidate) => candidate.instanceId === instanceId,
+      );
+      if (instance?.resolveSkills) {
+        return yield* instance.resolveSkills(cwd);
+      }
+      // No cwd-aware discovery (other drivers, unknown instance): serve the
+      // broadcast snapshot as-is — whatever the driver last probed, exactly
+      // what those providers showed before this RPC existed.
+      const providers = yield* Ref.get(providersRef);
+      const snapshot = providers.find((provider) => provider.instanceId === instanceId);
+      return snapshot?.skills ?? [];
+    });
+
     /**
      * Diff the aggregator's live-source set against the current
      * `ProviderInstanceRegistry` and:
@@ -711,6 +729,7 @@ export const ProviderRegistryLive = Layer.effect(
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
+      getProviderSkills,
       setProviderMaintenanceActionState,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);

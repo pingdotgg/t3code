@@ -99,6 +99,8 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
@@ -946,6 +948,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
   );
+  // Project-scope skills depend on the thread's cwd, so they ride a per-cwd
+  // request rather than the global provider snapshot. Falls back to the
+  // snapshot while the request is in flight (or when the server predates the
+  // RPC), so the picker never regresses.
+  const skillsCwd = gitCwd;
+  const providerSkillsQuery = useEnvironmentQuery(
+    skillsCwd !== null
+      ? serverEnvironment.providerSkills({
+          environmentId,
+          input: { instanceId: selectedInstanceId, cwd: skillsCwd },
+        })
+      : null,
+  );
+  const providerSkills = useMemo(() => {
+    const perCwdSkills = providerSkillsQuery.data?.skills;
+    if (perCwdSkills !== undefined) {
+      return perCwdSkills;
+    }
+    return selectedProviderStatus?.skills ?? [];
+  }, [providerSkillsQuery.data, selectedProviderStatus]);
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
@@ -1198,24 +1220,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
-        (skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }),
-      );
+      return searchProviderSkills(providerSkills, composerTrigger.query).map((skill) => ({
+        id: `skill:${selectedProvider}:${skill.name}`,
+        type: "skill" as const,
+        provider: selectedProvider,
+        skill,
+        label: formatProviderSkillDisplayName(skill),
+        description:
+          skill.shortDescription ??
+          skill.description ??
+          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+      }));
     }
     return [];
   }, [
     composerTrigger,
     planModeUiEnabled,
+    providerSkills,
     selectedProvider,
     selectedProviderStatus,
     settings.showSkillsInSlashMenu,
@@ -3399,7 +3420,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? composerTerminalContexts
                       : []
                   }
-                  skills={selectedProviderStatus?.skills ?? []}
+                  skills={providerSkills}
                   {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                   onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                   onChange={onPromptChange}

@@ -1354,6 +1354,142 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("getProviderSkills resolves per cwd and falls back to the snapshot", () =>
+        Effect.gen(function* () {
+          const codexDriver = ProviderDriverKind.make("codex");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const claudeDriver = ProviderDriverKind.make("claudeAgent");
+          const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+          // A driver without `resolveSkills` keeps whatever its snapshot
+          // carries — including project scope, which stays legitimate for
+          // providers that still resolve skills at probe time.
+          const codexProjectSkill = {
+            name: "repo-skill",
+            path: "/repo/.codex/skills/repo-skill/SKILL.md",
+            enabled: true,
+            scope: "project",
+          } as const;
+          const claudeUserSkill = {
+            name: "user-skill",
+            path: "/Users/dev/.claude/skills/user-skill/SKILL.md",
+            enabled: true,
+            scope: "user",
+          } as const;
+          const claudeProjectSkill = {
+            name: "trino-query",
+            path: "/tmp/project-a/.agents/skills/trino-query/SKILL.md",
+            enabled: true,
+            scope: "project",
+          } as const;
+          const codexProvider = {
+            instanceId: codexInstanceId,
+            driver: codexDriver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-04-29T10:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [codexProjectSkill],
+          } as const satisfies ServerProvider;
+          const claudeProvider = {
+            instanceId: claudeInstanceId,
+            driver: claudeDriver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-04-29T10:01:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [claudeUserSkill],
+          } as const satisfies ServerProvider;
+          const resolvedCwds: Array<string | undefined> = [];
+          const makeInstance = (
+            provider: ServerProvider,
+            resolveSkills?: ProviderInstance["resolveSkills"],
+          ): ProviderInstance => ({
+            instanceId: provider.instanceId,
+            driverKind: provider.driver,
+            continuationIdentity: {
+              driverKind: provider.driver,
+              continuationKey: `${provider.driver}:instance:${provider.instanceId}`,
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                provider: provider.driver,
+                packageName: null,
+              }),
+              getSnapshot: Effect.succeed(provider),
+              refresh: Effect.succeed(provider),
+              streamChanges: Stream.empty,
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+            ...(resolveSkills ? { resolveSkills } : {}),
+          });
+          const instances = [
+            makeInstance(codexProvider),
+            makeInstance(claudeProvider, (cwd) => {
+              resolvedCwds.push(cwd);
+              return Effect.succeed(
+                cwd === undefined ? [claudeUserSkill] : [claudeUserSkill, claudeProjectSkill],
+              );
+            }),
+          ];
+          const changes = yield* PubSub.unbounded<void>();
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+              listInstances: Effect.succeed(instances),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.fromPubSub(changes),
+              subscribeChanges: PubSub.subscribe(changes),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-skills-",
+                }),
+              ),
+              Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+
+            const perCwd = yield* registry.getProviderSkills(claudeInstanceId, "/tmp/project-a");
+            assert.deepStrictEqual(perCwd, [claudeUserSkill, claudeProjectSkill]);
+            const noCwd = yield* registry.getProviderSkills(claudeInstanceId);
+            assert.deepStrictEqual(noCwd, [claudeUserSkill]);
+            assert.deepStrictEqual(resolvedCwds, ["/tmp/project-a", undefined]);
+
+            const fallback = yield* registry.getProviderSkills(codexInstanceId, "/tmp/project-a");
+            assert.deepStrictEqual(fallback, [codexProjectSkill]);
+
+            const unknown = yield* registry.getProviderSkills(
+              ProviderInstanceId.make("missing"),
+              "/tmp/project-a",
+            );
+            assert.deepStrictEqual(unknown, []);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       // This test intentionally avoids `mockCommandSpawnerLayer` so the real
       // `probeCodexAppServerProvider` path runs — including the full
       // `codex app-server` RPC handshake via `CodexClient.layerChildProcess`.

@@ -3,6 +3,7 @@ import {
   type ModelCapabilities,
   type ModelSelection,
   type ServerProviderModel,
+  type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -920,7 +921,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
-  const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
+  // The broadcast snapshot keeps its existing shape — resolved against the
+  // server's cwd — so clients that only read the snapshot (older web and
+  // mobile builds) see what they have always seen. Clients that know
+  // `server.getProviderSkills` override it with the per-project list.
+  const skills = yield* resolveClaudeProviderSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = [
     {
       name: "compact",
@@ -972,6 +977,19 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
     },
   });
+});
+
+/**
+ * Skills for one project cwd: user scope plus the project roots
+ * under `cwd` (`.agents/skills`, `.claude/skills`). This is the cwd-aware
+ * counterpart to the global-only skill list in the broadcast snapshot.
+ */
+export const resolveClaudeProviderSkills = Effect.fn("resolveClaudeProviderSkills")(function* (
+  claudeSettings: Pick<ClaudeSettings, "homePath">,
+  cwd: string | undefined,
+  environment?: NodeJS.ProcessEnv,
+): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  return yield* discoverClaudeSkills(claudeSettings, cwd, environment ?? process.env);
 });
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);

@@ -603,6 +603,23 @@ export const ServerProviderUpdateInput = Schema.Struct({
 });
 export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
 
+/**
+ * Skills resolved for one provider instance against a project cwd. The
+ * broadcast snapshot resolves project scope against the server's cwd (the
+ * upstream behavior snapshot-only clients rely on); clients that know this
+ * RPC fetch the correct per-cwd list instead.
+ */
+export const ServerProviderSkillsInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  cwd: Schema.optionalKey(Schema.String),
+});
+export type ServerProviderSkillsInput = typeof ServerProviderSkillsInput.Type;
+
+export const ServerProviderSkillsResult = Schema.Struct({
+  skills: Schema.Array(ServerProviderSkill),
+});
+export type ServerProviderSkillsResult = typeof ServerProviderSkillsResult.Type;
+
 export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerProviderUpdateError>()(
   "ServerProviderUpdateError",
   {

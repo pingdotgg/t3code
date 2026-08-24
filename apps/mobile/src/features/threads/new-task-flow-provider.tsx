@@ -38,6 +38,7 @@ import {
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
+import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import {
   appendComposerDraftAttachments,
@@ -444,12 +445,26 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
+  // Project-scope skills depend on the project's cwd, so they ride a per-cwd
+  // request rather than the global provider snapshot. Falls back to the
+  // snapshot while the request is in flight (or when the
+  // server predates the RPC).
+  const providerSkillsQuery = useEnvironmentQuery(
+    selectedProject !== null && selectedProject.workspaceRoot !== "" && selectedModel !== null
+      ? serverEnvironment.providerSkills({
+          environmentId: selectedProject.environmentId,
+          input: { instanceId: selectedModel.instanceId, cwd: selectedProject.workspaceRoot },
+        })
+      : null,
+  );
   const selectedProviderSkills = useMemo(
     () =>
+      providerSkillsQuery.data?.skills ??
       selectedEnvironmentServerConfig?.providers.find(
         (provider) => provider.instanceId === selectedModel?.instanceId,
-      )?.skills ?? [],
-    [selectedEnvironmentServerConfig, selectedModel?.instanceId],
+      )?.skills ??
+      [],
+    [providerSkillsQuery.data, selectedEnvironmentServerConfig, selectedModel?.instanceId],
   );
   const setSelectedModelKey = useCallback(
     // Options ride along in the same write: a follow-up setSelectedModelOptions

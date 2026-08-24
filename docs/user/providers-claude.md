@@ -51,6 +51,8 @@ Claude can show its own resume prompt when you continue an old session.
 T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then
 `<workspace>/.agents/skills`, then `<workspace>/.claude/skills`.
 
+`<workspace>` is the project the active thread runs in, so the `$` skill picker follows the project you are working on and updates when you switch threads.
+
 If the same skill name exists in more than one folder, the later folder wins.
 
 ## I Want Work And Personal Claude Accounts

@@ -59,6 +59,8 @@ import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import type {
   PendingApproval,
   PendingUserInput,
@@ -447,11 +449,25 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
+  // Project-scope skills depend on the thread's cwd, so they ride a per-cwd
+  // request rather than the global provider snapshot. Falls back to the
+  // snapshot while the request is in flight (or when the
+  // server predates the RPC).
+  const providerSkillsQuery = useEnvironmentQuery(
+    props.threadCwd !== null
+      ? serverEnvironment.providerSkills({
+          environmentId: props.environmentId,
+          input: { instanceId: selectedInstanceId, cwd: props.threadCwd },
+        })
+      : null,
+  );
   const selectedProviderSkills = useMemo(
     () =>
+      providerSkillsQuery.data?.skills ??
       props.serverConfig?.providers.find((provider) => provider.instanceId === selectedInstanceId)
-        ?.skills ?? [],
-    [props.serverConfig, selectedInstanceId],
+        ?.skills ??
+      [],
+    [providerSkillsQuery.data, props.serverConfig, selectedInstanceId],
   );
 
   useLayoutEffect(() => {

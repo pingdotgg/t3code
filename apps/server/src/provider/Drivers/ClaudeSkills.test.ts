@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
+import { resolveClaudeProviderSkills } from "../Layers/ClaudeProvider.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -299,6 +300,134 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       );
 
       assert.deepEqual(skills, []);
+    }),
+  );
+
+  it.effect("does not leak project skills from a sibling directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const projectA = path.join(tempDir, "project-a");
+      const projectB = path.join(tempDir, "project-b");
+
+      yield* writeSkill(
+        path.join(projectA, ".agents", "skills"),
+        "trino-query",
+        ["---", "name: trino-query", "description: Query trino.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(projectB, ".claude", "skills"),
+        "deploy",
+        ["---", "name: deploy", "---"].join("\n"),
+      );
+
+      const skillsA = yield* discoverClaudeSkills({ homePath: configDir }, projectA);
+      assert.deepEqual(
+        skillsA.map((skill) => skill.name),
+        ["trino-query"],
+      );
+      assert.equal(skillsA[0]?.scope, "project");
+
+      // The same config dir with no cwd serves only user scope — project
+      // roots are skipped entirely when no cwd is supplied.
+      const globalSkills = yield* discoverClaudeSkills({ homePath: configDir }, undefined);
+      assert.deepEqual(globalSkills, []);
+    }),
+  );
+
+  it.effect("resolveClaudeProviderSkills serves per-cwd lists across two projects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const projectA = path.join(tempDir, "project-a");
+      const projectB = path.join(tempDir, "project-b");
+
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "shared",
+        ["---", "name: shared", "description: User scope everywhere.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(projectA, ".claude", "skills"),
+        "trino-query",
+        ["---", "name: trino-query", "description: Query trino.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(projectB, ".agents", "skills"),
+        "deploy",
+        ["---", "name: deploy", "---"].join("\n"),
+      );
+
+      const settings = { homePath: configDir };
+      // The bundled T3 plugin contributes plugin-scoped skills in this repo;
+      // they are global, so filter them out and assert on user/project split.
+      const skillsA = yield* resolveClaudeProviderSkills(settings, projectA);
+      assert.deepEqual(
+        skillsA
+          .filter((skill) => skill.scope !== "plugin")
+          .map((skill) => `${skill.scope}:${skill.name}`),
+        ["user:shared", "project:trino-query"],
+      );
+
+      const skillsB = yield* resolveClaudeProviderSkills(settings, projectB);
+      assert.deepEqual(
+        skillsB
+          .filter((skill) => skill.scope !== "plugin")
+          .map((skill) => `${skill.scope}:${skill.name}`)
+          .sort(),
+        ["project:deploy", "user:shared"],
+      );
+
+      // No cwd: global scopes only.
+      const globalSkills = yield* resolveClaudeProviderSkills(settings, undefined);
+      assert.deepEqual(
+        globalSkills.filter((skill) => skill.scope !== "plugin").map((skill) => skill.name),
+        ["shared"],
+      );
+    }),
+  );
+
+  it.effect("collision precedence holds across the three roots with a project cwd", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const project = path.join(tempDir, "project");
+
+      // "dupe" exists in all three roots; ".claude" beats ".agents" beats user.
+      for (const [root, description] of [
+        [path.join(configDir, "skills"), "user copy"],
+        [path.join(project, ".agents", "skills"), "agents copy"],
+        [path.join(project, ".claude", "skills"), "claude copy"],
+      ] as const) {
+        yield* writeSkill(
+          root,
+          "dupe",
+          ["---", "name: dupe", `description: ${description}`, "---"].join("\n"),
+        );
+      }
+      // "half" exists in user and ".agents" only; ".agents" wins.
+      yield* writeSkill(
+        path.join(configDir, "skills"),
+        "half",
+        ["---", "name: half", "description: user copy", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(project, ".agents", "skills"),
+        "half",
+        ["---", "name: half", "description: agents copy", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, project);
+      assert.deepEqual(
+        skills.map((skill) => `${skill.name}:${skill.scope}:${skill.description}`),
+        ["dupe:project:claude copy", "half:project:agents copy"],
+      );
     }),
   );
 });

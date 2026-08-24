@@ -33,6 +33,7 @@ import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
+  resolveClaudeProviderSkills,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -166,6 +167,27 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
+      // Per-cwd skills cache for the `$` picker: project scope depends on the
+      // directory a thread runs in, so discovery is keyed by resolved project
+      // cwd with the same TTL pattern as the capabilities probe. The broadcast
+      // snapshot keeps its server-cwd list for clients that never call the
+      // per-cwd RPC (older web and mobile builds).
+      const skillsCache = yield* Cache.make({
+        capacity: 32,
+        timeToLive: CAPABILITIES_PROBE_TTL,
+        lookup: (resolvedCwd: string) =>
+          resolveClaudeProviderSkills(
+            effectiveConfig,
+            resolvedCwd.length > 0 ? resolvedCwd : undefined,
+            processEnv,
+          ),
+      });
+      const resolveSkills = (cwd?: string | undefined) =>
+        Cache.get(skillsCache, cwd === undefined ? "" : path.resolve(cwd)).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
+
       // Kick the TTL-gated manifest refresh in the background and classify
       // with the in-memory manifest, so a slow or hung fetch never delays the
       // provider check. A refresh that lands mid-probe applies on the next one.
@@ -235,6 +257,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         snapshot,
         adapter,
         textGeneration,
+        resolveSkills,
       } satisfies ProviderInstance;
     }),
 };

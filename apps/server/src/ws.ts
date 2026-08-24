@@ -1603,6 +1603,14 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "provider" },
           ),
+        [WS_METHODS.serverGetProviderSkills]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetProviderSkills,
+            providerRegistry
+              .getProviderSkills(input.instanceId, input.cwd)
+              .pipe(Effect.map((skills) => ({ skills }))),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateProvider,

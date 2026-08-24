@@ -745,6 +745,15 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    // Project-scope skills depend on the thread's cwd, so they are fetched per
+    // (instanceId, cwd) instead of riding the global provider snapshot. The
+    // server caches discovery per cwd; a short client stale time keeps
+    // project switching cheap without rescan storms.
+    providerSkills: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:provider-skills",
+      tag: WS_METHODS.serverGetProviderSkills,
+      staleTimeMs: 60_000,
+    }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,

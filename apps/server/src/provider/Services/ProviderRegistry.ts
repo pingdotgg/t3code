@@ -10,6 +10,7 @@ import type {
   ProviderInstanceId,
   ProviderDriverKind,
   ServerProvider,
+  ServerProviderSkill,
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -68,6 +69,17 @@ export interface ProviderRegistryShape {
     readonly action: ProviderMaintenanceActionKind;
     readonly state: ServerProviderUpdateState | null;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Skills for one instance, resolved against a project cwd when the live
+   * driver supports cwd-aware discovery. Drivers without per-cwd discovery
+   * (and unknown instances) fall back to the broadcast snapshot's skills
+   * unchanged, so their behavior stays exactly what it was before this RPC.
+   */
+  readonly getProviderSkills: (
+    instanceId: ProviderInstanceId,
+    cwd?: string | undefined,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
 
   /**
    * Stream of provider snapshot updates — one emission per aggregated
