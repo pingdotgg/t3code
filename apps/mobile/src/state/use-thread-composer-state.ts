@@ -23,7 +23,6 @@ import {
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed } from "../lib/threadActivity";
-import { providerInteractionModeControlsEnabled } from "@t3tools/shared/model";
 import { appAtomRegistry } from "../state/atom-registry";
 import {
   appendComposerDraftAttachments,
@@ -42,6 +41,7 @@ import { setPendingConnectionError } from "../state/use-remote-environment-regis
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
+import { resolveMobileThreadInteractionMode } from "./thread-interaction-mode";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
 import { useEnvironmentServerConfig } from "./entities";
 import { mobilePreferencesAtom } from "./preferences";
@@ -83,8 +83,8 @@ export function useThreadComposerState() {
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const planModeEnabled =
-    AsyncResult.isSuccess(preferences) && preferences.value.planModeEnabled === true;
+  const planModePreferenceLoaded = AsyncResult.isSuccess(preferences);
+  const planModeEnabled = planModePreferenceLoaded && preferences.value.planModeEnabled === true;
   const selectedThreadServerConfig = useEnvironmentServerConfig(
     selectedThreadShell?.environmentId ?? null,
   );
@@ -112,15 +112,16 @@ export function useThreadComposerState() {
   const selectedThread = selectedThreadDetail ?? selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
-  const interactionMode = providerInteractionModeControlsEnabled({
-    planModeEnabled,
-    providers: selectedThreadServerConfig?.providers ?? [],
-    modelSelection,
-  })
-    ? (selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null)
-    : selectedThread
-      ? "default"
-      : null;
+  const interactionMode = selectedThread
+    ? resolveMobileThreadInteractionMode({
+        preferenceLoaded: planModePreferenceLoaded,
+        planModeEnabled,
+        providers: selectedThreadServerConfig?.providers ?? [],
+        modelSelection,
+        preferredMode: selectedDraft?.interactionMode,
+        fallbackMode: selectedThread.interactionMode,
+      })
+    : null;
 
   const selectedThreadSessionActivity = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
@@ -181,13 +182,14 @@ export function useThreadComposerState() {
       attachments,
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      interactionMode: providerInteractionModeControlsEnabled({
+      interactionMode: resolveMobileThreadInteractionMode({
+        preferenceLoaded: planModePreferenceLoaded,
         planModeEnabled,
         providers: selectedThreadServerConfig?.providers ?? [],
         modelSelection,
-      })
-        ? (draft.interactionMode ?? thread.interactionMode)
-        : "default",
+        preferredMode: draft.interactionMode,
+        fallbackMode: thread.interactionMode,
+      }),
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);
@@ -203,7 +205,13 @@ export function useThreadComposerState() {
       );
     });
     return messageId;
-  }, [planModeEnabled, selectedThreadDetail, selectedThreadServerConfig, selectedThreadShell]);
+  }, [
+    planModeEnabled,
+    planModePreferenceLoaded,
+    selectedThreadDetail,
+    selectedThreadServerConfig,
+    selectedThreadShell,
+  ]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {
