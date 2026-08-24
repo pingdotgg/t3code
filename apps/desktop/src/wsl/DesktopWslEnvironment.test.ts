@@ -198,6 +198,41 @@ describe("WSL runtime cache", () => {
     expect(extracted).toBeGreaterThan(digestChecked);
   });
 
+  // Invalidation revokes the ready marker without stopping the backend that
+  // failed the probe, so the next install can find an unready tree that a live
+  // process is still running out of. Deleting it there unlinks node_modules
+  // under that process; the pruner already refuses to touch in-use caches, and
+  // the install path has to refuse too.
+  it("moves an in-use runtime aside instead of deleting it under a live backend", () => {
+    const script = buildWslRuntimeInstallScript(
+      "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
+      "sha256-" + "c".repeat(64),
+      "b".repeat(64),
+      "c".repeat(64),
+    );
+
+    expect(script).toContain('grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null');
+    // No /proc means no way to tell, and guessing wrong costs a backend its
+    // runtime, so an unknowable answer has to count as in use.
+    expect(script).toContain("  [ -d /proc/1 ] || return 0");
+    expect(script).toContain('  if runtime_in_use "$runtime_root"; then');
+
+    // A process's cmdline keeps the pre-rename path, so the question is only
+    // answerable before the move.
+    const inUseChecked = script.indexOf('if runtime_in_use "$runtime_root"; then');
+    const moved = script.indexOf('mv -T "$runtime_root" "$runtime_stale"');
+    expect(inUseChecked).toBeGreaterThan(-1);
+    expect(inUseChecked).toBeLessThan(moved);
+
+    // In use: keep the tree and restart the sweep's clock, because renaming
+    // preserves the directory's mtime and a long-installed tree would otherwise
+    // already be past the age gate. Idle: delete it now, as before.
+    const kept = script.indexOf('touch "$runtime_stale"');
+    const deleted = script.indexOf('rm -rf "$runtime_stale"');
+    expect(kept).toBeGreaterThan(moved);
+    expect(deleted).toBeGreaterThan(kept);
+  });
+
   // The cache directory is named for the content it holds, so the install has
   // to confirm the archive actually carries that content before promoting a
   // tree under that name. Reading the manifest the build put in the archive is

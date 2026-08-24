@@ -328,11 +328,39 @@ export const buildWslRuntimeInstallScript = (
     `  printf 'WSL runtime archive does not match its recorded SHA-256 (expected %s, got %s)\\n' ${shellQuote(archiveSha256)} "$archive_sha" >&2`,
     "  exit 1",
     "fi",
+    // A backend can still be running out of an unready tree: the probe revokes
+    // the ready marker without stopping the process it just failed for, and
+    // invalidation deliberately leaves the tree in place for exactly that
+    // reason. Deleting it here unlinks node_modules from under a live backend,
+    // which then breaks the moment it lazily loads anything it had not already
+    // read. Move it aside either way, but only delete it now when nothing is
+    // running from it; otherwise hand it to the pruner's scratch sweep, which
+    // is what that delay is for. A process's cmdline keeps the pre-rename path,
+    // so this has to be asked before the move, not after. This script arrives
+    // on stdin, so it cannot match itself.
+    "runtime_in_use() {",
+    // No /proc means no way to tell, and guessing wrong costs a live backend
+    // its runtime. Keeping the tree only costs disk until the sweep runs.
+    "  [ -d /proc/1 ] || return 0",
+    '  grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null',
+    "}",
     'if [ -e "$runtime_root" ]; then',
+    '  if runtime_in_use "$runtime_root"; then',
+    "    runtime_root_in_use=1",
+    "  else",
+    "    runtime_root_in_use=0",
+    "  fi",
     `  runtime_stale=$(mktemp -d "$runtime_parent/.${safeRuntimeId}.stale.XXXXXX")`,
     '  rmdir "$runtime_stale"',
     '  if mv -T "$runtime_root" "$runtime_stale" 2>/dev/null; then',
-    '    rm -rf "$runtime_stale"',
+    '    if [ "$runtime_root_in_use" = 1 ]; then',
+    // Renaming keeps the directory's own mtime, so a tree installed weeks ago
+    // would already be past the sweep's age gate and get collected on the very
+    // next launch. Restart the clock so the grace period is real.
+    '      touch "$runtime_stale"',
+    "    else",
+    '      rm -rf "$runtime_stale"',
+    "    fi",
     "  fi",
     "fi",
     `runtime_tmp=$(mktemp -d "$runtime_parent/.${safeRuntimeId}.tmp.XXXXXX")`,
