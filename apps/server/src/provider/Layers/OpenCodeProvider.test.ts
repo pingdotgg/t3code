@@ -239,19 +239,16 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
             name: "openclaw-review",
             description: "Review OpenClaw workflow changes.",
             location: "/Users/test/.agents/skills/openclaw-review/SKILL.md",
-            content: "---\nname: openclaw-review\n---\n",
           },
           {
             name: "openclaw-triage",
             description: "Triage OpenClaw routing issues.",
             location: "/Users/test/.agents/skills/openclaw-triage/SKILL.md",
-            content: "---\nname: openclaw-triage\n---\n",
           },
           {
             name: "missing-location",
             description: "This incomplete SDK row should be skipped.",
             location: "",
-            content: "---\nname: missing-location\n---\n",
           },
         ],
       };

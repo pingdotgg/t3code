@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
   ProjectId,
@@ -2289,6 +2290,42 @@ it.effect("answers a repeated listing from cache, and concurrent readers share o
     // A different filter is a different answer, not a cache hit.
     yield* service.list({ state: "all" });
     assert.strictEqual(hostCalls, 2);
+  }),
+);
+
+it.effect("returns the refreshed listing on the first read after its cache expires", () =>
+  Effect.gen(function* () {
+    let hostCalls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: () => {
+            hostCalls += 1;
+            return Effect.succeed({
+              items: [changeRequest(hostCalls, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            });
+          },
+        }),
+      ],
+    });
+
+    const first = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(
+      first.entries.map((entry) => entry.number),
+      [1],
+    );
+
+    yield* TestClock.adjust("31 seconds");
+    const refreshed = yield* service.list({ state: "open" });
+
+    assert.strictEqual(hostCalls, 2);
+    assert.deepStrictEqual(
+      refreshed.entries.map((entry) => entry.number),
+      [2],
+    );
   }),
 );
 
