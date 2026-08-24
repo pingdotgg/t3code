@@ -114,19 +114,18 @@ the URL manually.
 
 ### Deployment CI
 
-The relay is versioned separately from client releases. `.github/workflows/deploy-relay.yml` deploys
-the shared Alchemy `prod` stage on every push to `main`. Stable and nightly release builds both
-resolve their static public config from the same
-`production` GitHub environment. Pull requests do not deploy relay stages. Developers can
-deploy personal non-production stages locally with any stage name other than `prod`.
+This fork does not deploy Relay from GitHub Actions. Developers deploy personal non-production
+stages locally with any stage name other than `prod`. A fork-owned production Relay must also be
+deployed explicitly and its public URL supplied to release builds through the `RELAY_URL` repository
+variable.
 
-The repository must define these Actions variables shared by relay deployments:
+An explicit production deployment needs these variables in its deployment environment:
 
 - `CLOUDFLARE_ACCOUNT_ID`
 - `PLANETSCALE_ORGANIZATION`
 - `AXIOM_ORG_ID`
 
-The repository must define these Actions secrets shared by relay deployments:
+It also needs these secrets:
 
 - `CLOUDFLARE_API_TOKEN`
 - `PLANETSCALE_API_TOKEN_ID`

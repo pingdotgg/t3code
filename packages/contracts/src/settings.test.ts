@@ -7,6 +7,7 @@ import {
   ClientSettingsPatch,
   DEFAULT_SERVER_SETTINGS,
   defaultEnabledForDriver,
+  OmpSettings,
   PiAgentSettings,
   resolveProviderInstanceEnabled,
   ServerSettings,
@@ -19,6 +20,7 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodePiAgentSettings = Schema.decodeUnknownSync(PiAgentSettings);
+const decodeOmpSettings = Schema.decodeUnknownSync(OmpSettings);
 
 describe("PiAgentSettings", () => {
   it("defaults to the system pi binary and standard agent home", () => {
@@ -39,6 +41,29 @@ describe("PiAgentSettings", () => {
     ).toMatchObject({
       binaryPath: "/opt/homebrew/bin/pi",
       homePath: "~/.pi/work",
+    });
+  });
+});
+
+describe("OmpSettings", () => {
+  it("defaults to the system omp binary with its own config", () => {
+    expect(decodeOmpSettings({})).toEqual({
+      enabled: true,
+      binaryPath: "omp",
+      homePath: "",
+      customModels: [],
+    });
+  });
+
+  it("trims explicit binary and agent home paths", () => {
+    expect(
+      decodeOmpSettings({
+        binaryPath: "  /opt/homebrew/bin/omp  ",
+        homePath: "  ~/.omp/work  ",
+      }),
+    ).toMatchObject({
+      binaryPath: "/opt/homebrew/bin/omp",
+      homePath: "~/.omp/work",
     });
   });
 });
@@ -229,6 +254,7 @@ describe("provider enabled defaults", () => {
     expect(decoded.providers.grok.enabled).toBe(false);
     expect(decoded.providers.opencode.enabled).toBe(false);
     expect(decoded.providers.piAgent.enabled).toBe(true);
+    expect(decoded.providers.omp.enabled).toBe(true);
   });
 
   it("derives per-driver defaults from the settings schemas", () => {
@@ -236,6 +262,7 @@ describe("provider enabled defaults", () => {
     expect(defaultEnabledForDriver(ProviderDriverKind.make("cursor"))).toBe(true);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("grok"))).toBe(false);
     expect(defaultEnabledForDriver(ProviderDriverKind.make("piAgent"))).toBe(true);
+    expect(defaultEnabledForDriver(ProviderDriverKind.make("omp"))).toBe(true);
     // Unknown fork drivers stay enabled; their own build decides otherwise.
     expect(defaultEnabledForDriver(ProviderDriverKind.make("ollama"))).toBe(true);
   });
@@ -380,6 +407,10 @@ describe("ServerSettingsPatch string normalization", () => {
           binaryPath: "  /opt/homebrew/bin/pi  ",
           homePath: "  ~/.pi/agent  ",
         },
+        omp: {
+          binaryPath: "  /opt/homebrew/bin/omp  ",
+          homePath: "  ~/.omp/agent  ",
+        },
       },
       providerInstances: {
         codex_personal: {
@@ -398,6 +429,8 @@ describe("ServerSettingsPatch string normalization", () => {
     expect(patch.providers?.codex?.launchArgs).toBe("--strict-config --enable foo");
     expect(patch.providers?.piAgent?.binaryPath).toBe("/opt/homebrew/bin/pi");
     expect(patch.providers?.piAgent?.homePath).toBe("~/.pi/agent");
+    expect(patch.providers?.omp?.binaryPath).toBe("/opt/homebrew/bin/omp");
+    expect(patch.providers?.omp?.homePath).toBe("~/.omp/agent");
     expect(patch.providerInstances?.[ProviderInstanceId.make("codex_personal")]?.driver).toBe(
       "codex",
     );

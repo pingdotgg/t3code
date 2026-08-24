@@ -45,7 +45,15 @@ const INSTANCE_ID = ProviderInstanceId.make("piAgent");
 const makeHarness = Effect.fn("makePiAdapterTestHarness")(function* (options?: {
   readonly resumeSessionFile?: string;
   readonly messages?: ReadonlyArray<unknown>;
+  readonly provider?: ProviderDriverKind;
+  readonly providerName?: string;
+  readonly instanceId?: ProviderInstanceId;
+  readonly binaryPath?: string;
+  readonly skillFlag?: "--skill" | "--skills";
+  readonly promptResponseData?: unknown;
 }) {
+  const provider = options?.provider ?? ProviderDriverKind.make("piAgent");
+  const instanceId = options?.instanceId ?? INSTANCE_ID;
   const nativeEvents = yield* Queue.unbounded<PiAgentEvent | PiExtensionUIRequest>();
   const terminated = yield* Deferred.make<PiRpcClientError>();
   const commands: PiRpcCommand[] = [];
@@ -81,6 +89,8 @@ const makeHarness = Effect.fn("makePiAdapterTestHarness")(function* (options?: {
             });
           case "get_messages":
             return success(command, { messages: options?.messages ?? [] });
+          case "prompt":
+            return success(command, options?.promptResponseData);
           default:
             return success(command);
         }
@@ -95,27 +105,34 @@ const makeHarness = Effect.fn("makePiAdapterTestHarness")(function* (options?: {
 
   const directoryLayer = Layer.succeed(ProviderSessionDirectory, {
     upsert: (binding) => Effect.sync(() => void bindings.push(binding)),
-    getProvider: () => Effect.succeed(ProviderDriverKind.make("piAgent")),
+    getProvider: () => Effect.succeed(provider),
     getBinding: () => Effect.succeed(Option.none()),
     listThreadIds: () => Effect.succeed([]),
     listBindings: () => Effect.succeed([]),
   });
 
-  const adapter = yield* makePiAdapter(decodeSettings({ binaryPath: "fake-pi" }), {
-    instanceId: INSTANCE_ID,
-    createClient: (input) =>
-      Effect.sync(() => {
-        factoryInputs.push(input);
-        return client;
-      }),
-    now: () => "2026-07-12T00:00:00.000Z",
-    nextTurnId: () => `turn-pi-${++turnSequence}`,
-    nativeEventLogger: {
-      filePath: "memory://pi-native-events",
-      write: (event, threadId) => Queue.offer(nativeLogs, { event, threadId }).pipe(Effect.asVoid),
-      close: () => Effect.void,
+  const adapter = yield* makePiAdapter(
+    decodeSettings({ binaryPath: options?.binaryPath ?? "fake-pi" }),
+    {
+      provider,
+      ...(options?.providerName ? { providerName: options.providerName } : {}),
+      ...(options?.skillFlag ? { skillFlag: options.skillFlag } : {}),
+      instanceId,
+      createClient: (input) =>
+        Effect.sync(() => {
+          factoryInputs.push(input);
+          return client;
+        }),
+      now: () => "2026-07-12T00:00:00.000Z",
+      nextTurnId: () => `turn-pi-${++turnSequence}`,
+      nativeEventLogger: {
+        filePath: "memory://pi-native-events",
+        write: (event, threadId) =>
+          Queue.offer(nativeLogs, { event, threadId }).pipe(Effect.asVoid),
+        close: () => Effect.void,
+      },
     },
-  }).pipe(
+  ).pipe(
     Effect.provide(
       Layer.mergeAll(
         directoryLayer,
@@ -176,6 +193,35 @@ describe("PiAdapter", () => {
     ),
   );
 
+  it.effect("keeps an OMP session isolated under the omp provider identity", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const omp = ProviderDriverKind.make("omp");
+        const ompInstance = ProviderInstanceId.make("omp");
+        const harness = yield* makeHarness({
+          provider: omp,
+          providerName: "Oh My Pi",
+          instanceId: ompInstance,
+          binaryPath: "fake-omp",
+        });
+        const session = yield* harness.adapter.startSession({
+          threadId: THREAD_ID,
+          provider: omp,
+          providerInstanceId: ompInstance,
+          cwd: "/tmp/project",
+          runtimeMode: "full-access",
+        });
+
+        expect(session).toMatchObject({
+          provider: "omp",
+          providerInstanceId: "omp",
+          status: "ready",
+        });
+        expect(harness.factoryInputs[0]).toMatchObject({ binaryPath: "fake-omp" });
+      }),
+    ),
+  );
+
   it.effect("passes a persisted Pi session file to the client factory", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -231,6 +277,44 @@ describe("PiAdapter", () => {
         expect(factoryInput?.args?.[3]).toMatch(
           /bundled-skills[\\/]midscene-preview[\\/]SKILL\.md$/u,
         );
+      }),
+    ),
+  );
+
+  it.effect("uses the OMP skill flag when a scoped MCP session is active", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const omp = ProviderDriverKind.make("omp");
+        const ompInstance = ProviderInstanceId.make("omp");
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("environment-omp-adapter"),
+          threadId: THREAD_ID,
+          providerSessionId: "provider-session-omp-adapter",
+          providerInstanceId: ompInstance,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer omp-mcp-secret",
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID)),
+        );
+
+        const harness = yield* makeHarness({
+          provider: omp,
+          providerName: "Oh My Pi",
+          instanceId: ompInstance,
+          binaryPath: "fake-omp",
+          skillFlag: "--skills",
+        });
+        yield* harness.adapter.startSession({
+          threadId: THREAD_ID,
+          provider: omp,
+          providerInstanceId: ompInstance,
+          cwd: "/tmp/project",
+          runtimeMode: "full-access",
+        });
+
+        expect(harness.factoryInputs[0]?.args?.[0]).toBe("--extension");
+        expect(harness.factoryInputs[0]?.args?.[2]).toBe("--skills");
       }),
     ),
   );
@@ -389,6 +473,86 @@ describe("PiAdapter", () => {
         const events = [...(yield* Fiber.join(eventsFiber))];
         expect(events.some((event) => event.type === "content.delta")).toBe(true);
         expect(events.some((event) => event.type === "turn.completed")).toBe(true);
+        expect((yield* harness.adapter.listSessions())[0]).toMatchObject({ status: "ready" });
+      }),
+    ),
+  );
+
+  it.effect("keeps OMP running until agent_end is terminal", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const omp = ProviderDriverKind.make("omp");
+        const ompInstance = ProviderInstanceId.make("omp");
+        const harness = yield* makeHarness({
+          provider: omp,
+          providerName: "Oh My Pi",
+          instanceId: ompInstance,
+        });
+        yield* harness.adapter.startSession({
+          threadId: THREAD_ID,
+          provider: omp,
+          providerInstanceId: ompInstance,
+          runtimeMode: "full-access",
+        });
+        yield* harness.adapter.sendTurn({ threadId: THREAD_ID, input: "Continue" });
+
+        yield* harness.emit({ type: "agent_end", isTerminal: false, messages: [] });
+        yield* Effect.yieldNow;
+        expect((yield* harness.adapter.listSessions())[0]).toMatchObject({ status: "running" });
+
+        yield* harness.emit({ type: "agent_end", isTerminal: true, messages: [] });
+        yield* Effect.yieldNow;
+        expect((yield* harness.adapter.listSessions())[0]).toMatchObject({ status: "ready" });
+      }),
+    ),
+  );
+
+  it.effect("finishes an OMP local prompt from its immediate response", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const omp = ProviderDriverKind.make("omp");
+        const ompInstance = ProviderInstanceId.make("omp");
+        const harness = yield* makeHarness({
+          provider: omp,
+          providerName: "Oh My Pi",
+          instanceId: ompInstance,
+          promptResponseData: { agentInvoked: false },
+        });
+        yield* harness.adapter.startSession({
+          threadId: THREAD_ID,
+          provider: omp,
+          providerInstanceId: ompInstance,
+          runtimeMode: "full-access",
+        });
+
+        yield* harness.adapter.sendTurn({ threadId: THREAD_ID, input: "/model" });
+
+        expect((yield* harness.adapter.listSessions())[0]).toMatchObject({ status: "ready" });
+      }),
+    ),
+  );
+
+  it.effect("finishes an OMP local prompt from a deferred prompt_result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const omp = ProviderDriverKind.make("omp");
+        const ompInstance = ProviderInstanceId.make("omp");
+        const harness = yield* makeHarness({
+          provider: omp,
+          providerName: "Oh My Pi",
+          instanceId: ompInstance,
+        });
+        yield* harness.adapter.startSession({
+          threadId: THREAD_ID,
+          provider: omp,
+          providerInstanceId: ompInstance,
+          runtimeMode: "full-access",
+        });
+        yield* harness.adapter.sendTurn({ threadId: THREAD_ID, input: "/model" });
+
+        yield* harness.emit({ type: "prompt_result", agentInvoked: false });
+        yield* Effect.yieldNow;
+
         expect((yield* harness.adapter.listSessions())[0]).toMatchObject({ status: "ready" });
       }),
     ),

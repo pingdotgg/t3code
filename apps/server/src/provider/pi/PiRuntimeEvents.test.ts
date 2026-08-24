@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { ProviderRuntimeEvent } from "@t3tools/contracts";
 
@@ -35,6 +35,23 @@ describe("PiRuntimeEvents", () => {
     expect(events[0]?.payload).toMatchObject({
       resume: { sessionId: "pi-session-1", sessionFile: "/tmp/pi.jsonl" },
     });
+    expectValid(events);
+  });
+
+  it("emits OMP runtime events with a separate provider identity", () => {
+    const mapper = makePiRuntimeEventMapper({
+      provider: ProviderDriverKind.make("omp"),
+      providerName: "Oh My Pi",
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      threadId: ThreadId.make("thread-omp-1"),
+      now: () => "2026-08-24T00:00:00.000Z",
+    });
+
+    const events = mapper.startSession({ sessionId: "omp-session-1" });
+
+    expect(events.every((event) => event.provider === "omp")).toBe(true);
+    expect(events.every((event) => event.providerInstanceId === "omp")).toBe(true);
+    expect(events[0]?.payload).toMatchObject({ message: "Oh My Pi RPC session started" });
     expectValid(events);
   });
 
@@ -251,6 +268,41 @@ describe("PiRuntimeEvents", () => {
     expect(succeeded).toEqual([]);
     expect(settled[0]?.payload).toMatchObject({ state: "completed" });
     expectValid(settled);
+  });
+
+  it("uses OMP isTerminal to wait for the final agent run", () => {
+    const mapper = makeMapper();
+    mapper.startTurn({ turnId: TurnId.make("turn-omp-maintenance") });
+
+    const continuing = mapper.map({
+      type: "agent_end",
+      isTerminal: false,
+      messages: [
+        {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorMessage: "maintenance continuation",
+        },
+      ],
+    });
+    const completed = mapper.map({ type: "agent_end", isTerminal: true, messages: [] });
+
+    expect(continuing).toEqual([]);
+    expect(completed[0]?.payload).toMatchObject({ state: "completed" });
+    expectValid(completed);
+  });
+
+  it("completes a local OMP prompt from prompt_result exactly once", () => {
+    const mapper = makeMapper();
+    mapper.startTurn({ turnId: TurnId.make("turn-omp-local") });
+
+    const completed = mapper.map({ type: "prompt_result", agentInvoked: false });
+    const duplicate = mapper.map({ type: "prompt_result", agentInvoked: false });
+
+    expect(completed[0]?.payload).toMatchObject({ state: "completed" });
+    expect(duplicate).toEqual([]);
+    expectValid(completed);
   });
 
   it("keeps legacy Pi versions terminal on agent_end", () => {

@@ -29,11 +29,25 @@ import {
 const VERSION_PROBE_TIMEOUT_MS = 30_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 30_000;
 
-const PI_PRESENTATION = {
-  displayName: "Pi",
-  showInteractionModeToggle: false,
-  requiresNewThreadForModelChange: true,
-} as const;
+export interface PiProviderOptions {
+  readonly providerName?: string;
+  readonly defaultBinaryPath?: string;
+}
+
+function resolvePiProviderOptions(options: PiProviderOptions) {
+  return {
+    providerName: options.providerName ?? "Pi",
+    defaultBinaryPath: options.defaultBinaryPath ?? "pi",
+  };
+}
+
+function providerPresentation(providerName: string) {
+  return {
+    displayName: providerName,
+    showInteractionModeToggle: false,
+    requiresNewThreadForModelChange: true,
+  } as const;
+}
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const THINKING_LEVELS = [
@@ -99,11 +113,13 @@ function fallbackModels(settings: PiAgentSettings): ReadonlyArray<ServerProvider
 
 export function buildInitialPiProviderSnapshot(
   settings: PiAgentSettings,
+  options: PiProviderOptions = {},
 ): Effect.Effect<ServerProviderDraft> {
   return Effect.gen(function* () {
+    const { providerName } = resolvePiProviderOptions(options);
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     return buildServerProvider({
-      presentation: PI_PRESENTATION,
+      presentation: providerPresentation(providerName),
       enabled: settings.enabled,
       checkedAt,
       models: fallbackModels(settings),
@@ -113,22 +129,26 @@ export function buildInitialPiProviderSnapshot(
             version: null,
             status: "warning",
             auth: { status: "unknown" },
-            message: "Checking Pi CLI availability...",
+            message: `Checking ${providerName} CLI availability...`,
           }
         : {
             installed: false,
             version: null,
             status: "warning",
             auth: { status: "unknown" },
-            message: "Pi is disabled in T3 Code settings.",
+            message: `${providerName} is disabled in T3 Code settings.`,
           },
     });
   });
 }
 
-const runPiVersionCommand = (settings: PiAgentSettings, environment: NodeJS.ProcessEnv) =>
+const runPiVersionCommand = (
+  settings: PiAgentSettings,
+  environment: NodeJS.ProcessEnv,
+  defaultBinaryPath: string,
+) =>
   Effect.gen(function* () {
-    const binaryPath = settings.binaryPath || "pi";
+    const binaryPath = settings.binaryPath || defaultBinaryPath;
     const resolved = yield* resolveSpawnCommand(binaryPath, ["--version"], {
       env: environment,
     });
@@ -142,11 +162,16 @@ const runPiVersionCommand = (settings: PiAgentSettings, environment: NodeJS.Proc
     );
   });
 
-const discoverPiModels = (settings: PiAgentSettings, cwd: string, environment: NodeJS.ProcessEnv) =>
+const discoverPiModels = (
+  settings: PiAgentSettings,
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+  defaultBinaryPath: string,
+) =>
   Effect.scoped(
     Effect.gen(function* () {
       const client = yield* spawnPiRpcClient({
-        binaryPath: settings.binaryPath || "pi",
+        binaryPath: settings.binaryPath || defaultBinaryPath,
         cwd,
         env: environment,
       });
@@ -172,23 +197,25 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   settings: PiAgentSettings,
   cwd: string,
   processEnvironment: NodeJS.ProcessEnv = process.env,
+  options: PiProviderOptions = {},
 ): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
+  const { providerName, defaultBinaryPath } = resolvePiProviderOptions(options);
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const models = fallbackModels(settings);
-  if (!settings.enabled) return yield* buildInitialPiProviderSnapshot(settings);
+  if (!settings.enabled) return yield* buildInitialPiProviderSnapshot(settings, options);
 
   const environment = {
     ...processEnvironment,
     ...(settings.homePath ? { PI_CODING_AGENT_DIR: settings.homePath } : {}),
   };
-  const versionResult = yield* runPiVersionCommand(settings, environment).pipe(
+  const versionResult = yield* runPiVersionCommand(settings, environment, defaultBinaryPath).pipe(
     Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
     Effect.result,
   );
   if (Result.isFailure(versionResult)) {
     const missing = isCommandMissingCause(versionResult.failure);
     return buildServerProvider({
-      presentation: PI_PRESENTATION,
+      presentation: providerPresentation(providerName),
       enabled: true,
       checkedAt,
       models,
@@ -198,14 +225,14 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         status: "error",
         auth: { status: "unknown" },
         message: missing
-          ? `Pi CLI (\`${settings.binaryPath || "pi"}\`) is not installed or not on PATH.`
-          : "Failed to execute Pi CLI health check.",
+          ? `${providerName} CLI (\`${settings.binaryPath || defaultBinaryPath}\`) is not installed or not on PATH.`
+          : `Failed to execute ${providerName} CLI health check.`,
       },
     });
   }
   if (Option.isNone(versionResult.success)) {
     return buildServerProvider({
-      presentation: PI_PRESENTATION,
+      presentation: providerPresentation(providerName),
       enabled: true,
       checkedAt,
       models,
@@ -214,7 +241,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: "Pi CLI timed out while running `pi --version`.",
+        message: `${providerName} CLI timed out while running \`${settings.binaryPath || defaultBinaryPath} --version\`.`,
       },
     });
   }
@@ -223,7 +250,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
   if (versionOutput.code !== 0) {
     return buildServerProvider({
-      presentation: PI_PRESENTATION,
+      presentation: providerPresentation(providerName),
       enabled: true,
       checkedAt,
       models,
@@ -232,18 +259,18 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         version,
         status: "error",
         auth: { status: "unknown" },
-        message: "Pi CLI is installed but failed to run.",
+        message: `${providerName} CLI is installed but failed to run.`,
       },
     });
   }
 
-  const discovered = yield* discoverPiModels(settings, cwd, environment).pipe(
+  const discovered = yield* discoverPiModels(settings, cwd, environment, defaultBinaryPath).pipe(
     Effect.timeoutOption(MODEL_DISCOVERY_TIMEOUT_MS),
     Effect.result,
   );
   if (Result.isFailure(discovered) || Option.isNone(discovered.success)) {
     return buildServerProvider({
-      presentation: PI_PRESENTATION,
+      presentation: providerPresentation(providerName),
       enabled: true,
       checkedAt,
       models,
@@ -253,14 +280,14 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         status: "error",
         auth: { status: "unknown" },
         message: Result.isFailure(discovered)
-          ? "Pi CLI is installed but RPC model discovery failed. Check server logs for details."
-          : "Pi CLI RPC model discovery timed out.",
+          ? `${providerName} CLI is installed but RPC model discovery failed. Check server logs for details.`
+          : `${providerName} CLI RPC model discovery timed out.`,
       },
     });
   }
 
   return buildServerProvider({
-    presentation: PI_PRESENTATION,
+    presentation: providerPresentation(providerName),
     enabled: true,
     checkedAt,
     models: discovered.success.value.models,
@@ -274,8 +301,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       ...(discovered.success.value.hasConfiguredAuth
         ? {}
         : {
-            message:
-              "Pi has no models with configured credentials. Configure a provider in Pi and try again.",
+            message: `${providerName} has no models with configured credentials. Configure a model provider in ${providerName} and try again.`,
           }),
     },
   });

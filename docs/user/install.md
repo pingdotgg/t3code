@@ -61,6 +61,7 @@ to use, then authenticate it.
 | Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
 | Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
 | OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Oh My Pi   | [Oh My Pi](https://github.com/can1357/oh-my-pi)       | `omp`          | Configure in `omp`    |
 
 Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
 them on in **Settings** → the provider's card when you want to use them.
@@ -70,6 +71,9 @@ T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`
 
 Run the login command on the machine running the T3 Code server, not on the device you browse
 from.
+
+Oh My Pi is configured as its own provider in T3 Code. It does not reuse the Pi provider's binary
+path, configuration directory, sessions, or provider instances.
 
 ### Binary Discovery
 

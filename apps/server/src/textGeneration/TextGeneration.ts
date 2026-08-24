@@ -14,7 +14,8 @@ export type TextGenerationProvider =
   | "cursor"
   | "grok"
   | "opencode"
-  | "piAgent";
+  | "piAgent"
+  | "omp";
 
 export interface CommitMessageGenerationInput {
   cwd: string;

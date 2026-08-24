@@ -37,16 +37,12 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { spawnPiRpcClient, type PiRpcClient, type PiRpcClientError } from "../pi/PiRpcClient.ts";
-import {
-  isPiTurnSettledEvent,
-  makePiRuntimeEventMapper,
-  type PiRuntimeEventMapper,
-} from "../pi/PiRuntimeEvents.ts";
+import { makePiRuntimeEventMapper, type PiRuntimeEventMapper } from "../pi/PiRuntimeEvents.ts";
 import type { PiRpcOutput, PiRpcResponse } from "../pi/PiRpcProtocol.ts";
 import type { PiAdapterShape } from "../Services/PiAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
-const PROVIDER = ProviderDriverKind.make("piAgent");
+const PI_PROVIDER = ProviderDriverKind.make("piAgent");
 
 export interface PiClientFactoryInput {
   readonly binaryPath: string;
@@ -64,6 +60,9 @@ export type PiClientFactory = (
 >;
 
 export interface PiAdapterOptions {
+  readonly provider?: ProviderDriverKind;
+  readonly providerName?: string;
+  readonly skillFlag?: "--skill" | "--skills";
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
   readonly createClient?: PiClientFactory;
@@ -91,13 +90,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function readState(response: PiRpcResponse) {
+function readState(response: PiRpcResponse, providerName: string) {
   if (!response.success) throw new Error(response.error);
   const data = asRecord(response.data);
-  if (!data) throw new Error("Pi get_state response did not include state data.");
+  if (!data) throw new Error(`${providerName} get_state response did not include state data.`);
   const sessionId = typeof data.sessionId === "string" ? data.sessionId : undefined;
   if (!sessionId) {
-    throw new Error("Pi get_state response did not include sessionId.");
+    throw new Error(`${providerName} get_state response did not include sessionId.`);
   }
   const sessionFile = typeof data.sessionFile === "string" ? data.sessionFile : undefined;
   const model = asRecord(data.model);
@@ -108,6 +107,14 @@ function readState(response: PiRpcResponse) {
     ...(sessionFile ? { sessionFile } : {}),
     ...(modelProvider && modelId ? { model: `${modelProvider}/${modelId}` } : {}),
   };
+}
+
+function promptCompletedWithoutAgent(response: PiRpcResponse): boolean {
+  return (
+    response.success &&
+    response.command === "prompt" &&
+    asRecord(response.data)?.agentInvoked === false
+  );
 }
 
 function readResumeSessionFile(value: unknown): string | undefined {
@@ -161,21 +168,29 @@ function splitPiModel(value: string): { provider: string; modelId: string } | nu
   return { provider: value.slice(0, separator), modelId: value.slice(separator + 1) };
 }
 
-function clientFailure(method: string, cause: unknown): ProviderAdapterRequestError {
+function clientFailure(
+  provider: ProviderDriverKind,
+  providerName: string,
+  method: string,
+  cause: unknown,
+): ProviderAdapterRequestError {
   return new ProviderAdapterRequestError({
-    provider: PROVIDER,
+    provider,
     method,
-    detail: cause instanceof Error ? cause.message : `Pi RPC ${method} failed.`,
+    detail: cause instanceof Error ? cause.message : `${providerName} RPC ${method} failed.`,
     cause,
   });
 }
 
-function failedTurnMessage(events: ReadonlyArray<ProviderRuntimeEvent>): string | undefined {
+function failedTurnMessage(
+  events: ReadonlyArray<ProviderRuntimeEvent>,
+  providerName: string,
+): string | undefined {
   const completed = events.find(
     (event) => event.type === "turn.completed" && event.payload.state === "failed",
   );
   return completed?.type === "turn.completed"
-    ? (completed.payload.errorMessage ?? "Pi turn failed.")
+    ? (completed.payload.errorMessage ?? `${providerName} turn failed.`)
     : undefined;
 }
 
@@ -197,11 +212,14 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
   const crypto = yield* Crypto.Crypto;
   const bundledPiMcpExtensionPath = yield* resolveBundledPiMcpExtensionPath();
   const bundledMidsceneSkillPath = yield* resolveBundledMidsceneSkillPath();
-  const instanceId = options.instanceId ?? ProviderInstanceId.make("piAgent");
+  const provider = options.provider ?? PI_PROVIDER;
+  const providerName = options.providerName ?? "Pi";
+  const skillFlag = options.skillFlag ?? "--skill";
+  const instanceId = options.instanceId ?? ProviderInstanceId.make(provider);
   const createClient = options.createClient ?? defaultCreateClient;
   const now = options.now ?? (() => new Date().toISOString());
   let turnSequence = 0;
-  const nextTurnId = options.nextTurnId ?? (() => `pi-turn-${++turnSequence}`);
+  const nextTurnId = options.nextTurnId ?? (() => `${provider}-turn-${++turnSequence}`);
   const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, PiSessionContext>();
 
@@ -218,7 +236,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
           event: {
             id: yield* crypto.randomUUIDv4,
             kind: "notification",
-            provider: PROVIDER,
+            provider,
             providerInstanceId: instanceId,
             createdAt: observedAt,
             method: raw.type,
@@ -230,7 +248,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       );
     }).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning("Failed to write native Pi RPC event log.", {
+        Effect.logWarning(`Failed to write native ${providerName} RPC event log.`, {
           cause,
           threadId,
           method: raw.type,
@@ -256,8 +274,27 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
     const context = sessions.get(threadId);
     return context
       ? Effect.succeed(context)
-      : Effect.fail(new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId }));
+      : Effect.fail(new ProviderAdapterSessionNotFoundError({ provider, threadId }));
   };
+
+  const finishContextTurn = Effect.fn("PiAdapter.finishContextTurn")(function* (
+    context: PiSessionContext,
+    mappedEvents: ReadonlyArray<ProviderRuntimeEvent>,
+  ) {
+    if (!mappedEvents.some((event) => event.type === "turn.completed")) return;
+    context.activeTurnId = undefined;
+    const turnFailure = failedTurnMessage(mappedEvents, providerName);
+    updateSession(
+      context,
+      turnFailure ? { status: "error", lastError: turnFailure } : { status: "ready" },
+      true,
+      turnFailure === undefined,
+    );
+    const stats = yield* context.client.request({ type: "get_session_stats" }).pipe(Effect.option);
+    if (stats._tag === "Some" && stats.value.success) {
+      yield* emit(context.mapper.updateTokenUsage((asRecord(stats.value.data) ?? {}) as never));
+    }
+  });
 
   const stopContext = Effect.fn("PiAdapter.stopContext")(function* (context: PiSessionContext) {
     if (context.stopped) return;
@@ -278,7 +315,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       });
       if (!path) {
         return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
+          provider,
           method: "prompt",
           detail: `Invalid attachment id '${attachment.id}'.`,
         });
@@ -287,7 +324,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         Effect.mapError(
           (cause) =>
             new ProviderAdapterRequestError({
-              provider: PROVIDER,
+              provider,
               method: "prompt",
               detail: `Failed to read attachment '${attachment.name}'.`,
               cause,
@@ -305,18 +342,18 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
 
   const startSession: PiAdapterShape["startSession"] = Effect.fn("PiAdapter.startSession")(
     function* (input) {
-      if (input.provider && input.provider !== PROVIDER) {
+      if (input.provider && input.provider !== provider) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "startSession",
-          issue: `Expected piAgent provider, received '${input.provider}'.`,
+          issue: `Expected ${provider} provider, received '${input.provider}'.`,
         });
       }
       if (sessions.has(input.threadId)) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "startSession",
-          issue: `Thread '${input.threadId}' already has an active Pi session.`,
+          issue: `Thread '${input.threadId}' already has an active ${providerName} session.`,
         });
       }
       const cwd = input.cwd ?? serverConfig.cwd;
@@ -332,7 +369,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
             Effect.mapError(
               (cause) =>
                 new ProviderAdapterRequestError({
-                  provider: PROVIDER,
+                  provider,
                   method: "spawn",
                   detail: `Failed to inspect bundled ${artifact} at '${artifactPath}'.`,
                   cause,
@@ -341,13 +378,13 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
           );
           if (!exists) {
             return yield* new ProviderAdapterRequestError({
-              provider: PROVIDER,
+              provider,
               method: "spawn",
               detail: `Bundled ${artifact} is missing at '${artifactPath}'.`,
             });
           }
         }
-        piArgs.push("--extension", bundledPiMcpExtensionPath, "--skill", bundledMidsceneSkillPath);
+        piArgs.push("--extension", bundledPiMcpExtensionPath, skillFlag, bundledMidsceneSkillPath);
       }
       if (resumeSessionFile) piArgs.push("--session", resumeSessionFile);
       const environment = {
@@ -369,14 +406,14 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       }).pipe(
         Effect.provideService(Scope.Scope, sessionScope),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-        Effect.mapError((cause) => clientFailure("spawn", cause)),
+        Effect.mapError((cause) => clientFailure(provider, providerName, "spawn", cause)),
       );
       const state = yield* client.request({ type: "get_state" }).pipe(
-        Effect.mapError((cause) => clientFailure("get_state", cause)),
+        Effect.mapError((cause) => clientFailure(provider, providerName, "get_state", cause)),
         Effect.flatMap((response) =>
           Effect.try({
-            try: () => readState(response),
-            catch: (cause) => clientFailure("get_state", cause),
+            try: () => readState(response, providerName),
+            catch: (cause) => clientFailure(provider, providerName, "get_state", cause),
           }),
         ),
       );
@@ -386,7 +423,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         ...(state.sessionFile ? { sessionFile: state.sessionFile } : {}),
       };
       const session: ProviderSession = {
-        provider: PROVIDER,
+        provider,
         providerInstanceId: instanceId,
         status: "ready",
         runtimeMode: input.runtimeMode,
@@ -398,6 +435,8 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         updatedAt: timestamp,
       };
       const mapper = makePiRuntimeEventMapper({
+        provider,
+        providerName,
         providerInstanceId: instanceId,
         threadId: input.threadId,
         now,
@@ -431,19 +470,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         }
         const mappedEvents = mapper.map(raw);
         yield* emit(mappedEvents);
-        if (!isPiTurnSettledEvent(raw)) return;
-        context.activeTurnId = undefined;
-        const turnFailure = failedTurnMessage(mappedEvents);
-        updateSession(
-          context,
-          turnFailure ? { status: "error", lastError: turnFailure } : { status: "ready" },
-          true,
-          turnFailure === undefined,
-        );
-        const stats = yield* client.request({ type: "get_session_stats" }).pipe(Effect.option);
-        if (stats._tag === "Some" && stats.value.success) {
-          yield* emit(mapper.updateTokenUsage((asRecord(stats.value.data) ?? {}) as never));
-        }
+        yield* finishContextTurn(context, mappedEvents);
       });
       yield* Stream.runForEach(client.events, handleNativeEvent).pipe(
         Effect.ignoreCause({ log: true }),
@@ -470,7 +497,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
     const context = yield* getContext(input.threadId);
     if (context.activeTurnId) {
       return yield* new ProviderAdapterValidationError({
-        provider: PROVIDER,
+        provider,
         operation: "sendTurn",
         issue: `Thread '${input.threadId}' already has an active turn.`,
       });
@@ -483,20 +510,26 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       const parsed = splitPiModel(selectedModel);
       if (!parsed) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
-          issue: `Pi model '${selectedModel}' must use provider/model format.`,
+          issue: `${providerName} model '${selectedModel}' must use provider/model format.`,
         });
       }
       yield* context.client
         .request({ type: "set_model", ...parsed })
-        .pipe(Effect.mapError((cause) => clientFailure("set_model", cause)));
+        .pipe(
+          Effect.mapError((cause) => clientFailure(provider, providerName, "set_model", cause)),
+        );
     }
     const effort = getModelSelectionStringOptionValue(modelSelection, "effort");
     if (effort) {
       yield* context.client
         .request({ type: "set_thinking_level", level: effort })
-        .pipe(Effect.mapError((cause) => clientFailure("set_thinking_level", cause)));
+        .pipe(
+          Effect.mapError((cause) =>
+            clientFailure(provider, providerName, "set_thinking_level", cause),
+          ),
+        );
     }
     const images = yield* buildImages(input);
     context.activeTurnId = turnId;
@@ -512,13 +545,18 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         ...(effort ? { effort } : {}),
       }),
     );
-    yield* context.client
+    const promptResponse = yield* context.client
       .request({
         type: "prompt",
         message: input.input ?? "",
         ...(images.length > 0 ? { images } : {}),
       })
-      .pipe(Effect.mapError((cause) => clientFailure("prompt", cause)));
+      .pipe(Effect.mapError((cause) => clientFailure(provider, providerName, "prompt", cause)));
+    if (promptCompletedWithoutAgent(promptResponse)) {
+      const mappedEvents = context.mapper.completeTurn("completed", undefined, promptResponse);
+      yield* emit(mappedEvents);
+      yield* finishContextTurn(context, mappedEvents);
+    }
     return { threadId: input.threadId, turnId, resumeCursor: context.session.resumeCursor };
   });
 
@@ -528,7 +566,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       if (!context.activeTurnId || (turnId && turnId !== context.activeTurnId)) return;
       yield* context.client
         .send({ type: "abort" })
-        .pipe(Effect.mapError((cause) => clientFailure("abort", cause)));
+        .pipe(Effect.mapError((cause) => clientFailure(provider, providerName, "abort", cause)));
       yield* emit(context.mapper.completeTurn("interrupted"));
       context.activeTurnId = undefined;
       updateSession(context, { status: "ready" }, true);
@@ -538,9 +576,9 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
   const respondToRequest: PiAdapterShape["respondToRequest"] = (threadId) =>
     Effect.fail(
       new ProviderAdapterValidationError({
-        provider: PROVIDER,
+        provider,
         operation: "respondToRequest",
-        issue: `Pi session '${threadId}' does not expose built-in tool approvals.`,
+        issue: `${providerName} session '${threadId}' does not expose built-in tool approvals.`,
       }),
     );
 
@@ -551,9 +589,9 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
     const method = context.pendingInputMethods.get(requestId);
     if (!method) {
       return yield* new ProviderAdapterValidationError({
-        provider: PROVIDER,
+        provider,
         operation: "respondToUserInput",
-        issue: `Unknown Pi extension input request '${requestId}'.`,
+        issue: `Unknown ${providerName} extension input request '${requestId}'.`,
       });
     }
     const answer = answers.value;
@@ -569,7 +607,11 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
             ? { type: "extension_ui_response", id: requestId, cancelled: true }
             : { type: "extension_ui_response", id: requestId, value: String(answer) },
       )
-      .pipe(Effect.mapError((cause) => clientFailure("extension_ui_response", cause)));
+      .pipe(
+        Effect.mapError((cause) =>
+          clientFailure(provider, providerName, "extension_ui_response", cause),
+        ),
+      );
     context.pendingInputMethods.delete(requestId);
     yield* emit(context.mapper.resolveUserInput(requestId, answer));
   });
@@ -579,7 +621,9 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
       const context = yield* getContext(threadId);
       const response = yield* context.client
         .request({ type: "get_messages" })
-        .pipe(Effect.mapError((cause) => clientFailure("get_messages", cause)));
+        .pipe(
+          Effect.mapError((cause) => clientFailure(provider, providerName, "get_messages", cause)),
+        );
       return { threadId, turns: readMessageTurns(response, context.sessionId) };
     },
   );
@@ -590,10 +634,12 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
     const context = yield* getContext(threadId);
     const response = yield* context.client
       .request({ type: "get_messages" })
-      .pipe(Effect.mapError((cause) => clientFailure("get_messages", cause)));
+      .pipe(
+        Effect.mapError((cause) => clientFailure(provider, providerName, "get_messages", cause)),
+      );
     return {
       threadId,
-      provider: PROVIDER,
+      provider,
       messages: readContextMessages(response, context.sessionId),
     };
   });
@@ -601,9 +647,9 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
   const rollbackThread: PiAdapterShape["rollbackThread"] = (threadId) =>
     Effect.fail(
       new ProviderAdapterValidationError({
-        provider: PROVIDER,
+        provider,
         operation: "rollbackThread",
-        issue: `Pi thread '${threadId}' does not support T3 rollback.`,
+        issue: `${providerName} thread '${threadId}' does not support T3 rollback.`,
       }),
     );
 
@@ -623,7 +669,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
   yield* Effect.addFinalizer(() => stopAll().pipe(Effect.ignore));
 
   return {
-    provider: PROVIDER,
+    provider,
     capabilities: { sessionModelSwitch: "in-session" },
     startSession,
     sendTurn,

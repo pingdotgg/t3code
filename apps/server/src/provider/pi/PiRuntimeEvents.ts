@@ -16,6 +16,8 @@ import type { PiRpcOutput } from "./PiRpcProtocol.ts";
 const PI_DRIVER = ProviderDriverKind.make("piAgent");
 
 interface PiRuntimeEventMapperOptions {
+  readonly provider?: ProviderDriverKind;
+  readonly providerName?: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly threadId: ThreadId;
   readonly now?: () => string;
@@ -62,22 +64,28 @@ function nonNegativeInt(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
-function agentEndErrorMessage(record: Record<string, unknown>): string | undefined {
+function agentEndErrorMessage(
+  record: Record<string, unknown>,
+  providerName: string,
+): string | undefined {
   if (!Array.isArray(record.messages)) return undefined;
   for (let index = record.messages.length - 1; index >= 0; index -= 1) {
     const message = asRecord(record.messages[index]);
     if (message?.role !== "assistant" || message.stopReason !== "error") continue;
-    return nonEmptyString(message.errorMessage) ?? "Pi request failed";
+    return nonEmptyString(message.errorMessage) ?? `${providerName} request failed`;
   }
   return undefined;
 }
 
 export function isPiTurnSettledEvent(raw: PiRpcOutput): boolean {
   if (raw.type === "agent_settled") return true;
+  const record = raw as Record<string, unknown>;
+  if (raw.type === "prompt_result") return record.agentInvoked === false;
   if (raw.type !== "agent_end") return false;
-  // Pi versions with agent_settled also add willRetry to agent_end. Keep
-  // supporting older versions where agent_end was the terminal event.
-  return typeof (raw as Record<string, unknown>).willRetry !== "boolean";
+  if (typeof record.isTerminal === "boolean") return record.isTerminal;
+  // Pi versions with agent_settled add willRetry to agent_end. Older Pi
+  // versions omit both completion hints and treat agent_end as terminal.
+  return typeof record.willRetry !== "boolean";
 }
 
 function extractText(value: unknown): string | undefined {
@@ -121,9 +129,9 @@ function classifyTool(toolName: string): PiToolState["itemType"] {
   }
 }
 
-function inputQuestion(request: Record<string, unknown>) {
+function inputQuestion(request: Record<string, unknown>, providerName: string) {
   const method = request.method;
-  const title = nonEmptyString(request.title) ?? "Pi";
+  const title = nonEmptyString(request.title) ?? providerName;
   if (method === "confirm") {
     return {
       id: "value",
@@ -157,6 +165,8 @@ function inputQuestion(request: Record<string, unknown>) {
 }
 
 export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
+  const provider = options.provider ?? PI_DRIVER;
+  const providerName = options.providerName ?? "Pi";
   let sequence = 0;
   const now = options.now ?? (() => new Date().toISOString());
   const nextId = options.nextId ?? ((prefix: string) => `${prefix}-${++sequence}`);
@@ -180,7 +190,7 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
     ({
       type,
       eventId: EventId.make(nextId("pi-event")),
-      provider: PI_DRIVER,
+      provider,
       providerInstanceId: options.providerInstanceId,
       threadId: options.threadId,
       createdAt: IsoDateTime.make(now()),
@@ -205,7 +215,7 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
       ...(input.sessionFile ? { sessionFile: input.sessionFile } : {}),
     };
     return [
-      event("session.started", { message: "Pi RPC session started", resume }),
+      event("session.started", { message: `${providerName} RPC session started`, resume }),
       event("session.configured", { config: resume }),
       event("session.state.changed", { state: "ready" }),
       event("thread.started", { providerThreadId: input.sessionId }),
@@ -293,7 +303,9 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
     if (!delta || typeof delta.type !== "string") return [];
     if (delta.type === "error") {
       attemptErrorMessage =
-        nonEmptyString(delta.error) ?? nonEmptyString(delta.reason) ?? "Pi request failed";
+        nonEmptyString(delta.error) ??
+        nonEmptyString(delta.reason) ??
+        `${providerName} request failed`;
       return [];
     }
     const isText = delta.type.startsWith("text_");
@@ -418,9 +430,10 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
         return mapTool(raw, record);
       case "agent_end": {
         const events = [...completeOpenContent(raw)];
-        const errorMessage = agentEndErrorMessage(record) ?? attemptErrorMessage;
+        const errorMessage = agentEndErrorMessage(record, providerName) ?? attemptErrorMessage;
         attemptErrorMessage = undefined;
-        if (record.willRetry !== true && errorMessage) {
+        const willContinue = record.willRetry === true || record.isTerminal === false;
+        if (!willContinue && errorMessage) {
           turnFailed = true;
           turnErrorMessage = errorMessage;
           events.push(
@@ -436,6 +449,13 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
         }
         return events;
       }
+      case "prompt_result":
+        return isPiTurnSettledEvent(raw)
+          ? [
+              ...completeOpenContent(raw),
+              ...completeTurn(turnFailed ? "failed" : "completed", turnErrorMessage, raw),
+            ]
+          : [];
       case "agent_settled": {
         const events = [...completeOpenContent(raw)];
         if (attemptErrorMessage) {
@@ -457,7 +477,7 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
       }
       case "extension_error": {
         turnFailed = true;
-        const message = nonEmptyString(record.error) ?? "Pi extension failed";
+        const message = nonEmptyString(record.error) ?? `${providerName} extension failed`;
         turnErrorMessage = message;
         return [event("runtime.error", { message, class: "provider_error", detail: raw }, { raw })];
       }
@@ -471,13 +491,13 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
           return [
             event(
               "user-input.requested",
-              { questions: [inputQuestion(record)] },
+              { questions: [inputQuestion(record, providerName)] },
               { requestId: RuntimeRequestId.make(String(record.id)), raw },
             ),
           ];
         }
         if (record.method === "notify") {
-          const message = nonEmptyString(record.message) ?? "Pi notification";
+          const message = nonEmptyString(record.message) ?? `${providerName} notification`;
           return [
             event(
               record.notifyType === "error" ? "runtime.error" : "runtime.warning",

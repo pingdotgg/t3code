@@ -59,6 +59,26 @@ describe("ProviderSettingsForm helpers", () => {
     );
   });
 
+  it("registers localized Oh My Pi settings independently", () => {
+    const omp = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("omp")];
+    expect(omp).toBeDefined();
+
+    const fields = deriveProviderSettingsFields(omp!);
+    expect(fields.map((field) => field.key)).toEqual(["binaryPath", "homePath"]);
+    expect(localizeProviderSettingsFields(omp!, fields, createTranslator("en"))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "binaryPath", label: "Binary path" }),
+        expect.objectContaining({ key: "homePath", label: "Oh My Pi home path" }),
+      ]),
+    );
+    expect(localizeProviderSettingsFields(omp!, fields, createTranslator("zh-CN"))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "binaryPath", label: "可执行文件路径" }),
+        expect.objectContaining({ key: "homePath", label: "Oh My Pi 主目录" }),
+      ]),
+    );
+  });
+
   it("preserves unknown config keys while omitting empty configurable fields", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

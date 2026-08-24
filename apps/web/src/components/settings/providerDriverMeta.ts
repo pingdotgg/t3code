@@ -4,6 +4,7 @@ import {
   CursorSettings,
   GrokSettings,
   OpenCodeSettings,
+  OmpSettings,
   PiAgentSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -15,6 +16,7 @@ import {
   type Icon,
   OpenAI,
   OpenCodeIcon,
+  OmpIcon,
   PiAgentIcon,
 } from "../Icons";
 import type { MessageKey } from "../../i18n";
@@ -100,6 +102,22 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
       homePath: {
         label: "providers.pi.homePath.label",
         description: "providers.pi.homePath.description",
+      },
+    },
+  },
+  {
+    value: ProviderDriverKind.make("omp"),
+    label: "Oh My Pi",
+    icon: OmpIcon,
+    settingsSchema: OmpSettings,
+    settingsFieldMessages: {
+      binaryPath: {
+        label: "providers.omp.binaryPath.label",
+        description: "providers.omp.binaryPath.description",
+      },
+      homePath: {
+        label: "providers.omp.homePath.label",
+        description: "providers.omp.homePath.description",
       },
     },
   },

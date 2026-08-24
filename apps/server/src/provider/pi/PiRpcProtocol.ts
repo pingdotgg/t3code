@@ -107,6 +107,7 @@ export type PiAgentEvent = {
     | "auto_retry_end"
     | "extension_error"
     | "agent_settled"
+    | "prompt_result"
     | "entry_appended"
     | "session_info_changed"
     | "thinking_level_changed";

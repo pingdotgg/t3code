@@ -57,6 +57,9 @@ type PiTextClientFactory = (
 
 export interface PiTextGenerationOptions {
   readonly createClient?: PiTextClientFactory;
+  readonly providerName?: string;
+  readonly defaultBinaryPath?: string;
+  readonly args?: ReadonlyArray<string>;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -86,6 +89,9 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const createClient = options.createClient ?? defaultCreateClient;
+  const providerName = options.providerName ?? "Pi";
+  const defaultBinaryPath = options.defaultBinaryPath ?? "pi";
+  const textGenerationArgs = options.args ?? TEXT_GENERATION_ARGS;
   const processEnvironment = {
     ...environment,
     ...(settings.homePath ? { PI_CODING_AGENT_DIR: settings.homePath } : {}),
@@ -107,21 +113,21 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       if (!model) {
         return yield* new TextGenerationError({
           operation: input.operation,
-          detail: `Pi model '${input.modelSelection.model}' must use provider/model format.`,
+          detail: `${providerName} model '${input.modelSelection.model}' must use provider/model format.`,
         });
       }
       const client = yield* createClient({
-        binaryPath: settings.binaryPath || "pi",
+        binaryPath: settings.binaryPath || defaultBinaryPath,
         cwd: input.cwd,
         env: processEnvironment,
-        args: TEXT_GENERATION_ARGS,
+        args: textGenerationArgs,
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
         Effect.mapError(
           (cause) =>
             new TextGenerationError({
               operation: input.operation,
-              detail: "Failed to start Pi RPC text generation.",
+              detail: `Failed to start ${providerName} RPC text generation.`,
               cause,
             }),
         ),
@@ -132,7 +138,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           (cause) =>
             new TextGenerationError({
               operation: input.operation,
-              detail: "Failed to set the Pi text generation model.",
+              detail: `Failed to set the ${providerName} text generation model.`,
               cause,
             }),
         ),
@@ -144,7 +150,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
             (cause) =>
               new TextGenerationError({
                 operation: input.operation,
-                detail: "Failed to set the Pi thinking level.",
+                detail: `Failed to set the ${providerName} thinking level.`,
                 cause,
               }),
           ),
@@ -161,7 +167,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           (cause) =>
             new TextGenerationError({
               operation: input.operation,
-              detail: "Pi rejected the text generation prompt.",
+              detail: `${providerName} rejected the text generation prompt.`,
               cause,
             }),
         ),
@@ -173,7 +179,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
               Effect.fail(
                 new TextGenerationError({
                   operation: input.operation,
-                  detail: "Pi RPC exited before text generation completed.",
+                  detail: `${providerName} RPC exited before text generation completed.`,
                   cause,
                 }),
               ),
@@ -187,8 +193,8 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         return yield* new TextGenerationError({
           operation: input.operation,
           detail: Option.isNone(completed)
-            ? "Pi text generation timed out."
-            : "Pi text generation ended without an agent completion event.",
+            ? `${providerName} text generation timed out.`
+            : `${providerName} text generation ended without an agent completion event.`,
         });
       }
 
@@ -197,7 +203,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           (cause) =>
             new TextGenerationError({
               operation: input.operation,
-              detail: "Failed to read Pi text generation output.",
+              detail: `Failed to read ${providerName} text generation output.`,
               cause,
             }),
         ),
@@ -206,7 +212,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       if (!output) {
         return yield* new TextGenerationError({
           operation: input.operation,
-          detail: "Pi returned empty text generation output.",
+          detail: `${providerName} returned empty text generation output.`,
         });
       }
       const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson));
@@ -215,7 +221,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           (cause) =>
             new TextGenerationError({
               operation: input.operation,
-              detail: "Pi returned invalid structured text generation output.",
+              detail: `${providerName} returned invalid structured text generation output.`,
               cause,
             }),
         ),
@@ -226,7 +232,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           ? cause
           : new TextGenerationError({
               operation: input.operation,
-              detail: "Pi text generation failed.",
+              detail: `${providerName} text generation failed.`,
               cause,
             }),
       ),

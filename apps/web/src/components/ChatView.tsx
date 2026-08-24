@@ -2831,6 +2831,7 @@ function ChatViewContent(props: ChatViewProps) {
     isServerThread &&
     (contextProvider === "codex" ||
       contextProvider === "piAgent" ||
+      contextProvider === "omp" ||
       contextProvider === "opencode");
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
@@ -7020,10 +7021,7 @@ function ChatViewContent(props: ChatViewProps) {
                           />
                         </div>
                       )}
-                      <div
-                        aria-hidden
-                        className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
-                      />
+                      <div aria-hidden className="h-[env(safe-area-inset-bottom)]" />
                     </div>
                   </div>
                 </div>

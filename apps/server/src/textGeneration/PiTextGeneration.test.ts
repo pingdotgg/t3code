@@ -83,6 +83,39 @@ it.layer(NodeServices.layer)("PiTextGeneration", (it) =>
             expect.objectContaining({ type: "get_last_assistant_text" }),
           ]),
         );
+
+        let ompSpawnArgs: ReadonlyArray<string> | undefined;
+        const ompTextGeneration = yield* makePiTextGeneration(
+          decodePiSettings({ binaryPath: "/opt/bin/omp", homePath: "/tmp/omp-home" }),
+          {},
+          {
+            providerName: "Oh My Pi",
+            defaultBinaryPath: "omp",
+            args: ["--no-tools", "--no-session", "--no-extensions", "--no-skills"],
+            createClient: (input) => {
+              ompSpawnArgs = input.args;
+              expect(input.env?.PI_CODING_AGENT_DIR).toBe("/tmp/omp-home");
+              return Effect.succeed(client);
+            },
+          },
+        );
+
+        yield* ompTextGeneration.generateThreadTitle({
+          cwd: "/tmp/project",
+          message: "please connect omp",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("omp"),
+            "openai/gpt-5.4",
+            [],
+          ),
+        });
+
+        expect(ompSpawnArgs).toEqual([
+          "--no-tools",
+          "--no-session",
+          "--no-extensions",
+          "--no-skills",
+        ]);
       }),
     ),
   ),

@@ -2355,6 +2355,12 @@ const common = defineMessages(
     "providers.pi.homePath.label": "Pi agent home path",
     "providers.pi.homePath.description":
       "Optional Pi configuration directory. Leave blank to reuse ~/.pi/agent.",
+    "providers.omp.binaryPath.label": "Binary path",
+    "providers.omp.binaryPath.description":
+      "Path to the external Oh My Pi executable. Leave as 'omp' to use PATH discovery.",
+    "providers.omp.homePath.label": "Oh My Pi home path",
+    "providers.omp.homePath.description":
+      "Optional Oh My Pi configuration directory. Leave blank to reuse ~/.omp/agent.",
     "providers.pi.trustTitle": "Trusted workspaces only",
     "providers.pi.trustNotice":
       "Pi runs its native tools directly without T3 Code approval prompts. Use this provider only in workspaces you trust.",
@@ -6005,6 +6011,11 @@ const common = defineMessages(
       "外部 Pi Coding Agent 可执行文件的路径。保留为“pi”即可通过 PATH 自动探测。",
     "providers.pi.homePath.label": "Pi Agent 主目录",
     "providers.pi.homePath.description": "可选的 Pi 配置目录。留空时复用 ~/.pi/agent。",
+    "providers.omp.binaryPath.label": "可执行文件路径",
+    "providers.omp.binaryPath.description":
+      "外部 Oh My Pi 可执行文件的路径。保留为“omp”即可通过 PATH 自动探测。",
+    "providers.omp.homePath.label": "Oh My Pi 主目录",
+    "providers.omp.homePath.description": "可选的 Oh My Pi 配置目录。留空时复用 ~/.omp/agent。",
     "providers.pi.trustTitle": "仅用于可信工作区",
     "providers.pi.trustNotice":
       "Pi 的原生工具会直接执行，不经过 T3 Code 的批准提示。请仅在你信任的工作区中使用此供应商。",
