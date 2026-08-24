@@ -323,6 +323,37 @@ describe("getCursorFallbackModels", () => {
 });
 
 describe("buildCursorProviderSnapshot", () => {
+  it("includes discovered skills", () => {
+    expect(
+      buildCursorProviderSnapshot({
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        cursorSettings: baseCursorSettings,
+        parsed: {
+          version: "2026.04.09-f2b0fcd",
+          status: "ready",
+          auth: { status: "authenticated", type: "Team", label: "Cursor Team Subscription" },
+        },
+        skills: [
+          {
+            name: "review",
+            path: "/home/user/.agents/skills/review/SKILL.md",
+            enabled: true,
+            scope: "user",
+          },
+        ],
+      }),
+    ).toMatchObject({
+      skills: [
+        {
+          name: "review",
+          path: "/home/user/.agents/skills/review/SKILL.md",
+          enabled: true,
+          scope: "user",
+        },
+      ],
+    });
+  });
+
   it("downgrades ready status to warning when ACP model discovery times out", () => {
     expect(
       buildCursorProviderSnapshot({

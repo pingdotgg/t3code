@@ -21,7 +21,12 @@ import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "../../pathExpansion.ts";
 
-type ClaudeSkillScope = "user" | "project";
+type SkillScope = "user" | "project";
+
+export interface SkillDiscoveryRoot {
+  readonly directory: string;
+  readonly scope: SkillScope;
+}
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
@@ -55,6 +60,52 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
     ...(description ? { description } : {}),
   };
 }
+
+export const discoverSkillsFromRoots = Effect.fn("discoverSkillsFromRoots")(function* (
+  roots: ReadonlyArray<SkillDiscoveryRoot>,
+): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const skillsByName = new Map<string, ServerProviderSkill>();
+
+  for (const root of roots) {
+    const entries = yield* fileSystem
+      .readDirectory(root.directory)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+
+    for (const entry of [...entries].sort()) {
+      const skillPath = path.join(root.directory, entry, "SKILL.md");
+      const contents = yield* fileSystem
+        .readFileString(skillPath)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (contents === undefined) {
+        continue;
+      }
+
+      const frontmatter = parseSkillFrontmatter(contents);
+      if (frontmatter.kind === "malformed") {
+        continue;
+      }
+
+      const name = (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? entry.trim();
+      if (!name) {
+        continue;
+      }
+
+      skillsByName.set(name, {
+        name,
+        path: skillPath,
+        enabled: true,
+        scope: root.scope,
+        ...(frontmatter.kind === "parsed" && frontmatter.description
+          ? { description: frontmatter.description }
+          : {}),
+      });
+    }
+  }
+
+  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+});
 
 /**
  * Resolve the Claude config directory the CLI would use, matching the
@@ -97,11 +148,10 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   cwd?: string,
   environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
-  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment ?? process.env, cwd);
 
-  const roots: ReadonlyArray<{ directory: string; scope: ClaudeSkillScope }> = [
+  const roots: ReadonlyArray<SkillDiscoveryRoot> = [
     { directory: path.join(configDirPath, "skills"), scope: "user" },
     ...(cwd
       ? [
@@ -111,45 +161,5 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       : []),
   ];
 
-  const skillsByName = new Map<string, ServerProviderSkill>();
-  for (const root of roots) {
-    const entries = yield* fileSystem
-      .readDirectory(root.directory)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-
-    for (const entry of [...entries].sort()) {
-      const skillPath = path.join(root.directory, entry, "SKILL.md");
-      const contents = yield* fileSystem
-        .readFileString(skillPath)
-        .pipe(Effect.orElseSucceed(() => undefined));
-      if (contents === undefined) {
-        continue;
-      }
-
-      const frontmatter = parseSkillFrontmatter(contents);
-      // Malformed frontmatter means the skill won't load in Claude Code
-      // either — skip it rather than surfacing a broken entry under its
-      // directory name.
-      if (frontmatter.kind === "malformed") {
-        continue;
-      }
-
-      const name = (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? entry.trim();
-      if (!name) {
-        continue;
-      }
-
-      skillsByName.set(name, {
-        name,
-        path: skillPath,
-        enabled: true,
-        scope: root.scope,
-        ...(frontmatter.kind === "parsed" && frontmatter.description
-          ? { description: frontmatter.description }
-          : {}),
-      });
-    }
-  }
-
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return yield* discoverSkillsFromRoots(roots);
 });
