@@ -41,12 +41,12 @@ const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("grok");
 
-function isGrokNativeCommandPath(commandPath: string): boolean {
+function isGrokNativeCommandPath(commandPath: string) {
   const normalized = normalizeCommandPath(commandPath);
   return normalized.endsWith("/.grok/bin/grok") || normalized.endsWith("/.grok/bin/grok.exe");
 }
 
-const UPDATE = makeProviderMaintenanceResolver({
+export const GrokMaintenanceResolver = makeProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   packageName: "@xai-official/grok",
   homebrewFormula: null,
@@ -117,10 +117,13 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies GrokSettings;
-      const resolveMaintenance = resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-        binaryPath: effectiveConfig.binaryPath,
-        env: processEnv,
-      }).pipe(
+      const resolveMaintenance = resolveProviderMaintenanceCapabilitiesEffect(
+        GrokMaintenanceResolver,
+        {
+          binaryPath: effectiveConfig.binaryPath,
+          env: processEnv,
+        },
+      ).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, pathService),

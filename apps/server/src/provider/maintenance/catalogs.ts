@@ -390,7 +390,7 @@ function stableHomebrewRoot(context: InstallationContext, prefix: string): strin
   return formulaEnd < 0 ? normalized : normalized.slice(0, formulaEnd);
 }
 
-function isHomebrewShimPath(path: string): boolean {
+function isHomebrewShimPath(path: string) {
   return (
     path.startsWith("/opt/homebrew/bin/") ||
     path.startsWith("/usr/local/bin/") ||

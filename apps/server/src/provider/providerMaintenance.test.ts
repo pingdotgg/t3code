@@ -9,6 +9,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import { HttpClient } from "effect/unstable/http";
+import { GrokMaintenanceResolver } from "./Drivers/GrokDriver.ts";
 import {
   createProviderVersionAdvisory,
   enrichProviderSnapshotWithVersionAdvisory,
@@ -417,6 +418,59 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           },
         });
       }),
+  );
+
+  it.effect("resolves Grok native updates only for the standalone installer path", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-grok-native-capabilities");
+      const nativeBinDir = NodePath.join(tempDir, ".grok", "bin");
+      NodeFS.mkdirSync(nativeBinDir, { recursive: true });
+      const nativeGrokPath = NodePath.join(nativeBinDir, "grok");
+      NodeFS.writeFileSync(nativeGrokPath, "#!/bin/sh\n");
+      NodeFS.chmodSync(nativeGrokPath, 0o755);
+      const realNativeGrokPath = NodeFS.realpathSync(nativeGrokPath);
+
+      const nativeCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        GrokMaintenanceResolver,
+        {
+          binaryPath: "grok",
+          env: { PATH: nativeBinDir },
+        },
+      ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+      expect(nativeCapabilities).toMatchObject({
+        provider: driver("grok"),
+        packageName: "@xai-official/grok",
+        installationLabel: "Managed by native installer",
+        ownershipVerified: true,
+        update: {
+          command: "grok update",
+          executable: realNativeGrokPath,
+          args: ["update"],
+        },
+      });
+
+      const unownedBinDir = NodePath.join(tempDir, "bin");
+      NodeFS.mkdirSync(unownedBinDir, { recursive: true });
+      const unownedGrokPath = NodePath.join(unownedBinDir, "grok");
+      NodeFS.writeFileSync(unownedGrokPath, "#!/bin/sh\n");
+      NodeFS.chmodSync(unownedGrokPath, 0o755);
+
+      const unownedCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        GrokMaintenanceResolver,
+        {
+          binaryPath: "grok",
+          env: { PATH: unownedBinDir },
+        },
+      ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+
+      expect(unownedCapabilities).toMatchObject({
+        provider: driver("grok"),
+        packageName: "@xai-official/grok",
+        ownershipVerified: false,
+        update: null,
+      });
+    }),
   );
 
   it.effect(
