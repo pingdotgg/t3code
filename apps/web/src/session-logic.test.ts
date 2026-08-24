@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  deriveActiveComposerTasks,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   deriveTurnPlans,
@@ -494,6 +495,51 @@ describe("deriveActivePlanState", () => {
     expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
       { durationMs: 3_000, step: "Check", status: "completed" },
     ]);
+  });
+});
+
+describe("deriveActiveComposerTasks", () => {
+  it("restores unfinished tasks from the persisted plan for the active turn", () => {
+    const activeTurnId = TurnId.make("turn-relaunch");
+    const activePlan = deriveActivePlanState(
+      [
+        makeActivity({
+          id: "plan-before-relaunch",
+          createdAt: "2026-08-24T12:00:00.000Z",
+          kind: "turn.plan.updated",
+          summary: "Plan updated",
+          tone: "info",
+          turnId: activeTurnId,
+          payload: {
+            plan: [
+              { step: "Inspect persistence", status: "completed" },
+              { step: "Restore Tasks tab", status: "inProgress" },
+              { step: "Verify reconnect", status: "pending" },
+            ],
+          },
+        }),
+      ],
+      activeTurnId,
+    );
+
+    expect(
+      deriveActiveComposerTasks({
+        activePlan,
+        activeTurnId,
+        latestTurnSettled: false,
+      }),
+    ).toEqual({
+      progress: {
+        step: "Restore Tasks tab",
+        completedSteps: 1,
+        totalSteps: 3,
+      },
+      steps: [
+        { step: "Inspect persistence", status: "completed" },
+        { step: "Restore Tasks tab", status: "inProgress" },
+        { step: "Verify reconnect", status: "pending" },
+      ],
+    });
   });
 });
 

@@ -146,6 +146,23 @@ export interface ActivePlanState {
   }>;
 }
 
+export interface ActiveComposerTasks {
+  progress: {
+    step: string;
+    completedSteps: number;
+    totalSteps: number;
+  };
+  steps: ActivePlanState["steps"];
+}
+
+export function deriveActiveComposerTasks(_input: {
+  activePlan: ActivePlanState | null;
+  activeTurnId: TurnId | null;
+  latestTurnSettled: boolean;
+}): ActiveComposerTasks | null {
+  return null;
+}
+
 export interface LatestProposedPlanState {
   id: OrchestrationProposedPlanId;
   createdAt: string;
