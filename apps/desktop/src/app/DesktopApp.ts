@@ -216,22 +216,6 @@ const bootstrap = Effect.gen(function* () {
     }
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
-    if (!environment.isDevelopment) {
-      const primaryConfig = yield* primaryBackend.currentConfig;
-      if (
-        Option.isSome(primaryConfig) &&
-        Option.isNone(primaryConfig.value.preflightFailure) &&
-        !(yield* Ref.get(state.quitting))
-      ) {
-        yield* desktopWindow.handleBackendConfigured.pipe(
-          Effect.catch((error) =>
-            logBootstrapWarning("failed to open main window after backend configuration", {
-              error: error.message,
-            }),
-          ),
-        );
-      }
-    }
     // Bring up the WSL backend if the user previously enabled it. The
     // primary is already starting; reconcile fires off the WSL register
     // in parallel rather than blocking primary readiness on a possibly

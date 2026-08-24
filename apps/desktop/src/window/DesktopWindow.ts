@@ -86,14 +86,12 @@ export class DesktopWindow extends Context.Service<
     // mode), before the WSL backend that serves the renderer is ready. It is
     // dismissed automatically once the real main window reveals.
     readonly showConnectingSplash: Effect.Effect<void>;
-    // Opens the packaged renderer before backend HTTP readiness and seeds the
-    // existing readiness gate so activation can retry or recreate the window.
-    readonly handleBackendConfigured: Effect.Effect<void, DesktopWindowError>;
-    // Marks the primary backend as ready so `createMainIfBackendReady` and later
-    // app activation can recreate the main window. Packaged startup creates the
-    // window once backend configuration resolves, before HTTP readiness. The
-    // reported httpBaseUrl remains useful for the readiness log and preserves the
-    // callback contract the backend pool drives.
+    // Marks the primary backend as ready so `createMainIfBackendReady` and the
+    // macOS "activate without windows" path may open the real main window. The
+    // renderer now always loads the local client URL (getDesktopUrl) and connects
+    // to the backend through the connection layer, so the reported httpBaseUrl is
+    // no longer used to point the window at the backend — it is kept only for the
+    // readiness log and to preserve the callback contract the backend pool drives.
     readonly handleBackendReady: (httpBaseUrl: URL) => Effect.Effect<void, DesktopWindowError>;
     // Called when the backend transitions back to "not ready" (clean stop,
     // restart, crash). Clears the latch that lets `activate` auto-create a
@@ -276,8 +274,11 @@ export const make = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
-  // Packaged startup seeds the existing readiness latch once the local
-  // renderer is configured. Backend shutdown still clears it as before.
+  // Window-side latch for the primary backend's readiness. Set by
+  // handleBackendReady (driven by the pool's onReady callback), cleared
+  // by handleBackendNotReady (driven by onShutdown). Only consumed by
+  // createMainIfBackendReady, which gates the post-readiness window
+  // open in development and the macOS "activate without windows" path.
   const backendReadyRef = yield* Ref.make(false);
   // The transient "Connecting to WSL" splash window, tracked separately so it
   // is never mistaken for the real main window.
@@ -859,10 +860,6 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.withSpan("desktop.window.activate")),
     createMainIfBackendReady,
     showConnectingSplash,
-    handleBackendConfigured: Effect.gen(function* () {
-      yield* Ref.set(backendReadyRef, true);
-      yield* createMainIfBackendReady;
-    }).pipe(Effect.withSpan("desktop.window.handleBackendConfigured")),
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
