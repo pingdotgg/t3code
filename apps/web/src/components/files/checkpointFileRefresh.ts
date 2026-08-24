@@ -30,10 +30,69 @@ export interface ScopeMarker {
 
 export type ScopeAction = "none" | "refresh";
 
+const INACTIVE_QUERY_ATOM = Atom.make(AsyncResult.initial<never, never>(false)).pipe(
+  Atom.withLabel("checkpoint-query-refresh:inactive"),
+);
+
+export function checkpointRefreshQueryAtom<A, E>(
+  scopeKey: string | null,
+  queryAtom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+): Atom.Atom<AsyncResult.AsyncResult<A, E>> {
+  return scopeKey === null ? INACTIVE_QUERY_ATOM : queryAtom;
+}
+
+export interface ScopeReconciliationState {
+  readonly marker: ScopeMarker | undefined;
+  readonly reconciledSnapshot: CheckpointsSnapshot | undefined;
+  readonly initialFetchSnapshot: CheckpointsSnapshot | null | undefined;
+}
+
+export const MAX_RECONCILED_SCOPES = 256;
+
+export function createScopeReconciliationCache() {
+  const states = new Map<string, ScopeReconciliationState>();
+
+  return {
+    get(scopeKey: string) {
+      const state = states.get(scopeKey);
+      if (state === undefined) return undefined;
+      states.delete(scopeKey);
+      states.set(scopeKey, state);
+      return state;
+    },
+    set(scopeKey: string, state: ScopeReconciliationState) {
+      states.delete(scopeKey);
+      states.set(scopeKey, state);
+      while (states.size > MAX_RECONCILED_SCOPES) {
+        const oldestScopeKey = states.keys().next().value;
+        if (oldestScopeKey === undefined) break;
+        states.delete(oldestScopeKey);
+      }
+    },
+    size() {
+      return states.size;
+    },
+  };
+}
+
+function changedCheckpointIsRelevant(
+  previous: CheckpointsSnapshot,
+  next: CheckpointsSnapshot,
+  isRelevant: (files: ReadonlyArray<OrchestrationCheckpointFile>) => boolean,
+): boolean {
+  // The snapshot atom preserves file-array references across streamed clones.
+  // A changed reference at the same cursor is a placeholder being replaced.
+  return next.checkpoints.some(
+    (checkpoint, index) =>
+      checkpoint.files !== previous.checkpoints[index]?.files && isRelevant(checkpoint.files),
+  );
+}
+
 export function evaluateScopeRefresh(
   marker: ScopeMarker | undefined,
   snapshot: CheckpointsSnapshot,
   isRelevant: (files: ReadonlyArray<OrchestrationCheckpointFile>) => boolean,
+  reconciledSnapshot?: CheckpointsSnapshot,
 ): { readonly marker: ScopeMarker; readonly action: ScopeAction } {
   const nextMarker: ScopeMarker = {
     completedAt: snapshot.latestCompletedAt,
@@ -48,7 +107,52 @@ export function evaluateScopeRefresh(
   const relevant = snapshot.checkpoints.some(
     (checkpoint) => checkpoint.completedAt > marker.completedAt && isRelevant(checkpoint.files),
   );
-  return { marker: nextMarker, action: relevant ? "refresh" : "none" };
+  const replacementIsRelevant =
+    reconciledSnapshot !== undefined &&
+    changedCheckpointIsRelevant(reconciledSnapshot, snapshot, isRelevant);
+  return { marker: nextMarker, action: relevant || replacementIsRelevant ? "refresh" : "none" };
+}
+
+export function reconcileScopeRefresh(
+  state: ScopeReconciliationState | undefined,
+  snapshot: CheckpointsSnapshot | null,
+  firstFetchInFlight: boolean,
+  isRelevant: (files: ReadonlyArray<OrchestrationCheckpointFile>) => boolean,
+): { readonly state: ScopeReconciliationState; readonly action: ScopeAction } {
+  const currentState =
+    state ??
+    ({
+      marker: undefined,
+      reconciledSnapshot: undefined,
+      initialFetchSnapshot: firstFetchInFlight ? snapshot : undefined,
+    } satisfies ScopeReconciliationState);
+
+  if (snapshot === null) {
+    return { state: currentState, action: "none" };
+  }
+
+  const decision = evaluateScopeRefresh(
+    currentState.marker,
+    snapshot,
+    isRelevant,
+    currentState.reconciledSnapshot,
+  );
+  const initialFetchCoversSnapshot =
+    firstFetchInFlight &&
+    currentState.marker === undefined &&
+    currentState.initialFetchSnapshot === snapshot;
+  if (firstFetchInFlight && decision.action === "refresh" && !initialFetchCoversSnapshot) {
+    return { state: currentState, action: "none" };
+  }
+
+  return {
+    state: {
+      marker: decision.marker,
+      reconciledSnapshot: snapshot,
+      initialFetchSnapshot: undefined,
+    },
+    action: firstFetchInFlight ? "none" : decision.action,
+  };
 }
 
 export function checkpointFilesIncludePath(
@@ -110,7 +214,7 @@ export function useCheckpointsSnapshot(threadRef: ScopedThreadRef): CheckpointsS
   return useAtomValue(checkpointsSnapshotAtomFamily(threadKey(threadRef)));
 }
 
-const reconciledScopes = new Map<string, ScopeMarker>();
+const reconciledScopes = createScopeReconciliationCache();
 
 export function useCheckpointQueryRefresh<A, E>(
   scopeKey: string | null,
@@ -120,19 +224,19 @@ export function useCheckpointQueryRefresh<A, E>(
 ): void {
   const currentIsRelevant = useRef(isRelevant);
   currentIsRelevant.current = isRelevant;
-  const result = useAtomValue(queryAtom);
+  const result = useAtomValue(checkpointRefreshQueryAtom(scopeKey, queryAtom));
 
   useEffect(() => {
-    if (scopeKey === null || snapshot === null) return;
-    const marker = reconciledScopes.get(scopeKey);
-    const decision = evaluateScopeRefresh(marker, snapshot, currentIsRelevant.current);
+    if (scopeKey === null) return;
     const firstFetchInFlight = result.waiting && Option.isNone(AsyncResult.value(result));
-    if (decision.action === "refresh" && marker !== undefined && firstFetchInFlight) {
-      return;
-    }
-    reconciledScopes.set(scopeKey, decision.marker);
+    const decision = reconcileScopeRefresh(
+      reconciledScopes.get(scopeKey),
+      snapshot,
+      firstFetchInFlight,
+      currentIsRelevant.current,
+    );
+    reconciledScopes.set(scopeKey, decision.state);
     if (decision.action === "none") return;
-    if (firstFetchInFlight) return;
     appAtomRegistry.refresh(queryAtom);
   }, [scopeKey, snapshot, result, queryAtom]);
 }

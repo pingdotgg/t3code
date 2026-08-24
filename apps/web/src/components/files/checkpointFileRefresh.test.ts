@@ -1,11 +1,17 @@
 import { CheckpointRef, type OrchestrationCheckpointSummary, TurnId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  MAX_RECONCILED_SCOPES,
   type CheckpointsSnapshot,
+  type ScopeReconciliationState,
   buildSnapshot,
   checkpointFilesIncludePath,
+  checkpointRefreshQueryAtom,
+  createScopeReconciliationCache,
   evaluateScopeRefresh,
+  reconcileScopeRefresh,
 } from "./checkpointFileRefresh";
 
 function file(path: string) {
@@ -31,6 +37,35 @@ function snapshot(
 
 const touchesOpenFile = (files: ReadonlyArray<ReturnType<typeof file>>) =>
   checkpointFilesIncludePath(files, "src/main.tsx");
+
+function emptyReconciliationState(): ScopeReconciliationState {
+  return {
+    marker: undefined,
+    reconciledSnapshot: undefined,
+    initialFetchSnapshot: undefined,
+  };
+}
+
+describe("checkpointRefreshQueryAtom", () => {
+  it("does not subscribe to a query while its scope is disabled", () => {
+    const subscribed = vi.fn();
+    const queryAtom = Atom.make(() => {
+      subscribed();
+      return AsyncResult.initial<string, never>(false);
+    });
+    const registry = AtomRegistry.make();
+
+    const unmountInactive = registry.mount(checkpointRefreshQueryAtom(null, queryAtom));
+    expect(subscribed).not.toHaveBeenCalled();
+
+    const unmountActive = registry.mount(checkpointRefreshQueryAtom("file:scope", queryAtom));
+    expect(subscribed).toHaveBeenCalledOnce();
+
+    unmountActive();
+    unmountInactive();
+    registry.dispose();
+  });
+});
 
 describe("evaluateScopeRefresh", () => {
   it("asks to refresh on first observation, since prior freshness is unprovable", () => {
@@ -110,6 +145,75 @@ describe("evaluateScopeRefresh", () => {
         { completedAt: "T4", files: [file("src/main.tsx")] },
         { completedAt: "T5", files: [file("docs/other.md")] },
       ]),
+      touchesOpenFile,
+    );
+    expect(result.action).toBe("refresh");
+  });
+});
+
+describe("reconcileScopeRefresh", () => {
+  it("refreshes a checkpoint that appears while the initial query is waiting", () => {
+    const firstCheckpoint = snapshot(1, [{ completedAt: "T1", files: [file("src/main.tsx")] }]);
+    const latestCheckpoint = snapshot(2, [
+      { completedAt: "T1", files: [file("src/main.tsx")] },
+      { completedAt: "T2", files: [file("src/main.tsx")] },
+    ]);
+
+    let result = reconcileScopeRefresh(undefined, null, true, touchesOpenFile);
+    result = reconcileScopeRefresh(result.state, firstCheckpoint, true, touchesOpenFile);
+    expect(result.action).toBe("none");
+    expect(result.state.marker).toBeUndefined();
+
+    result = reconcileScopeRefresh(result.state, latestCheckpoint, true, touchesOpenFile);
+    expect(result.action).toBe("none");
+    expect(result.state.marker).toBeUndefined();
+
+    result = reconcileScopeRefresh(result.state, latestCheckpoint, false, touchesOpenFile);
+    expect(result.action).toBe("refresh");
+    expect(result.state.marker).toEqual({ completedAt: "T2", maxTurnCount: 2 });
+
+    result = reconcileScopeRefresh(result.state, latestCheckpoint, false, touchesOpenFile);
+    expect(result.action).toBe("none");
+  });
+
+  it("does not refetch when the initial query started with the snapshot it read", () => {
+    const existingCheckpoint = snapshot(1, [{ completedAt: "T1", files: [file("src/main.tsx")] }]);
+
+    let result = reconcileScopeRefresh(undefined, existingCheckpoint, true, touchesOpenFile);
+    expect(result.action).toBe("none");
+    expect(result.state.marker).toEqual({ completedAt: "T1", maxTurnCount: 1 });
+
+    result = reconcileScopeRefresh(result.state, existingCheckpoint, false, touchesOpenFile);
+    expect(result.action).toBe("none");
+  });
+
+  it("refreshes when a placeholder gains files without advancing its cursor", () => {
+    const placeholder = snapshot(1, [{ completedAt: "T1", files: [] }]);
+    const captured = snapshot(1, [{ completedAt: "T1", files: [file("src/main.tsx")] }]);
+
+    let result = reconcileScopeRefresh(undefined, placeholder, true, touchesOpenFile);
+    result = reconcileScopeRefresh(result.state, placeholder, false, touchesOpenFile);
+    expect(result.action).toBe("none");
+
+    result = reconcileScopeRefresh(result.state, captured, false, touchesOpenFile);
+    expect(result.action).toBe("refresh");
+  });
+
+  it("bounds retained scope state and safely refreshes an evicted scope", () => {
+    const cache = createScopeReconciliationCache();
+    const state = emptyReconciliationState();
+    cache.set("evicted", state);
+    for (let index = 0; index < MAX_RECONCILED_SCOPES; index += 1) {
+      cache.set(`scope-${index}`, state);
+    }
+
+    expect(cache.size()).toBe(MAX_RECONCILED_SCOPES);
+    expect(cache.get("evicted")).toBeUndefined();
+
+    const result = reconcileScopeRefresh(
+      cache.get("evicted"),
+      snapshot(1, [{ completedAt: "T1", files: [file("src/main.tsx")] }]),
+      false,
       touchesOpenFile,
     );
     expect(result.action).toBe("refresh");
