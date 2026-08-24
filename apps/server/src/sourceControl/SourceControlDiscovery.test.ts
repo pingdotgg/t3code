@@ -12,6 +12,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
+import * as GiteaCli from "./GiteaCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -30,6 +31,7 @@ const sourceControlProviderRegistryTestLayer = (input: {
         Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
+        Layer.mock(GiteaCli.GiteaCli)({}),
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
         Layer.mock(VcsProcess.VcsProcess)(input.process),
       ),
@@ -161,6 +163,12 @@ it.effect("reports implemented tools separately from locally available executabl
           auth: "unauthenticated",
           account: Option.none(),
         },
+        {
+          kind: "gitea",
+          status: "missing",
+          auth: "unknown",
+          account: Option.none(),
+        },
       ],
     );
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
@@ -207,6 +215,22 @@ Logged in to gitlab.com as gitlab-user
         input.args.join(" ") === "account show --query user.name -o tsv"
       ) {
         return Effect.succeed(processOutput("azure-user@example.com\n"));
+      }
+      if (input.command === "tea" && input.args.join(" ") === "logins list --output json") {
+        // Shape captured from tea 0.15.1: `default` is a string, and no token is included.
+        return Effect.succeed(
+          processOutput(
+            JSON.stringify([
+              {
+                name: "self-hosted",
+                url: "https://git.example.com",
+                ssh_host: "git.example.com",
+                user: "gitea-user",
+                default: "true",
+              },
+            ]),
+          ),
+        );
       }
       return Effect.fail(
         new VcsProcessSpawnError({
@@ -275,6 +299,12 @@ Logged in to gitlab.com as gitlab-user
           kind: "bitbucket",
           auth: "authenticated",
           account: Option.some("bitbucket-user"),
+          detail: Option.none(),
+        },
+        {
+          kind: "gitea",
+          auth: "authenticated",
+          account: Option.some("gitea-user"),
           detail: Option.none(),
         },
       ],

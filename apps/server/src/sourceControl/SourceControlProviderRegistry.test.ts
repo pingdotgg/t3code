@@ -14,6 +14,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
+import * as GiteaCli from "./GiteaCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
@@ -92,6 +93,7 @@ function makeRegistry(input: {
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
+        Layer.mock(GiteaCli.GiteaCli)({}),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
@@ -291,5 +293,105 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "azure-devops");
+  }),
+);
+
+/**
+ * `tea logins list --output json` output for a mock. Keyed on the command so the GitLab spec, which
+ * also refines unknown remotes, is never handed Gitea's JSON.
+ */
+const teaLoginsProcess = (logins: ReadonlyArray<Record<string, string>>) => ({
+  run: (input: VcsProcess.VcsProcessInput) =>
+    input.command === "tea"
+      ? Effect.succeed(processOutput(JSON.stringify(logins)))
+      : Effect.succeed(processOutput("")),
+});
+
+it.effect("routes gitea.com remotes to the Gitea provider", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@gitea.com:owner/repo.git" }],
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "gitea");
+  }),
+);
+
+it.effect("refines an unmarked self-hosted remote to Gitea when tea is authenticated for it", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      // Nothing in this hostname says "gitea"; only tea's login list can identify it.
+      remotes: [{ name: "origin", url: "git@git.example.com:owner/repo.git" }],
+      process: teaLoginsProcess([
+        {
+          name: "self-hosted",
+          url: "https://git.example.com",
+          ssh_host: "git.example.com",
+          user: "mario",
+          default: "true",
+        },
+      ]),
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "gitea");
+  }),
+);
+
+it.effect("refines a self-hosted Gitea remote whose SSH and HTTPS ports differ", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://code.home.internal:3000/team/project.git" }],
+      process: teaLoginsProcess([
+        {
+          name: "home",
+          url: "https://code.home.internal:3000",
+          ssh_host: "code.home.internal",
+          user: "mario",
+          default: "true",
+        },
+      ]),
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "gitea");
+  }),
+);
+
+it.effect("leaves an unrelated remote unknown when tea has no login for that host", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@git.unrelated.example:owner/repo.git" }],
+      process: teaLoginsProcess([
+        {
+          name: "self-hosted",
+          url: "https://git.example.com",
+          ssh_host: "git.example.com",
+          user: "mario",
+          default: "true",
+        },
+      ]),
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "unknown");
+  }),
+);
+
+it.effect("leaves a remote unknown when tea reports no logins at all", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@git.example.com:owner/repo.git" }],
+      process: teaLoginsProcess([]),
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "unknown");
   }),
 );
