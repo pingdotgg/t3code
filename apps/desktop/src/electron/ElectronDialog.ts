@@ -6,8 +6,6 @@ import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
 
-const CONFIRM_BUTTON_INDEX = 1;
-
 export class ElectronDialogPickFolderError extends Schema.TaggedErrorClass<ElectronDialogPickFolderError>()(
   "ElectronDialogPickFolderError",
   {
@@ -35,20 +33,6 @@ export class ElectronDialogPickFilesError extends Schema.TaggedErrorClass<Electr
     const owner = this.ownerWindowId === null ? "the application" : `window ${this.ownerWindowId}`;
     const defaultPath = this.defaultPath === null ? "no default path" : this.defaultPath;
     return `Failed to open the Electron file picker for ${owner} with ${defaultPath}.`;
-  }
-}
-
-export class ElectronDialogConfirmError extends Schema.TaggedErrorClass<ElectronDialogConfirmError>()(
-  "ElectronDialogConfirmError",
-  {
-    ownerWindowId: Schema.NullOr(Schema.Number),
-    promptLength: Schema.Number,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    const owner = this.ownerWindowId === null ? "the application" : `window ${this.ownerWindowId}`;
-    return `Failed to open an Electron confirmation dialog for ${owner} with a ${this.promptLength}-character prompt.`;
   }
 }
 
@@ -85,7 +69,6 @@ export class ElectronDialogShowErrorBoxError extends Schema.TaggedErrorClass<Ele
 export const ElectronDialogError = Schema.Union([
   ElectronDialogPickFolderError,
   ElectronDialogPickFilesError,
-  ElectronDialogConfirmError,
   ElectronDialogShowMessageBoxError,
   ElectronDialogShowErrorBoxError,
 ]);
@@ -101,11 +84,7 @@ export interface ElectronDialogPickFilesInput {
   readonly owner: Option.Option<Electron.BrowserWindow>;
   readonly defaultPath: Option.Option<string>;
   readonly filters: readonly Electron.FileFilter[];
-}
-
-export interface ElectronDialogConfirmInput {
-  readonly owner: Option.Option<Electron.BrowserWindow>;
-  readonly message: string;
+  readonly multiple: boolean;
 }
 
 export class ElectronDialog extends Context.Service<
@@ -117,9 +96,6 @@ export class ElectronDialog extends Context.Service<
     readonly pickFiles: (
       input: ElectronDialogPickFilesInput,
     ) => Effect.Effect<readonly string[], ElectronDialogPickFilesError>;
-    readonly confirm: (
-      input: ElectronDialogConfirmInput,
-    ) => Effect.Effect<boolean, ElectronDialogConfirmError>;
     readonly showMessageBox: (
       options: Electron.MessageBoxOptions,
     ) => Effect.Effect<Electron.MessageBoxReturnValue, ElectronDialogShowMessageBoxError>;
@@ -169,7 +145,7 @@ export const make = ElectronDialog.of({
     });
     const defaultPath = Option.getOrNull(input.defaultPath);
     const openDialogOptions: Electron.OpenDialogOptions = {
-      properties: ["openFile", "multiSelections"],
+      properties: input.multiple ? ["openFile", "multiSelections"] : ["openFile"],
       filters: [...input.filters],
       ...(defaultPath === null ? {} : { defaultPath }),
     };
@@ -187,39 +163,6 @@ export const make = ElectronDialog.of({
         }),
     });
     return result.canceled ? [] : result.filePaths;
-  }),
-  confirm: Effect.fn("desktop.electron.dialog.confirm")(function* (input) {
-    const normalizedMessage = input.message.trim();
-    if (normalizedMessage.length === 0) {
-      return false;
-    }
-
-    const options = {
-      type: "question" as const,
-      buttons: ["No", "Yes"],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-      message: normalizedMessage,
-    };
-    const ownerWindowId = Option.match(input.owner, {
-      onNone: () => null,
-      onSome: (owner) => owner.id,
-    });
-    const result = yield* Effect.tryPromise({
-      try: () =>
-        Option.match(input.owner, {
-          onNone: () => Electron.dialog.showMessageBox(options),
-          onSome: (owner) => Electron.dialog.showMessageBox(owner, options),
-        }),
-      catch: (cause) =>
-        new ElectronDialogConfirmError({
-          ownerWindowId,
-          promptLength: normalizedMessage.length,
-          cause,
-        }),
-    });
-    return result.response === CONFIRM_BUTTON_INDEX;
   }),
   showMessageBox: (options) =>
     Effect.tryPromise({

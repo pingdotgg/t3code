@@ -1,4 +1,11 @@
-import { ChevronDownIcon, ChevronUpIcon, MousePointer2Icon, PlusIcon, XIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ChevronUpIcon,
+  MousePointer2Icon,
+  PaintbrushIcon,
+  PlusIcon,
+  XIcon,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -20,8 +27,10 @@ import {
   parseThemeFile,
   removeCustomTheme,
   themeIdFromName,
+  updateThemeColorFamily,
   updateCustomTheme,
   type ThemeAppearance,
+  type ThemeColors,
   type ThemeColorRole,
   type ThemeDefinition,
 } from "../../themePalette";
@@ -42,62 +51,189 @@ import {
   type ThemeElementInspection,
 } from "./themeInspector";
 
-const THEME_EDITOR_PRIMARY_ROLES: ReadonlyArray<ThemeColorRole> = [
-  "canvas",
-  "chrome",
-  "sidebar",
-  "surface",
-  "text",
-  "textMuted",
-  "placeholder",
-  "secondaryLabel",
-  "iconMuted",
-  "accent",
-  "messageSurface",
-  "messageAction",
-];
-
 const THEME_EDITOR_SIMPLE_ROLES: ReadonlyArray<ThemeColorRole> = ["canvas", "accent"];
 
-const THEME_EDITOR_STATUS_ROLES: ReadonlyArray<ThemeColorRole> = [
-  "error",
-  "errorForeground",
-  "errorSurface",
-  "warning",
-  "warningForeground",
-  "warningSurface",
-  "update",
-  "updateForeground",
-  "updateSurface",
-];
-
-const THEME_EDITOR_ADVANCED_ROLES = THEME_COLOR_ROLES.filter(
-  (role) => !THEME_EDITOR_PRIMARY_ROLES.includes(role) && !THEME_EDITOR_STATUS_ROLES.includes(role),
-);
+type ThemeEditorColorFamily = Readonly<{
+  id: string;
+  label: string;
+  role: ThemeColorRole;
+  roles: ReadonlyArray<ThemeColorRole>;
+}>;
 
 const THEME_EDITOR_ROLE_GROUPS: ReadonlyArray<{
   id: string;
   title: string;
-  roles: ReadonlyArray<ThemeColorRole>;
+  families: ReadonlyArray<ThemeEditorColorFamily>;
 }> = [
   {
-    id: "main",
-    title: "Main colors",
-    roles: THEME_EDITOR_PRIMARY_ROLES,
+    id: "foundation",
+    title: "Foundation",
+    families: [
+      {
+        id: "background",
+        label: "Background",
+        role: "canvas",
+        roles: ["canvas", "chrome", "toolbar"],
+      },
+      { id: "surface", label: "Surface", role: "surface", roles: ["surface"] },
+      {
+        id: "raised-surface",
+        label: "Raised surface",
+        role: "surfaceRaised",
+        roles: ["surfaceRaised"],
+      },
+      {
+        id: "overlay",
+        label: "Overlay",
+        role: "surfaceOverlay",
+        roles: ["surfaceOverlay"],
+      },
+      {
+        id: "text",
+        label: "Text",
+        role: "text",
+        roles: ["text", "toolbarForeground", "toolbarControlForeground"],
+      },
+      {
+        id: "muted-text",
+        label: "Muted text",
+        role: "mutedForeground",
+        roles: [
+          "textMuted",
+          "mutedForeground",
+          "placeholder",
+          "secondaryLabel",
+          "iconMuted",
+          "sidebarMutedForeground",
+        ],
+      },
+      {
+        id: "border",
+        label: "Border",
+        role: "border",
+        roles: ["border", "toolbarBorder", "sidebarBorder"],
+      },
+      { id: "input", label: "Input", role: "input", roles: ["input"] },
+    ],
+  },
+  {
+    id: "brand-content",
+    title: "Brand & content",
+    families: [
+      {
+        id: "subtle-surface",
+        label: "Subtle surface",
+        role: "secondary",
+        roles: ["secondary", "secondaryForeground", "muted", "toolbarControl"],
+      },
+      {
+        id: "highlight-surface",
+        label: "Highlight surface",
+        role: "accentSurface",
+        roles: ["accentSurface", "accentSurfaceForeground", "toolbarControlHover"],
+      },
+      {
+        id: "accent",
+        label: "Accent",
+        role: "accent",
+        roles: [
+          "accent",
+          "accentForeground",
+          "focus",
+          "update",
+          "updateForeground",
+          "updateSurface",
+          "terminalCursor",
+        ],
+      },
+      {
+        id: "action",
+        label: "Action",
+        role: "messageAction",
+        roles: ["messageAction", "messageActionForeground", "messageActionHover"],
+      },
+      {
+        id: "message-surface",
+        label: "Message surface",
+        role: "messageSurface",
+        roles: ["messageSurface", "messageForeground"],
+      },
+      {
+        id: "code-surface",
+        label: "Code surface",
+        role: "codeBackground",
+        roles: ["codeBackground", "codeForeground"],
+      },
+    ],
+  },
+  {
+    id: "context",
+    title: "Context",
+    families: [
+      {
+        id: "sidebar-background",
+        label: "Sidebar background",
+        role: "sidebar",
+        roles: ["sidebar", "sidebarForeground"],
+      },
+      {
+        id: "sidebar-controls",
+        label: "Sidebar controls",
+        role: "sidebarControlSurface",
+        roles: ["sidebarControlSurface"],
+      },
+      {
+        id: "sidebar-selection",
+        label: "Sidebar selection",
+        role: "sidebarRowSelected",
+        roles: ["sidebarRowHover", "sidebarRowActive", "sidebarRowSelected"],
+      },
+      {
+        id: "terminal-background",
+        label: "Terminal background",
+        role: "terminalBackground",
+        roles: [
+          "terminalBackground",
+          "terminalForeground",
+          "terminalSelection",
+          "terminalScrollbar",
+          "terminalScrollbarHover",
+        ],
+      },
+    ],
   },
   {
     id: "status",
-    title: "Status colors",
-    roles: THEME_EDITOR_STATUS_ROLES,
-  },
-  {
-    id: "additional",
-    title: "Other colors",
-    roles: THEME_EDITOR_ADVANCED_ROLES,
+    title: "Status",
+    families: [
+      {
+        id: "error",
+        label: "Error",
+        role: "error",
+        roles: ["error", "errorForeground", "errorSurface"],
+      },
+      {
+        id: "warning",
+        label: "Warning",
+        role: "warning",
+        roles: ["warning", "warningForeground", "warningSurface"],
+      },
+    ],
   },
 ];
 
-type ThemeEditorColors = Record<ThemeColorRole, string>;
+const THEME_EDITOR_COLOR_FAMILIES = THEME_EDITOR_ROLE_GROUPS.flatMap((group) => group.families);
+const THEME_EDITOR_COLOR_FAMILY_BY_ROLE = new Map(
+  THEME_EDITOR_COLOR_FAMILIES.flatMap((family) =>
+    family.roles.map((role) => [role, family] as const),
+  ),
+);
+
+function getThemeEditorColorFamily(role: ThemeColorRole): ThemeEditorColorFamily | null {
+  return THEME_EDITOR_COLOR_FAMILY_BY_ROLE.get(role) ?? null;
+}
+
+type ThemeEditorColors = ThemeColors;
 type ThemeEditorColorsByAppearance = Record<ThemeAppearance, ThemeEditorColors>;
 
 // A draft with no source theme starts as the standard T3 Code look — the
@@ -165,7 +301,6 @@ export function ThemeEditorPanel({
   const isEditing = editingTheme !== null;
   const [name, setName] = useState("");
   const [activeAppearance, setActiveAppearance] = useState<ThemeAppearance>(initialAppearance);
-  const [sidebarArtwork, setSidebarArtwork] = useState(false);
   const [isAdvanced, setIsAdvanced] = useState(false);
   const [colorsByAppearance, setColorsByAppearance] = useState<ThemeEditorColorsByAppearance>(() =>
     getThemeEditorColorsByAppearance(),
@@ -179,7 +314,6 @@ export function ThemeEditorPanel({
   const [isInspecting, setIsInspecting] = useState(false);
   const [selectedRole, setSelectedRole] = useState<ThemeColorRole | null>(null);
   const [usageCount, setUsageCount] = useState<number | null>(null);
-  const previousMergeTargetIdRef = useRef<string | null>(null);
   // Null parks the panel at its default corner; a value is a dragged spot,
   // kept clamped so the header can always be grabbed again.
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -230,7 +364,6 @@ export function ThemeEditorPanel({
     };
     window.addEventListener("resize", clamp);
     return () => window.removeEventListener("resize", clamp);
-    // oxlint-disable-next-line exhaustive-deps -- clampPosition reads live layout only.
   }, [isMinimized, open]);
 
   // The draft only reaches the live app once this open has been seeded;
@@ -261,9 +394,6 @@ export function ThemeEditorPanel({
 
       setName(editingTheme?.label ?? seedName ?? "");
       setActiveAppearance(nextAppearance);
-      // Artwork is opt-in for new themes, including duplicates. Editing keeps
-      // the theme's existing choice.
-      setSidebarArtwork(editingTheme?.sidebarArtwork === true);
       // Themes saved by the guided editor carry the managed flag; anything
       // else (imports, hand-edited files, older saves) opens in advanced mode
       // so guided regeneration cannot silently discard hand-tuned colors. A
@@ -321,18 +451,6 @@ export function ThemeEditorPanel({
   const mergeTargetId = mergeTarget?.id ?? null;
   const takenAppearancesKey = takenAppearances.join(",");
   useEffect(() => {
-    if (previousMergeTargetIdRef.current === mergeTargetId) return;
-    previousMergeTargetIdRef.current = mergeTargetId;
-    // A matching name makes that existing theme the surviving merge target.
-    // Seed theme-level options from it so adding a palette or renaming onto it
-    // does not silently reset them. Leaving the merge restores the edited
-    // theme's option (or the off-by-default choice for a new theme).
-    setSidebarArtwork(
-      mergeTarget ? mergeTarget.sidebarArtwork === true : editingTheme?.sidebarArtwork === true,
-    );
-  }, [editingTheme, mergeTarget, mergeTargetId]);
-
-  useEffect(() => {
     if (isEditing || mergeTargetId === null) return;
     const taken = takenAppearancesKey.split(",").filter(Boolean) as ThemeAppearance[];
     if (taken.length !== 1) return;
@@ -347,8 +465,8 @@ export function ThemeEditorPanel({
   // comes back when the editor closes, including on cancel.
   useEffect(() => {
     if (!open || !isDraftSeeded) return;
-    applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance, sidebarArtwork);
-  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open, sidebarArtwork]);
+    applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
+  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -366,9 +484,11 @@ export function ThemeEditorPanel({
 
         return {
           ...current,
-          [activeAppearance]: shouldManageColors
-            ? getManagedEditorColors(activeAppearance, nextColors)
-            : nextColors,
+          [activeAppearance]: isAdvanced
+            ? updateThemeColorFamily(activeAppearance, current[activeAppearance], role, value)
+            : shouldManageColors
+              ? getManagedEditorColors(activeAppearance, nextColors)
+              : nextColors,
         };
       });
       if (!isAdvanced && THEME_EDITOR_SIMPLE_ROLES.includes(role) && isThemeEditorColor(value)) {
@@ -382,8 +502,9 @@ export function ThemeEditorPanel({
   );
 
   const selectThemeRole = useCallback((role: ThemeColorRole, reveal = false) => {
-    setSelectedRole(role);
-    if (!THEME_EDITOR_SIMPLE_ROLES.includes(role)) {
+    const visibleRole = getThemeEditorColorFamily(role)?.role ?? role;
+    setSelectedRole(visibleRole);
+    if (!THEME_EDITOR_SIMPLE_ROLES.includes(visibleRole)) {
       setIsAdvanced(true);
       setRoleQuery("");
     }
@@ -391,7 +512,7 @@ export function ThemeEditorPanel({
 
     requestAnimationFrame(() => {
       panelRef.current
-        ?.querySelector(`[data-theme-color-role="${role}"]`)
+        ?.querySelector(`[data-theme-color-role="${visibleRole}"]`)
         ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   }, []);
@@ -407,13 +528,15 @@ export function ThemeEditorPanel({
   }, []);
 
   const selectedHighlightRoles = selectedRole
-    ? !isAdvanced && THEME_EDITOR_SIMPLE_ROLES.includes(selectedRole)
-      ? THEME_COLOR_ROLES.filter(
-          (role) =>
-            colorsByAppearance[activeAppearance][role].trim().toLowerCase() ===
-            colorsByAppearance[activeAppearance][selectedRole].trim().toLowerCase(),
-        )
-      : [selectedRole]
+    ? isAdvanced
+      ? (getThemeEditorColorFamily(selectedRole)?.roles ?? [selectedRole])
+      : THEME_EDITOR_SIMPLE_ROLES.includes(selectedRole)
+        ? THEME_COLOR_ROLES.filter(
+            (role) =>
+              colorsByAppearance[activeAppearance][role].trim().toLowerCase() ===
+              colorsByAppearance[activeAppearance][selectedRole].trim().toLowerCase(),
+          )
+        : [selectedRole]
     : [];
   const selectedHighlightRolesKey = selectedHighlightRoles.join(",");
 
@@ -508,7 +631,10 @@ export function ThemeEditorPanel({
     };
     const showInspection = (inspection: ThemeElementInspection) => {
       hoverInspection = inspection;
-      showThemeInspectorHover(inspection, getThemeRoleLabel(inspection.role));
+      showThemeInspectorHover(
+        inspection,
+        getThemeEditorColorFamily(inspection.role)?.label ?? getThemeRoleLabel(inspection.role),
+      );
     };
     const handlePointerOver = (event: PointerEvent) => {
       const target = event.target;
@@ -571,7 +697,11 @@ export function ThemeEditorPanel({
       hoverFrame ??= requestAnimationFrame(() => {
         hoverFrame = null;
         if (hoverInspection) {
-          showThemeInspectorHover(hoverInspection, getThemeRoleLabel(hoverInspection.role));
+          showThemeInspectorHover(
+            hoverInspection,
+            getThemeEditorColorFamily(hoverInspection.role)?.label ??
+              getThemeRoleLabel(hoverInspection.role),
+          );
         }
       });
     };
@@ -628,7 +758,7 @@ export function ThemeEditorPanel({
     [activeAppearance, editingTheme, selectedRole],
   );
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = () => {
     if (!name.trim()) {
       setError("Name your theme first.");
       return;
@@ -663,8 +793,8 @@ export function ThemeEditorPanel({
           return;
         }
         mergedAppearance = editedModes[0] ?? null;
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: mergeTarget.id,
             name: mergeTarget.label,
@@ -674,10 +804,10 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               ...Object.fromEntries(editedModes.map((mode) => [mode, colorsForSave[mode]])),
             },
-            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
-        );
+          ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+        });
         retiredTheme = editingTheme;
         try {
           removeCustomTheme(editingTheme.id);
@@ -695,8 +825,8 @@ export function ThemeEditorPanel({
       } else if (editingTheme) {
         const baseAppearance = editingTheme.appearance;
         const variantAppearance = baseAppearance === "light" ? "dark" : "light";
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: editingTheme.id,
             name,
@@ -705,10 +835,10 @@ export function ThemeEditorPanel({
             ...(getThemeModes(editingTheme).length > 1
               ? { variants: { [variantAppearance]: colorsForSave[variantAppearance] } }
               : {}),
-            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
-        );
+          ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
+        });
       } else if (mergeTarget) {
         if (takenAppearances.includes(activeAppearance)) {
           setError(
@@ -721,8 +851,8 @@ export function ThemeEditorPanel({
         // survives when every palette in the theme came from the guided
         // editor.
         mergedAppearance = activeAppearance;
-        savedTheme = updateCustomTheme(
-          parseThemeFile({
+        savedTheme = updateCustomTheme({
+          ...parseThemeFile({
             version: THEME_FILE_VERSION,
             id: mergeTarget.id,
             name: mergeTarget.label,
@@ -732,10 +862,10 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               [activeAppearance]: colorsForSave[activeAppearance],
             },
-            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
-        );
+          ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
+        });
       } else {
         savedTheme = installCustomTheme(
           parseThemeFile({
@@ -743,7 +873,6 @@ export function ThemeEditorPanel({
             name,
             appearance: activeAppearance,
             colors: colorsForSave[activeAppearance],
-            ...(sidebarArtwork ? { sidebarArtwork: true } : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
         );
@@ -784,20 +913,7 @@ export function ThemeEditorPanel({
             : "Could not create the theme.",
       );
     }
-  }, [
-    activeAppearance,
-    colorsByAppearance,
-    editingTheme,
-    isAdvanced,
-    isEditing,
-    mergeTarget,
-    name,
-    onOpenChange,
-    onSaved,
-    sidebarArtwork,
-    simpleColorsDirtyByAppearance,
-    takenAppearances,
-  ]);
+  };
 
   const renderNameField = () => (
     <label className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
@@ -854,20 +970,6 @@ export function ThemeEditorPanel({
     </div>
   );
 
-  const renderSidebarArtworkToggle = () => (
-    <label className="grid cursor-pointer grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
-      <span className="text-sm font-medium">Sidebar artwork</span>
-      <span className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-        <span>Show T3 Code environment artwork</span>
-        <Switch
-          aria-label="Allow sidebar artwork with this theme"
-          checked={sidebarArtwork}
-          onCheckedChange={(checked) => setSidebarArtwork(Boolean(checked))}
-        />
-      </span>
-    </label>
-  );
-
   const renderColorsHeader = () => (
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-start gap-3">
       <div>
@@ -900,19 +1002,20 @@ export function ThemeEditorPanel({
   );
 
   const renderRoleFields = (
-    roles: ReadonlyArray<ThemeColorRole>,
+    families: ReadonlyArray<ThemeEditorColorFamily>,
     gridClassName = "grid gap-2 sm:grid-cols-2",
   ) => (
     <div className={gridClassName}>
-      {roles.map((role) => (
+      {families.map((family) => (
         <ThemeColorField
-          key={role}
+          key={family.id}
+          label={family.label}
           onChange={updateColor}
           onSelect={selectThemeRole}
           onToggleSelected={toggleThemeRole}
-          role={role}
-          selected={selectedRole === role}
-          value={colorsByAppearance[activeAppearance][role]}
+          role={family.role}
+          selected={selectedRole === family.role}
+          value={colorsByAppearance[activeAppearance][family.role]}
         />
       ))}
     </div>
@@ -922,16 +1025,21 @@ export function ThemeEditorPanel({
     const query = roleQuery.trim().toLowerCase();
     const groups = THEME_EDITOR_ROLE_GROUPS.map((group) => ({
       ...group,
-      roles: group.roles.filter(
-        (role) => !query || getThemeRoleLabel(role).toLowerCase().includes(query),
+      families: group.families.filter(
+        (family) =>
+          !query ||
+          [family.label, ...family.roles.map((role) => getThemeRoleLabel(role))]
+            .join(" ")
+            .toLowerCase()
+            .includes(query),
       ),
-    })).filter((group) => group.roles.length > 0);
+    })).filter((group) => group.families.length > 0);
     return isAdvanced ? (
       <div className="space-y-5">
         {groups.map((group) => (
           <section className="space-y-2" key={group.id}>
             <h4 className="text-sm font-medium text-foreground">{group.title}</h4>
-            {renderRoleFields(group.roles, "grid gap-1")}
+            {renderRoleFields(group.families, "grid gap-1")}
           </section>
         ))}
         {groups.length === 0 ? <p className="text-xs text-muted-foreground">No matches.</p> : null}
@@ -1064,7 +1172,7 @@ export function ThemeEditorPanel({
               {isInspecting
                 ? "Select an element · Esc to cancel"
                 : selectedRole
-                  ? `${getThemeRoleLabel(selectedRole)} · ${usageCount ?? 0} ${usageCount === 1 ? "use" : "uses"}`
+                  ? `${isAdvanced ? (getThemeEditorColorFamily(selectedRole)?.label ?? getThemeRoleLabel(selectedRole)) : getThemeRoleLabel(selectedRole)} · ${usageCount ?? 0} ${usageCount === 1 ? "use" : "uses"}`
                   : "Select a color below"}
             </p>
           )}
@@ -1124,7 +1232,6 @@ export function ThemeEditorPanel({
               </p>
             ) : null}
             {renderAppearanceButtons()}
-            {renderSidebarArtworkToggle()}
             <div className="space-y-3">
               {renderColorsHeader()}
               {renderColorFields()}
@@ -1148,7 +1255,7 @@ export function ThemeEditorPanel({
                 </>
               ) : (
                 <>
-                  <PlusIcon />
+                  <PaintbrushIcon />
                   Create theme
                 </>
               )}

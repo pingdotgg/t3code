@@ -55,10 +55,13 @@ const ICON_SOURCE_FILES = [
 ] as const;
 
 // Matches <link ...> tags or object-like icon metadata where rel/href can appear in any order.
+// The tag pattern is anchored on `<link`, so it only starts at real candidates. Object metadata
+// is matched by scanning brace-free runs instead of by one combined pattern: an unanchored
+// pattern restarts at every offset and rescans forward, which is quadratic on large sources.
 const LINK_ICON_HTML_RE =
   /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i;
-const LINK_ICON_OBJ_RE =
-  /(?=[^}]*\brel\s*:\s*["'](?:icon|shortcut icon)["'])(?=[^}]*\bhref\s*:\s*["']([^"'?]+))[^}]*/i;
+const ICON_REL_RE = /\brel\s*:\s*["'](?:icon|shortcut icon)["']/i;
+const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
 
 export class ProjectFaviconResolutionError extends Schema.TaggedErrorClass<ProjectFaviconResolutionError>()(
   "ProjectFaviconResolutionError",
@@ -91,6 +94,7 @@ export class ProjectFaviconResolver extends Context.Service<
      */
     readonly resolvePath: (
       cwd: string,
+      faviconPath?: string,
     ) => Effect.Effect<string | null, ProjectFaviconResolutionError>;
   }
 >()("t3/project/ProjectFaviconResolver") {}
@@ -98,8 +102,13 @@ export class ProjectFaviconResolver extends Context.Service<
 function extractIconHref(source: string): string | null {
   const htmlMatch = source.match(LINK_ICON_HTML_RE);
   if (htmlMatch?.[1]) return htmlMatch[1];
-  const objMatch = source.match(LINK_ICON_OBJ_RE);
-  if (objMatch?.[1]) return objMatch[1];
+  // Icon metadata counts when `rel` and `href` share a brace-free run, so a run holding `rel`
+  // but no href falls through to the next one rather than ending the search.
+  for (const run of source.split("}")) {
+    if (!ICON_REL_RE.test(run)) continue;
+    const hrefMatch = run.match(ICON_HREF_RE);
+    if (hrefMatch?.[1]) return hrefMatch[1];
+  }
   return null;
 }
 
@@ -128,22 +137,25 @@ export const make = Effect.gen(function* () {
   const findExistingFile = Effect.fn("ProjectFaviconResolver.findExistingFile")(function* (
     projectCwd: string,
     relativeCandidates: ReadonlyArray<string>,
+    candidateScope: "workspace" | "filesystem",
   ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
     for (const relativePath of relativeCandidates) {
-      const candidate = yield* workspacePaths
-        .resolveRelativePathWithinRoot({
-          workspaceRoot: projectCwd,
-          relativePath,
-        })
-        .pipe(
-          Effect.map(Option.some),
-          Effect.catchTags({
-            WorkspacePathOutsideRootError: () =>
-              Effect.succeed(
-                Option.none<{ readonly absolutePath: string; readonly relativePath: string }>(),
-              ),
-          }),
-        );
+      const candidate = yield* (
+        candidateScope === "filesystem" && path.isAbsolute(relativePath)
+          ? Effect.succeed({ absolutePath: relativePath, relativePath })
+          : workspacePaths.resolveRelativePathWithinRoot({
+              workspaceRoot: projectCwd,
+              relativePath,
+            })
+      ).pipe(
+        Effect.map(Option.some),
+        Effect.catchTags({
+          WorkspacePathOutsideRootError: () =>
+            Effect.succeed(
+              Option.none<{ readonly absolutePath: string; readonly relativePath: string }>(),
+            ),
+        }),
+      );
       if (Option.isNone(candidate)) {
         continue;
       }
@@ -168,7 +180,7 @@ export const make = Effect.gen(function* () {
 
   const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
     "ProjectFaviconResolver.resolvePath",
-  )(function* (cwd) {
+  )(function* (cwd, faviconPath) {
     const projectCwd = yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
       Effect.mapError(
         (cause) =>
@@ -179,17 +191,30 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    // A grouped project's saved path can be absent from one checkout. Use it
+    // where it exists and retain automatic discovery for the other checkouts.
+    if (faviconPath !== undefined) {
+      const existing = yield* findExistingFile(projectCwd, [faviconPath], "filesystem");
+      if (existing) {
+        return existing;
+      }
+    }
+
     // A t3.json iconPath takes precedence over the well-known locations.
     const projectFile = yield* projectFileLoader.load(projectCwd);
     if (Option.isSome(projectFile) && projectFile.value.iconPath !== undefined) {
-      const existing = yield* findExistingFile(projectCwd, [projectFile.value.iconPath]);
+      const existing = yield* findExistingFile(
+        projectCwd,
+        [projectFile.value.iconPath],
+        "workspace",
+      );
       if (existing) {
         return existing;
       }
     }
 
     for (const candidate of FAVICON_CANDIDATES) {
-      const existing = yield* findExistingFile(projectCwd, [candidate]);
+      const existing = yield* findExistingFile(projectCwd, [candidate], "workspace");
       if (existing) {
         return existing;
       }
@@ -233,7 +258,7 @@ export const make = Effect.gen(function* () {
       if (!href) {
         continue;
       }
-      const existing = yield* findExistingFile(projectCwd, resolveIconHref(href));
+      const existing = yield* findExistingFile(projectCwd, resolveIconHref(href), "workspace");
       if (existing) {
         return existing;
       }
