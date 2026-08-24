@@ -1,14 +1,13 @@
 import * as ec2 from "@distilled.cloud/aws/ec2";
-import { Region } from "@distilled.cloud/aws/Region";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
-import type { Providers } from "../Providers.ts";
 import { createInternalTags, createTagsList, diffTags } from "../../Tags.ts";
 import type { AccountID } from "../Environment.ts";
 import { AWSEnvironment } from "../Environment.ts";
+import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 
 export type EIPArn =
@@ -103,15 +102,76 @@ export interface EIP extends Resource<
   never,
   Providers
 > {}
+/**
+ * An Elastic IP address — a static, public IPv4 address allocated to your AWS
+ * account that you can attach to instances, network interfaces, or NAT
+ * gateways.
+ *
+ * Allocating an `EIP` reserves the address; you then reference its
+ * `allocationId` from the resource that should use it (for example a public
+ * `NatGateway`). The address is released back to AWS when the resource is
+ * destroyed. The pool-related properties (`publicIpv4Pool`,
+ * `networkBorderGroup`, `customerOwnedIpv4Pool`) are immutable and replace the
+ * address when changed.
+ *
+ * @resource
+ * @section Allocating Elastic IPs
+ * By default an Elastic IP is allocated for use within a VPC (`domain: "vpc"`),
+ * which is the only domain available to modern accounts.
+ * @example VPC-Scoped Elastic IP
+ * ```typescript
+ * const eip = yield* AWS.EC2.EIP("MyEip", {
+ *   domain: "vpc",
+ *   tags: { Name: "app-eip" },
+ * });
+ * ```
+ * This reserves a standard, Amazon-owned public IPv4 address scoped to your VPC;
+ * `domain` defaults to `"vpc"`, so it can be omitted, and `tags` help you find
+ * the address in the console and on the bill.
+ *
+ * @section Bring-Your-Own-IP and Address Pools
+ * If you have onboarded an address range to AWS (BYOIP) or use Outposts, you can
+ * draw the address from a specific pool instead of Amazon's general pool.
+ * @example Allocate from a Public IPv4 (BYOIP) Pool
+ * ```typescript
+ * const eip = yield* AWS.EC2.EIP("ByoipEip", {
+ *   publicIpv4Pool: "ipv4pool-ec2-0abcdef1234567890",
+ *   networkBorderGroup: "us-east-1",
+ * });
+ * ```
+ * `publicIpv4Pool` selects an address from a pool you own rather than a random
+ * Amazon address, and `networkBorderGroup` restricts which zone group AWS
+ * advertises it from (useful for Local and Wavelength Zones).
+ *
+ * @example Allocate from a Customer-Owned Pool (Outposts)
+ * ```typescript
+ * const eip = yield* AWS.EC2.EIP("CoIpEip", {
+ *   customerOwnedIpv4Pool: "ipv4pool-coip-0abcdef1234567890",
+ * });
+ * ```
+ * `customerOwnedIpv4Pool` pulls a customer-owned IP (CoIP) from an
+ * Outposts-associated pool, for workloads that must use your own on-premises
+ * address space.
+ *
+ * @section Using an Elastic IP
+ * @example Attach to a NAT Gateway
+ * ```typescript
+ * const eip = yield* AWS.EC2.EIP("NatEip", {});
+ *
+ * const natGateway = yield* AWS.EC2.NatGateway("NatGateway", {
+ *   subnetId: publicSubnet.subnetId,
+ *   allocationId: eip.allocationId,
+ * });
+ * ```
+ * Downstream resources consume the reserved address through its `allocationId`;
+ * here the EIP becomes the fixed public IP of a NAT gateway.
+ */
 export const EIP = Resource<EIP>("AWS.EC2.EIP");
 
 export const EIPProvider = () =>
   Provider.effect(
     EIP,
     Effect.gen(function* () {
-      const region = yield* Region;
-      const { accountId } = yield* AWSEnvironment;
-
       const createTags = Effect.fn(function* (
         id: string,
         tags?: Record<string, string>,
@@ -126,7 +186,34 @@ export const EIPProvider = () =>
       return {
         stables: ["allocationId", "eipArn", "publicIp"],
 
+        list: () =>
+          Effect.gen(function* () {
+            const { region, accountId } = yield* AWSEnvironment.current;
+            // describeAddresses is non-paginated and returns every Elastic IP
+            // in the account/region in a single response.
+            const result = yield* ec2.describeAddresses({});
+            return (result.Addresses ?? [])
+              .filter(
+                (a): a is ec2.Address & { AllocationId: string } =>
+                  a.AllocationId != null,
+              )
+              .map((address): EIP["Attributes"] => ({
+                allocationId: address.AllocationId as AllocationId,
+                eipArn:
+                  `arn:aws:ec2:${region}:${accountId}:elastic-ip/${address.AllocationId}` as EIPArn,
+                publicIp: address.PublicIp!,
+                publicIpv4Pool: address.PublicIpv4Pool,
+                domain: (address.Domain as "vpc" | "standard") ?? "vpc",
+                networkBorderGroup: address.NetworkBorderGroup,
+                customerOwnedIp: address.CustomerOwnedIp,
+                customerOwnedIpv4Pool: address.CustomerOwnedIpv4Pool,
+                carrierIp: address.CarrierIp,
+              }));
+          }),
+
         read: Effect.fn(function* ({ output }) {
+          const { region, accountId } = yield* AWSEnvironment.current;
+
           if (!output) return undefined;
           const result = yield* ec2.describeAddresses({
             AllocationIds: [output.allocationId],
@@ -167,6 +254,8 @@ export const EIPProvider = () =>
         }),
 
         reconcile: Effect.fn(function* ({ id, news = {}, output, session }) {
+          const { region, accountId } = yield* AWSEnvironment.current;
+
           const desiredTags = yield* createTags(id, news.tags);
 
           // Observe — try to find an existing EIP via the cached allocationId.
@@ -276,11 +365,13 @@ export const EIPProvider = () =>
                     e._tag === "InvalidIPAddress.InUse"
                   );
                 },
-                schedule: Schedule.exponential(1000, 1.5).pipe(
-                  Schedule.both(Schedule.recurs(20)),
-                  Schedule.tapOutput(([, attempt]) =>
+                schedule: Schedule.max([
+                  Schedule.exponential(1000, 1.5),
+                  Schedule.recurs(20),
+                ]).pipe(
+                  Schedule.tap(({ attempt }) =>
                     session.note(
-                      `EIP still in use, waiting for release... (attempt ${attempt + 1})`,
+                      `EIP still in use, waiting for release... (attempt ${attempt})`,
                     ),
                   ),
                 ),

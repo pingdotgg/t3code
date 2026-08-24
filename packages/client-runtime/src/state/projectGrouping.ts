@@ -1,5 +1,9 @@
 import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
-import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScopedProjectRef,
+  SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import type { EnvironmentProject } from "./models.ts";
@@ -165,19 +169,167 @@ export function deriveProjectGroupLabel(input: {
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
   readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
 }): string {
+  const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const sharedDisplayNames = uniqueNonEmptyValues(
     input.members.map((member) => member.repositoryIdentity?.displayName),
   );
+  const sharedRepositoryNames = uniqueNonEmptyValues(
+    input.members.map((member) => member.repositoryIdentity?.name),
+  );
+  const sharedTitle = sharedTitles[0];
+  if (
+    sharedTitles.length === 1 &&
+    sharedTitle !== undefined &&
+    !sharedDisplayNames.includes(sharedTitle) &&
+    !sharedRepositoryNames.includes(sharedTitle)
+  ) {
+    return sharedTitle;
+  }
   if (sharedDisplayNames.length === 1) {
     return sharedDisplayNames[0]!;
   }
 
-  const sharedRepositoryNames = uniqueNonEmptyValues(
-    input.members.map((member) => member.repositoryIdentity?.name),
-  );
   if (sharedRepositoryNames.length === 1) {
     return sharedRepositoryNames[0]!;
   }
 
   return input.representative.title;
+}
+
+export interface ProjectGroupMember<TProject extends EnvironmentProject = EnvironmentProject> {
+  readonly physicalProjectKey: string;
+  readonly project: TProject;
+}
+
+export interface ProjectGroup<TProject extends EnvironmentProject = EnvironmentProject> {
+  readonly key: string;
+  readonly label: string;
+  readonly representative: TProject;
+  readonly members: ReadonlyArray<ProjectGroupMember<TProject>>;
+  readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+}
+
+function projectFreshnessTime(project: EnvironmentProject): number {
+  const updatedAtTime = Date.parse(project.updatedAt);
+  if (Number.isFinite(updatedAtTime)) {
+    return updatedAtTime;
+  }
+  const createdAtTime = Date.parse(project.createdAt);
+  return Number.isFinite(createdAtTime) ? createdAtTime : 0;
+}
+
+function shouldReplacePhysicalProjectWinner<TProject extends EnvironmentProject>(
+  existing: TProject,
+  candidate: TProject,
+): boolean {
+  const freshnessDelta = projectFreshnessTime(candidate) - projectFreshnessTime(existing);
+  return freshnessDelta > 0 || (freshnessDelta === 0 && candidate.id > existing.id);
+}
+
+function selectProjectIdentitySource<TProject extends EnvironmentProject>(
+  projects: ReadonlyArray<TProject>,
+  winner: TProject,
+): TProject {
+  if (winner.repositoryIdentity !== null) {
+    return winner;
+  }
+
+  let freshestIdentifiedProject: TProject | null = null;
+  for (const project of projects) {
+    if (project.repositoryIdentity === null) {
+      continue;
+    }
+    if (
+      freshestIdentifiedProject === null ||
+      shouldReplacePhysicalProjectWinner(freshestIdentifiedProject, project)
+    ) {
+      freshestIdentifiedProject = project;
+    }
+  }
+  return freshestIdentifiedProject ?? winner;
+}
+
+/**
+ * Builds logical project groups without losing the physical projects that
+ * remain the actual navigation and task-creation targets.
+ *
+ * Presentation-specific metadata, filtering, and activity sorting stay in
+ * each client. Grouping modes, overrides, physical deduplication, labels, and
+ * member preservation live here so web and mobile cannot drift.
+ */
+export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
+  readonly projects: ReadonlyArray<TProject>;
+  readonly settings: ProjectGroupingSettings;
+  readonly preferredEnvironmentId?: EnvironmentId | null;
+}): ReadonlyArray<ProjectGroup<TProject>> {
+  const projectsByPhysicalKey = new Map<string, TProject[]>();
+  for (const project of input.projects) {
+    const physicalProjectKey = derivePhysicalProjectKey(project);
+    const existing = projectsByPhysicalKey.get(physicalProjectKey);
+    if (existing) {
+      existing.push(project);
+    } else {
+      projectsByPhysicalKey.set(physicalProjectKey, [project]);
+    }
+  }
+
+  const logicalKeyByPhysicalKey = new Map<string, string>();
+  const groupedMembers = new Map<string, ProjectGroupMember<TProject>[]>();
+  for (const [physicalProjectKey, physicalProjects] of projectsByPhysicalKey) {
+    const winner = physicalProjects.reduce((current, candidate) =>
+      shouldReplacePhysicalProjectWinner(current, candidate) ? candidate : current,
+    );
+    const identitySource = selectProjectIdentitySource(physicalProjects, winner);
+    const logicalKey = deriveLogicalProjectKey(identitySource, {
+      groupingMode: resolveProjectGroupingMode(winner, input.settings),
+    });
+    logicalKeyByPhysicalKey.set(physicalProjectKey, logicalKey);
+    const member = { physicalProjectKey, project: winner };
+    const existing = groupedMembers.get(logicalKey);
+    if (existing) {
+      existing.push(member);
+    } else {
+      groupedMembers.set(logicalKey, [member]);
+    }
+  }
+
+  const projectRefsByLogicalKey = new Map<string, ScopedProjectRef[]>();
+  const seenProjectRefs = new Set<string>();
+  for (const project of input.projects) {
+    const physicalProjectKey = derivePhysicalProjectKey(project);
+    const logicalKey =
+      logicalKeyByPhysicalKey.get(physicalProjectKey) ??
+      deriveLogicalProjectKeyFromSettings(project, input.settings);
+    const projectRefKey = scopedProjectKey(scopeProjectRef(project.environmentId, project.id));
+    if (seenProjectRefs.has(projectRefKey)) continue;
+    seenProjectRefs.add(projectRefKey);
+    const projectRef = scopeProjectRef(project.environmentId, project.id);
+    const existing = projectRefsByLogicalKey.get(logicalKey);
+    if (existing) {
+      existing.push(projectRef);
+    } else {
+      projectRefsByLogicalKey.set(logicalKey, [projectRef]);
+    }
+  }
+
+  const preferredEnvironmentId = input.preferredEnvironmentId ?? null;
+  return Array.from(groupedMembers, ([key, members]) => {
+    const representative =
+      (preferredEnvironmentId
+        ? members.find((member) => member.project.environmentId === preferredEnvironmentId)?.project
+        : null) ?? members[0]!.project;
+    return {
+      key,
+      label:
+        members.length > 1
+          ? deriveProjectGroupLabel({
+              representative,
+              members: members.map((member) => member.project),
+            })
+          : representative.title,
+      representative,
+      members,
+      memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
+    };
+  });
 }

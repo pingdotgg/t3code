@@ -1,13 +1,27 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, FileSystem, Layer, Path, PlatformError, Redacted } from "effect"
+import { Effect, FileSystem, Layer, Path, PlatformError, Redacted, Stdio } from "effect"
+import { TestConsole } from "effect/testing/index"
 import { Primitive } from "effect/unstable/cli"
+import { ChildProcessSpawner } from "effect/unstable/process"
+import * as MockTerminal from "./services/MockTerminal.ts"
 
+const ConsoleLayer = TestConsole.layer
 const FileSystemLayer = FileSystem.layerNoop({})
 const PathLayer = Path.layer
+const TerminalLayer = MockTerminal.layer
+const StdioLayer = Stdio.layerTest({})
+const ChildProcessSpawnerLayer = Layer.succeed(
+  ChildProcessSpawner.ChildProcessSpawner,
+  ChildProcessSpawner.make(() => Effect.die("Not implemented"))
+)
 
 const TestLayer = Layer.mergeAll(
+  ConsoleLayer,
   FileSystemLayer,
-  PathLayer
+  PathLayer,
+  TerminalLayer,
+  StdioLayer,
+  ChildProcessSpawnerLayer
 )
 
 // Helper functions to reduce repetition
@@ -131,7 +145,7 @@ describe("Primitive", () => {
         ]))
 
       it.effect("should fail for invalid values", () =>
-        expectInvalidValues(Primitive.date, ["not-a-date"], [`Expected a valid date, got Invalid Date`]))
+        expectInvalidValues(Primitive.date, ["not-a-date"], [`Expected a valid Date, got Invalid Date`]))
 
       it("should have correct _tag", () => {
         assert.strictEqual(Primitive.date._tag, "Date")
@@ -200,9 +214,9 @@ describe("Primitive", () => {
           colorChoice,
           ["yellow", "purple", ""],
           [
-            `Expected "red" | "green" | "blue", got "yellow"`,
-            `Expected "red" | "green" | "blue", got "purple"`,
-            `Expected "red" | "green" | "blue", got ""`
+            `"red" | "green" | "blue"`,
+            `"red" | "green" | "blue"`,
+            `"red" | "green" | "blue"`
           ]
         ))
 

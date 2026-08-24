@@ -1,4 +1,4 @@
-import { Effect, Schema, Tuple } from "effect"
+import { Effect, hole, Schema, Tuple } from "effect"
 import type { Array as Arr } from "effect"
 import { describe, expect, it } from "tstyche"
 
@@ -28,6 +28,24 @@ describe("Union", () => {
     expect(schema.annotate({})).type.toBe<Schema.Union<readonly [Schema.String, Schema.Number]>>()
 
     expect(schema.members).type.toBe<readonly [Schema.String, Schema.Number]>()
+  })
+
+  it("schema views remain precise", () => {
+    const schema = Schema.Union([Schema.String, Schema.FiniteFromString])
+    const asSchema = <T>(schema: Schema.Schema<T>) => schema
+    const asCodec = <T, E, RD, RE>(schema: Schema.Codec<T, E, RD, RE>) => schema
+
+    expect(schema).type.toBeAssignableTo<Schema.Schema<string | number>>()
+    expect(schema).type.toBeAssignableTo<Schema.Codec<string | number, string, never, never>>()
+
+    const schemaView = asSchema(schema)
+    expect(schemaView.Type).type.toBe<string | number>()
+
+    const codecView = asCodec(schema)
+    expect(codecView.Type).type.toBe<string | number>()
+    expect(codecView.Encoded).type.toBe<string>()
+    expect(codecView.DecodingServices).type.toBe<never>()
+    expect(codecView.EncodingServices).type.toBe<never>()
   })
 
   describe("mapMembers", () => {
@@ -103,6 +121,8 @@ describe("Union", () => {
 
         const schema = original.pipe(Schema.toTaggedUnion("_tag"))
 
+        expect(schema.discriminants).type.toBe<readonly ["A", "C", "B"]>()
+
         expect(Schema.revealCodec(schema)).type.toBe<
           Schema.Codec<
             | { readonly _tag: "A"; readonly a: string }
@@ -124,6 +144,42 @@ describe("Union", () => {
         expect(A).type.toBe<Schema.TaggedStruct<"A", { readonly a: Schema.String }>>()
         expect(B).type.toBe<Schema.TaggedStruct<"B", { readonly b: Schema.FiniteFromString }>>()
         expect(C).type.toBe<Schema.TaggedStruct<"C", { readonly c: Schema.Boolean }>>()
+      })
+
+      it("isAnyOf should narrow custom tags", () => {
+        const schema = Schema.Union([
+          Schema.Struct({ kind: Schema.tag("a"), a: Schema.Number }),
+          Schema.Struct({ kind: Schema.tag("b"), b: Schema.String }),
+          Schema.Struct({ kind: Schema.tag("c"), c: Schema.Boolean })
+        ]).pipe(Schema.toTaggedUnion("kind"))
+
+        const value = hole<Schema.Schema.Type<typeof schema>>()
+
+        if (schema.isAnyOf(["a", "b"])(value)) {
+          expect(value).type.toBe<
+            | { readonly kind: "a"; readonly a: number }
+            | { readonly kind: "b"; readonly b: string }
+          >()
+        }
+      })
+
+      it("should flatten discriminants", () => {
+        const schema = Schema.Union([
+          Schema.Struct({ event: Schema.Literal("A") }),
+          Schema.Union([
+            Schema.Struct({ event: Schema.Literal("B") }),
+            Schema.Struct({ event: Schema.Literal("C") })
+          ])
+        ]).pipe(Schema.toTaggedUnion("event"))
+
+        expect(schema.discriminants).type.toBe<readonly ["A", "B", "C"]>()
+        expect(Schema.Literals(schema.discriminants)).type.toBe<Schema.Literals<readonly ["A", "B", "C"]>>()
+      })
+
+      it("should support empty unions", () => {
+        const schema = Schema.Union([]).pipe(Schema.toTaggedUnion("event"))
+
+        expect(schema.discriminants).type.toBe<readonly []>()
       })
     })
 

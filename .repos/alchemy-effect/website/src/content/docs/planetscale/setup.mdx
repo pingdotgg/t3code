@@ -1,0 +1,58 @@
+---
+title: Setup
+description: Connect alchemy to PlanetScale — account, credentials, and profiles.
+---
+
+Sign up at [planetscale.com](https://planetscale.com) and create a
+[service token](https://planetscale.com/docs/concepts/service-tokens).
+Register the provider next to your cloud's:
+
+```typescript
+// alchemy.run.ts
+import * as Planetscale from "alchemy/Planetscale";
+
+providers: Layer.mergeAll(Cloudflare.providers(), Planetscale.providers()),
+```
+
+The next `alchemy login` adds a `Planetscale` step with two options:
+
+- **Environment variables** — reads `PLANETSCALE_API_TOKEN_ID`,
+  `PLANETSCALE_API_TOKEN`, and `PLANETSCALE_ORGANIZATION` (good for CI).
+- **Stored service token** — entered interactively, saved under
+  `~/.alchemy/credentials/<profile>/planetscale-stored.json`.
+
+When `CI=true`, the login step skips the prompt and selects the
+environment-variables method automatically.
+
+There is no OAuth option — intentionally. PlanetScale does not publish a
+redirect-based OAuth client, so service tokens are the canonical credential.
+
+See [Profiles](/environments/profiles) for how credentials are stored
+and switched.
+
+## Programmatic credentials
+
+Skip profiles entirely by building the `Credentials` layer from a token
+you already have in hand — useful in tests:
+
+```typescript
+Effect.provide(
+  Planetscale.fromToken({
+    tokenId: "abcd1234",
+    token: "api-token-secret",
+    organization: "my-org",
+  }),
+)
+```
+
+`tokenId` and `token` accept plain strings or `Redacted` values.
+
+## API base URL
+
+Requests go to `https://api.planetscale.com/v1` by default. Set
+`PLANETSCALE_API_BASE_URL` to point profile-resolved credentials at a
+different endpoint; `fromToken` takes an `apiBaseUrl` option instead.
+
+## Next steps
+
+- [PlanetScale overview](/planetscale) — resources and compositions.

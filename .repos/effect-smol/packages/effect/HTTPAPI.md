@@ -2182,6 +2182,63 @@ Layer.launch(ApiLive).pipe(NodeRuntime.runMain)
 // curl "http://localhost:3000/user/1"
 ```
 
+## Interdependent Middleware
+
+Middleware can depend on services provided by other middleware. Declare the dependency with `requires` and declare the produced service with `provides`.
+
+When you attach interdependent middleware to an endpoint, group, or API, the middleware that uses `requires` must come **BEFORE** the middleware that provides that service. The earlier middleware wraps the later middleware, so it can consume the service that the later middleware adds to the request effect.
+
+**Example** (Middleware that consumes another middleware's output)
+
+```ts
+import { Context, Effect, Layer, Schema } from "effect"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/unstable/httpapi"
+
+class AuthInfo extends Context.Service<AuthInfo, {
+  readonly userId: string
+}>()("AuthInfo") {}
+
+class LoadAuth extends HttpApiMiddleware.Service<LoadAuth, {
+  readonly provides: AuthInfo
+}>()("LoadAuth") {}
+
+class RequireAuth extends HttpApiMiddleware.Service<RequireAuth, {
+  readonly requires: AuthInfo
+}>()("RequireAuth") {}
+
+const Api = HttpApi.make("api").add(
+  HttpApiGroup.make("users").add(
+    HttpApiEndpoint.get("me", "/me", {
+      success: Schema.String
+    })
+      // RequireAuth reads AuthInfo, so it must appear first.
+      .middleware(RequireAuth)
+      // LoadAuth provides AuthInfo to middleware that appears before it.
+      .middleware(LoadAuth)
+  )
+)
+
+const LoadAuthLive = Layer.effect(
+  LoadAuth,
+  Effect.succeed((effect) =>
+    Effect.provideService(effect, AuthInfo, {
+      userId: "user-1"
+    })
+  )
+)
+
+const RequireAuthLive = Layer.effect(
+  RequireAuth,
+  Effect.succeed(
+    Effect.fnUntraced(function*(effect) {
+      const authInfo = yield* AuthInfo
+      yield* Effect.log(`authenticated user ${authInfo.userId}`)
+      return yield* effect
+    })
+  )
+)
+```
+
 # Security
 
 The `HttpApiSecurity` module lets you declare how an endpoint is protected. These declarations show up in the generated OpenAPI spec and are enforced at runtime through middleware.

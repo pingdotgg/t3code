@@ -15,7 +15,7 @@ const emptyState: PackageState = {
   totalDownloads: 0,
 };
 
-export default class PackageStore extends Cloudflare.DurableObjectNamespace<PackageStore>()(
+export default class PackageStore extends Cloudflare.DurableObject<PackageStore>()(
   "PackageStore",
   Effect.gen(function* () {
     return Effect.gen(function* () {

@@ -12,7 +12,7 @@ import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
 import { makeAcpNativeLoggerFactory } from "./AcpNativeLogging.ts";
 
 const nodeServicesIt = it.layer(NodeServices.layer);
-const encodeUnknownJson = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 nodeServicesIt("ACP native logging", (it) => {
   it.effect("records bounded request and protocol diagnostics without raw payloads", () =>

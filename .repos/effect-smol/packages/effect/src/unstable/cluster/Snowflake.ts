@@ -1,21 +1,12 @@
 /**
- * The `Snowflake` module provides compact, sortable identifiers for cluster
- * resources and events. A snowflake id is a branded `bigint` made from a
- * millisecond timestamp, a machine id, and a per-machine sequence number.
+ * Creates compact, sortable identifiers for cluster messages and runtime
+ * events.
  *
- * **Common use cases**
- *
- * - Creating ids without coordinating through a central database
- * - Ordering cluster events, entity ids, or log records by generation time
- * - Encoding ids as strings at service boundaries with {@link SnowflakeFromString}
- * - Decoding a generated id into timestamp, machine id, and sequence parts with {@link toParts}
- *
- * **Gotchas**
- *
- * - Uniqueness depends on each concurrent generator using a distinct machine id
- * - Generated ids are time-sortable, but they are not random or secret values
- * - The default generator prevents local clock drift from moving ids backward
- * - More than 4096 ids in the same millisecond advance the logical timestamp
+ * A snowflake id is a branded `bigint` built from a millisecond timestamp, a
+ * machine id, and a sequence number for that machine. The parts make generated
+ * ids sortable by time while still being unique for a runner. This module
+ * includes schemas for bigint and string encodings, helpers for creating and
+ * reading ids, and a `Clock`-backed generator service for cluster runtime use.
  *
  * @since 4.0.0
  */
@@ -27,7 +18,7 @@ import * as Effect from "../../Effect.ts"
 import { identity } from "../../Function.ts"
 import * as Layer from "../../Layer.ts"
 import * as Schema from "../../Schema.ts"
-import * as Transformation from "../../SchemaTransformation.ts"
+import * as SchemaTransformation from "../../SchemaTransformation.ts"
 import type { MachineId } from "./MachineId.ts"
 
 /**
@@ -62,8 +53,8 @@ export type Snowflake = Brand.Branded<bigint, TypeId>
  * @category constructors
  * @since 4.0.0
  */
-export const Snowflake = (input: string | bigint): Snowflake =>
-  typeof input === "string" ? BigInt(input) as Snowflake : input as Snowflake
+export const Snowflake = (input: string | number | bigint): Snowflake =>
+  typeof input === "bigint" ? input as Snowflake : BigInt(input) as Snowflake
 
 /**
  * Namespace containing support types for snowflake parts and generators.
@@ -129,7 +120,7 @@ export interface SnowflakeFromString extends Schema.decodeTo<SnowflakeFromBigInt
  * @since 4.0.0
  */
 export const SnowflakeFromString: SnowflakeFromString = Schema.String.pipe(
-  Schema.decodeTo(SnowflakeFromBigInt, Transformation.bigintFromString)
+  Schema.decodeTo(SnowflakeFromBigInt, SchemaTransformation.bigintFromString)
 )
 
 /**
@@ -154,7 +145,7 @@ const constBigInt4096 = BigInt(4096)
  * **When to use**
  *
  * Use to pack known timestamp, machine id, and sequence parts into a branded
- * snowflake id when you already control id allocation.
+ * snowflake id.
  *
  * **Gotchas**
  *
@@ -179,7 +170,7 @@ export const make = (options: {
 /**
  * Extracts the Unix timestamp in milliseconds from a snowflake id.
  *
- * @category Parts
+ * @category parts
  * @since 4.0.0
  */
 export const timestamp = (snowflake: Snowflake): number => Number(snowflake >> constBigInt22) + sinceUnixEpoch
@@ -187,7 +178,7 @@ export const timestamp = (snowflake: Snowflake): number => Number(snowflake >> c
 /**
  * Extracts the timestamp from a snowflake id as a `DateTime.Utc`.
  *
- * @category Parts
+ * @category parts
  * @since 4.0.0
  */
 export const dateTime = (snowflake: Snowflake): DateTime.Utc => DateTime.makeUnsafe(timestamp(snowflake))
@@ -195,7 +186,7 @@ export const dateTime = (snowflake: Snowflake): DateTime.Utc => DateTime.makeUns
 /**
  * Extracts the machine id component from a snowflake id.
  *
- * @category Parts
+ * @category parts
  * @since 4.0.0
  */
 export const machineId = (snowflake: Snowflake): MachineId =>
@@ -204,7 +195,7 @@ export const machineId = (snowflake: Snowflake): MachineId =>
 /**
  * Extracts the per-machine sequence component from a snowflake id.
  *
- * @category Parts
+ * @category parts
  * @since 4.0.0
  */
 export const sequence = (snowflake: Snowflake): number => Number(snowflake % constBigInt4096)
@@ -212,7 +203,7 @@ export const sequence = (snowflake: Snowflake): number => Number(snowflake % con
 /**
  * Decomposes a snowflake id into its timestamp, machine id, and sequence parts.
  *
- * @category Parts
+ * @category parts
  * @since 4.0.0
  */
 export const toParts = (snowflake: Snowflake): Snowflake.Parts => ({

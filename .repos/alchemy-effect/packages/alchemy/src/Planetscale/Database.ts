@@ -29,7 +29,8 @@ export interface BaseDatabaseProps {
 
   /**
    * Number of replicas for the database. `0` for non-HA, `2+` for HA.
-   * Create-only.
+   * Create-only for PostgreSQL databases; MySQL databases reconcile
+   * changes in place ({@link MySQLDatabaseProps.replicas}).
    */
   replicas?: number;
 
@@ -65,7 +66,7 @@ export interface BaseDatabaseProps {
 
   /**
    * Name of the table used to track applied migrations.
-   * @default "planetscale_migrations"
+   * @default "__alchemy_migrations"
    */
   migrationsTable?: string;
 

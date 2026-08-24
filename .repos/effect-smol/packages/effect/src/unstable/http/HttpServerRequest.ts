@@ -1,37 +1,12 @@
 /**
- * Server-side access to the current incoming HTTP request.
+ * Provides server-side access to the current incoming HTTP request.
  *
- * This module defines the `HttpServerRequest` context service used by HTTP
- * handlers, middleware, schema decoders, multipart parsers, WebSocket upgrades,
- * and adapters. A request value carries the method, URL, original URL, headers,
- * cookies, remote address, body stream, and platform source object, plus helpers
- * for converting to and from Effect client requests and Web `Request` values.
- *
- * **Mental model**
- *
- * Server handlers read the current request from context. Metadata such as the
- * method, URL, headers, and cookies is available directly, while body access is
- * effectful because reading, parsing, schema decoding, or multipart persistence
- * can fail. Schema helpers decode cookies, headers, search parameters, JSON
- * bodies, URL-encoded bodies, multipart bodies, and form JSON without each
- * handler needing to parse raw values by hand.
- *
- * **Common tasks**
- *
- * - Inspect request metadata or derive a modified request view.
- * - Decode cookies, headers, search parameters, or body content with schemas.
- * - Upgrade a request to a WebSocket channel.
- * - Convert between server requests, client requests, and Web `Request` values.
- *
- * **Gotchas**
- *
- * Streaming request bodies may be single-use depending on the underlying
- * platform. Cached accessors such as text, JSON, URL parameters, array buffers,
- * and persisted multipart data reuse the first read. Multipart persistence
- * requires `Scope`, `FileSystem`, and `Path` services. Search parameter decoding
- * depends on the `ParsedSearchParams` service being provided by the router or
- * adapter, and body size limits are controlled through the re-exported
- * `MaxBodySize` fiber reference.
+ * `HttpServerRequest` is the context service used by handlers, middleware,
+ * schema decoders, multipart parsers, WebSocket upgrades, and adapters. A
+ * request stores its method, URL, original URL, headers, cookies, remote
+ * address, body stream, and platform source object. This module also includes
+ * request conversions and schema decoders for cookies, headers, search
+ * parameters, JSON, forms, URL-encoded bodies, and multipart bodies.
  *
  * @since 4.0.0
  */
@@ -41,6 +16,7 @@ import * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
 import type * as FileSystem from "../../FileSystem.ts"
 import * as Inspectable from "../../Inspectable.ts"
+import * as InternalRecord from "../../internal/record.ts"
 import * as Option from "../../Option.ts"
 import type * as Path from "../../Path.ts"
 import type { ReadonlyRecord } from "../../Record.ts"
@@ -170,15 +146,15 @@ export class ParsedSearchParams extends Context.Service<
 export const searchParamsFromURL = (url: URL): ReadonlyRecord<string, string | Array<string>> => {
   const out: Record<string, string | Array<string>> = {}
   for (const [key, value] of url.searchParams.entries()) {
-    const entry = out[key]
-    if (entry !== undefined) {
+    if (Object.hasOwn(out, key)) {
+      const entry = out[key]
       if (Array.isArray(entry)) {
         entry.push(value)
       } else {
-        out[key] = [entry, value]
+        InternalRecord.assignProperty(out, key, [entry, value])
       }
     } else {
-      out[key] = value
+      InternalRecord.assignProperty(out, key, value)
     }
   }
   return out
@@ -216,8 +192,8 @@ export const upgradeChannel = <IE = never>(): Channel.Channel<
  * @category schemas
  * @since 4.0.0
  */
-export const schemaCookies = <A, I extends Readonly<Record<string, string | undefined>>, RD, RE>(
-  schema: Schema.Codec<A, I, RD, RE>,
+export const schemaCookies = <A, I extends Readonly<Record<string, string | undefined>>, RD>(
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ): Effect.Effect<A, Schema.SchemaError, RD | HttpServerRequest> => {
   const parse = Schema.decodeUnknownEffect(schema)
@@ -230,8 +206,8 @@ export const schemaCookies = <A, I extends Readonly<Record<string, string | unde
  * @category schemas
  * @since 4.0.0
  */
-export const schemaHeaders = <A, I extends Readonly<Record<string, string | undefined>>, RD, RE>(
-  schema: Schema.Codec<A, I, RD, RE>,
+export const schemaHeaders = <A, I extends Readonly<Record<string, string | undefined>>, RD>(
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ): Effect.Effect<A, Schema.SchemaError, HttpServerRequest | RD> => {
   const parse = Schema.decodeUnknownEffect(schema)
@@ -247,10 +223,9 @@ export const schemaHeaders = <A, I extends Readonly<Record<string, string | unde
 export const schemaSearchParams = <
   A,
   I extends Readonly<Record<string, string | ReadonlyArray<string> | undefined>>,
-  RD,
-  RE
+  RD
 >(
-  schema: Schema.Codec<A, I, RD, RE>,
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ): Effect.Effect<A, Schema.SchemaError, ParsedSearchParams | RD> => {
   const parse = Schema.decodeUnknownEffect(schema)
@@ -267,8 +242,8 @@ export const schemaSearchParams = <
  * @category schemas
  * @since 4.0.0
  */
-export const schemaBodyJson = <A, I, RD, RE>(
-  schema: Schema.Codec<A, I, RD, RE>,
+export const schemaBodyJson = <A, RD>(
+  schema: Schema.ConstraintDecoder<A, RD>,
   options?: ParseOptions | undefined
 ): Effect.Effect<A, HttpServerError | Schema.SchemaError, HttpServerRequest | RD> => {
   const parse = HttpIncomingMessage.schemaBodyJson(schema, options)
@@ -290,12 +265,15 @@ const isMultipart = (request: HttpServerRequest) =>
  * @category schemas
  * @since 4.0.0
  */
-export const schemaBodyForm = <A, I extends Partial<Multipart.Persisted>, RD, RE>(
-  schema: Schema.Codec<A, I, RD, RE>,
+export const schemaBodyForm = <A, I extends Partial<Multipart.Persisted>, RD>(
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ) => {
   const parseMultipart = Multipart.schemaPersisted(schema)
-  const parseUrlParams = HttpIncomingMessage.schemaBodyUrlParams(schema as Schema.Codec<A, any, RD, RE>, options)
+  const parseUrlParams = HttpIncomingMessage.schemaBodyUrlParams(
+    schema as Schema.ConstraintCodec<A, any, RD, unknown>,
+    options
+  )
   return Effect.flatMap(HttpServerRequest, (request): Effect.Effect<
     A,
     Multipart.MultipartError | Schema.SchemaError | HttpServerError,
@@ -318,10 +296,9 @@ export const schemaBodyForm = <A, I extends Partial<Multipart.Persisted>, RD, RE
 export const schemaBodyUrlParams = <
   A,
   I extends Readonly<Record<string, string | ReadonlyArray<string> | undefined>>,
-  RD,
-  RE
+  RD
 >(
-  schema: Schema.Codec<A, I, RD, RE>,
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ): Effect.Effect<A, HttpServerError | Schema.SchemaError, HttpServerRequest | RD> => {
   const parse = HttpIncomingMessage.schemaBodyUrlParams(schema, options)
@@ -340,8 +317,8 @@ export const schemaBodyUrlParams = <
  * @category schemas
  * @since 4.0.0
  */
-export const schemaBodyMultipart = <A, I extends Partial<Multipart.Persisted>, RD, RE>(
-  schema: Schema.Codec<A, I, RD, RE>,
+export const schemaBodyMultipart = <A, I extends Partial<Multipart.Persisted>, RD>(
+  schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ): Effect.Effect<
   A,
@@ -367,8 +344,8 @@ export const schemaBodyMultipart = <A, I extends Partial<Multipart.Persisted>, R
  * @category schemas
  * @since 4.0.0
  */
-export const schemaBodyFormJson = <A, I, RD, RE>(
-  schema: Schema.Codec<A, I, RD, RE>,
+export const schemaBodyFormJson = <A, RD>(
+  schema: Schema.ConstraintDecoder<A, RD>,
   options?: ParseOptions | undefined
 ) => {
   const parseMultipart = Multipart.schemaJson(schema, options)

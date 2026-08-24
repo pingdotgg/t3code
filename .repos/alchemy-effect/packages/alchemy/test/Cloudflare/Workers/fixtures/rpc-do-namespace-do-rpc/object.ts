@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -8,16 +8,17 @@ import { CounterRpcs } from "./group.ts";
 
 /**
  * Typed counter Durable Object built on
- * {@link Cloudflare.RpcDurableObjectNamespace}. Persists `count` in
+ * {@link Cloudflare.RpcDurableObject}. Persists `count` in
  * `state.storage` and serves `Increment` / `Get` / `CountUpTo` over
  * an `RpcServer.toHttpEffect(group)` on the DO's `fetch`.
  */
-export default class RpcCounterObject extends Cloudflare.RpcDurableObjectNamespace<RpcCounterObject>()(
+export default class RpcCounterObject extends Cloudflare.RpcDurableObject<RpcCounterObject>()(
   "RpcCounterObject",
   { schema: CounterRpcs },
   Effect.gen(function* () {
+    const state = yield* Cloudflare.DurableObjectState;
+
     return Effect.gen(function* () {
-      const state = yield* Cloudflare.DurableObjectState;
       let count = (yield* state.storage.get<number>("count")) ?? 0;
 
       const handlers = CounterRpcs.toLayer({

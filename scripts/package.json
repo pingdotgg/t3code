@@ -8,8 +8,10 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
+    "@electron/asar": "^3.4.1",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "@t3tools/tailscale": "workspace:*",
     "effect": "catalog:",
     "pngjs": "7.0.0",
     "yaml": "catalog:"

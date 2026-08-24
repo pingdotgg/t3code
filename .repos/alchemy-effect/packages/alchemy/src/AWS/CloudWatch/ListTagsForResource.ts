@@ -1,12 +1,7 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
-import {
-  getTaggableResourceArn,
-  type TaggableResource,
-} from "./binding-common.ts";
+import type { TaggableResource } from "./binding-common.ts";
 
 export interface ListTagsForResourceRequest extends Omit<
   cloudwatch.ListTagsForResourceInput,
@@ -14,10 +9,27 @@ export interface ListTagsForResourceRequest extends Omit<
 > {}
 
 /**
- * Runtime binding for `cloudwatch:ListTagsForResource`.
+ * Runtime binding for `cloudwatch:ListTagsForResource` — read the tags on
+ * a bound CloudWatch resource (alarm, dashboard, metric stream, insight
+ * rule, or mute rule); the resource ARN is injected automatically.
+ *
+ * Provide `CloudWatch.ListTagsForResourceHttp` on the hosting Lambda
+ * Function to satisfy the requirement.
+ * @binding
+ * @section Reading Tags
+ * @example Read the Tags on an Alarm
+ * ```typescript
+ * // init — grants cloudwatch:ListTagsForResource on the alarm's ARN
+ * const listTagsForResource = yield* AWS.CloudWatch.ListTagsForResource(alarm);
+ *
+ * // runtime
+ * const result = yield* listTagsForResource();
+ * const tags = result.Tags ?? [];
+ * ```
  */
-export class ListTagsForResource extends Binding.Service<
+export interface ListTagsForResource extends Binding.Service<
   ListTagsForResource,
+  "AWS.CloudWatch.ListTagsForResource",
   (
     resource: TaggableResource,
   ) => Effect.Effect<
@@ -28,52 +40,8 @@ export class ListTagsForResource extends Binding.Service<
       cloudwatch.ListTagsForResourceError
     >
   >
->()("AWS.CloudWatch.ListTagsForResource") {}
+> {}
 
-export const ListTagsForResourceLive = Layer.effect(
-  ListTagsForResource,
-  Effect.gen(function* () {
-    const Policy = yield* ListTagsForResourcePolicy;
-    const listTagsForResource = yield* cloudwatch.listTagsForResource;
-
-    return Effect.fn(function* (resource: TaggableResource) {
-      const ResourceARN = yield* getTaggableResourceArn(resource);
-      yield* Policy(resource);
-
-      return Effect.fn(function* (request: ListTagsForResourceRequest = {}) {
-        return yield* listTagsForResource({
-          ...request,
-          ResourceARN: yield* ResourceARN,
-        });
-      });
-    });
-  }),
+export const ListTagsForResource = Binding.Service<ListTagsForResource>(
+  "AWS.CloudWatch.ListTagsForResource",
 );
-
-export class ListTagsForResourcePolicy extends Binding.Policy<
-  ListTagsForResourcePolicy,
-  (resource: TaggableResource) => Effect.Effect<void>
->()("AWS.CloudWatch.ListTagsForResource") {}
-
-export const ListTagsForResourcePolicyLive =
-  ListTagsForResourcePolicy.layer.succeed(
-    Effect.fn(function* (host, resource) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.CloudWatch.ListTagsForResource(${resource}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["cloudwatch:ListTagsForResource"],
-                Resource: [getTaggableResourceArn(resource)],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `ListTagsForResourcePolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

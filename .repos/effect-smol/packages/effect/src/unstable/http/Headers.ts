@@ -1,56 +1,10 @@
 /**
- * Immutable HTTP header collections for the unstable HTTP modules.
+ * Models HTTP headers for the unstable HTTP client and server modules.
  *
- * This module defines the `Headers` data type used by HTTP client and server
- * request / response models. It converts records or iterables into a
- * predictable lowercase map, provides pipeable operations for reading and
- * updating header values, and integrates with inspection redaction so sensitive
- * header names can be masked before logging or serialization.
- *
- * ## Mental model
- *
- * A `Headers` value is a plain immutable record whose keys are normalized
- * header names and whose values are strings. Safe constructors and lookups
- * lowercase names because HTTP header names are case-insensitive, and
- * combinators return new `Headers` values instead of mutating the original
- * collection.
- *
- * ## Common tasks
- *
- * - Build headers from records or entry iterables with {@link fromInput}.
- * - Read values with {@link get} or check presence with {@link has}.
- * - Add, replace, merge, or remove headers with {@link set}, {@link setAll},
- *   {@link merge}, {@link remove}, and {@link removeMany}.
- * - Mask sensitive names before inspection with {@link redact} and
- *   {@link CurrentRedactedNames}.
- *
- * ## Gotchas
- *
- * Each lowercase header name stores one string. Record array values are joined
- * with `", "`, iterable input keeps the last value for duplicate names, and
- * later set / merge operations replace earlier values. This is convenient for
- * most headers but does not preserve repeated field lines such as `Set-Cookie`;
- * use cookie-specific HTTP modules when cookie multiplicity matters.
- *
- * **Example** (Normalize and update headers)
- *
- * ```ts
- * import { Option } from "effect"
- * import { Headers } from "effect/unstable/http"
- *
- * const headers = Headers.fromInput({
- *   "Content-Type": "application/json",
- *   accept: ["application/json", "text/plain"]
- * })
- *
- * const contentType = Headers.get(headers, "content-type")
- * if (Option.isSome(contentType)) {
- *   console.log(contentType.value)
- * }
- *
- * const next = Headers.set(headers, "authorization", "Bearer token")
- * console.log(Headers.has(next, "Authorization")) // true
- * ```
+ * `Headers` values are immutable maps keyed by lowercase header name. This
+ * module converts common header inputs into that shape, provides helpers for
+ * reading and updating header values, and redacts configured sensitive headers
+ * when values are inspected.
  *
  * @since 4.0.0
  */
@@ -66,7 +20,7 @@ import * as Record from "../../Record.ts"
 import * as Redactable from "../../Redactable.ts"
 import * as Redacted from "../../Redacted.ts"
 import * as Schema from "../../Schema.ts"
-import * as Transformation from "../../SchemaTransformation.ts"
+import * as SchemaTransformation from "../../SchemaTransformation.ts"
 import type { Mutable } from "../../Types.ts"
 
 /**
@@ -108,9 +62,10 @@ export interface Headers extends Redactable.Redactable {
   readonly [key: string]: string
 }
 
-const Proto = Object.create(null)
-
-Object.defineProperties(Proto, {
+// the properties are folded into the initializer (rather than a separate
+// `Object.defineProperties(Proto, ...)` statement) so the whole definition
+// is pure-annotated by the build and tree-shakable.
+const Proto = Object.defineProperties(Object.create(null), {
   [TypeId]: {
     value: TypeId
   },
@@ -175,21 +130,21 @@ export interface HeadersSchema extends Schema.declare<Headers, { readonly [x: st
 export const HeadersSchema: HeadersSchema = Schema.declare(
   isHeaders,
   {
-    typeConstructor: {
-      _tag: "effect/http/Headers"
+    representation: {
+      id: "effect/http/Headers",
+      payload: null
     },
-    generation: {
-      runtime: `Headers.HeadersSchema`,
-      Type: `Headers.Headers`,
-      Encoded: `typeof Headers.HeadersSchema["Encoded"]`,
-      importDeclaration: `import * as Headers from "effect/unstable/http/Headers"`
-    },
+    toCode: () => ({
+      runtime: "Headers.HeadersSchema",
+      Type: "Headers.Headers",
+      importDeclarations: [`import * as Headers from "effect/unstable/http/Headers"`]
+    }),
     expected: "Headers",
     toEquivalence: () => Equivalence,
     toCodec: () =>
       Schema.link<Headers>()(
         Schema.Record(Schema.String, Schema.String),
-        Transformation.transform({
+        SchemaTransformation.transform({
           decode: (input) => fromInput(input),
           encode: (headers) => ({ ...headers })
         })

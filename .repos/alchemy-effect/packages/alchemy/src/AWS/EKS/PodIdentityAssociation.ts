@@ -1,5 +1,6 @@
 import * as eks from "@distilled.cloud/aws/eks";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
@@ -48,17 +49,29 @@ export interface PodIdentityAssociation extends Resource<
   "AWS.EKS.PodIdentityAssociation",
   PodIdentityAssociationProps,
   {
+    /** The ARN of the pod identity association. */
     associationArn: string;
+    /** The ID of the pod identity association. */
     associationId: string;
+    /** The name of the EKS cluster the association belongs to. */
     clusterName: string;
+    /** The Kubernetes namespace of the bound service account. */
     namespace: string;
+    /** The name of the Kubernetes service account bound to the role. */
     serviceAccount: string;
+    /** The ARN of the IAM role pods assume via the association. */
     roleArn: string;
+    /** Whether EKS session tags are disabled on the assumed-role session. */
     disableSessionTags: boolean;
+    /** The ARN of the target role for role chaining, if configured. */
     targetRoleArn: string | undefined;
+    /** The external ID EKS uses when assuming the target role. */
     externalId: string | undefined;
+    /** The ARN of the add-on that owns the association, if add-on managed. */
     ownerArn: string | undefined;
+    /** The inline policy document attached to the generated role, if any. */
     policy: string | undefined;
+    /** The tags applied to the association. */
     tags: Record<string, string>;
   },
   never,
@@ -70,7 +83,7 @@ export interface PodIdentityAssociation extends Resource<
  *
  * `PodIdentityAssociation` is the canonical workload-identity resource for EKS
  * clusters that use EKS Pod Identity instead of IRSA.
- *
+ * @resource
  * @section Managing Pod Identity
  * @example Bind a Service Account to a Role
  * ```typescript
@@ -99,6 +112,54 @@ export const PodIdentityAssociationProvider = () =>
 
       return {
         stables: ["associationArn", "associationId"],
+        // `list()` enumerates every pod identity association across the
+        // account/region. The list op is cluster-scoped, so first enumerate all
+        // clusters (`listClusters`), then list each cluster's associations
+        // (`listPodIdentityAssociations`), then hydrate each summary via
+        // `describePodIdentityAssociation` to produce the full Attributes shape.
+        list: () =>
+          Effect.gen(function* () {
+            const clusterNames = yield* eks.listClusters.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) => page.clusters ?? []),
+              ),
+            );
+
+            const perCluster = yield* Effect.forEach(
+              clusterNames,
+              (clusterName) =>
+                eks.listPodIdentityAssociations.pages({ clusterName }).pipe(
+                  Stream.runCollect,
+                  Effect.map((chunk) =>
+                    Array.from(chunk).flatMap(
+                      (page) => page.associations ?? [],
+                    ),
+                  ),
+                  Effect.flatMap((summaries) =>
+                    Effect.forEach(
+                      summaries,
+                      (summary) =>
+                        summary.associationId
+                          ? readAssociationById({
+                              clusterName,
+                              associationId: summary.associationId,
+                            })
+                          : Effect.succeed(undefined),
+                      { concurrency: 5 },
+                    ),
+                  ),
+                ),
+              { concurrency: 5 },
+            );
+
+            return perCluster
+              .flat()
+              .filter(
+                (association): association is NonNullable<typeof association> =>
+                  association !== undefined,
+              );
+          }),
         diff: Effect.fn(function* ({ olds, news }) {
           if (!isResolved(news)) return;
           if (olds.clusterName !== news.clusterName) {

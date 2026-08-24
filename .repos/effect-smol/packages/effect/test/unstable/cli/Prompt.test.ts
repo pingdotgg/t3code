@@ -1,20 +1,18 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Fiber, FileSystem, Layer, Path, Redacted } from "effect"
-import { TestConsole } from "effect/testing"
+import { Data, Effect, Fiber, FileSystem, Layer, Match, Path, Queue, Redacted } from "effect"
 import { Prompt } from "effect/unstable/cli"
 import * as MockTerminal from "./services/MockTerminal.ts"
 
-const ConsoleLayer = TestConsole.layer
 const FileSystemLayer = FileSystem.layerNoop({})
 const PathLayer = Path.layer
 const TerminalLayer = MockTerminal.layer
 
 const TestLayer = Layer.mergeAll(
-  ConsoleLayer,
   FileSystemLayer,
   PathLayer,
   TerminalLayer
 )
+const Action = Data.taggedEnum<Prompt.ActionDefinition>()
 
 const escape = String.fromCharCode(27)
 const bell = String.fromCharCode(7)
@@ -97,7 +95,7 @@ describe("Prompt.float", () => {
       const result = yield* Prompt.run(prompt)
       assert.strictEqual(result, 12.5)
 
-      const output = yield* TestConsole.logLines
+      const output = yield* MockTerminal.displayLines
       const frames = toFrames(output)
       const rendered = frames.join("\n")
 
@@ -211,7 +209,7 @@ describe("Prompt.text", () => {
       const result = yield* Prompt.run(prompt)
       assert.strictEqual(result, "")
 
-      const output = yield* TestConsole.logLines
+      const output = yield* MockTerminal.displayLines
       const frames = toFrames(output)
       const lastFrame = frames.at(-1)
 
@@ -268,7 +266,7 @@ describe("Prompt.autoComplete", () => {
       const result = yield* Prompt.run(prompt)
       assert.strictEqual(result, "banana")
 
-      const output = yield* TestConsole.logLines
+      const output = yield* MockTerminal.displayLines
       const frames = toFrames(output)
       const filteredFrame = findFrame(frames, "[filter: ban]")
 
@@ -295,7 +293,7 @@ describe("Prompt.autoComplete", () => {
       const result = yield* Prompt.run(prompt)
       assert.strictEqual(result, "alpha")
 
-      const output = yield* TestConsole.logLines
+      const output = yield* MockTerminal.displayLines
       const frames = toFrames(output)
       const narrowedFrame = findFrame(frames, "[filter: al]")
       const expandedFrame = findFrame(frames, "[filter: a]")
@@ -324,7 +322,7 @@ describe("Prompt.autoComplete", () => {
       const result = yield* Prompt.run(prompt)
       assert.strictEqual(result, "alpha")
 
-      const output = yield* TestConsole.logLines
+      const output = yield* MockTerminal.displayLines
       const frames = toFrames(output)
       const narrowedFrame = findFrame(frames, "[filter: al]")
       const clearedFrame = findFrame(frames, "[filter: type to filter]")
@@ -355,7 +353,7 @@ describe("Prompt.autoComplete", () => {
       const result = yield* Prompt.run(prompt)
       assert.strictEqual(result, "cat")
 
-      const output = yield* TestConsole.logLines
+      const output = yield* MockTerminal.displayLines
       const frames = toFrames(output)
 
       assert.isTrue(output.some((line) => String(line).includes("\x07")))
@@ -379,7 +377,7 @@ describe("Prompt.autoComplete", () => {
       const result = yield* Prompt.run(prompt)
       assert.strictEqual(result, "fast")
 
-      const output = yield* TestConsole.logLines
+      const output = yield* MockTerminal.displayLines
       assert.isTrue(output.some((line) => String(line).includes("\x07")))
     }).pipe(Effect.provide(TestLayer)))
 
@@ -394,7 +392,7 @@ describe("Prompt.autoComplete", () => {
       const exit = yield* Prompt.run(prompt).pipe(Effect.exit)
       assert.isTrue(exit._tag === "Failure")
 
-      const output = yield* TestConsole.logLines
+      const output = yield* MockTerminal.displayLines
       const frames = toFrames(output)
 
       assert.isTrue(findFrame(frames, "No matches") !== undefined)
@@ -403,7 +401,6 @@ describe("Prompt.autoComplete", () => {
 
 describe("Prompt.file", () => {
   const FilePromptLayer = Layer.mergeAll(
-    ConsoleLayer,
     FileSystem.layerNoop({
       exists: () => Effect.succeed(true),
       readDirectory: (directory) =>
@@ -449,7 +446,7 @@ describe("Prompt.file", () => {
       const result = yield* Prompt.run(prompt)
       assert.strictEqual(result, "/workspace/banana.txt")
 
-      const output = yield* TestConsole.logLines
+      const output = yield* MockTerminal.displayLines
       const frames = toFrames(output)
       const filteredFrame = findFrame(frames, "[filter: ban]")
 
@@ -473,7 +470,7 @@ describe("Prompt.file", () => {
       const result = yield* Prompt.run(prompt)
       assert.strictEqual(result, "/workspace/banana.txt")
 
-      const output = yield* TestConsole.logLines
+      const output = yield* MockTerminal.displayLines
       const frames = toFrames(output)
       const narrowedFrame = findFrame(frames, "[filter: ban]")
       const expandedFrame = findFrame(frames, "[filter: ba]")
@@ -505,7 +502,7 @@ describe("Prompt.multiSelect", () => {
       yield* MockTerminal.inputKey("down")
       yield* Effect.yieldNow
 
-      const output = yield* TestConsole.logLines
+      const output = yield* MockTerminal.displayLines
       const frames = toRawFrames(output)
       const highlightedFrame = [...frames].reverse().find((frame) => frame.includes("Beta"))
 
@@ -516,5 +513,113 @@ describe("Prompt.multiSelect", () => {
 
       const result = yield* Fiber.join(fiber)
       assert.deepStrictEqual(result, [])
+    }).pipe(Effect.provide(TestLayer)))
+})
+
+describe("Prompt.custom", () => {
+  it.effect("receive handles events from external dequeue", () =>
+    Effect.gen(function*() {
+      const eventQueue = yield* Queue.make<string>()
+
+      const prompt = Prompt.custom(
+        { count: 0 },
+        Queue.asDequeue(eventQueue),
+        {
+          render: (state) => Effect.succeed(`Count: ${state.count}`),
+          process: (input, state) =>
+            Match.value(input).pipe(
+              Match.tag("Input", () => Effect.succeed(Action.Submit({ value: state.count }))),
+              Match.tag("Event", ({ value }) =>
+                Effect.succeed(
+                  Action.NextFrame({ state: { count: state.count + (value === "tick" ? 1 : 0) } })
+                )),
+              Match.exhaustive
+            ),
+          clear: () => Effect.succeed("")
+        }
+      )
+
+      const fiber = yield* Prompt.run(prompt).pipe(Effect.forkChild)
+
+      // Give the prompt loop time to start and block on the race
+      yield* Effect.yieldNow
+
+      // Push two events
+      yield* Queue.offer(eventQueue, "tick")
+      yield* Effect.yieldNow
+      yield* Queue.offer(eventQueue, "tock")
+      yield* Effect.yieldNow
+      yield* Queue.offer(eventQueue, "tick")
+      yield* Effect.yieldNow
+
+      // Submit via keypress
+      yield* MockTerminal.inputKey("enter")
+
+      const result = yield* Fiber.join(fiber)
+      assert.strictEqual(result, 2)
+    }).pipe(Effect.provide(TestLayer)))
+
+  it.effect("falls back to process when no events are pending", () =>
+    Effect.gen(function*() {
+      const eventQueue = yield* Queue.make<string>()
+
+      const prompt = Prompt.custom(
+        { keys: 0 },
+        Queue.asDequeue(eventQueue),
+        {
+          render: (state) => Effect.succeed(`Keys: ${state.keys}`),
+          process: (input, state) =>
+            Match.value(input).pipe(
+              Match.tag("Input", () => {
+                const next = state.keys + 1
+                return next >= 3
+                  ? Effect.succeed(Action.Submit({ value: next }))
+                  : Effect.succeed(Action.NextFrame({ state: { keys: next } }))
+              }),
+              Match.tag("Event", () => Effect.succeed(Action.NextFrame({ state }))),
+              Match.exhaustive
+            ),
+          clear: () => Effect.succeed("")
+        }
+      )
+
+      yield* MockTerminal.inputKey("a")
+      yield* MockTerminal.inputKey("b")
+      yield* MockTerminal.inputKey("c")
+
+      const result = yield* Prompt.run(prompt)
+      assert.strictEqual(result, 3)
+    }).pipe(Effect.provide(TestLayer)))
+
+  it.effect("Input variant exposes the input field with UserInput", () =>
+    Effect.gen(function*() {
+      const eventQueue = yield* Queue.make<string>()
+
+      const prompt = Prompt.custom(
+        { captured: "" },
+        Queue.asDequeue(eventQueue),
+        {
+          render: (state) => Effect.succeed(`Captured: ${state.captured}`),
+          process: (input, state) =>
+            Match.value(input).pipe(
+              Match.tag("Input", ({ input: userInput }) => {
+                const key = userInput.key.name
+                return key === "enter"
+                  ? Effect.succeed(Action.Submit({ value: state.captured }))
+                  : Effect.succeed(Action.NextFrame({ state: { captured: state.captured + key } }))
+              }),
+              Match.tag("Event", () => Effect.succeed(Action.NextFrame({ state }))),
+              Match.exhaustive
+            ),
+          clear: () => Effect.succeed("")
+        }
+      )
+
+      yield* MockTerminal.inputKey("x")
+      yield* MockTerminal.inputKey("y")
+      yield* MockTerminal.inputKey("enter")
+
+      const result = yield* Prompt.run(prompt)
+      assert.strictEqual(result, "xy")
     }).pipe(Effect.provide(TestLayer)))
 })

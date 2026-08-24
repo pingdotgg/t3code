@@ -4,6 +4,7 @@ import { assertExitFailure, assertSuccess, assertTrue, deepStrictEqual, strictEq
 import {
   Array,
   Cause,
+  Channel,
   Clock,
   Context,
   Data,
@@ -22,6 +23,7 @@ import {
   References,
   Result,
   Schedule,
+  Scope,
   Sink,
   Stream,
   String as Str
@@ -133,6 +135,254 @@ describe("Stream", () => {
       }))
   })
 
+  describe("destructors", () => {
+    const withScopeFinalizer = <A, E, R>(
+      self: Stream.Stream<A, E, R>,
+      finalizer: (exit: Exit.Exit<unknown, unknown>) => Effect.Effect<unknown>
+    ): Stream.Stream<A, E, R> =>
+      Stream.fromChannel(
+        Channel.fromTransform((upstream, scope) =>
+          Effect.andThen(
+            Scope.addFinalizerExit(scope, finalizer),
+            Channel.toTransform(Stream.toChannel(self))(upstream, scope)
+          )
+        )
+      )
+
+    it.effect("runForEachWhile continues across chunk boundaries", () =>
+      Effect.gen(function*() {
+        const seen: Array<number> = []
+        yield* Stream.fromArrays([1, 2], [3, 4]).pipe(
+          Stream.runForEachWhile((n) =>
+            Effect.sync(() => {
+              seen.push(n)
+              return true
+            })
+          )
+        )
+        assert.deepStrictEqual(seen, [1, 2, 3, 4])
+      }))
+
+    it.effect("runForEachWhile stops when predicate returns false", () =>
+      Effect.gen(function*() {
+        const seen: Array<number> = []
+        yield* Stream.fromArrays([1, 2, 3], [4, 5]).pipe(
+          Stream.runForEachWhile((n) =>
+            Effect.sync(() => {
+              seen.push(n)
+              return n < 3
+            })
+          )
+        )
+        assert.deepStrictEqual(seen, [1, 2, 3])
+      }))
+
+    it.effect("toAsyncIterable - return interrupts an in-flight pull", () =>
+      Effect.gen(function*() {
+        const started = yield* Deferred.make<void>()
+        let interrupted = false
+        const iterator = Stream.toAsyncIterable(
+          Stream.fromEffect(
+            Effect.andThen(
+              Deferred.succeed(started, void 0),
+              Effect.never
+            ).pipe(
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  interrupted = true
+                })
+              )
+            )
+          )
+        )[Symbol.asyncIterator]()
+
+        const pending = iterator.next()
+        yield* Deferred.await(started)
+        const result = yield* Effect.promise(() => iterator.return!(undefined))
+        const pendingResult = yield* Effect.promise(() => pending)
+
+        assert.deepStrictEqual(result, { done: true, value: undefined })
+        assert.deepStrictEqual(pendingResult, { done: true, value: undefined })
+        assert.isTrue(interrupted)
+      }))
+
+    it.effect("toAsyncIterable - return does not reject an unawaited in-flight next", () =>
+      Effect.gen(function*() {
+        let interrupted = false
+        const iterator = Stream.toAsyncIterable(
+          Stream.fromEffect(
+            Effect.never.pipe(
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  interrupted = true
+                })
+              )
+            )
+          )
+        )[Symbol.asyncIterator]()
+
+        iterator.next()
+        const result = yield* Effect.promise(() => iterator.return!(undefined))
+        yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
+
+        assert.deepStrictEqual(result, { done: true, value: undefined })
+        assert.isTrue(interrupted)
+      }))
+
+    it.effect("toAsyncIterable - early for await exit interrupts the producer", () =>
+      Effect.gen(function*() {
+        let interrupted = false
+        const iterable = Stream.toAsyncIterable(
+          Stream.callback<number>((queue) =>
+            Effect.andThen(
+              Queue.offer(queue, 1),
+              Effect.never
+            ).pipe(
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  interrupted = true
+                })
+              )
+            )
+          )
+        )
+
+        yield* Effect.promise(async () => {
+          for await (const _ of iterable) {
+            break
+          }
+        })
+
+        assert.isTrue(interrupted)
+      }))
+
+    it.effect("toAsyncIterable - return is idempotent without an in-flight pull", () =>
+      Effect.gen(function*() {
+        const iterator = Stream.toAsyncIterable(Stream.make(1))[Symbol.asyncIterator]()
+
+        const first = yield* Effect.promise(() => iterator.return!(undefined))
+        const second = yield* Effect.promise(() => iterator.return!(undefined))
+        const next = yield* Effect.promise(() => iterator.next())
+
+        assert.deepStrictEqual(first, { done: true, value: undefined })
+        assert.deepStrictEqual(second, { done: true, value: undefined })
+        assert.deepStrictEqual(next, { done: true, value: undefined })
+      }))
+
+    it.effect("toAsyncIterable - natural completion closes the scope with a successful exit", () =>
+      Effect.gen(function*() {
+        const finalizerExits: Array<Exit.Exit<unknown, unknown>> = []
+        const stream = withScopeFinalizer(
+          Stream.make(1, 2),
+          (exit) =>
+            Effect.sync(() => {
+              finalizerExits.push(exit)
+            })
+        )
+        const values = yield* Effect.promise(async () => {
+          const values: Array<number> = []
+          for await (const value of Stream.toAsyncIterable(stream)) {
+            values.push(value)
+          }
+          return values
+        })
+
+        assert.deepStrictEqual(values, [1, 2])
+        assert.deepStrictEqual(finalizerExits, [Exit.void])
+      }))
+
+    it.effect("toAsyncIterable - stream failure is forwarded to the scope", () =>
+      Effect.gen(function*() {
+        const streamError = new Error("stream failure")
+        const finalizerError = new Error("finalizer failure")
+        const finalizerExits: Array<Exit.Exit<unknown, unknown>> = []
+        const capturedLogs: Array<unknown> = []
+        const testLogger = Logger.make<unknown, void>((options) => {
+          capturedLogs.push(options.message)
+        })
+        const stream = withScopeFinalizer(
+          Stream.fail(streamError),
+          (exit) =>
+            Effect.andThen(
+              Effect.sync(() => {
+                finalizerExits.push(exit)
+              }),
+              Effect.die(finalizerError)
+            )
+        )
+
+        const thrown = yield* Effect.gen(function*() {
+          const iterable = yield* Stream.toAsyncIterableEffect(stream)
+          return yield* Effect.promise(() => iterable[Symbol.asyncIterator]().next().catch((error) => error))
+        }).pipe(Effect.withLogger(testLogger))
+
+        assert.strictEqual(thrown, streamError)
+        assert.deepStrictEqual(finalizerExits, [Exit.fail(streamError)])
+        assert.strictEqual(capturedLogs.length, 1)
+      }))
+
+    it.effect("toAsyncIterable - throw forwards a failure exit and preserves its error", () =>
+      Effect.gen(function*() {
+        const thrownError = new Error("thrown failure")
+        const finalizerError = new Error("finalizer failure")
+        const finalizerExits: Array<Exit.Exit<unknown, unknown>> = []
+        const capturedLogs: Array<unknown> = []
+        const testLogger = Logger.make<unknown, void>((options) => {
+          capturedLogs.push(options.message)
+        })
+        const stream = withScopeFinalizer(
+          Stream.make(1),
+          (exit) =>
+            Effect.andThen(
+              Effect.sync(() => {
+                finalizerExits.push(exit)
+              }),
+              Effect.die(finalizerError)
+            )
+        )
+
+        const thrown = yield* Effect.gen(function*() {
+          const iterator = (yield* Stream.toAsyncIterableEffect(stream))[Symbol.asyncIterator]()
+          yield* Effect.promise(() => iterator.next())
+          return yield* Effect.promise(() => iterator.throw!(thrownError).catch((error) => error))
+        }).pipe(Effect.withLogger(testLogger))
+
+        assert.strictEqual(thrown, thrownError)
+        assert.deepStrictEqual(finalizerExits, [Exit.die(thrownError)])
+        assert.strictEqual(capturedLogs.length, 1)
+      }))
+
+    it.effect("toAsyncIterable - throw interrupts an in-flight pull", () =>
+      Effect.gen(function*() {
+        const started = yield* Deferred.make<void>()
+        let interrupted = false
+        const iterator = Stream.toAsyncIterable(
+          Stream.fromEffect(
+            Effect.andThen(
+              Deferred.succeed(started, void 0),
+              Effect.never
+            ).pipe(
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  interrupted = true
+                })
+              )
+            )
+          )
+        )[Symbol.asyncIterator]()
+        const error = new Error("boom")
+
+        const pending = iterator.next()
+        yield* Deferred.await(started)
+        const thrown = yield* Effect.promise(() => iterator.throw!(error).catch((error) => error))
+        const pendingResult = yield* Effect.promise(() => pending)
+
+        assert.strictEqual(thrown, error)
+        assert.deepStrictEqual(pendingResult, { done: true, value: undefined })
+        assert.isTrue(interrupted)
+      }))
+  })
+
   describe("constructors", () => {
     class Greeter extends Context.Service<Greeter, {
       readonly greet: (name: string) => string
@@ -237,6 +487,25 @@ describe("Stream", () => {
 
         assert.deepStrictEqual(result, [2, 4])
         assert.strictEqual(yield* Ref.get(releases), 2)
+      }))
+
+    it.effect("fromReadableStream - errored streams fail with the mapped error, not a finalizer defect", () =>
+      Effect.gen(function*() {
+        const exit = yield* Stream.fromReadableStream({
+          evaluate: () =>
+            new ReadableStream<number>({
+              start(controller) {
+                controller.error(new Error("boom"))
+              }
+            }),
+          onError: (error) => new Error(`mapped: ${(error as Error).message}`)
+        }).pipe(Stream.runDrain, Effect.exit)
+
+        assertTrue(Exit.isFailure(exit))
+        if (Exit.isFailure(exit)) {
+          assertTrue(exit.cause.reasons.every(Cause.isFailReason))
+          deepStrictEqual(Cause.squash(exit.cause), new Error("mapped: boom"))
+        }
       }))
   })
 
@@ -980,6 +1249,139 @@ describe("Stream", () => {
         )
         assert.deepStrictEqual(result, [1, 2, 3])
       }))
+  })
+
+  const testOuterFailure = (
+    combinator: "flatMap" | "switchMap",
+    inner: "never" | "slow"
+  ) =>
+    Effect.gen(function*() {
+      const started = yield* Latch.make(false)
+      const failing = yield* Deferred.make<void>()
+      const finalized = yield* Ref.make(0)
+      const outer = Stream.concat(
+        Stream.make(1),
+        Stream.fromEffect(
+          started.await.pipe(
+            Effect.andThen(Deferred.succeed(failing, void 0)),
+            Effect.andThen(Effect.fail("boom"))
+          )
+        )
+      )
+      const makeInner = () => {
+        started.openUnsafe()
+        return (inner === "never" ? Stream.never : Stream.fromEffect(Effect.sleep(Duration.hours(1)))).pipe(
+          Stream.ensuring(Ref.update(finalized, (n) => n + 1))
+        )
+      }
+      const stream = combinator === "flatMap"
+        ? Stream.flatMap(outer, makeInner, { concurrency: 2 })
+        : Stream.switchMap(outer, makeInner)
+      const fiber = yield* stream.pipe(
+        Stream.runDrain,
+        Effect.forkChild
+      )
+      yield* Deferred.await(failing)
+
+      const result = yield* Fiber.await(fiber)
+      assert.deepStrictEqual(result, Exit.fail("boom"))
+      assert.strictEqual(yield* Ref.get(finalized), 1)
+    })
+
+  describe("flatMap", () => {
+    it.effect("interrupts all inner streams when the outer fails at the concurrency limit", () =>
+      Effect.gen(function*() {
+        const latch = yield* Latch.make()
+        const finalized = yield* Ref.make(0)
+        const outer = Stream.concat(
+          Stream.make(1, 2),
+          Stream.flatMap(Stream.fromEffect(latch.await), () => Stream.fail("boom"))
+        )
+        const result = yield* Stream.flatMap(
+          outer,
+          () =>
+            Stream.flatMap(Stream.fromEffect(latch.open), () => Stream.never).pipe(
+              Stream.ensuring(Ref.update(finalized, (n) => n + 1))
+            ),
+          { concurrency: 2 }
+        ).pipe(
+          Stream.runDrain,
+          Effect.exit
+        )
+
+        assert.deepStrictEqual(result, Exit.fail("boom"))
+        assert.strictEqual(yield* Ref.get(finalized), 2)
+      }))
+
+    it.effect("releases a permit after a successful saturated pull", () =>
+      Effect.gen(function*() {
+        const gate = yield* Deferred.make<void>()
+        const outer = Stream.concat(
+          Stream.make(1, 2),
+          Stream.fromEffect(Deferred.succeed(gate, void 0).pipe(Effect.as(3)))
+        )
+        const result = yield* Stream.flatMap(
+          outer,
+          (n) => n === 3 ? Stream.make(3) : Stream.fromEffect(Deferred.await(gate).pipe(Effect.as(n))),
+          { concurrency: 2 }
+        ).pipe(Stream.runCollect)
+
+        assert.deepStrictEqual([...result].sort(), [1, 2, 3])
+      }))
+
+    it.effect("preserves an outer element when a permit arrives during a pull", () =>
+      Effect.gen(function*() {
+        const probing = yield* Deferred.make<void>()
+        const gate = yield* Deferred.make<void>()
+        const innerGate = yield* Deferred.make<void>()
+        const innerCompleted = yield* Deferred.make<void>()
+        const outer = Stream.concat(
+          Stream.make(1, 2),
+          Stream.fromEffect(
+            Deferred.succeed(probing, void 0).pipe(
+              Effect.andThen(Deferred.await(gate)),
+              Effect.as(3)
+            )
+          )
+        )
+        const fiber = yield* Stream.flatMap(
+          outer,
+          (n) =>
+            n === 3
+              ? Stream.make(3)
+              : Stream.fromEffect(Deferred.await(innerGate).pipe(Effect.as(n))).pipe(
+                Stream.ensuring(Deferred.succeed(innerCompleted, void 0))
+              ),
+          { concurrency: 2 }
+        ).pipe(
+          Stream.runCollect,
+          Effect.forkChild
+        )
+        yield* Deferred.await(probing)
+        yield* Deferred.succeed(innerGate, void 0)
+        yield* Deferred.await(innerCompleted)
+        yield* Deferred.succeed(gate, void 0)
+
+        const result = yield* Fiber.join(fiber)
+        assert.deepStrictEqual([...result].sort(), [1, 2, 3])
+      }))
+
+    it.effect(
+      "fails promptly and interrupts slow inner streams when the outer stream fails",
+      () => testOuterFailure("flatMap", "slow")
+    )
+  })
+
+  describe("switchMap", () => {
+    it.effect(
+      "interrupts a never-ending inner stream when the outer stream fails",
+      () => testOuterFailure("switchMap", "never")
+    )
+
+    it.effect(
+      "fails promptly and interrupts a slow inner stream when the outer stream fails",
+      () => testOuterFailure("switchMap", "slow")
+    )
   })
 
   it.effect.prop(
@@ -2498,13 +2900,11 @@ describe("Stream", () => {
           assertExitFailure(result, Cause.fail("boom"))
         }))
 
-      // Note: This test is skipped because with sequential pulling (matching zipWith behavior),
-      // when the left stream ends, we don't pull from the right stream, so errors after
-      // the left stream ends are not encountered. This is correct behavior.
-      it.skip("error propagation from right stream", () =>
+      // Keep the left stream alive: once either side ends, later errors from the other side are not observed.
+      it.effect("error propagation from right stream", () =>
         Effect.gen(function*() {
           const result = yield* Stream.zipWithArray(
-            Stream.make(1, 2, 3),
+            Stream.fromArrays([1, 2, 3], [4]),
             Stream.make("a", "b").pipe(Stream.concat(Stream.fail("boom"))),
             (left, right) => {
               const minLength = Math.min(left.length, right.length)
@@ -3372,6 +3772,28 @@ describe("Stream", () => {
   })
 
   describe("haltWhen", () => {
+    it.effect("halts after the current element in the documentation example", () =>
+      Effect.gen(function*() {
+        const halt = yield* Deferred.make<void>()
+        const values = yield* Stream.fromArray([1, 2, 3]).pipe(
+          Stream.tap((value) => value === 2 ? Deferred.succeed(halt, void 0) : Effect.void),
+          Stream.haltWhen(Deferred.await(halt)),
+          Stream.runCollect
+        )
+        assert.deepStrictEqual(values, [1, 2])
+      }))
+
+    it.effect("halts a synchronous upstream before the next chunk", () =>
+      Effect.gen(function*() {
+        const halt = yield* Deferred.make<void>()
+        const values = yield* Stream.fromArrays([1], [2], [3], [4]).pipe(
+          Stream.tap((value) => value === 2 ? Deferred.succeed(halt, void 0) : Effect.void),
+          Stream.haltWhen(Deferred.await(halt)),
+          Stream.runCollect
+        )
+        assert.deepStrictEqual(values, [1, 2])
+      }))
+
     it.effect("halts after the current element", () =>
       Effect.gen(function*() {
         const ref = yield* Ref.make(false)

@@ -19,6 +19,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
+import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -140,6 +141,44 @@ const logBackendObservabilitySettingsReadFailure = (
     }),
   );
 };
+
+function resourceMonitorBinaryName(platform: NodeJS.Platform): string {
+  return platform === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
+}
+
+const resolveResourceMonitorPath = Effect.fn(
+  "desktop.backendConfiguration.resolveResourceMonitorPath",
+)(function* () {
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const binaryName = resourceMonitorBinaryName(environment.platform);
+  const candidates = environment.isDevelopment
+    ? [
+        environment.path.join(
+          environment.rootDir,
+          "native/resource-monitor/target/release",
+          binaryName,
+        ),
+        environment.path.join(
+          environment.rootDir,
+          "native/resource-monitor/target/debug",
+          binaryName,
+        ),
+      ]
+    : environment.isPackaged
+      ? [environment.path.join(environment.resourcesPath, "resource-monitor", binaryName)]
+      : environment.resolveResourcePathCandidates(
+          environment.path.join("resource-monitor", binaryName),
+        );
+
+  for (const candidate of candidates) {
+    if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+      return Option.some(candidate);
+    }
+  }
+
+  return Option.none<string>();
+});
 
 const readPersistedBackendObservabilitySettings = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -326,7 +365,9 @@ const buildObservabilityFragment = (observabilitySettings: BackendObservabilityS
 
 const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolvePrimary")(
   function* (
-    input: SharedBootstrapInput,
+    input: SharedBootstrapInput & {
+      readonly resourceMonitorPath: Option.Option<string>;
+    },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
     never,
@@ -345,6 +386,12 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       desktopBootstrapToken: input.bootstrapToken,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
       tailscaleServePort: backendExposure.tailscaleServePort,
+      desktopTelemetryFd: 4,
+      desktopTelemetryControlFd: 5,
+      ...Option.match(input.resourceMonitorPath, {
+        onNone: () => ({}),
+        onSome: (resourceMonitorPath) => ({ resourceMonitorPath }),
+      }),
       ...buildObservabilityFragment(input.observabilitySettings),
     };
 
@@ -378,10 +425,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   never,
   | DesktopEnvironment.DesktopEnvironment
   | DesktopWslEnvironment.DesktopWslEnvironment
+  | DesktopWslServerTree.DesktopWslServerTree
   | FileSystem.FileSystem
 > {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+  const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
 
   // Bind to 0.0.0.0 inside WSL so the backend is reachable both via
   // WSL2's automatic localhost forwarding (wslhost: Windows 127.0.0.1
@@ -411,34 +460,38 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     // inert.
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    // The packaged sidecar is a Windows executable and cannot run inside the
+    // Linux WSL backend. Keep the field absent instead of passing an unusable
+    // `/mnt/.../*.exe` path; WSL resource telemetry is reported unavailable.
+    // See docs/architecture/resource-telemetry.md.
     ...buildObservabilityFragment(input.observabilitySettings),
   };
 
-  // In packaged builds environment.appRoot is .../resources/app.asar — an
-  // archive FILE. The Windows primary reads its entry through
-  // ELECTRON_RUN_AS_NODE (asar-aware), but the WSL backend launches plain
-  // `wsl.exe -- node`, which can't read inside an asar. electron-builder unpacks
-  // the server bundle + node-pty (see asarUnpack in build-desktop-artifact.ts)
-  // to the app.asar.unpacked sibling, so point WSL there. In dev appRoot is
-  // already a real directory, so this is a no-op.
-  const wslAppRoot = environment.isPackaged
-    ? environment.path.join(environment.resourcesPath, "app.asar.unpacked")
-    : environment.appRoot;
+  // In packaged builds the server tree ships inside resources/server.asar —
+  // an archive FILE the Windows primary reads through ELECTRON_RUN_AS_NODE
+  // (asar-aware). The WSL backend launches plain `wsl.exe -- node`, which
+  // can't read an asar, so materialize (or reuse) the extracted copy of the
+  // sidecar before preflighting. In dev the server tree is the real checkout
+  // directory and ensure returns it unchanged.
+  const serverTree = yield* wslServerTree.ensure;
+  const wslAppRoot = serverTree.ok ? serverTree.root : environment.serverRoot;
   const wslEntryPath = environment.path.join(wslAppRoot, "apps/server/dist/bin.mjs");
 
-  const preflight = yield* runWslPreflight({
-    distro: input.distro,
-    windowsEntryPath: wslEntryPath,
-    windowsRepoRoot: wslAppRoot,
-    // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and
-    // attached to the Windows artifact — see build-desktop-artifact.ts), so the
-    // WSL backend never needs a compiler, node-gyp, or network on first launch.
-    // Compiling from source is a dev-only convenience: a checkout has no shipped
-    // prebuilt, and developers have the toolchain. In packaged builds we instead
-    // surface a clear diagnostic if the prebuilt can't load (unsupported
-    // arch/distro), rather than silently dropping into a fragile runtime build.
-    allowBuild: !environment.isPackaged,
-  });
+  const preflight = serverTree.ok
+    ? yield* runWslPreflight({
+        distro: input.distro,
+        windowsEntryPath: wslEntryPath,
+        windowsRepoRoot: wslAppRoot,
+        // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and
+        // attached to the Windows artifact — see build-desktop-artifact.ts), so the
+        // WSL backend never needs a compiler, node-gyp, or network on first launch.
+        // Compiling from source is a dev-only convenience: a checkout has no shipped
+        // prebuilt, and developers have the toolchain. In packaged builds we instead
+        // surface a clear diagnostic if the prebuilt can't load (unsupported
+        // arch/distro), rather than silently dropping into a fragile runtime build.
+        allowBuild: !environment.isPackaged,
+      })
+    : ({ _tag: "Failed", reason: serverTree.reason, fatal: serverTree.fatal } as const);
 
   // Every operation after preflight uses the same concrete distro. In
   // default-tracking mode this closes the race where the system default
@@ -560,6 +613,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+  const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
   const settings = yield* DesktopAppSettings.DesktopAppSettings;
   const crypto = yield* Crypto.Crypto;
   // SynchronizedRef (not a plain Ref) so the read-generate-write is atomic.
@@ -615,13 +669,18 @@ export const make = Effect.gen(function* () {
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
+      Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
     );
   });
 
   const buildWindowsPrimaryConfig = Effect.gen(function* () {
     const shared = yield* sharedInputs;
-    return yield* resolvePrimaryStartConfig(shared).pipe(
+    const resourceMonitorPath = yield* resolveResourceMonitorPath().pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+    );
+    return yield* resolvePrimaryStartConfig({ ...shared, resourceMonitorPath }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
     );
@@ -673,6 +732,7 @@ export const make = Effect.gen(function* () {
         return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
+          Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
       }).pipe(

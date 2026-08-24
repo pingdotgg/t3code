@@ -1,61 +1,71 @@
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Sink from "effect/Sink";
+import type * as sqs from "@distilled.cloud/aws/sqs";
+import type * as Effect from "effect/Effect";
+import type * as Sink from "effect/Sink";
 import * as Binding from "../../Binding.ts";
-import * as Output from "../../Output.ts";
-import { isFunction } from "../Lambda/Function.ts";
+import type { BatchRetryExhaustedError } from "../internal/BatchedSink.ts";
 import type { Queue } from "./Queue.ts";
-import { SendMessageBatch } from "./SendMessageBatch.ts";
 
-export class QueueSink extends Binding.Service<
+/**
+ * A raw `SendMessageBatchRequestEntry` minus the batch-correlation `Id`,
+ * which the sink assigns per API call. Callers stay in control of
+ * `MessageBody`, `MessageGroupId`, `MessageDeduplicationId`, attributes, etc.
+ */
+export interface QueueSinkEntry extends Omit<
+  sqs.SendMessageBatchRequestEntry,
+  "Id"
+> {}
+
+export type QueueSinkError =
+  | sqs.SendMessageBatchError
+  | BatchRetryExhaustedError<QueueSinkEntry>;
+
+/**
+ * A batching sink over SQS `SendMessageBatch` (10 entries / 256 KiB per
+ * call). Per-entry failures with `SenderFault: false` (throttling, internal
+ * errors) are retried on a bounded schedule; `SenderFault: true` failures are
+ * permanent and dropped. Exhausting retries fails the sink with a typed
+ * `BatchRetryExhaustedError` carrying the stranded entries.
+ *
+ * The binding grants the host function `sqs:SendMessage` and
+ * `sqs:SendMessageBatch` on the queue. Provide the `QueueSinkHttp` layer
+ * (which itself needs `SendMessageBatchHttp`) on the Function to implement
+ * the binding.
+ * @binding
+ * @section Streaming Messages into a Queue
+ * @example Run a Stream into a Queue
+ * ```typescript
+ * // init (provide SQS.QueueSinkHttp + SQS.SendMessageBatchHttp on the Function)
+ * const sink = yield* SQS.QueueSink(queue);
+ *
+ * // runtime: batching, size limits, and transient-failure retry are handled
+ * // by the sink — each element is a SendMessageBatchRequestEntry minus `Id`.
+ * yield* Stream.fromIterable(messages).pipe(
+ *   Stream.map((message) => ({ MessageBody: message })),
+ *   Stream.run(sink),
+ * );
+ * ```
+ *
+ * @example Forward Event-Source Records into a Result Queue
+ * ```typescript
+ * const sink = yield* SQS.QueueSink(resultQueue);
+ *
+ * yield* SQS.consumeQueueMessages(sourceQueue, (records) =>
+ *   records.pipe(
+ *     Stream.map((record) => ({ MessageBody: record.body })),
+ *     Stream.run(sink),
+ *     Effect.orDie,
+ *   ),
+ * );
+ * ```
+ */
+export interface QueueSink extends Binding.Service<
   QueueSink,
+  "AWS.SQS.QueueSink",
   (
     queue: Queue,
-  ) => Effect.Effect<Sink.Sink<void, string, readonly string[], never>>
->()("AWS.SQS.QueueSink") {}
+  ) => Effect.Effect<
+    Sink.Sink<void, QueueSinkEntry, readonly QueueSinkEntry[], QueueSinkError>
+  >
+> {}
 
-export const QueueSinkLive = Layer.effect(
-  QueueSink,
-  Effect.gen(function* () {
-    const Policy = yield* QueueSinkPolicy;
-    const sendMessageBatch = yield* SendMessageBatch;
-
-    return Effect.fn(function* (queue: Queue) {
-      yield* Policy(queue);
-      const sendBatch = yield* sendMessageBatch(queue);
-      return Sink.forEachArray((messages: readonly string[]) =>
-        sendBatch({
-          Entries: messages.map((message, i) => ({
-            Id: `${i}`,
-            MessageBody: message,
-          })),
-        }).pipe(Effect.orDie, Effect.asVoid),
-      );
-    });
-  }),
-);
-
-export class QueueSinkPolicy extends Binding.Policy<
-  QueueSinkPolicy,
-  (queue: Queue) => Effect.Effect<void>
->()("AWS.SQS.QueueSinkPolicy") {}
-
-export const QueueSinkPolicyLive = QueueSinkPolicy.layer.succeed(
-  Effect.fn(function* (host, queue) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.SQS.QueueSink(${queue}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["sqs:SendMessage", "sqs:SendMessageBatch"],
-            Resource: [Output.interpolate`${queue.queueArn}`],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `QueueSinkPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
-);
+export const QueueSink = Binding.Service<QueueSink>("AWS.SQS.QueueSink");

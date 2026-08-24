@@ -3,14 +3,21 @@ import { Effect, Exit, Layer, Option, Schema } from "effect"
 import { Workflow, WorkflowEngine } from "effect/unstable/workflow"
 
 describe("WorkflowEngine", () => {
-  const IncrementWorkflow = Workflow.make({
-    name: "WorkflowEngine/IncrementWorkflow",
+  const IncrementWorkflow = Workflow.make("WorkflowEngine/IncrementWorkflow", {
     payload: { value: Schema.Number },
     success: Schema.Number,
     idempotencyKey: ({ value }) => String(value)
   })
 
   const IncrementWorkflowLayer = IncrementWorkflow.toLayer(({ value }) => Effect.succeed(value + 1))
+
+  class ClassWorkflow extends Workflow.make("WorkflowEngine/ClassWorkflow", {
+    payload: { value: Schema.Number },
+    success: Schema.Number,
+    idempotencyKey: ({ value }) => String(value)
+  }) {}
+
+  const ClassWorkflowLayer = ClassWorkflow.toLayer(({ value }) => Effect.succeed(value + 1))
 
   it.effect("layer executes and polls workflows", () =>
     Effect.gen(function*() {
@@ -35,6 +42,18 @@ describe("WorkflowEngine", () => {
       assert.strictEqual(discardedExecutionId, executionId)
     }).pipe(
       Effect.provide(IncrementWorkflowLayer.pipe(
+        Layer.provideMerge(WorkflowEngine.layerMemory)
+      ))
+    ))
+
+  it.effect("supports class extension", () =>
+    Effect.gen(function*() {
+      const result = yield* ClassWorkflow.execute({ value: 1 })
+
+      assert.strictEqual(ClassWorkflow._tag, "WorkflowEngine/ClassWorkflow")
+      assert.strictEqual(result, 2)
+    }).pipe(
+      Effect.provide(ClassWorkflowLayer.pipe(
         Layer.provideMerge(WorkflowEngine.layerMemory)
       ))
     ))

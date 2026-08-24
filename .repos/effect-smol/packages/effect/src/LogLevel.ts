@@ -1,39 +1,8 @@
 /**
- * The `LogLevel` module defines the levels used by Effect logging and the
- * ordering operations used to compare, filter, and enable log output.
- *
- * **Mental model**
- *
- * - A `LogLevel` is one of `All`, `Fatal`, `Error`, `Warn`, `Info`, `Debug`,
- *   `Trace`, or `None`
- * - `Fatal` is the most severe concrete level and `Trace` is the least severe
- * - `All` and `None` are sentinel levels: `All` enables every message and
- *   `None` disables every message
- * - Ordering follows logging severity, so higher levels are more important and
- *   lower levels are more verbose
- * - Filtering is usually expressed as "log this message when its level is
- *   greater than or equal to the configured minimum"
- *
- * **Common tasks**
- *
- * - Enumerate levels with {@link values}
- * - Compare exact levels with {@link Equivalence}
- * - Sort or compare by severity with {@link Order} and {@link getOrdinal}
- * - Check thresholds with {@link isGreaterThanOrEqualTo} and
- *   {@link isLessThanOrEqualTo}
- * - Test whether a level is enabled for the current fiber with
- *   {@link isEnabled}
- *
- * **Gotchas**
- *
- * - `All` and `None` are useful for configuration boundaries, but they are not
- *   concrete message severities; use {@link Severity} when only emitted message
- *   levels are valid
- * - The comparison helpers compare severity, not declaration position in source
- *   code or alphabetical order
- * - `isEnabled` reads the current fiber's `MinimumLogLevel` reference, so it is
- *   context-sensitive; use the pure comparison helpers when checking an
- *   explicit threshold
+ * Log-level types and helpers used by Effect logging. The module defines all
+ * accepted log levels, the concrete emitted severities, the ordered level list,
+ * equality and ordering instances, threshold comparison helpers, and an effect
+ * for checking whether a level is enabled by the current logging settings.
  *
  * @since 2.0.0
  */

@@ -1,8 +1,8 @@
 import * as AWS from "@/AWS";
 import * as Alchemy from "@/index.ts";
 import * as State from "@/State";
-import * as Test from "@/Test/Vitest";
-import { describe, expect } from "@effect/vitest";
+import * as Test from "@/Test/Alchemy";
+import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -36,16 +36,26 @@ const Stack = Alchemy.Stack(
   }).pipe(Effect.provide(KinesisApiFunctionLive)),
 );
 
-const stack = beforeAll(deploy(Stack), { timeout: 240_000 });
+const stack = beforeAll(
+  Effect.gen(function* () {
+    yield* Effect.logInfo("Kinesis test setup: destroying previous resources");
+    yield* destroy(Stack);
+
+    yield* Effect.logInfo("Kinesis test setup: deploying fixture");
+    return yield* deploy(Stack);
+  }),
+  { timeout: 240_000 },
+);
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), { timeout: 60_000 });
 
 // Lambda Function URLs cold-start (DNS, init) and a fresh role's IAM grants
 // (eventual consistency) can both take a while on the first hit. Retrying on
 // any non-200 lets the first request wait through that window; warm calls
 // return on the first try and never retry.
-const readinessSchedule = Schedule.fixed("2 seconds").pipe(
-  Schedule.both(Schedule.recurs(75)),
-);
+const readinessSchedule = Schedule.max([
+  Schedule.fixed("4 seconds"),
+  Schedule.recurs(10),
+]);
 
 // Lambda Function URLs come back with a trailing slash (`https://…on.aws/`).
 // Naively concatenating `${baseUrl}${path}` would yield a double slash
@@ -57,6 +67,7 @@ const urlOf = (baseUrl: string, path: string) =>
 
 const getJson = (baseUrl: string, path: string) =>
   HttpClient.get(urlOf(baseUrl, path)).pipe(
+    Effect.timeout("5 seconds"),
     Effect.flatMap((response) =>
       response.status === 200
         ? response.json
@@ -72,6 +83,9 @@ const postJson = (baseUrl: string, path: string, body: unknown) =>
       body,
     ),
   ).pipe(
+    // Runtime routes are normally sub-second. The record-polling and sink
+    // routes can legitimately spend several seconds on bounded retries.
+    Effect.timeout("15 seconds"),
     Effect.flatMap((response) =>
       response.status === 200
         ? response.json
@@ -323,5 +337,125 @@ describe.sequential("Kinesis Bindings", () => {
         expect((response as any).ok).toBe(true);
       }),
     );
+
+    test(
+      "splits more than 500 records into multiple PutRecords calls",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+        // 501 records > the PutRecords limit of 500, so the batched sink
+        // must split the chunk into 2 sequential API calls (500 + 1). Any
+        // per-record throttling failures are retried by the sink engine.
+        const marker = crypto.randomUUID();
+        const response = yield* postJson(url, "/sink", {
+          records: Array.from({ length: 501 }, (_, i) => ({
+            partitionKey: `sink-${i % 7}`,
+            data: `sink-${marker}-${i}`,
+          })),
+        });
+        expect((response as any).ok).toBe(true);
+      }),
+      { timeout: 120_000 },
+    );
+  });
+
+  // Shard-topology tests run LAST (describe.sequential) because they change
+  // the stream's shard layout: earlier tests assume `Shards[0]` is the
+  // single open shard the fixture was created with.
+  describe("SplitShard", () => {
+    test(
+      "splits the open shard into two children",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+
+        const openShards = yield* getOpenShards(url);
+        expect(openShards.length).toBe(1);
+        const shard = openShards[0]!;
+
+        // Split at the midpoint of the shard's hash-key range.
+        const start = BigInt(shard.HashKeyRange.StartingHashKey);
+        const end = BigInt(shard.HashKeyRange.EndingHashKey);
+        const midpoint = (start + end) / 2n + 1n;
+
+        const response = yield* postJson(url, "/split-shard", {
+          shardToSplit: shard.ShardId,
+          newStartingHashKey: midpoint.toString(),
+        });
+        expect((response as any).ok).toBe(true);
+
+        // The split completes asynchronously: the stream transitions
+        // UPDATING -> ACTIVE and the parent shard closes, leaving two
+        // open children.
+        const children = yield* waitForOpenShardCount(url, 2);
+        for (const child of children) {
+          expect(child.ParentShardId).toBe(shard.ShardId);
+        }
+      }),
+      { timeout: 120_000 },
+    );
+  });
+
+  describe("MergeShards", () => {
+    test(
+      "merges the two adjacent children back into one shard",
+      Effect.gen(function* () {
+        const { url } = yield* stack;
+
+        const openShards = yield* waitForOpenShardCount(url, 2);
+        // Order the two children by hash-key range so they are passed as
+        // (shard, adjacent-shard) the way MergeShards expects.
+        const [low, high] = [...openShards].sort((a, b) =>
+          BigInt(a.HashKeyRange.StartingHashKey) <
+          BigInt(b.HashKeyRange.StartingHashKey)
+            ? -1
+            : 1,
+        );
+
+        const response = yield* postJson(url, "/merge-shards", {
+          shardToMerge: low!.ShardId,
+          adjacentShardToMerge: high!.ShardId,
+        });
+        expect((response as any).ok).toBe(true);
+
+        const merged = yield* waitForOpenShardCount(url, 1);
+        expect(merged[0]!.ParentShardId).toBe(low!.ShardId);
+      }),
+      { timeout: 120_000 },
+    );
   });
 });
+
+interface ShardInfo {
+  ShardId: string;
+  ParentShardId?: string;
+  HashKeyRange: { StartingHashKey: string; EndingHashKey: string };
+  SequenceNumberRange: { EndingSequenceNumber?: string };
+}
+
+// A shard is open while its sequence-number range has no upper bound.
+const getOpenShards = (baseUrl: string) =>
+  getJson(baseUrl, "/shards").pipe(
+    Effect.map((response) =>
+      (((response as any).Shards ?? []) as ShardInfo[]).filter(
+        (shard) =>
+          shard.SequenceNumberRange?.EndingSequenceNumber === undefined,
+      ),
+    ),
+  );
+
+const waitForOpenShardCount = (baseUrl: string, count: number) =>
+  getOpenShards(baseUrl).pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("5 seconds"),
+      until: (shards): boolean => shards.length === count,
+      times: 20,
+    }),
+    Effect.flatMap((shards) =>
+      shards.length === count
+        ? Effect.succeed(shards)
+        : Effect.fail(
+            new Error(
+              `expected ${count} open shards, saw ${shards.length} after polling`,
+            ),
+          ),
+    ),
+  );

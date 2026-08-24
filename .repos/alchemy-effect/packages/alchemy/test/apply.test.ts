@@ -1,25 +1,38 @@
+import { adopt, Unowned } from "@/AdoptPolicy";
 import { Cli } from "@/Cli/Cli";
-import * as Construct from "@/Construct";
+import * as Namespace from "@/Namespace.ts";
 import * as Output from "@/Output";
+import * as Provider from "@/Provider";
+import * as RemovalPolicy from "@/RemovalPolicy.ts";
 import { Stack } from "@/Stack";
 import {
+  type CreatingResourceState,
   type ReplacedResourceState,
   type ReplacingResourceState,
   type ResourceState,
   State,
 } from "@/State";
-import * as Test from "@/Test/Vitest";
-import { describe, expect } from "@effect/vitest";
+import * as Test from "@/Test/Alchemy";
+import { describe, expect } from "alchemy-test";
 import { Data, Layer } from "effect";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
 import {
+  AliasedWidget,
+  aliasedWidgetDeletes,
+  aliasedWidgetProvider,
   ArtifactProbe,
   BindingTarget,
+  CollisionRegistry,
+  DeleteFirstResource,
   DeletedBindingRegressionTarget,
   DurationResource,
+  FqnProbe,
   Function,
+  KindStablesResource,
   PhasedTarget,
   StaticStablesResource,
   TestLayers,
@@ -234,29 +247,54 @@ describe("basic operations", () => {
   );
 
   test.provider(
+    "should apply downstream resources when a stable kind shadows an output discriminator",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* KindStablesResource("Database", {
+          value: "v1",
+        }).pipe(stack.deploy);
+
+        const output = yield* Effect.gen(function* () {
+          const database = yield* KindStablesResource("Database", {
+            value: "v2",
+          });
+          const role = yield* KindStablesResource("Role", {
+            value: "role",
+            upstream: database,
+          });
+          return { database, role };
+        }).pipe(stack.deploy);
+
+        expect(output.database.value).toBe("v2");
+        expect(output.role.upstreamKind).toBe("postgresql");
+      }),
+  );
+
+  test.provider(
     "should resolve bindings inside constructs using namespaced resources",
     (stack) =>
       Effect.gen(function* () {
-        const Site = Construct.fn(function* (_id: string, _props: {}) {
-          const bucket = yield* BindingTarget("Bucket", {
-            string: "bucket-value",
-          });
-          const distribution = yield* BindingTarget("Distribution", {
-            string: "distribution-value",
-          });
+        const Site = (id: string, _props: {}) =>
+          Effect.gen(function* () {
+            const bucket = yield* BindingTarget("Bucket", {
+              string: "bucket-value",
+            });
+            const distribution = yield* BindingTarget("Distribution", {
+              string: "distribution-value",
+            });
 
-          yield* bucket.bind("Policy", {
-            env: {
-              BUCKET: bucket.string,
-              DISTRIBUTION: distribution.string,
-            },
-          });
+            yield* bucket.bind("Policy", {
+              env: {
+                BUCKET: bucket.string,
+                DISTRIBUTION: distribution.string,
+              },
+            });
 
-          return {
-            bucket,
-            distribution,
-          };
-        });
+            return {
+              bucket,
+              distribution,
+            };
+          }).pipe(Namespace.push(id));
 
         const output = yield* Site("MarketingSite", {}).pipe(stack.deploy);
 
@@ -311,6 +349,68 @@ describe("basic operations", () => {
           },
         });
       }),
+  );
+
+  // #874: terminal commits must persist the RESOLVED binding payload the
+  // provider reconciled with, not the raw plan-time expressions. Raw
+  // `node.bindings` hold unresolved Outputs (silently dropped by JSON state
+  // stores), so persisting them makes every later plan's `diffBindings`
+  // compare a lossy stored shape against fully-resolved data — a phantom
+  // binding update on every plan. Exercises the create, update, and replace
+  // commit sites.
+  test.provider("terminal commits persist resolved binding payloads", (stack) =>
+    Effect.gen(function* () {
+      const program = (opts: { source: string; replaceString?: string }) =>
+        Effect.gen(function* () {
+          const source = yield* BindingTarget("BindSource", {
+            string: opts.source,
+          });
+          const host = yield* BindingTarget("BindHost", {
+            name: "host",
+            replaceString: opts.replaceString,
+          });
+          // `source.string` is an unresolved Output at plan time.
+          yield* host.bind("FromSource", {
+            env: { VALUE: source.string },
+          });
+          return { source, host };
+        });
+
+      const actionOf = (plan: any, logicalId: string) =>
+        (Object.values(plan.resources) as any[]).find(
+          (node: any) => node.resource.LogicalId === logicalId,
+        )?.action;
+
+      const expectHostBindings = Effect.fn(function* (value: string) {
+        const hostState = yield* getState("BindHost");
+        expect(hostState?.bindings).toEqual([
+          { sid: "FromSource", data: { env: { VALUE: value } } },
+        ]);
+      });
+
+      // ── create commit ──
+      yield* stack.deploy(program({ source: "v1" }));
+      yield* expectHostBindings("v1");
+      const created = yield* stack.plan(program({ source: "v1" }));
+      expect(actionOf(created, "BindSource")).toBe("noop");
+      expect(actionOf(created, "BindHost")).toBe("noop");
+
+      // ── update commit ──
+      yield* stack.deploy(program({ source: "v2" }));
+      yield* expectHostBindings("v2");
+      const updated = yield* stack.plan(program({ source: "v2" }));
+      expect(actionOf(updated, "BindSource")).toBe("noop");
+      expect(actionOf(updated, "BindHost")).toBe("noop");
+
+      // ── replace commit ──
+      yield* stack.deploy(program({ source: "v2", replaceString: "flip" }));
+      yield* expectHostBindings("v2");
+      const replaced = yield* stack.plan(
+        program({ source: "v2", replaceString: "flip" }),
+      );
+      expect(actionOf(replaced, "BindSource")).toBe("noop");
+      expect(actionOf(replaced, "BindHost")).toBe("noop");
+    }),
   );
 
   test.provider(
@@ -378,6 +478,74 @@ describe("basic operations", () => {
   );
 });
 
+// Regression: a logical ID may legitimately contain the FQN separator ("/").
+// The GitHub event source registers a webhook keyed by `${owner}/${repository}`
+// (e.g. "alchemy-run/alchemy"). During destroy the deletion path used to
+// recompute the state key via `toFqn(namespace, logicalId)`, but `logicalId`
+// came from `parseFqn` which splits on "/" and keeps only the last segment
+// ("alchemy"). The recomputed key missed the real state row, so the
+// resource was deleted from the cloud yet never removed from state — resurfacing
+// as an orphan deletion on every subsequent destroy, forever.
+describe("FQN separator in logical ID", () => {
+  test.provider(
+    "destroy clears state for a top-level logical ID containing '/'",
+    (stack) =>
+      Effect.gen(function* () {
+        const fqn = "alchemy-run/alchemy";
+
+        yield* stack.deploy(
+          Effect.gen(function* () {
+            return yield* TestResource(fqn, { string: "v1" });
+          }),
+        );
+
+        // The row is persisted under the full FQN (separator and all).
+        expect((yield* getState(fqn))?.status).toEqual("created");
+
+        const deleted: string[] = [];
+        yield* stack.destroy().pipe(
+          hook({
+            delete: (id: string) =>
+              Effect.sync(() => {
+                deleted.push(id);
+              }),
+          }),
+        );
+
+        // provider.delete ran exactly once, AND the state row was removed
+        // (the pre-fix bug deleted the cloud resource but missed the row).
+        expect(deleted).toHaveLength(1);
+        expect(yield* getState(fqn)).toBeUndefined();
+        expect(yield* listState()).toEqual([]);
+      }),
+  );
+
+  test.provider(
+    "destroy clears state for a namespaced logical ID containing '/'",
+    (stack) =>
+      Effect.gen(function* () {
+        // Mirrors the GitHub webhook: a host construct (the Worker) whose
+        // child resource's logical ID is "owner/repo".
+        const fqn = "ReleaseService/alchemy-run/alchemy";
+
+        yield* stack.deploy(
+          Effect.gen(function* () {
+            return yield* TestResource("alchemy-run/alchemy", {
+              string: "v1",
+            });
+          }).pipe(Namespace.push("ReleaseService")),
+        );
+
+        expect((yield* getState(fqn))?.status).toEqual("created");
+
+        yield* stack.destroy();
+
+        expect(yield* getState(fqn)).toBeUndefined();
+        expect(yield* listState()).toEqual([]);
+      }),
+  );
+});
+
 describe("linear update propagation", () => {
   // Regression: in a linear chain (A -> B with no cycle), an update to A
   // followed by an update to B must let B see A's *post-update* attr, never
@@ -423,6 +591,137 @@ describe("linear update propagation", () => {
         // sequence as long as no stale value leaked through.
         expect(sawByB.length).toBeGreaterThan(0);
         expect(sawByB.every((v) => v === "v2")).toBe(true);
+      }),
+  );
+});
+
+// Regression: `deleteFirst` on a `replace` diff was plumbed from the provider
+// all the way into persisted state but never *read* — every replacement was
+// create-first, with the old generation reclaimed afterwards by Phase-2 GC.
+// That silently broke any resource whose replacement can't coexist with the
+// original (fixed physical name, singleton): the create collided with the
+// not-yet-deleted original. These tests pin both orderings.
+describe("deleteFirst replacements", () => {
+  test.provider(
+    "deletes the old generation BEFORE creating the replacement",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* stack.deploy(
+          Effect.gen(function* () {
+            return yield* DeleteFirstResource("R", { replaceString: "v1" });
+          }),
+        );
+
+        const order: string[] = [];
+        const recordHooks = {
+          create: () =>
+            Effect.sync(() => {
+              order.push("create");
+            }),
+          update: () => Effect.succeed(undefined),
+          delete: () =>
+            Effect.sync(() => {
+              order.push("delete");
+            }),
+        };
+
+        yield* Effect.gen(function* () {
+          return yield* DeleteFirstResource("R", { replaceString: "v2" });
+        }).pipe(stack.deploy, hook(recordHooks));
+
+        // The whole point: delete-old precedes create-new.
+        expect(order).toEqual(["delete", "create"]);
+
+        // The resource collapses straight to a terminal `created` state with
+        // no leftover replacement chain for GC to drain.
+        const state = yield* getState("R");
+        expect(state?.status).toEqual("created");
+        expect((state as { old?: unknown }).old).toBeUndefined();
+        expect(yield* listState()).toHaveLength(1);
+      }),
+  );
+
+  test.provider(
+    "default (non-deleteFirst) replacement still creates BEFORE deleting",
+    (stack) =>
+      Effect.gen(function* () {
+        // `TestResource` returns a plain `{ action: "replace" }` (deleteFirst
+        // defaults to false), so the engine must stay create-first.
+        yield* stack.deploy(
+          Effect.gen(function* () {
+            return yield* TestResource("R", { replaceString: "v1" });
+          }),
+        );
+
+        const order: string[] = [];
+        yield* Effect.gen(function* () {
+          return yield* TestResource("R", { replaceString: "v2" });
+        }).pipe(
+          stack.deploy,
+          hook({
+            create: () =>
+              Effect.sync(() => {
+                order.push("create");
+              }),
+            update: () => Effect.succeed(undefined),
+            delete: () =>
+              Effect.sync(() => {
+                order.push("delete");
+              }),
+          }),
+        );
+
+        expect(order).toEqual(["create", "delete"]);
+      }),
+  );
+
+  test.provider(
+    "lets a same-identity replacement succeed where create-first would collide",
+    (stack) =>
+      Effect.gen(function* () {
+        // A shared registry of live physical names. The provider's create
+        // fails if the (fixed) name is still live — exactly the failure mode
+        // of a real fixed-name resource (Docker network "already exists",
+        // no-op `volume create`) when create runs before the old is deleted.
+        const registry = { live: new Set<string>() };
+        const withRegistry = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          effect.pipe(
+            Effect.provide(Layer.succeed(CollisionRegistry, registry)),
+          );
+
+        yield* stack
+          .deploy(
+            Effect.gen(function* () {
+              return yield* DeleteFirstResource("R", {
+                name: "singleton",
+                replaceString: "v1",
+              });
+            }),
+          )
+          .pipe(withRegistry);
+        expect(registry.live.has("singleton")).toBe(true);
+
+        // Before the fix this deploy died with a CollisionError because the
+        // create of the new "singleton" ran while the old one was still live.
+        const result = yield* stack
+          .deploy(
+            Effect.gen(function* () {
+              return yield* DeleteFirstResource("R", {
+                name: "singleton",
+                replaceString: "v2",
+              });
+            }),
+          )
+          .pipe(withRegistry);
+
+        expect(result.name).toEqual("singleton");
+        expect(result.replaceString).toEqual("v2");
+        // Exactly one live instance remains (old torn down, new created).
+        expect(registry.live.size).toBe(1);
+        expect(registry.live.has("singleton")).toBe(true);
+
+        const state = yield* getState("R");
+        expect(state?.status).toEqual("created");
       }),
   );
 });
@@ -1469,6 +1768,241 @@ describe("from creating state", () => {
         expect(yield* getState("A")).toBeUndefined();
       }),
   );
+
+  // ── attr-less `creating` rows must not orphan the physical resource ──
+  //
+  // A create can be interrupted AFTER the cloud-side call succeeded but
+  // BEFORE reconcile returned Attributes, leaving a `creating` row with
+  // `attr === undefined`. Destroy used to skip `provider.delete` entirely
+  // for such rows and drop the state, silently orphaning the physical
+  // resource. The engine now read-then-deletes: `provider.read` recovers
+  // the attributes from the persisted props (deterministic physical name),
+  // and only a confirmed-missing or Unowned resource skips the delete.
+
+  test.provider(
+    "destroy deletes the recovered physical resource of an attr-less creating row",
+    (stack) =>
+      Effect.gen(function* () {
+        // Interrupted create: cloud-side create "succeeded" but no attrs
+        // were ever persisted.
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", {
+            string: "test-string",
+          });
+        }).pipe(stack.deploy, hook());
+        expect((yield* getState("A"))?.status).toEqual("creating");
+        expect((yield* getState("A"))?.attr).toBeUndefined();
+
+        const deleted: string[] = [];
+        yield* stack.destroy().pipe(
+          hook({
+            read: () => Effect.succeed({ string: "test-string" }),
+            delete: (id) => Effect.sync(() => void deleted.push(id)),
+          }),
+        );
+
+        // The physical resource recovered by `read` was actually deleted —
+        // not silently orphaned.
+        expect(deleted).toEqual(["A"]);
+        expect(yield* getState("A")).toBeUndefined();
+      }),
+  );
+
+  test.provider(
+    "destroy never deletes a recovered resource that is Unowned",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", {
+            string: "test-string",
+          });
+        }).pipe(stack.deploy, hook());
+        expect((yield* getState("A"))?.status).toEqual("creating");
+
+        const deleted: string[] = [];
+        yield* stack.destroy().pipe(
+          hook({
+            // The physical name exists but belongs to someone else — our
+            // interrupted create actually lost a name race (or died before
+            // stamping ownership).
+            read: () => Effect.succeed(Unowned({ string: "foreign" })),
+            delete: (id) => Effect.sync(() => void deleted.push(id)),
+          }),
+        );
+
+        // Foreign resources are left in place; only our state is dropped.
+        expect(deleted).toEqual([]);
+        expect(yield* getState("A")).toBeUndefined();
+      }),
+  );
+
+  test.provider(
+    "destroy tolerates not-found for an attr-less creating row",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", {
+            string: "test-string",
+          });
+        }).pipe(stack.deploy, hook());
+        expect((yield* getState("A"))?.status).toEqual("creating");
+
+        const deleted: string[] = [];
+        yield* stack.destroy().pipe(
+          hook({
+            read: () => Effect.succeed(undefined),
+            delete: (id) => Effect.sync(() => void deleted.push(id)),
+          }),
+        );
+
+        // Nothing exists cloud-side — delete is not invoked, state is dropped.
+        expect(deleted).toEqual([]);
+        expect(yield* getState("A")).toBeUndefined();
+      }),
+  );
+
+  test.provider(
+    "destroy drops an attr-less creating row when the provider has no read",
+    (stack) =>
+      Effect.gen(function* () {
+        // Manufacture the interrupted-create row directly: Test.Queue's
+        // provider implements no `read`, so recovery is impossible and the
+        // engine can only drop the row (surfacing a note, not crashing).
+        const state = yield* yield* State;
+        const stk = yield* Stack;
+        yield* state.set({
+          stack: stk.name,
+          stage: stk.stage,
+          fqn: "Q",
+          value: {
+            kind: "resource",
+            status: "creating",
+            resourceType: "Test.Queue",
+            namespace: undefined,
+            fqn: "Q",
+            logicalId: "Q",
+            instanceId: "q-instance",
+            providerVersion: 0,
+            downstream: [],
+            bindings: [],
+            props: { name: "q" },
+          } satisfies CreatingResourceState,
+        });
+
+        yield* stack.destroy();
+        expect(yield* getState("Q")).toBeUndefined();
+      }),
+  );
+
+  test.provider(
+    "replacement drain recovers and deletes an attr-less old generation",
+    (stack) =>
+      Effect.gen(function* () {
+        // 1. Interrupted create — `creating` row with no attr.
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", {
+            replaceString: "original",
+          });
+        }).pipe(stack.deploy, hook());
+        expect((yield* getState("A"))?.status).toEqual("creating");
+        expect((yield* getState("A"))?.attr).toBeUndefined();
+
+        // 2. Deploy a replacement. The first `read` (plan-time create-resume
+        // probe) reports not-found so the engine plans a replacement instead
+        // of resuming the create; the drain-time `read` then discovers the
+        // physical resource the interrupted create actually made, and the
+        // engine must delete it while draining the replaced old generation.
+        const deleted: string[] = [];
+        let reads = 0;
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", {
+            replaceString: "new",
+          });
+        }).pipe(
+          stack.deploy,
+          hook({
+            read: () =>
+              Effect.sync(() => ++reads).pipe(
+                Effect.map((n) =>
+                  n === 1 ? undefined : { replaceString: "original" },
+                ),
+              ),
+            delete: (id) => Effect.sync(() => void deleted.push(id)),
+          }),
+        );
+
+        // The old generation's physical resource was recovered and deleted,
+        // and the replacement collapsed to a stable `created` row.
+        expect(deleted).toEqual(["A"]);
+        expect((yield* getState("A"))?.status).toEqual("created");
+        expect(
+          ((yield* getState("A"))?.attr as TestResourceProps)?.replaceString,
+        ).toEqual("new");
+      }),
+  );
+
+  test.provider(
+    "resuming an interrupted create fails loudly when the recovered resource is Unowned",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", {
+            string: "test-string",
+          });
+        }).pipe(stack.deploy, hook());
+        expect((yield* getState("A"))?.status).toEqual("creating");
+
+        const exit = yield* Effect.gen(function* () {
+          yield* TestResource("A", {
+            string: "test-string",
+          });
+        }).pipe(
+          stack.deploy,
+          hook({
+            read: () => Effect.succeed(Unowned({ string: "foreign" })),
+          }),
+          Effect.exit,
+        );
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const reason = exit.cause.reasons.find(Cause.isFailReason);
+          expect((reason?.error as any)?._tag).toBe("OwnedBySomeoneElse");
+        }
+        // The row is untouched — the user can re-run with --adopt.
+        expect((yield* getState("A"))?.status).toEqual("creating");
+      }),
+  );
+
+  test.provider(
+    "resuming an interrupted create with adopt(true) takes over an Unowned resource",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", {
+            string: "test-string",
+          });
+        }).pipe(stack.deploy, hook());
+        expect((yield* getState("A"))?.status).toEqual("creating");
+
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", {
+            string: "test-string",
+          });
+        }).pipe(
+          adopt(true),
+          stack.deploy,
+          hook({
+            read: () => Effect.succeed(Unowned({ string: "test-string" })),
+          }),
+        );
+
+        const persisted = yield* getState("A");
+        expect(persisted?.status).toEqual("created");
+        // The Unowned brand never reaches persisted state.
+        expect(Unowned.is(persisted?.attr)).toBe(false);
+      }),
+  );
 });
 
 describe("from updating state", () => {
@@ -1806,6 +2340,166 @@ describe("from replaced state", () => {
         }).pipe(stack.deploy);
         expectConvergedStatus((yield* getState("A"))?.status);
         expect(output).toEqual("another-replacement");
+      }),
+  );
+});
+
+describe("retain removal policy on replace", () => {
+  test.provider(
+    "replace with retain does not delete the old generation",
+    (stack) =>
+      Effect.gen(function* () {
+        const deleted: string[] = [];
+
+        // 1. Create initial resource with a retain removal policy.
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", { replaceString: "v1" }).pipe(
+            RemovalPolicy.retain(true),
+          );
+        }).pipe(stack.deploy);
+
+        const before = yield* getState("A");
+        expect(before?.status).toEqual("created");
+        const oldInstanceId = before?.instanceId;
+
+        // 2. Trigger a replacement (replaceString change). The old generation
+        //    must NOT be deleted because the resource is retained.
+        const output = yield* Effect.gen(function* () {
+          const A = yield* TestResource("A", { replaceString: "v2" }).pipe(
+            RemovalPolicy.retain(true),
+          );
+          return A.replaceString;
+        }).pipe(
+          stack.deploy,
+          hook({
+            delete: (id) =>
+              Effect.sync(() => {
+                deleted.push(id);
+              }),
+          }),
+        );
+
+        expect(output).toEqual("v2");
+        // provider.delete must never fire for the retained old generation.
+        expect(deleted).not.toContain("A");
+
+        const after = yield* getState("A");
+        // Resource was genuinely replaced (fresh instance id) and the old
+        // chain drained back to a terminal `created` state.
+        expect(after?.status).toEqual("created");
+        expect(after?.instanceId).not.toEqual(oldInstanceId);
+      }),
+  );
+
+  test.provider(
+    "replace without retain deletes the old generation exactly once",
+    (stack) =>
+      Effect.gen(function* () {
+        const deleted: string[] = [];
+
+        // 1. Create initial resource with the default (destroy) policy.
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", { replaceString: "v1" });
+        }).pipe(stack.deploy);
+        expect((yield* getState("A"))?.status).toEqual("created");
+
+        // 2. Trigger a replacement. The old generation must be deleted since
+        //    the resource is not retained — guards the retain patch against
+        //    disabling normal replacement GC.
+        const output = yield* Effect.gen(function* () {
+          const A = yield* TestResource("A", { replaceString: "v2" });
+          return A.replaceString;
+        }).pipe(
+          stack.deploy,
+          hook({
+            delete: (id) =>
+              Effect.sync(() => {
+                deleted.push(id);
+              }),
+          }),
+        );
+
+        expect(output).toEqual("v2");
+        expect(deleted.filter((id) => id === "A")).toHaveLength(1);
+        expect((yield* getState("A"))?.status).toEqual("created");
+      }),
+  );
+
+  test.provider(
+    "nested replacement chain with retain never deletes old generations",
+    (stack) =>
+      Effect.gen(function* () {
+        const deleted: string[] = [];
+
+        // 1. Create with retain.
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", { replaceString: "v1" }).pipe(
+            RemovalPolicy.retain(true),
+          );
+        }).pipe(stack.deploy);
+        expect((yield* getState("A"))?.status).toEqual("created");
+
+        // 2. Trigger a replacement but fail mid-create so a replacement chain
+        //    forms (replacing, with old=created still live).
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", { replaceString: "v2" }).pipe(
+            RemovalPolicy.retain(true),
+          );
+        }).pipe(
+          stack.deploy,
+          hook({ create: () => Effect.fail(new ResourceFailure()) }),
+        );
+        expect((yield* getState("A"))?.status).toEqual("replacing");
+
+        // 3. Replace again — converges and drains the entire old chain. Every
+        //    old generation must be retained (no provider.delete calls).
+        const output = yield* Effect.gen(function* () {
+          const A = yield* TestResource("A", { replaceString: "v3" }).pipe(
+            RemovalPolicy.retain(true),
+          );
+          return A.replaceString;
+        }).pipe(
+          stack.deploy,
+          hook({
+            delete: (id) =>
+              Effect.sync(() => {
+                deleted.push(id);
+              }),
+          }),
+        );
+
+        expect(output).toEqual("v3");
+        expect(deleted).not.toContain("A");
+        expect((yield* getState("A"))?.status).toEqual("created");
+      }),
+  );
+
+  test.provider(
+    "orphan delete still honors retain (regression guard)",
+    (stack) =>
+      Effect.gen(function* () {
+        const deleted: string[] = [];
+
+        yield* Effect.gen(function* () {
+          yield* TestResource("A", { string: "v1" }).pipe(
+            RemovalPolicy.retain(true),
+          );
+        }).pipe(stack.deploy);
+        expect((yield* getState("A"))?.status).toEqual("created");
+
+        // Destroy removes the resource from the stack (orphan delete). Retain
+        // (persisted in state) must skip provider.delete and just drop state.
+        yield* stack.destroy().pipe(
+          hook({
+            delete: (id) =>
+              Effect.sync(() => {
+                deleted.push(id);
+              }),
+          }),
+        );
+
+        expect(deleted).not.toContain("A");
+        expect(yield* getState("A")).toBeUndefined();
       }),
   );
 });
@@ -3920,12 +4614,10 @@ describe("artifacts", () => {
     "isolates artifact bags by FQN for namespaced resources with the same leaf logical ID",
     (stack) =>
       Effect.gen(function* () {
-        const Site = Construct.fn(function* (
-          _id: string,
-          props: { value: string },
-        ) {
-          return yield* ArtifactProbe("Shared", { value: props.value });
-        });
+        const Site = (id: string, props: { value: string }) =>
+          Effect.gen(function* () {
+            return yield* ArtifactProbe("Shared", { value: props.value });
+          }).pipe(Namespace.push(id));
 
         yield* Effect.gen(function* () {
           yield* Site("Left", { value: "left-v1" });
@@ -3942,6 +4634,30 @@ describe("artifacts", () => {
         expect(updated.right.artifactValue).toEqual("right-v2");
         expect((yield* getState("Left/Shared"))?.status).toEqual("updated");
         expect((yield* getState("Right/Shared"))?.status).toEqual("updated");
+      }),
+  );
+});
+
+describe("resource identity (fqn) threading", () => {
+  test.provider(
+    "threads the resource's fully-qualified name into handler inputs, distinct from the logical id",
+    (stack) =>
+      Effect.gen(function* () {
+        // Deploy the probe under a namespace so its FQN ("Parent/leaf") is
+        // NOT its bare logical id ("leaf"). The provider echoes both the `id`
+        // and `fqn` it received back out as attributes.
+        const { probe } = yield* Effect.gen(function* () {
+          const probe = yield* Effect.gen(function* () {
+            return yield* FqnProbe("leaf", {});
+          }).pipe(Namespace.push("Parent"));
+          return { probe };
+        }).pipe(stack.deploy);
+
+        // The engine passes the leaf logical id as `id` and the full
+        // namespace-qualified name as `fqn`.
+        expect(probe.id).toEqual("leaf");
+        expect(probe.fqn).toEqual("Parent/leaf");
+        expect((yield* getState("Parent/leaf"))?.status).toEqual("created");
       }),
   );
 });
@@ -4425,6 +5141,222 @@ describe("Duration round-trip through state", () => {
         }>("Timer");
         expect(Duration.isDuration(persisted.attr.computedTimeout)).toBe(true);
         expect(Duration.toMillis(persisted.attr.computedTimeout)).toBe(16_000);
+      }),
+  );
+});
+
+describe("type aliases", () => {
+  // Simulate state written before a type rename: rewrite the persisted row's
+  // resourceType to the legacy name ("Test.Widget") that the canonical type
+  // ("Test.Widgets.Widget") carries as an alias.
+  const rewriteTypeToLegacy = Effect.fn(function* (fqn: string) {
+    const state = yield* yield* State;
+    const stk = yield* Stack;
+    const row = (yield* state.get({
+      stack: stk.name,
+      stage: stk.stage,
+      fqn,
+    })) as ResourceState;
+    expect(row.resourceType).toEqual("Test.Widgets.Widget");
+    yield* state.set({
+      stack: stk.name,
+      stage: stk.stage,
+      fqn,
+      value: { ...row, resourceType: "Test.Widget" },
+    });
+  });
+
+  describe("bare provider layer", () => {
+    const { test } = Test.make({
+      providers: Layer.mergeAll(TestLayers(), aliasedWidgetProvider()),
+    });
+
+    test.provider(
+      "a noop deploy migrates legacy-typed state to the canonical type",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* Effect.gen(function* () {
+            yield* AliasedWidget("W1", { name: "w1" });
+          }).pipe(stack.deploy);
+
+          yield* rewriteTypeToLegacy("W1");
+
+          // Unchanged props plan as a noop — Apply must still rewrite the
+          // state row to the canonical type name.
+          yield* Effect.gen(function* () {
+            yield* AliasedWidget("W1", { name: "w1" });
+          }).pipe(stack.deploy);
+
+          const row = yield* getState("W1");
+          expect(row.resourceType).toEqual("Test.Widgets.Widget");
+          expect(row.status).toEqual("created");
+          expect(row.attr).toEqual({ name: "w1" });
+        }),
+    );
+
+    test.provider(
+      "orphan persisted under a legacy type name is deleted via alias",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* Effect.gen(function* () {
+            yield* AliasedWidget("W2", { name: "w2" });
+          }).pipe(stack.deploy);
+
+          yield* rewriteTypeToLegacy("W2");
+
+          // Remove the resource from the stack — the orphan-deletion path
+          // resolves the provider from the legacy type via its alias.
+          yield* Effect.void.pipe(stack.deploy);
+
+          expect(aliasedWidgetDeletes).toContain("W2");
+          expect(yield* getState("W2")).toBeUndefined();
+        }),
+    );
+
+    test.provider(
+      "destroy resolves the provider for legacy-typed state via alias",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* Effect.gen(function* () {
+            yield* AliasedWidget("W3", { name: "w3" });
+          }).pipe(stack.deploy);
+
+          yield* rewriteTypeToLegacy("W3");
+
+          yield* stack.destroy();
+
+          expect(aliasedWidgetDeletes).toContain("W3");
+          expect(yield* getState("W3")).toBeUndefined();
+        }),
+    );
+  });
+
+  describe("provider collection", () => {
+    class AliasApplyProviders extends Provider.ProviderCollection<AliasApplyProviders>()(
+      "Test.AliasApplyProviders",
+    ) {}
+
+    // The bare provider layer is consumed while building the collection and
+    // is NOT exported — lookup can only succeed through the collection.
+    const { test } = Test.make({
+      providers: Layer.effect(
+        AliasApplyProviders,
+        Provider.collection([AliasedWidget]),
+      ).pipe(Layer.provide(aliasedWidgetProvider())),
+    });
+
+    test.provider(
+      "orphan persisted under a legacy type name is deleted via alias",
+      (stack) =>
+        Effect.gen(function* () {
+          yield* Effect.gen(function* () {
+            yield* AliasedWidget("W4", { name: "w4" });
+          }).pipe(stack.deploy);
+
+          yield* rewriteTypeToLegacy("W4");
+
+          yield* Effect.void.pipe(stack.deploy);
+
+          expect(aliasedWidgetDeletes).toContain("W4");
+          expect(yield* getState("W4")).toBeUndefined();
+        }),
+    );
+  });
+});
+
+// Regression coverage for
+// https://github.com/alchemy-run/alchemy/issues/793
+//
+// `Plan.make` used to `state.set(...)` the adopted `created` state during plan
+// construction. Because `alchemy plan` / `deploy --dry-run` build a plan the
+// exact same way a real deploy does, a read-only preview silently claimed
+// ownership of an unowned cloud resource — arming a later, unrelated deploy to
+// orphan-delete it. Plan construction must be side-effect-free: reading the
+// cloud resource is fine (needed for an accurate diff), but persisting the
+// adopted state may only happen when the plan node is applied.
+describe("engine-level adoption persists at apply, not plan (issue #793)", () => {
+  // A pre-existing, foreign-owned cloud resource that `read` always discovers
+  // — the exact shape that triggers an `--adopt` takeover.
+  const ownedAttrs: TestResource["Attributes"] = {
+    string: "hello",
+    stringArray: [],
+    stableString: "Adopted",
+    stableArray: ["Adopted"],
+    replaceString: undefined,
+    redacted: undefined,
+    redactedArray: undefined,
+  };
+
+  const adoptHooks = Layer.succeed(TestResourceHooks, {
+    read: () => Effect.succeed(Unowned(ownedAttrs)),
+  });
+
+  test.provider(
+    "a dry-run plan writes nothing to the state store; applying persists",
+    (stack) =>
+      Effect.gen(function* () {
+        // ── dry-run: build a plan that adopts the unowned cloud resource ──
+        const plan = yield* TestResource("Adopted", { string: "hello" }).pipe(
+          adopt(true),
+          stack.plan,
+          Effect.provide(adoptHooks),
+        );
+
+        // The adopted state rides on the plan node as a forced update (so the
+        // provider re-syncs ownership tags / config) — it is not persisted.
+        expect(plan.resources.Adopted!.action).toBe("update");
+        expect(plan.resources.Adopted!.state?.status).toBe("created");
+
+        // The critical invariant of #793: planning persisted nothing, so a
+        // read-only `alchemy plan` / `--dry-run` cannot arm a later deploy to
+        // orphan-delete the live resource.
+        expect(yield* getState("Adopted")).toBeUndefined();
+        expect(yield* listState()).toEqual([]);
+
+        // ── apply: the same config now deploys. Because plan didn't persist,
+        // the resource is still adoptable here. ──
+        yield* TestResource("Adopted", { string: "hello" }).pipe(
+          adopt(true),
+          stack.deploy,
+          Effect.provide(adoptHooks),
+        );
+
+        // Applying DOES persist the adopted state.
+        const persisted = yield* getState("Adopted");
+        expect(["created", "updated"]).toContain(persisted?.status);
+        expect(yield* listState()).toEqual(["Adopted"]);
+      }),
+  );
+});
+
+describe("interrupted create persists no unresolved Output exprs", () => {
+  test.provider(
+    "creating-state props are plain data and destroy converges",
+    (stack) =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          const a = yield* TestResource("A", { string: "a-value" });
+          const b = yield* TestResource("B", { string: a.string });
+          return { a, b };
+        });
+
+        // B's reconcile fails AFTER the engine committed its `creating`
+        // state, which snapshots the plan props — where `string` is still
+        // an unresolved PropExpr referencing A's output.
+        yield* program.pipe(stack.deploy, hook(failOn("B", "create")));
+
+        const b = yield* getState("B");
+        expect(b?.status).toEqual("creating");
+        // State only holds plain data: the unresolved expr must be
+        // stripped, never persisted as a live proxy. A later destroy plan
+        // hands these props back to `provider.read` as `olds`; a live
+        // proxy explodes on first string coercion (e.g. inside a distilled
+        // path-parameter builder).
+        expect((b?.props as TestResourceProps).string).toBeUndefined();
+
+        yield* stack.destroy();
+        expect(yield* getState("B")).toBeUndefined();
+        expect(yield* listState()).toEqual([]);
       }),
   );
 });

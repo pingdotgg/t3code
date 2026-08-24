@@ -1,33 +1,11 @@
 /**
  * Runner-side browser platform for Effect worker handlers.
  *
- * This module is for code already executing inside a browser worker, or for
- * tests and adapters that pass a `MessagePort` or `Window` endpoint directly.
- * It provides the `WorkerRunnerPlatform` used by `WorkerRunner` and protocols
- * such as `RpcServer.layerProtocolWorkerRunner` to receive parent or client
- * requests, run Effect handlers, and post responses back through the browser
- * messaging channel.
- *
- * **Mental model**
- *
- * Dedicated workers use the ambient `self` endpoint. Shared workers receive one
- * `MessagePort` per `onconnect` event, and this module caches ports that arrive
- * before the runner layer starts. `layer` reads from the global worker `self`;
- * `make` and `layerMessagePort` are for explicit endpoints supplied by tests,
- * custom channels, or adapter code.
- *
- * **Common tasks**
- *
- * Pair this module with `BrowserWorker` in the parent page when moving RPC
- * handlers, CPU-bound computations, or browser-only services into a dedicated
- * worker or shared worker. Use `layer` in normal worker entry points and
- * `layerMessagePort` when a test or integration already owns the transport.
- *
- * **Gotchas**
- *
- * Payloads and transfer lists must satisfy the browser structured-clone
- * algorithm. `messageerror` and `error` events fail the runner, and each
- * connected `MessagePort` is closed when its scope finalizes.
+ * `make` builds a `WorkerRunnerPlatform` over a `MessagePort` or `Window`.
+ * `layer` provides the platform from the global worker `self`, and
+ * `layerMessagePort` provides it from an explicit endpoint. The platform
+ * receives parent or client messages, runs Effect handlers, and posts responses
+ * back through the browser messaging channel.
  *
  * @since 4.0.0
  */
@@ -187,8 +165,8 @@ export const make = (self: MessagePort | Window): WorkerRunner.WorkerRunnerPlatf
  *
  * **When to use**
  *
- * Use when a browser worker entry point uses the ambient `self` object as the
- * worker transport.
+ * Use when you need a browser worker entry point to use the ambient `self`
+ * object as the worker transport.
  *
  * **Details**
  *

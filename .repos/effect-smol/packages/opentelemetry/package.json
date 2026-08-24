@@ -1,17 +1,17 @@
 {
   "name": "@effect/opentelemetry",
   "type": "module",
-  "version": "4.0.0-beta.73",
+  "version": "4.0.0-beta.102",
   "license": "MIT",
   "description": "OpenTelemetry integration for Effect",
   "homepage": "https://effect.website",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Effect-TS/effect-smol.git",
+    "url": "https://github.com/Effect-TS/effect.git",
     "directory": "packages/opentelemetry"
   },
   "bugs": {
-    "url": "https://github.com/Effect-TS/effect-smol/issues"
+    "url": "https://github.com/Effect-TS/effect/issues"
   },
   "tags": [
     "opentelemetry",
@@ -63,7 +63,6 @@
   "scripts": {
     "codegen": "effect-utils codegen",
     "build": "tsc -b tsconfig.json && pnpm babel",
-    "build:tsgo": "tsgo -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
     "check": "tsc -b tsconfig.json",
     "test": "vitest",
@@ -109,18 +108,18 @@
   },
   "devDependencies": {
     "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/api-logs": "^0.217.0",
-    "@opentelemetry/context-async-hooks": "^2.7.1",
-    "@opentelemetry/exporter-metrics-otlp-http": "0.217.0",
-    "@opentelemetry/exporter-prometheus": "^0.217.0",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.217.0",
-    "@opentelemetry/otlp-exporter-base": "^0.217.0",
-    "@opentelemetry/resources": "^2.7.1",
-    "@opentelemetry/sdk-logs": "^0.217.0",
-    "@opentelemetry/sdk-metrics": "^2.7.1",
-    "@opentelemetry/sdk-trace-base": "^2.7.1",
-    "@opentelemetry/sdk-trace-node": "^2.7.1",
-    "@opentelemetry/sdk-trace-web": "^2.7.1",
-    "@opentelemetry/semantic-conventions": "^1.40.0"
+    "@opentelemetry/api-logs": "^0.220.0",
+    "@opentelemetry/context-async-hooks": "^2.9.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "0.220.0",
+    "@opentelemetry/exporter-prometheus": "^0.220.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.220.0",
+    "@opentelemetry/otlp-exporter-base": "^0.220.0",
+    "@opentelemetry/resources": "^2.9.0",
+    "@opentelemetry/sdk-logs": "^0.220.0",
+    "@opentelemetry/sdk-metrics": "^2.9.0",
+    "@opentelemetry/sdk-trace-base": "^2.9.0",
+    "@opentelemetry/sdk-trace-node": "^2.9.0",
+    "@opentelemetry/sdk-trace-web": "^2.9.0",
+    "@opentelemetry/semantic-conventions": "^1.42.0"
   }
 }

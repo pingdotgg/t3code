@@ -1,0 +1,136 @@
+name: website
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "website/**"
+      - "packages/alchemy/**"
+      - "bun.lock"
+      - ".github/workflows/deploy.yml"
+  pull_request:
+    # `labeled` so adding `deploy-website` on an open PR triggers a
+    # deploy without needing another push.
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - closed
+    paths:
+      - "website/**"
+      - "packages/alchemy/**"
+      - "bun.lock"
+      - ".github/workflows/deploy.yml"
+
+concurrency:
+  group: deploy-website-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  STAGE: ${{ github.event_name == 'pull_request' && format('pr-{0}',
+    github.event.number) || (github.ref == 'refs/heads/main' && 'prod' ||
+    github.ref_name) }}
+
+jobs:
+  deploy:
+    # Deploy on push-to-main and `workflow_dispatch` always. On PRs,
+    # require BOTH:
+    #   - the PR is internal (forks can't access bot/Cloudflare secrets
+    #     so `create-github-app-token` would error immediately), AND
+    #   - the PR carries the `deploy-website` label (opt-in — most PRs
+    #     don't need a website preview, so default to skipping).
+    if: >-
+      github.event.action != 'closed' &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'deploy-website')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # `bun install` needs the distilled submodule (workspace member)
+          submodules: true
+
+      # Mint a token for the alchemy-version-bot GitHub App so the PR
+      # preview comment (created via GitHub.Comment in alchemy.run.ts)
+      # posts under the bot's identity instead of `github-actions[bot]`.
+      # Same App as release.yml — its installation scopes already cover
+      # PR comments.
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
+          private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install dependencies
+        run: bun install
+
+      # Secrets (Cloudflare credentials, etc.) are injected by
+      # `doppler run` from the `alchemy-v2` project — `prod` config on
+      # main, `dev` config everywhere else.
+      - name: Deploy
+        working-directory: website
+        run: bun alchemy deploy --stage "$STAGE" --yes
+        env:
+          PULL_REQUEST: ${{ github.event.number }}
+          CLOUDFLARE_API_TOKEN: ${{ startsWith(env.STAGE, 'prod') && secrets.PROD_CLOUDFLARE_API_TOKEN || secrets.TEST_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ startsWith(env.STAGE, 'prod') && secrets.PROD_CLOUDFLARE_ACCOUNT_ID || secrets.TEST_CLOUDFLARE_ACCOUNT_ID }}
+          BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GITHUB_TOKEN: ${{ steps.bot-token.outputs.token }}
+
+  cleanup:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request' && github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # `bun install` needs the distilled submodule (workspace member)
+          submodules: true
+
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
+          private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Safety Check
+        run: |-
+          if [ "${{ env.STAGE }}" = "prod" ]; then
+            echo "ERROR: Cannot destroy prod environment in cleanup job"
+            exit 1
+          fi
+
+      - name: Destroy Preview Environment
+        working-directory: website
+        run: >-
+          doppler run --project "$DOPPLER_PROJECT" --config "$DOPPLER_CONFIG"
+          -- bun alchemy destroy --stage "$STAGE" --yes
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          PULL_REQUEST: ${{ github.event.number }}
+          GITHUB_TOKEN: ${{ steps.bot-token.outputs.token }}

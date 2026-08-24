@@ -13,7 +13,7 @@ export default Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const { region, accountId } = yield* AWS.AWSEnvironment;
+    const { region, accountId } = yield* AWS.AWSEnvironment.current;
 
     const fn = yield* JobFunction;
 

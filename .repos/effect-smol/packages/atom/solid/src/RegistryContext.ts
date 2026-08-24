@@ -1,25 +1,8 @@
 /**
- * The `RegistryContext` module provides the Solid context used by Effect Atom
- * hooks to share an `AtomRegistry` across an owner tree. The registry owns atom
- * state, scheduling, and idle cleanup, so Solid components that read or write
- * atoms coordinate through the same runtime instead of creating isolated
- * registries.
- *
- * **Common tasks**
- *
- * - Use {@link RegistryProvider} to scope atom state to a Solid subtree
- * - Seed atoms for tests, examples, or server-provided data with `initialValues`
- * - Override scheduling or idle timing for custom rendering environments
- * - Read {@link RegistryContext} when integrating lower-level atom APIs
- *
- * **Gotchas**
- *
- * - The provider creates a registry for the current Solid owner and disposes it
- *   with `onCleanup`
- * - `initialValues` are applied when the provider creates the registry, not as
- *   reactive updates after creation
- * - Overriding `scheduleTask` changes when atom work is flushed, so it should
- *   return a cancellation function that is safe to call during Solid cleanup
+ * Solid context and provider for the Atom registry used by Effect Atom hooks.
+ * The registry stores atom values, schedules update work, and cleans up unused
+ * atoms. Sharing one registry through Solid context lets components and
+ * computations in the same owner tree read and write the same atom state.
  *
  * @since 4.0.0
  */
@@ -34,8 +17,8 @@ import { createComponent, createContext, onCleanup } from "solid-js"
  *
  * **When to use**
  *
- * Use when integrating lower-level Solid atom APIs that need direct access to,
- * or direct provisioning of, the `AtomRegistry` for the current owner tree.
+ * Use when you need to integrate lower-level Solid context APIs, such as custom
+ * providers or hooks, instead of using the default atom hook setup.
  *
  * **Details**
  *

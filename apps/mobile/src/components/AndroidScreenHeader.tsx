@@ -70,7 +70,7 @@ export function AndroidScreenHeader(props: {
             accessibilityRole="button"
             hitSlop={8}
             onPress={props.onBack}
-            className="size-11 items-center justify-center"
+            className="-mr-2 size-11 items-center justify-center"
           >
             <SymbolView
               name="chevron.left"

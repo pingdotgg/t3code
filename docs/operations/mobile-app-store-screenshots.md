@@ -1,5 +1,7 @@
 # Mobile app-store screenshot harness
 
+> For maintainers. Using T3 Code? See [docs/user](../user/).
+
 The screenshot harness runs the real mobile application against three disposable local T3
 environments. It creates an isolated base directory and server for each environment, real Git
 projects with deterministic content, seeded orchestration projections, and persisted terminal
@@ -28,7 +30,7 @@ The command:
 4. Starts an isolated Metro server, builds the selected native apps, and boots each device.
 5. Pairs each clean app installation with Moonbase Terminal, Suspense Station, and Kernel Cabin.
 6. Navigates to the real application route for every requested scene.
-7. Sets the requested system appearance and normalizes status bars, converts captures to 24-bit RGB PNGs without alpha, and
+7. Sets the requested system appearance and palette, normalizes status bars, converts captures to 24-bit RGB PNGs without alpha, and
    validates dimensions, aspect ratio, file size, and screenshot count before succeeding.
 8. Writes store-ready folders beneath `artifacts/app-store/screenshots/` that can be uploaded
    directly to App Store Connect or Google Play Console.
@@ -41,54 +43,76 @@ Captures wait for the real environment snapshot to hydrate and for the requested
 active. Both platforms record readiness in the simulator/emulator app container. A final settle
 delay allows native terminal and Git review data to finish rendering.
 
-A full capture regenerates the selected native project with Expo's clean development prebuild before
+A full capture regenerates the selected native project with Expo's clean production prebuild before
 building it. Use --skip-build for repeated captures after the first build.
 
-The harness uses its own Metro port (8199 by default), so an ordinary mobile server or another
-worktree cannot accidentally provide the bundle being photographed.
+The harness uses fixed Metro port `8199`, which separates it from Expo's normal default port but is
+shared across every checkout. The readiness check only verifies that the port is open; it does not
+verify process ownership. Concurrent screenshot harnesses in different worktrees can therefore
+collide or attach to the wrong Metro process.
+
+Every configured device defaults to dark appearance and the `t3-code` palette, so plain
+`pnpm screenshots:mobile` produces 30 dark PNGs. Pass `--appearance light`, `--appearance dark`, or
+`--appearance both` to override the configured appearance; `both` produces 60 PNGs.
+
+Pass `--theme <id>` (repeatable) or `--theme all` to capture the app's other palettes: `t3-code`,
+`t3-chat`, `grove`, `ocean`, `ember`, and `iris`. The runner hands the palette to the app as a launch
+argument, the app applies it to both color schemes, and a scene only reports itself ready once the
+requested palette is active — so a capture can never show the previous theme. `--theme all`
+multiplies the run by six; only the native build is shared.
 
 The default matrix is:
 
 | Output folder                         | Capture target            | Upload dimensions | Store slot                                |
 | ------------------------------------- | ------------------------- | ----------------- | ----------------------------------------- |
-| `apple/iphone-6.9/{light,dark}/`      | iPhone 17 Pro Max         | 1320×2868         | App Store Connect iPhone 6.9-inch         |
-| `apple/iphone-6.5/{light,dark}/`      | disposable iPhone 14 Plus | 1284×2778         | App Store Connect iPhone 6.5-inch         |
-| `apple/ipad-13/{light,dark}/`         | iPad Pro 13-inch (M5)     | 2064×2752         | App Store Connect iPad 13-inch            |
-| `google-play/phone/{light,dark}/`     | Pixel AVD at 420 dpi      | 1080×1920         | Google Play phone, portrait 9:16          |
-| `google-play/tablet-7/{light,dark}/`  | Pixel AVD at 600dp width  | 1080×1920         | Google Play 7-inch tablet, portrait 9:16  |
-| `google-play/tablet-10/{light,dark}/` | Pixel AVD at 800dp width  | 1440×2560         | Google Play 10-inch tablet, portrait 9:16 |
+| `apple/iphone-6.9/dark/t3-code/`      | iPhone 17 Pro Max         | 1320×2868         | App Store Connect iPhone 6.9-inch         |
+| `apple/iphone-6.5/dark/t3-code/`      | disposable iPhone 14 Plus | 1284×2778         | App Store Connect iPhone 6.5-inch         |
+| `apple/ipad-13/dark/t3-code/`         | iPad Pro 13-inch (M5)     | 2752×2064         | App Store Connect iPad 13-inch, landscape |
+| `google-play/phone/dark/t3-code/`     | Pixel AVD at 420 dpi      | 1080×1920         | Google Play phone, portrait 9:16          |
+| `google-play/tablet-7/dark/t3-code/`  | Pixel AVD at 600dp width  | 1080×1920         | Google Play 7-inch tablet, portrait 9:16  |
+| `google-play/tablet-10/dark/t3-code/` | Pixel AVD at 800dp width  | 1440×2560         | Google Play 10-inch tablet, portrait 9:16 |
 
-Each target captures thread, terminal, review, thread list, and environments, producing 30 PNG
-files for one appearance or 60 for both. Each appearance folder's five screenshots satisfy the configured Apple limit of 1–10, Google
+Each target captures thread, terminal, review, thread list, and environments. Each palette folder's
+five screenshots satisfy the configured Apple limit of 1–10, Google
 phone requirement of 2–8, and Google tablet recommendation/slot minimum of 4 with a maximum of 8.
+Every palette gets its own leaf folder so one upload slot never mixes themes and each folder keeps a
+store-legal screenshot count.
 
 The generated tree is deliberately aligned with the store upload fields:
 
     artifacts/app-store/screenshots/
     ├── apple/
-    │   ├── iphone-6.9/{light,dark}/{thread,terminal,review,threads,environments}.png
-    │   ├── iphone-6.5/{light,dark}/{thread,terminal,review,threads,environments}.png
-    │   └── ipad-13/{light,dark}/{thread,terminal,review,threads,environments}.png
+    │   ├── iphone-6.9/dark/t3-code/{thread,terminal,review,threads,environments}.png
+    │   ├── iphone-6.5/dark/t3-code/{thread,terminal,review,threads,environments}.png
+    │   └── ipad-13/dark/t3-code/{thread,terminal,review,threads,environments}.png
     └── google-play/
-        ├── phone/{light,dark}/{thread,terminal,review,threads,environments}.png
-        ├── tablet-7/{light,dark}/{thread,terminal,review,threads,environments}.png
-        └── tablet-10/{light,dark}/{thread,terminal,review,threads,environments}.png
+        ├── phone/dark/t3-code/{thread,terminal,review,threads,environments}.png
+        ├── tablet-7/dark/t3-code/{thread,terminal,review,threads,environments}.png
+        └── tablet-10/dark/t3-code/{thread,terminal,review,threads,environments}.png
+
+A light-only run writes the same tree under `light/`; `--appearance both` writes both appearance
+folders, and each requested theme adds a sibling folder next to `t3-code/`.
 
 Edit [mobile-showcase.config.ts](../../scripts/mobile-showcase.config.ts) to change simulator or AVD
-names, light/dark appearance, scenes, output directory, capture delay, Android ABI, or viewport.
+names, light/dark appearance, default palette, iOS orientation, scenes, output directory, capture
+delay, Android ABI, or viewport. The selectable palette ids come from `MOBILE_THEME_IDS` in
+[themePalettes.ts](../../packages/shared/src/themePalettes.ts), so the harness and the app's
+appearance settings can never drift apart.
 
 ## Capture in GitHub Actions
 
 Run the `Mobile Showcase Screenshots` workflow from GitHub's Actions tab, choose `all`, `ios`, or
-`android`, and select `light`, `dark`, or `both`. The default dispatch captures both appearances and
-runs iOS and Android concurrently: iPhone and iPad capture on a
+`android`, select `light`, `dark`, or `both`, and pick a palette (or `all`, which raises each job's
+timeout from 60 to 300 minutes). The default dispatch captures both appearances of the `t3-code`
+palette and runs iOS and Android concurrently: iPhone and iPad capture on a
 12-vCPU Blacksmith macOS runner, while Android phone, 7-inch tablet, and 10-inch tablet capture on a
 16-vCPU Blacksmith Linux runner with a KVM-accelerated x86_64 emulator.
 
-Every job uploads its PNGs even when a later capture fails, which makes partial runs useful for
-diagnosis. Download `app-store-connect-screenshots` and `google-play-screenshots` from the workflow
-run's Artifacts section. Each job runs validation again immediately before upload. Artifacts are
-retained for 14 days.
+Every job uploads its PNGs even when capture fails, which makes partial runs useful for diagnosis.
+The separate validation step is success-gated: it runs before upload only when capture succeeds. If
+capture fails, the `always()` upload still publishes partial PNGs without re-validating them.
+Download `app-store-connect-screenshots` and `google-play-screenshots` from the workflow run's
+Artifacts section. Artifacts are retained for 14 days.
 
 The workflow uses the same checked-in device and scene matrix as local capture. Android remains
 ARM64 by default for local Apple Silicon development; CI sets `T3_SHOWCASE_ANDROID_ABI=x86_64` so the
@@ -107,14 +131,28 @@ Override the configured appearance or capture both variants:
     pnpm screenshots:mobile --appearance dark
     pnpm screenshots:mobile --appearance both
 
+Capture other palettes:
+
+    pnpm screenshots:mobile --device iphone-6.9 --theme ocean
+    pnpm screenshots:mobile --device iphone-6.9 --theme ocean --theme ember
+    pnpm screenshots:mobile --device iphone-6.9 --theme all
+
 Reuse the native build and retain the disposable environment:
 
     pnpm screenshots:mobile --device ipad-13 --skip-build --keep-running
 
-Run Metro separately:
+By default, let the screenshot runner start Metro on port `8199`. To keep Metro in a separate
+terminal, start it with the same showcase environment and explicit harness port:
 
-    pnpm --filter @t3tools/mobile showcase
+    cd apps/mobile
+    APP_VARIANT=development EXPO_PUBLIC_SHOWCASE=1 pnpm exec expo start --dev-client --port 8199
+
+Then run the capture from the repository root:
+
     pnpm screenshots:mobile --skip-build --skip-metro --device iphone-6.9
+
+`pnpm --filter @t3tools/mobile showcase` starts Expo on its normal port, so it is not compatible with
+the harness's `--skip-metro` mode.
 
 List the matrix and flags:
 
@@ -151,7 +189,9 @@ remote-first while the harness retains reliable loopback connections to its ephe
 ## Local prerequisites
 
 - iOS: Xcode command-line tools, the configured simulator runtimes, and installed CocoaPods.
-- Android: ANDROID_HOME (or the default macOS SDK path), adb, emulator, and the configured AVD.
+- Android: SDK resolution checks `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then defaults to
+  `$HOME/Library/Android/sdk` on macOS or `$HOME/Android/Sdk` on other platforms. The resolved SDK
+  must provide `adb` and `emulator`, and the configured AVD must exist.
 
 The harness is the source of truth for upload dimensions; do not resize its output. If store rules
 change, update the target's `storeAsset` specification. Capture fails when a PNG is the wrong size,

@@ -1,9 +1,10 @@
-import type { Octokit } from "@octokit/rest";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import { isResolved } from "../Diff.ts";
 import * as Provider from "../Provider.ts";
 import { Resource } from "../Resource.ts";
-import { GitHubCredentials } from "./Credentials.ts";
+import { type Environment, resolveEnvironmentName } from "./Environment.ts";
+import { gitHubBaseUrlChanged, octokitFor } from "./Octokit.ts";
 import type * as GitHub from "./Providers.ts";
 
 export interface SecretProps {
@@ -29,10 +30,20 @@ export interface SecretProps {
   value: Redacted.Redacted;
 
   /**
-   * Optional environment name. When set the secret is scoped to that
-   * GitHub Actions environment instead of the whole repository.
+   * Optional environment. When set the secret is scoped to that GitHub
+   * Actions environment instead of the whole repository. Accepts an
+   * environment name or a `GitHub.Environment` resource.
    */
-  environment?: string;
+  environment?: string | Environment;
+
+  /**
+   * Override the GitHub host or API base URL for this resource only (e.g.
+   * `github.example.com` for GitHub Enterprise). Falls back to
+   * `GitHub.providers({ baseUrl })`, then to the host resolved by the auth
+   * provider. Changing it replaces the resource — the same name on a
+   * different GitHub instance is a different physical resource.
+   */
+  baseUrl?: string;
 }
 
 export interface Secret extends Resource<
@@ -60,7 +71,7 @@ export interface Secret extends Resource<
  * by `GitHub.providers()` (which uses the Alchemy AuthProvider — env,
  * stored PAT, `gh` CLI, or OAuth). The token needs `repo` scope for
  * private repositories or `public_repo` for public ones.
- *
+ * @resource
  * @section Repository Secrets
  * Store secrets accessible to all GitHub Actions workflows in the
  * repository.
@@ -129,11 +140,6 @@ export interface Secret extends Resource<
  */
 export const Secret = Resource<Secret>("GitHub.Secret");
 
-const getOctokit = Effect.gen(function* () {
-  const creds = yield* GitHubCredentials;
-  return creds.octokit();
-});
-
 async function encryptValue(
   plaintext: string,
   publicKey: string,
@@ -152,20 +158,48 @@ async function encryptValue(
 
 export const SecretProvider = () =>
   Provider.succeed(Secret, {
-    reconcile: Effect.fn(function* ({ news, olds }) {
-      const octokit = yield* getOctokit;
+    // A secret's entire identity is (host, owner, repository, environment,
+    // name) — GitHub has no rename/move API for secrets, so changing any of
+    // them replaces the resource: the engine upserts the new secret first,
+    // then `delete` removes the old one from its old location. Replacement
+    // is safe here — a secret is declarative config that is fully
+    // re-creatable from props.
+    diff: Effect.fn(function* ({ news, olds }) {
+      if (!isResolved(news)) return;
+      if (olds === undefined) return;
+      if (
+        news.owner !== olds.owner ||
+        news.repository !== olds.repository ||
+        news.name !== olds.name ||
+        resolveEnvironmentName(news.environment) !==
+          resolveEnvironmentName(olds.environment) ||
+        (yield* gitHubBaseUrlChanged(olds, news))
+      ) {
+        return { action: "replace" };
+      }
+    }),
 
+    // Non-listable: a GitHub Actions secret is keyed entirely by its parent
+    // (owner, repository[, environment], name) which arrive as props — there is
+    // no ambient owner/repo scope to enumerate from, `list()` takes no input,
+    // and the `Attributes` shape carries no identifying keys (only `updatedAt`).
+    // GitHub only exposes list-secrets *within* a specific repo/environment, so
+    // there is no account-wide enumeration API. Return an empty array.
+    list: () => Effect.succeed([]),
+
+    reconcile: Effect.fn(function* ({ news, olds }) {
       // Observe — there's no API to read a secret's value back, so we can
       // only observe its location (repo vs. environment, environment name).
-      // If the location changed, the previous secret is orphaned: delete
-      // it before upserting the new one, otherwise it stays in GitHub as
-      // dead state.
-      if (olds !== undefined) {
-        const wasEnv = !!olds.environment;
-        const isEnv = !!news.environment;
-        if (wasEnv !== isEnv || olds.environment !== news.environment) {
-          yield* deleteSecret(octokit, olds);
-        }
+      // A location change normally arrives as a replacement (see `diff`);
+      // this guard is the safety net for the plan-time path where `news`
+      // contained unresolved outputs and diff could not compare — delete the
+      // orphaned secret from its old location before upserting the new one.
+      if (
+        olds !== undefined &&
+        resolveEnvironmentName(olds.environment) !==
+          resolveEnvironmentName(news.environment)
+      ) {
+        yield* deleteSecret(olds);
       }
 
       // Ensure & Sync — `createOrUpdate*Secret` is upsert-style: it
@@ -173,29 +207,26 @@ export const SecretProvider = () =>
       // value is encrypted client-side with the repo/environment public
       // key, so we re-encrypt and re-upload on every reconcile (Redacted
       // values can't be diffed across runs anyway).
-      yield* upsertSecret(octokit, news);
+      yield* upsertSecret(news);
       return { updatedAt: new Date().toISOString() };
     }),
 
     delete: Effect.fn(function* ({ olds }) {
-      const octokit = yield* getOctokit;
-      yield* deleteSecret(octokit, olds);
+      yield* deleteSecret(olds);
     }),
   });
 
-const upsertSecret = Effect.fn(function* (
-  octokit: Octokit,
-  props: SecretProps,
-) {
+const upsertSecret = Effect.fn(function* (props: SecretProps) {
+  const octokit = yield* octokitFor(props.baseUrl);
   const plaintext = Redacted.value(props.value);
-  const isEnv = !!props.environment;
+  const environment = resolveEnvironmentName(props.environment);
 
   const publicKey = yield* Effect.tryPromise(async () => {
-    if (isEnv) {
+    if (environment !== undefined) {
       const { data } = await octokit.rest.actions.getEnvironmentPublicKey({
         owner: props.owner,
         repo: props.repository,
-        environment_name: props.environment!,
+        environment_name: environment,
       });
       return data;
     }
@@ -211,11 +242,11 @@ const upsertSecret = Effect.fn(function* (
   );
 
   yield* Effect.tryPromise(async () => {
-    if (isEnv) {
+    if (environment !== undefined) {
       await octokit.rest.actions.createOrUpdateEnvironmentSecret({
         owner: props.owner,
         repo: props.repository,
-        environment_name: props.environment!,
+        environment_name: environment,
         secret_name: props.name,
         encrypted_value: encrypted,
         key_id: publicKey.key_id,
@@ -232,17 +263,16 @@ const upsertSecret = Effect.fn(function* (
   });
 });
 
-const deleteSecret = Effect.fn(function* (
-  octokit: Octokit,
-  props: SecretProps,
-) {
+const deleteSecret = Effect.fn(function* (props: SecretProps) {
+  const octokit = yield* octokitFor(props.baseUrl);
+  const environment = resolveEnvironmentName(props.environment);
   yield* Effect.tryPromise(async () => {
     try {
-      if (props.environment) {
+      if (environment !== undefined) {
         await octokit.rest.actions.deleteEnvironmentSecret({
           owner: props.owner,
           repo: props.repository,
-          environment_name: props.environment,
+          environment_name: environment,
           secret_name: props.name,
         });
       } else {

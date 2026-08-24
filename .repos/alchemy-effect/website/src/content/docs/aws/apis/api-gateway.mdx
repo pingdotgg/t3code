@@ -1,0 +1,128 @@
+---
+title: REST API (API Gateway v1)
+description: Expose a Lambda with a regional Amazon API Gateway REST API using RestApi, Resource, Method, Deployment, and Stage primitives.
+---
+
+The [Deploy a Lambda Function](/aws/compute/lambda) tutorial uses a **Function URL** for HTTP. Many teams still use **Amazon API Gateway** (REST, v1) as the front door.
+
+Alchemy models the v1 REST control plane as separate resources so you can wire integrations, stages, and custom domains explicitly.
+
+## Try the example
+
+The repo includes **`examples/aws-rest-api`**: a minimal **regional** REST API with `ANY` on the root and a `{proxy+}` resource, **AWS_PROXY** integration to a Lambda, then **Deployment**, **Stage** (`prod`), and **Lambda.Permission** so API Gateway can invoke the function.
+
+```sh
+cd examples/aws-rest-api
+bun install
+bun run deploy
+```
+
+After deploy, open the printed `invokeUrl` in a browser; you should see the Lambda’s text response.
+
+## Shape of the stack
+
+Typical order inside `Effect.gen`:
+
+1. **`AWS.ApiGateway.RestApi`** — creates the API and exposes `restApiId` / `rootResourceId`.
+2. **`AWS.ApiGateway.Resource`** — optional path segments (e.g. `{proxy+}`).
+3. **`AWS.ApiGateway.Method`** — HTTP verb + integration (`AWS_PROXY` Lambda ARNs use `Output.interpolate` with `arn:aws:apigateway:${region}:lambda:path/2015-03-31/functions/${functionArn}/invocations`).
+4. **`AWS.ApiGateway.Deployment`** — snapshots the current resource graph; change **`triggers`** (or other props) to force a new deployment when only integrations changed.
+5. **`AWS.ApiGateway.Stage`** — attaches a deployment to a named stage (`prod`, `dev`, …).
+6. **`AWS.Lambda.Permission`** — `principal: "apigateway.amazonaws.com"` and `sourceArn` covering `execute-api` for your API.
+
+Use **`yield* AWS.AWSEnvironment`** for `region` and `accountId` when building ARNs (as in the example).
+
+## Private integration (VPC link)
+
+For **private** HTTP integrations, create a **`AWS.ApiGateway.VpcLink`** with your load balancer target ARNs, then reference `vpcLinkId` as **`integration.connectionId`** with **`connectionType: "VPC_LINK"`** on `AWS.ApiGateway.Method` (`integration.uri` points at your private backend URL).
+
+```typescript
+const link = yield* AWS.ApiGateway.VpcLink("InternalLink", {
+  name: "internal-nlb",
+  targetArns: [loadBalancer.loadBalancerArn],
+});
+
+yield* AWS.ApiGateway.Method("PrivateGet", {
+  restApiId: api.restApiId,
+  resourceId: resource.resourceId,
+  httpMethod: "GET",
+  integration: {
+    type: "HTTP_PROXY",
+    integrationHttpMethod: "GET",
+    uri: "https://api.internal.example/resource",
+    connectionType: "VPC_LINK",
+    connectionId: link.vpcLinkId,
+  },
+});
+```
+
+See also [VpcLink](/providers/aws/apigateway/vpclink) in the generated API reference.
+
+## Custom domain
+
+Serve the API from your own hostname instead of the default `execute-api` URL. You need a validated ACM certificate, an **`AWS.ApiGateway.DomainName`**, a **`AWS.ApiGateway.BasePathMapping`**, and a DNS record pointing at the domain's regional target.
+
+### Request a certificate
+
+```typescript
+const cert = yield* AWS.ACM.Certificate("ApiCertificate", {
+  domainName: "api.example.com",
+  hostedZoneId: "Z1234567890",
+});
+```
+
+With `hostedZoneId` set, the provider creates the DNS validation records in Route 53 and waits for the certificate to be issued. Note that `AWS.ACM.Certificate` always requests the certificate in **`us-east-1`** (the region CloudFront and **EDGE** endpoints require) — a **REGIONAL** domain name needs a certificate in the API's own region, so outside `us-east-1` pass a pre-provisioned regional certificate ARN instead.
+
+### Create the domain name
+
+```typescript
+const domain = yield* AWS.ApiGateway.DomainName("ApiDomain", {
+  domainName: "api.example.com",
+  regionalCertificateArn: cert.certificateArn,
+  endpointConfiguration: { types: ["REGIONAL"] },
+  securityPolicy: "TLS_1_2",
+});
+```
+
+A regional domain exposes `regionalDomainName` and `regionalHostedZoneId` — the alias target for DNS. (EDGE domains use `certificateArn` and the `distributionDomainName` / `distributionHostedZoneId` attributes instead.)
+
+### Map the API to the domain
+
+```typescript
+yield* AWS.ApiGateway.BasePathMapping("Root", {
+  domainName: domain.domainName,
+  restApiId: api.restApiId,
+  stage: stage.stageName,
+});
+```
+
+Omitting `basePath` maps the domain root; set `basePath: "v1"` to serve the stage under `https://api.example.com/v1`.
+
+### Point DNS at the domain
+
+```typescript
+yield* AWS.Route53.Record("ApiAlias", {
+  hostedZoneId: "Z1234567890",
+  name: "api.example.com",
+  type: "A",
+  aliasTarget: {
+    hostedZoneId: domain.regionalHostedZoneId.as<string>(),
+    dnsName: domain.regionalDomainName.as<string>(),
+  },
+});
+```
+
+An alias **A** record targets the regional endpoint; `.as<string>()` narrows the optional outputs. See [DomainName](/providers/aws/apigateway/domainname) and [BasePathMapping](/providers/aws/apigateway/basepathmapping) in the API reference, and the [custom domains guide](/aws/networking/custom-domains) for the broader pattern (CloudFront, static sites).
+
+## API reference
+
+Generated docs for each primitive live under **Providers → AWS → ApiGateway** in the sidebar (for example [RestApi](/providers/aws/apigateway/restapi)). Run `bun generate:api-reference` locally after changing JSDoc on resources.
+
+## Next steps
+
+- **Custom domains:** covered [above](#custom-domain); see also the [custom domains guide](/aws/networking/custom-domains).
+- **API keys / throttling:** `ApiKey`, `UsagePlan`, `UsagePlanKey`.
+- **Authorizers:** `Authorizer` for Cognito or Lambda TOKEN / REQUEST flows.
+- **Gateway responses:** `GatewayResponse` for consistent 4xx/5xx bodies.
+
+HTTP APIs (v2) are a different product; this tutorial is **REST v1** only.

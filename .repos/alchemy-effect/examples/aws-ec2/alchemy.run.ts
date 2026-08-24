@@ -5,11 +5,12 @@ import * as Effect from "effect/Effect";
 import { NetworkLive } from "./src/Network.ts";
 import Server from "./src/Server.ts";
 
-const aws = AWS.providers();
-
 export default Alchemy.Stack(
   "AwsEc2Example",
-  { providers: aws, state: Alchemy.localState() },
+  {
+    providers: AWS.providers(),
+    state: Alchemy.localState(),
+  },
   Effect.gen(function* () {
     const instance = yield* Server;
 

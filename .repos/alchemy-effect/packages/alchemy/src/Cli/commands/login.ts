@@ -1,26 +1,23 @@
 import * as Config from "effect/Config";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import { Command, Flag } from "effect/unstable/cli";
+import * as Argument from "effect/unstable/cli/Argument";
+import * as CliError from "effect/unstable/cli/CliError";
 
-import { AuthProviders } from "../../Auth/AuthProvider.ts";
-import { Profile, withProfileOverride } from "../../Auth/Profile.ts";
-import { Stage } from "../../Stage.ts";
-import { loadConfigProvider } from "../../Util/ConfigProvider.ts";
-import { fileLogger } from "../../Util/FileLogger.ts";
+import type { AuthProviders } from "../../Auth/AuthProvider.ts";
+import { AlchemyProfile } from "../../Auth/Profile.ts";
+import * as Clank from "../../Util/Clank.ts";
 
-import { Stack } from "../../Stack.ts";
 import {
+  buildBuiltinAuthProviders,
+  buildStackProviders,
   envFile,
-  importStack,
   instrumentCommand,
   printProfile,
   profile,
-  script,
-  stage,
 } from "./_shared.ts";
 
 const loginConfigure = Flag.boolean("configure").pipe(
@@ -30,69 +27,109 @@ const loginConfigure = Flag.boolean("configure").pipe(
   Flag.withDefault(false),
 );
 
+/**
+ * Stack entrypoint whose `providers()` layer selects which auth providers
+ * to log in with. Optional: when omitted and no `alchemy.run.ts` exists in
+ * the current folder, `alchemy login` falls back to every built-in auth
+ * provider, so logging in (and refreshing credentials) works from any
+ * folder.
+ */
+const loginMain = Argument.file("main").pipe(
+  Argument.withDescription(
+    "Stack entrypoint whose providers() to log in with, defaults to alchemy.run.ts (falls back to all built-in providers when absent)",
+  ),
+  Argument.optional,
+);
+
 export const loginCommand = Command.make(
   "login",
   {
-    main: script,
+    main: loginMain,
     envFile,
-    stage,
     profile,
     configure: loginConfigure,
   },
   instrumentCommand(
     "login",
     (a: {
-      main: string;
-      stage: string;
+      main: Option.Option<string>;
       profile: string;
       configure: boolean;
     }) => ({
-      "alchemy.stage": a.stage,
       "alchemy.profile": a.profile,
-      "alchemy.main": a.main,
+      "alchemy.main": Option.getOrElse(a.main, () => "alchemy.run.ts"),
       "alchemy.configure": a.configure,
     }),
   )(
-    Effect.fnUntraced(function* ({ main, stage, envFile, profile, configure }) {
-      const stackEffect = yield* importStack(main);
+    Effect.fn(function* ({ main, envFile, profile, configure }) {
+      const fs = yield* FileSystem.FileSystem;
+      const explicitMain = Option.getOrUndefined(main);
+      const mainPath = explicitMain ?? "alchemy.run.ts";
+      const mainExists = yield* fs
+        .exists(mainPath)
+        .pipe(Effect.catch(() => Effect.succeed(false)));
 
-      const authProviders: AuthProviders["Service"] = {};
+      // An explicitly-passed entrypoint must exist; only the default may
+      // fall back to the built-in providers.
+      if (explicitMain != null && !mainExists) {
+        return yield* Effect.fail(
+          new CliError.InvalidValue({
+            option: "main",
+            value: explicitMain,
+            expected: "an existing stack entrypoint file",
+            kind: "argument",
+          }),
+        );
+      }
 
-      // build the state + providers layer to capture the Auth Providers
-      yield* Layer.build(
-        (stackEffect.providers ?? Layer.empty).pipe(
-          Layer.provideMerge(stackEffect.state ?? Layer.empty),
-          Layer.provideMerge(
-            Layer.mergeAll(
-              Layer.succeed(AuthProviders, authProviders),
-              ConfigProvider.layer(
-                withProfileOverride(
-                  yield* loadConfigProvider(envFile),
-                  profile,
-                ),
-              ),
-              Logger.layer([fileLogger("out")], { mergeWithExisting: true }),
-              Layer.succeed(Stage, stage),
-              Layer.succeed(Stack, {
-                actions: {},
-                bindings: {},
-                name: stackEffect.stackName,
-                resources: {},
-                stage,
-              }),
-            ),
-          ),
-        ),
-      );
-
-      const profiles = yield* Profile;
-
+      const profiles = yield* AlchemyProfile;
       const ci = yield* Config.boolean("CI").pipe(Config.withDefault(false));
-      const providers = Object.values(authProviders);
+
+      let authProviders: AuthProviders["Service"];
+      // Providers to actually log in with; `undefined` means all registered.
+      let selected: string[] | undefined;
+      if (mainExists) {
+        // Build the user's providers() (+ state) layer to capture the auth
+        // providers their stack wires up.
+        ({ authProviders } = yield* buildStackProviders({
+          main: mainPath,
+          envFile,
+          profile,
+        }));
+      } else {
+        // No stack entrypoint — register every built-in auth provider so
+        // `alchemy login` works from any folder. Interactively, let the
+        // user pick which ones to log in with; in CI, take them all.
+        yield* Console.log(
+          "No alchemy.run.ts found — using Alchemy's built-in providers.",
+        );
+        authProviders = yield* buildBuiltinAuthProviders({ envFile, profile });
+        if (!ci) {
+          const existing = yield* profiles.getProfile(profile);
+          const names = Object.keys(authProviders).sort();
+          selected = yield* Clank.multiselect({
+            message: "Select providers to log in with",
+            options: names.map((name) => ({
+              value: name,
+              label: name,
+              hint: existing?.[name] != null ? "configured" : undefined,
+            })),
+            // Pre-select providers already in the profile so re-running
+            // login naturally refreshes/re-prints what's set up.
+            initialValues: names.filter((name) => existing?.[name] != null),
+          });
+        }
+      }
+
+      const providers = Object.values(authProviders).filter(
+        (provider) => selected == null || selected.includes(provider.name),
+      );
 
       if (providers.length === 0) {
         yield* Console.log(
-          "No AuthProviders registered. Make sure the stack's providers() layer includes AuthProviderLayer entries.",
+          selected != null
+            ? "No providers selected."
+            : "No AuthProviders registered. Make sure the stack's providers() layer includes AuthProviderLayer entries.",
         );
         return;
       }
@@ -116,14 +153,6 @@ export const loginCommand = Command.make(
             } else {
               cfg = stored;
             }
-
-            // `read` succeeds when creds are present and not expired
-            // (refreshing OAuth proactively if near expiry). Any failure
-            // — missing file, dead refresh token, etc. — falls through
-            // to `login`.
-            yield* provider
-              .read(profile, cfg)
-              .pipe(Effect.catch(() => provider.login(profile, cfg)));
           }),
         { discard: true },
       );

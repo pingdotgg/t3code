@@ -1,45 +1,10 @@
 /**
- * SQL migration runner for Effect applications.
+ * Runs SQL migrations with `SqlClient`.
  *
- * A migrator loads numbered migration effects, records which ids have already
- * run in a migrations table, and executes only the pending migrations through a
- * `SqlClient`. The helpers in this module cover the common ways migrations are
- * discovered: dynamic glob imports, Babel-style glob records, in-memory
- * records, and filesystem directories.
- *
- * **Mental model**
- *
- * - A {@link Loader} resolves an ordered list of {@link ResolvedMigration}
- *   values
- * - {@link make} creates a runner that ensures the migrations table exists,
- *   reads the latest recorded id, loads pending migration effects, records
- *   them, and runs them in a transaction
- * - The default migrations table is `effect_sql_migrations`; pass `table` when
- *   a database needs a different name
- * - On PostgreSQL the migrations table is explicitly locked; other dialects use
- *   the table constraint to detect concurrent runners
- * - `schemaDirectory` runs the `dumpSchema` hook after successful migrations
- *
- * **Common tasks**
- *
- * - Load bundler migration modules with {@link fromGlob} or
- *   {@link fromBabelGlob}
- * - Load test or programmatic migrations with {@link fromRecord}
- * - Load migration files from a directory with {@link fromFileSystem}
- * - Customize schema dumps by passing `dumpSchema` to {@link make}
- *
- * **Gotchas**
- *
- * - Migration ids must be unique numbers; duplicate ids fail before any pending
- *   migration is run
- * - Only ids greater than the latest recorded id are considered pending, so
- *   editing or inserting an older migration does not make it run again
- * - File-based migrations must match `<id>_<name>.js`, `<id>_<name>.ts`,
- *   `<id>_<name>.mjs`, or `<id>_<name>.mts`
- * - File-based migration modules should default-export an `Effect` value that
- *   uses the current `SqlClient`; records can supply effects directly
- * - DDL transaction behavior is dialect-specific; coordinate custom table
- *   names, schema dumps, and external migration tooling accordingly
+ * A migrator loads numbered migration effects, records completed ids in a
+ * migrations table, and runs only pending migrations in a transaction. It
+ * creates the table when needed, detects duplicate ids, treats concurrent runs
+ * as locked, and can dump the schema after successful migrations.
  *
  * @since 4.0.0
  */
@@ -57,7 +22,7 @@ import type { SqlError } from "./SqlError.ts"
  * Options for running SQL migrations, including the migration loader, optional
  * schema dump directory, and migrations table name.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export interface MigratorOptions<R = never> {

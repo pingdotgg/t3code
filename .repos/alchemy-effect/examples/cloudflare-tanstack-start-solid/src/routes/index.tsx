@@ -5,7 +5,7 @@ import { createSignal } from "solid-js";
 export const getServerGreeting = createServerFn({
   method: "GET",
 }).handler(() => ({
-  message: "Hello from TanStack Start Solid on Cloudflare.Vite.",
+  message: "Hello from TanStack Start Solid on Cloudflare.Website.Vite.",
 }));
 
 export const Route = createFileRoute("/")({
@@ -27,7 +27,7 @@ function Home() {
     >
       <h1 style={{ margin: 0, "font-size": "2.5rem" }}>TanStack Start Solid</h1>
       <p style={{ "margin-top": "1rem", "font-size": "1.125rem" }}>
-        This app is served by <code>Cloudflare.Vite</code>.
+        This app is served by <code>Cloudflare.Website.Vite</code>.
       </p>
       <p data-testid="server-greeting">{message()}</p>
       <button

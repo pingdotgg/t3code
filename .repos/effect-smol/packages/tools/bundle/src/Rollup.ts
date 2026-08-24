@@ -28,7 +28,7 @@ import * as Stream from "effect/Stream"
 import { createGzip } from "node:zlib"
 import type { RollupOptions } from "rollup"
 import { rollup } from "rollup"
-import { createPlugins } from "./Plugins.ts"
+import { createPlugins, type VisualizationOutput } from "./Plugins.ts"
 
 /**
  * Error raised when Rollup bundling, output generation, or bundle size measurement fails.
@@ -54,7 +54,7 @@ export class BundleStats extends Data.TaggedClass("BundleStats")<{
 /**
  * Options for bundling one entry file, optionally writing a minified output and generating a visualization.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export interface BundleOptions {
@@ -66,7 +66,7 @@ export interface BundleOptions {
 /**
  * Options for bundling multiple entry files with shared visualization and output-directory settings.
  *
- * @category models
+ * @category options
  * @since 4.0.0
  */
 export interface BundleAllOptions {
@@ -88,12 +88,34 @@ export class Rollup extends Context.Service<Rollup>()(
       const pathService = yield* Path.Path
       const fs = yield* FileSystem.FileSystem
 
+      const createVisualizationOutputs = (options: BundleOptions): ReadonlyArray<VisualizationOutput> => {
+        if (!options.visualize || !options.outputDirectory) {
+          return []
+        }
+        const name = pathService.parse(options.path).name
+        return [
+          {
+            filename: pathService.join(options.outputDirectory, `${name}.treemap.html`),
+            template: "treemap",
+            title: `${name} bundle treemap`
+          },
+          {
+            filename: pathService.join(options.outputDirectory, `${name}.raw-data.json`),
+            template: "raw-data",
+            title: `${name} bundle raw data`
+          }
+        ]
+      }
+
       const getRollupOptions = (options: BundleOptions): RollupOptions => ({
         input: options.path,
         output: {
           format: "esm"
         },
-        plugins: createPlugins(pathService, { visualize: options.visualize }),
+        plugins: createPlugins(pathService, {
+          visualize: options.visualize,
+          visualizations: createVisualizationOutputs(options)
+        }),
         onwarn: (warning, next) => {
           if (warning.code === "THIS_IS_UNDEFINED") return
           next(warning)

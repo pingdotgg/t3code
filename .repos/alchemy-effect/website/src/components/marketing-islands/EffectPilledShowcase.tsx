@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
 import { Icon } from "@iconify/react";
+import { useEffect, useRef, useState } from "react";
 import { highlightTS } from "../marketing/highlightTS";
 
 /**
@@ -11,9 +11,9 @@ import { highlightTS } from "../marketing/highlightTS";
  * what Alchemy wired up. Tabs auto-cycle while in view; tap to pin.
  *
  * Tabs:
- *   - IAM bindings   — `S3.GetObject.bind(...)` → permissions + env vars
+ *   - IAM bindings   — `S3.GetObject(...)` → permissions + env vars
  *   - Event sources  — `DynamoDB.stream(...).process(...)` → EventSourceMapping
- *   - Durable Objects — `Cloudflare.DurableObjectNamespace`
+ *   - Durable Objects — `Cloudflare.DurableObject`
  *   - Containers     — `Cloudflare.Container`
  *   - Workflows      — `Cloudflare.Workflow`
  *   - Layers         — `Layer.effect(JobStorage, ...)`
@@ -39,8 +39,8 @@ const LAYER_IMPL_SWAP_MS = 3500;
 const IAM_CODE = `export default AWS.Lambda.Function(
   "JobApi",
   Effect.gen(function* () {
-    const getPhoto = yield* S3.GetObject.bind(Photos);
-    const putJob   = yield* DynamoDB.PutItem.bind(Jobs);
+    const getPhoto = yield* S3.GetObject(Photos);
+    const putJob   = yield* DynamoDB.PutItem(Jobs);
 
     return {
       fetch: Effect.gen(function* () {
@@ -64,12 +64,12 @@ const STREAM_CODE = `export default AWS.Lambda.Function(
   }),
 );`;
 
-const DO_CODE = `export default class Room extends Cloudflare.DurableObjectNamespace<Room>()(
+const DO_CODE = `export default class Room extends Cloudflare.DurableObject<Room>()(
   "Rooms",
   Effect.gen(function* () {
+    const state = yield* Cloudflare.DurableObjectState;
     return Effect.gen(function* () {
-      const state = yield* Cloudflare.DurableObjectState;
-      const sessions = new Map<string, Cloudflare.DurableWebSocket>();
+      const sessions = new Map<string, Cloudflare.WebSocket>();
 
       return {
         fetch: Effect.gen(function* () {
@@ -84,14 +84,13 @@ const DO_CODE = `export default class Room extends Cloudflare.DurableObjectNames
 
 const CONTAINER_CODE = `export class Sandbox extends Cloudflare.Container<Sandbox, {
   exec: (cmd: string) => Effect.Effect<ExecResult>;
-}>()(
-  "Sandbox",
-  Stack.useSync((stack) => ({
-    instanceType: stack.stage === "prod" ? "standard-1" : "dev",
-  })),
-) {}
+}>()("Sandbox") {}
 
 export const SandboxLive = Sandbox.make(
+  Stack.useSync((stack) => ({
+    main: import.meta.url,
+    instanceType: stack.stage === "prod" ? "standard-1" : "dev",
+  })),
   Effect.gen(function* () {
     const cp = yield* ChildProcessSpawner;
     return Sandbox.of({
@@ -105,12 +104,12 @@ const WORKFLOW_CODE = `export default class Notifier extends Cloudflare.Workflow
   Effect.gen(function* () {
     const rooms = yield* Room;
     return Effect.gen(function* () {
-      const { roomId, message } = (yield* Cloudflare.WorkflowEvent).payload;
-      yield* Cloudflare.task("store",     rooms.getByName(roomId).store(message));
-      yield* Cloudflare.task("process",   processMessage(message));
-      yield* Cloudflare.task("broadcast", rooms.getByName(roomId).broadcast(message));
-      yield* Cloudflare.sleep("cooldown", "2 seconds");
-      yield* Cloudflare.task("finalize",  rooms.getByName(roomId).cleanup());
+      const { roomId, message } = (yield* Cloudflare.Workflows.WorkflowEvent).payload;
+      yield* Cloudflare.Workflows.task("store",     rooms.getByName(roomId).store(message));
+      yield* Cloudflare.Workflows.task("process",   processMessage(message));
+      yield* Cloudflare.Workflows.task("broadcast", rooms.getByName(roomId).broadcast(message));
+      yield* Cloudflare.Workflows.sleep("cooldown", "2 seconds");
+      yield* Cloudflare.Workflows.task("finalize",  rooms.getByName(roomId).cleanup());
     });
   }),
 ) {}`;
@@ -146,13 +145,13 @@ const LAYER_SEGMENTS: LayerSegment[] = [
     ddb: [
       "export const JobStorageDynamoDB = Layer.effect(JobStorage, Effect.gen(function* () {",
       '  const table   = yield* DynamoDB.Table("JobsTable", { partitionKey: "id" });',
-      "  const putItem = yield* DynamoDB.PutItem.bind(table);",
+      "  const putItem = yield* DynamoDB.PutItem(table);",
       "  const getItem = yield* DynamoDB.GetItem.bind(table);",
     ],
     d1: [
       "export const JobStorageD1 = Layer.effect(JobStorage, Effect.gen(function* () {",
-      '  const db   = yield* Cloudflare.D1Database("JobsDB");',
-      "  const conn = yield* Cloudflare.D1Connection.bind(db);",
+      '  const db   = yield* Cloudflare.D1.Database("JobsDB");',
+      "  const conn = yield* Cloudflare.D1.QueryDatabase(db);",
       "",
     ],
   },
@@ -437,7 +436,7 @@ function DurableObjectPanel() {
   const FEATURES = [
     {
       icon: "logos:cloudflare-icon",
-      label: "Cloudflare.DurableObjectNamespace",
+      label: "Cloudflare.DurableObject",
       sub: "one instance per name · single-threaded",
     },
     {
@@ -566,7 +565,7 @@ function LayerPanel({ impl }: { impl: LayerImpl }) {
           >
             <FeatureRow
               icon="logos:cloudflare-icon"
-              label="Cloudflare.D1Database"
+              label="Cloudflare.D1.Database"
               sub='"JobsDB" · serverless SQL'
               delay={240}
             />

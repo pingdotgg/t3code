@@ -1,34 +1,8 @@
 /**
- * The `OpenRouterConfig` module provides scoped contextual configuration for
- * OpenRouter request execution. It lets a workflow customize the HTTP client
- * used by generated OpenRouter request methods without rebuilding the
- * `OpenRouterClient` layer.
- *
- * **Mental model**
- *
- * - {@link OpenRouterConfig} is a context service carrying optional
- *   OpenRouter-specific request configuration
- * - {@link withClientTransform} provides that service around one effect
- * - Generated request methods read the current context and apply the transform
- *   to their `HttpClient`
- * - The scoped configuration only applies while the returned effect is run
- *
- * **Common tasks**
- *
- * - Add request logging, retries, proxy routing, headers, or test doubles with
- *   {@link withClientTransform}
- * - Scope OpenRouter client customization to one workflow without changing the
- *   shared client layer
- *
- * **Gotchas**
- *
- * - Each {@link withClientTransform} call replaces the current scoped
- *   transform for the supplied effect; compose transforms manually when both
- *   behaviors should apply
- * - The transform receives and returns an `HttpClient`, so it should preserve
- *   the OpenRouter request contract while adding behavior around it
- * - Streaming chat completion requests are sent directly by `OpenRouterClient`
- *   and do not read this scoped transform
+ * The `OpenRouterConfig` module lets a workflow temporarily customize the HTTP
+ * client used by generated OpenRouter request methods. `OpenRouterClient` reads
+ * this scoped transform when generated client operations execute, so callers can
+ * add middleware or instrumentation without rebuilding the client layer.
  *
  * @since 4.0.0
  */
@@ -90,8 +64,8 @@ export declare namespace OpenRouterConfig {
  *
  * **When to use**
  *
- * Use when a single effect or workflow needs temporary OpenRouter HTTP client
- * customization without rebuilding the client layer.
+ * Use when you need temporary OpenRouter HTTP client customization for a
+ * single effect or workflow without rebuilding the client layer.
  *
  * **Details**
  *

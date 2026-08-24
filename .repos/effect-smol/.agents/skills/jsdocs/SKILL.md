@@ -81,6 +81,12 @@ Use a normal multiline JSDoc comment in TypeScript source:
 - `**When to use**` describes the positive use case for the documented API. Do not use it as a routing section for sibling APIs. If neighboring APIs need to be mentioned, put that boundary in `@see` tag text instead.
 - `**When to use**` is important when the API has close alternatives, trade-offs, or `@see` tags. If `@see` tags are present, inspect the referenced APIs and add `**When to use**` when it clarifies the documented API's own use case.
 - `**When to use**` must start with one of these practical guidance forms: `Use to`, `Use when`, `Use as`, or `Use with`. Avoid bullet lists and vague openers such as `Use this...` or `Useful for...`.
+- Prefer reader-centered `**When to use**` wording, especially `Use when you ...`,
+  when the sentence describes a user's goal. Avoid third-person noun-phrase
+  subjects such as `the input is ...`, `a service needs ...`, or
+  `values should ...` when they would become awkward in generated prompts.
+- A good `**When to use**` sentence should still read naturally if reused as
+  a user intent prompt, for example after `I need ...` or `I have ...`.
 - Keep `short` and `**When to use**` distinct: the short description says what
   the API is or does; `**When to use**` says when to choose it.
 - Add internal `@see` tags only for semantically useful related public APIs.
@@ -89,6 +95,15 @@ Use a normal multiline JSDoc comment in TypeScript source:
 - Do not use Markdown headings such as `# Heading` or ad hoc bold headings such as `**Notes**`; only the standard headings are allowed.
 - Examples must use `**Example** (Title)`, optional prose, and exactly one non-empty `ts` code fence.
 - Example titles must be unique after trimming and lowercasing.
+- Example titles should be short use-case phrases, not generic labels.
+- Prefer gerund or action-noun titles that read naturally after `for`, for
+  example `Parsing JSON`, `Creating a scoped runtime`, or `Comparing structs`.
+- Avoid imperative titles such as `Parse JSON`, vague labels such as `Syntax`
+  or `Basic usage`, and title-cased fragments such as `String Ordering`.
+- Preserve canonical technical capitalization inside the phrase, such as
+  `Option`, `Effect`, `Schema`, `DateTime`, `HashMap`, `Base64`, and `JSON`.
+- For multiple examples on the same API, make each title describe the distinct
+  use case shown by that example.
 - Prefer examples with stable, deterministic output. Avoid assertions or
   `console.log` comments that depend on stack traces, object inspection,
   `Error` formatting, concurrency order, timing, randomness, or

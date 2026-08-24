@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "alchemy-test";
 
 import {
   fromAttributeValue,
@@ -206,7 +206,7 @@ describe("toAttributeValue", () => {
     const result = Effect.runPromise(
       toAttributeValue(symbol).pipe(
         Effect.map(() => false),
-        Effect.catchTag("InvalidAttributeValue", (error) =>
+        Effect.catchTag("InvalidAttributeValue", (_error) =>
           Effect.succeed(true),
         ),
       ),

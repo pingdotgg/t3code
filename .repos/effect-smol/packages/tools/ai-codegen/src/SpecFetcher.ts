@@ -53,7 +53,7 @@ export interface SpecFetcher {
 /**
  * Service tag for fetching OpenAPI specifications from configured sources.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const SpecFetcher: Context.Service<SpecFetcher, SpecFetcher> = Context.Service(

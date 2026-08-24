@@ -13,10 +13,13 @@
  * @module providerInstances
  */
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
+  resolveProviderInstanceEnabled,
+  type ModelSelection,
   type ProviderDriverKind,
-  type ProviderInstanceId,
+  ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
   type ServerSettings,
@@ -24,6 +27,16 @@ import {
 } from "@t3tools/contracts";
 
 import { formatProviderDriverKindLabel } from "./providerModels";
+
+/**
+ * Local-only placeholder used while a draft has no provider it can safely
+ * target. It must never be persisted or dispatched; the composer disables
+ * send until a live provider replaces it.
+ */
+export const NO_PROVIDER_MODEL_SELECTION: ModelSelection = {
+  instanceId: ProviderInstanceId.make("t3code_no_provider"),
+  model: "",
+};
 
 /**
  * UI-facing projection of one configured provider instance. Carries the
@@ -95,6 +108,23 @@ function humanizeInstanceId(instanceId: ProviderInstanceId): string {
 
 function driverKindLabel(driverKind: ProviderDriverKind): string {
   return PROVIDER_DISPLAY_NAMES[driverKind] ?? formatProviderDriverKindLabel(driverKind);
+}
+
+/**
+ * Whether an instance's icon carries the account badge: accent color set, or
+ * several instances sharing a driver so the brand glyph alone is ambiguous.
+ * Shared by the composer trigger, the picker rail, and sidebar rows.
+ */
+export function shouldShowInstanceBadge(
+  entry: ProviderInstanceEntry,
+  entries: Iterable<ProviderInstanceEntry>,
+): boolean {
+  if (entry.accentColor) return true;
+  let sharedDriverCount = 0;
+  for (const candidate of entries) {
+    if (candidate.driverKind === entry.driverKind && ++sharedDriverCount > 1) return true;
+  }
+  return false;
 }
 
 export function normalizeProviderAccentColor(value: string | undefined): string | undefined {
@@ -171,6 +201,33 @@ export function deriveProviderInstanceEntries(
 }
 
 /**
+ * Project several environments' `ServerProvider[]` into a nested
+ * `environmentId → instanceId → entry` lookup.
+ *
+ * Instance ids are per-environment routing keys, and `defaultInstanceIdForDriver`
+ * makes the default id literally the driver slug, so every environment running
+ * the same driver reports the same id. Flattening across environments would
+ * clobber entries and mis-resolve accent colors; lookups must stay scoped to
+ * the thread's own environment.
+ */
+export function deriveProviderEntriesByEnvironment(
+  providersByEnvironment: Iterable<readonly [string, ReadonlyArray<ServerProvider>]>,
+): ReadonlyMap<string, ReadonlyMap<string, ProviderInstanceEntry>> {
+  const byEnvironment = new Map<string, ReadonlyMap<string, ProviderInstanceEntry>>();
+  for (const [environmentId, providers] of providersByEnvironment) {
+    byEnvironment.set(
+      environmentId,
+      new Map(
+        deriveProviderInstanceEntries(providers).map(
+          (entry) => [entry.instanceId as string, entry] as const,
+        ),
+      ),
+    );
+  }
+  return byEnvironment;
+}
+
+/**
  * Overlay the current settings configuration onto streamed provider snapshots.
  * Provider probes can briefly retain their previous `enabled` value after a
  * settings write, so picker visibility must follow settings rather than waiting
@@ -191,7 +248,7 @@ export function applyProviderInstanceSettings(
   return entries.map((entry) => {
     const explicitInstance = settings.providerInstances?.[entry.instanceId];
     const enabled = explicitInstance
-      ? (explicitInstance.enabled ?? true)
+      ? resolveProviderInstanceEnabled(explicitInstance)
       : entry.isDefault
         ? (legacyProviders[entry.driverKind]?.enabled ?? entry.enabled)
         : false;
@@ -254,26 +311,81 @@ export function getProviderInstanceModels(
 }
 
 /**
+ * Default model slug for a specific instance: its declared built-in default,
+ * then its first built-in model, then any model it reports, then the driver-level default. Custom
+ * instances can serve a different model list than the default instance of
+ * the same driver kind, so the lookup must be instance-scoped rather than
+ * kind-scoped.
+ */
+export function getDefaultProviderInstanceModel(
+  providers: ReadonlyArray<ServerProvider>,
+  instanceId: ProviderInstanceId,
+): string | undefined {
+  const entry = getProviderInstanceEntry(providers, instanceId);
+  if (!entry) return undefined;
+  return (
+    entry.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    entry.models.find((model) => !model.isCustom)?.slug ??
+    entry.models[0]?.slug ??
+    DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
+  );
+}
+
+const isSelectableProviderInstanceEntry = (entry: ProviderInstanceEntry): boolean =>
+  entry.enabled && entry.isAvailable;
+
+/**
+ * Resolve an exact stored instance when it remains enabled and available.
+ * Otherwise choose a deterministic fallback that can plausibly start now:
+ * ready first, then a non-error probe result. An errored provider is retained
+ * only when it was explicitly requested; it is never invented as a new-user
+ * default.
+ */
+export function resolveSelectableProviderInstanceEntry(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  instanceId: ProviderInstanceId | undefined,
+): ProviderInstanceEntry | undefined {
+  if (instanceId !== undefined) {
+    const requested = entries.find((entry) => entry.instanceId === instanceId);
+    if (requested && isSelectableProviderInstanceEntry(requested)) {
+      return requested;
+    }
+  }
+  return (
+    entries.find(isProviderInstancePickerReady) ??
+    entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error")
+  );
+}
+
+/**
  * Resolve the routing key for a selection that may reference an instance
  * id that no longer exists (e.g. a persisted thread selection after the
- * user deleted the custom instance). Returns the first enabled instance
- * as a fallback so downstream code can still send a turn.
+ * user deleted the custom instance). Returns a ready or non-error fallback,
+ * or `undefined` when no provider can safely become a new selection.
  */
 export function resolveSelectableProviderInstance(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId | undefined,
 ): ProviderInstanceId | undefined {
-  if (instanceId === undefined) {
-    return deriveProviderInstanceEntries(providers).find(
-      (entry) => entry.enabled && entry.isAvailable,
-    )?.instanceId;
-  }
   const entries = deriveProviderInstanceEntries(providers);
-  const requested = entries.find((entry) => entry.instanceId === instanceId);
-  if (requested && requested.enabled && requested.isAvailable) {
-    return instanceId;
-  }
-  return entries.find((entry) => entry.enabled && entry.isAvailable)?.instanceId;
+  return resolveSelectableProviderInstanceEntry(entries, instanceId)?.instanceId;
+}
+
+/**
+ * Resolve the model selection persisted for a project or new thread. A valid
+ * stored selection is preserved byte-for-byte. Falling back to another
+ * instance also resets the model to that instance's own default, avoiding
+ * cross-provider instance/model pairs.
+ */
+export function resolveDefaultProviderModelSelection(
+  providers: ReadonlyArray<ServerProvider>,
+  selection: ModelSelection | null | undefined,
+): ModelSelection | null {
+  const instanceId = resolveSelectableProviderInstance(providers, selection?.instanceId);
+  if (instanceId === undefined) return null;
+  if (selection?.instanceId === instanceId) return selection;
+  const model = getDefaultProviderInstanceModel(providers, instanceId);
+  return model ? { instanceId, model } : null;
 }
 
 /**

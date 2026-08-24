@@ -1,15 +1,32 @@
-import * as ECS from "@distilled.cloud/aws/ecs";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import type * as ECS from "@distilled.cloud/aws/ecs";
+import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
-import { isTask } from "./Task.ts";
 import type { Cluster } from "./Cluster.ts";
 
 export interface StopTaskRequest extends Omit<ECS.StopTaskRequest, "cluster"> {}
 
-export class StopTask extends Binding.Service<
+/**
+ * Runtime binding for `ecs:StopTask`.
+ *
+ * Bind this operation to a `Cluster` inside a function runtime to get a
+ * callable that stops a running task in the bound cluster. The cluster ARN is
+ * injected automatically and the host is granted `ecs:StopTask` on the
+ * cluster's tasks.
+ * @binding
+ * @section Stopping Tasks
+ * @example Stop a Running Task
+ * ```typescript
+ * const stopTask = yield* AWS.ECS.StopTask(cluster);
+ *
+ * const response = yield* stopTask({
+ *   task: taskArn,
+ *   reason: "drained by worker",
+ * });
+ * ```
+ */
+export interface StopTask extends Binding.Service<
   StopTask,
+  "AWS.ECS.StopTask",
   (
     cluster: Cluster,
   ) => Effect.Effect<
@@ -17,48 +34,5 @@ export class StopTask extends Binding.Service<
       request: StopTaskRequest,
     ) => Effect.Effect<ECS.StopTaskResponse, ECS.StopTaskError>
   >
->()("AWS.ECS.StopTask") {}
-
-export const StopTaskLive = Layer.effect(
-  StopTask,
-  Effect.gen(function* () {
-    const Policy = yield* StopTaskPolicy;
-    const stopTask = yield* ECS.stopTask;
-
-    return Effect.fn(function* (cluster: Cluster) {
-      yield* Policy(cluster);
-      const clusterArn = (yield* cluster.clusterArn) as unknown as string;
-      return Effect.fn(function* (request: StopTaskRequest) {
-        return yield* stopTask({
-          ...request,
-          cluster: clusterArn,
-        });
-      });
-    });
-  }),
-);
-
-export class StopTaskPolicy extends Binding.Policy<
-  StopTaskPolicy,
-  (cluster: Cluster) => Effect.Effect<void>
->()("AWS.ECS.StopTask") {}
-
-export const StopTaskPolicyLive = StopTaskPolicy.layer.succeed(
-  Effect.fn(function* (host, cluster) {
-    if (isFunction(host) || isTask(host)) {
-      yield* host.bind`Allow(${host}, AWS.ECS.StopTask(${cluster}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["ecs:StopTask"],
-            Resource: ["*"],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `StopTaskPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
-);
+> {}
+export const StopTask = Binding.Service<StopTask>("AWS.ECS.StopTask");

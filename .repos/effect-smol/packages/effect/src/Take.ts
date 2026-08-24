@@ -4,30 +4,6 @@
  * emitted values, a failed `Exit`, or a successful `Exit` carrying the
  * completion value.
  *
- * **Mental model**
- *
- * - A value batch represents elements that were pulled successfully
- * - A failed `Exit` represents an ordinary pull failure
- * - A successful `Exit` represents normal completion and carries `Done`
- * - {@link toPull} interprets the stored result as a `Pull.Pull` step
- *
- * **Common tasks**
- *
- * - Store or transfer one pull result as {@link Take}
- * - Turn a stored result back into a pull step with {@link toPull}
- *
- * **Gotchas**
- *
- * - Value batches are `NonEmptyReadonlyArray` values; empty arrays are not
- *   valid `Take` values
- * - Successful `Exit` values do not emit elements; they signal completion
- * - `Take` is a representation, not a queue or stream by itself
- *
- * **See also**
- *
- * - {@link Pull.Pull} for the pull-step effect interpreted by {@link toPull}
- * - {@link Exit.Exit} for the success and failure outcomes stored by `Take`
- *
  * @since 2.0.0
  */
 import type { NonEmptyReadonlyArray } from "./Array.ts"

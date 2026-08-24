@@ -1,0 +1,177 @@
+---
+title: cloudflare
+description: Cloudflare provider commands — bootstrap the state-store worker, mint API tokens, and inspect state-store logs.
+---
+
+import Terminal from "../../../components/Terminal.astro";
+
+```sh
+alchemy cloudflare <subcommand> [options]
+```
+
+Cloud-provider commands for Cloudflare — managing the state-store
+worker that backs `Cloudflare.state(...)`, and inspecting its logs.
+
+## `cloudflare bootstrap`
+
+```sh
+alchemy cloudflare bootstrap [options]
+```
+
+Manually deploy (or repair) the Cloudflare-hosted HTTP State Store —
+the worker + Secrets Store + auth-token secret that back the
+remote-state layer used by `Cloudflare.state(...)`.
+
+You normally don't need to run this: the very first stack deploy
+that uses `Cloudflare.state(...)` will prompt you to bootstrap
+automatically. Use this command to re-run that flow on demand —
+typically to recover from a previous deploy that was interrupted
+mid-bootstrap.
+
+| Option                 | Description                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `--profile <name>`     | Alchemy auth profile (defaults to `default` or `$ALCHEMY_PROFILE`). Determines which `~/.alchemy/profiles.json` entry is used.       |
+| `--force`              | Force a full redeploy even if the worker already exists. Without this flag, an existing worker is **adopted** and only its credentials are refreshed. |
+| `--worker-name <name>` | Override the default state-store worker name. Advanced; only needed if you run multiple state stores per Cloudflare account.         |
+| `--env-file <path>`    | Load environment variables from a file                                                                                               |
+
+The bootstrap is idempotent and self-healing:
+
+- An existing worker is **adopted** — its auth token is re-fetched live and `~/.alchemy/credentials/<profile>/cloudflare-state-store.json` is rewritten with the current token.
+- A partial failure resumes from the leftover local state stack; the bootstrap only completes once local state has been hoisted into the remote store.
+- `--force` redeploys unconditionally, but still reconciles existing resources (worker, Secrets Store, secret) in place rather than replacing them.
+
+```sh
+# First-time bootstrap (or repair after a failed deploy)
+alchemy cloudflare bootstrap
+
+# Bootstrap a separate profile
+alchemy cloudflare bootstrap --profile staging
+
+# Force a full redeploy (e.g. to roll out an updated state-store worker)
+alchemy cloudflare bootstrap --force
+```
+
+## `cloudflare create-token`
+
+```sh
+alchemy cloudflare create-token [options]
+```
+
+Mint a Cloudflare API token (`POST /user/tokens`) from the CLI. Useful
+for creating the `CLOUDFLARE_API_TOKEN` you hand to CI, or a broad local
+token for `alchemy deploy`. You'll be pointed to
+[your Cloudflare profile](https://dash.cloudflare.com/profile/api-tokens)
+once to grab your Global API Key (unless it's already in the environment);
+everything else happens in the terminal.
+
+This command is **standalone** — it takes no `--profile` and does not
+use an Alchemy auth profile. Cloudflare only mints a token whose
+permissions the authenticating credential is allowed to grant, and
+OAuth/scoped tokens silently produce a token with **zero** permissions.
+So this command always authenticates with your account's **Global API
+Key**, read from `CLOUDFLARE_API_KEY` / `CLOUDFLARE_EMAIL` (or
+prompted). The key is used only to create the token and is never stored.
+
+By default you pick permission groups from an interactive multi-select,
+resolved live from your account — restricted to the three scopes that
+can actually become a token policy (account, zone, r2). Pass
+`--all-permissions` for a "superuser" token spanning **every** permission
+group your account exposes (after a confirmation prompt).
+
+<Terminal content={`◇  Select a Cloudflare account
+│  My Account
+│
+◇  Token name
+│  alchemy-superuser
+│
+◇  Create a superuser token with all permissions?
+│  Yes
+
+Created Cloudflare API token "alchemy-superuser" (7cb070fe...).
+Granted 360 permission group(s) across 3 policy(ies); token status: active.
+
+cfut_pMtBzTOGHWyFC2RSNvfw8f7p2cc...
+
+Store this value now — Cloudflare only shows it once. Use it as CLOUDFLARE_API_TOKEN.`} />
+
+| Option              | Description                                                                                                          |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `--all-permissions` | Grant every Cloudflare permission group (a "superuser" token). Prompts for confirmation.                             |
+| `--name <name>`     | Token name. Prompted (required) if omitted.                                                                          |
+| `--account-id <id>` | Account ID(s) to scope the token to — comma-separated for multiple. If omitted, you'll be prompted with a multi-select spanning your accounts. |
+| `--env-file <path>` | Load environment variables (e.g. `CLOUDFLARE_API_KEY`, `CLOUDFLARE_EMAIL`) from a file                               |
+
+The permission groups are resolved **live** from your account (so the
+token always uses IDs valid for that account), and the freshly minted
+token is verified against `/user/tokens/verify` before the value is
+printed.
+
+If the result reports `Granted 0 permission group(s)`, the token is
+useless: a token can only carry permissions the authenticating user
+already holds, so this usually means the Global API Key's user is not
+a Super Administrator on the selected account. Check the user's role
+under Members in the Cloudflare dashboard and retry.
+
+:::note
+The Cloudflare dashboard has a long-standing rendering bug where
+API-created tokens show a **blank** permission summary (and a greyed-out
+"View") on first load. The permissions are applied regardless — the
+`Granted N permission group(s)` line and `token status: active` confirm
+it. To see them in the UI, open the token and click "← Edit token".
+:::
+
+```sh
+# Pick permission groups interactively for a typical Alchemy deploy token
+alchemy cloudflare create-token --name ci-token
+
+# Full-access "superuser" token
+alchemy cloudflare create-token --all-permissions --name admin
+
+# Non-interactive: key/email from the environment, explicit account
+CLOUDFLARE_API_KEY=... CLOUDFLARE_EMAIL=you@example.com \
+  alchemy cloudflare create-token --name ci --account-id <account-id>
+```
+
+## `cloudflare state logs`
+
+```sh
+alchemy cloudflare state logs [options]
+```
+
+Get or tail logs from the `alchemy-state-store` Worker on your
+Cloudflare account. Talks directly to the Workers Observability
+Telemetry API — no stack file required — so you can debug the
+state-store itself.
+
+Requires `workers_observability:read` and
+`workers_observability_telemetry:write` OAuth scopes (included in the
+default scope set; existing profiles need to re-run `alchemy login`
+to pick them up).
+
+| Option                 | Description                                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `--tail`               | Stream logs in real time via the Cloudflare tail websocket instead of fetching past entries                  |
+| `--limit <n>`          | Number of log entries to fetch (default: 100). Ignored with `--tail`.                                        |
+| `--since <time>`       | Fetch logs since this time — a duration (`1h`, `30m`, `2d`) or ISO date                                       |
+| `--worker-name <name>` | Override the default state-store worker name. Only needed if you run multiple state stores per account.       |
+| `--profile <name>`     | Alchemy auth profile (defaults to `default` or `$ALCHEMY_PROFILE`)                                           |
+| `--env-file <path>`    | Load environment variables from a file                                                                        |
+
+```sh
+# Last hour of state-store logs
+alchemy cloudflare state logs
+
+# Stream live in a separate terminal while you reproduce a bug
+alchemy cloudflare state logs --tail
+
+# Just the last 30 minutes
+alchemy cloudflare state logs --since 30m --limit 200
+```
+
+## Where next
+
+- [aws](/cli/aws) — provider commands for AWS
+- [Inspecting State](/cli/inspecting-state) — read and manage the state store from the CLI
+- [State Store](/state-store) — where resource state lives
+- [Cloudflare](/cloudflare) — the Cloudflare provider hub

@@ -1,0 +1,155 @@
+---
+title: Store Git Repos with Artifacts
+description: Use Cloudflare Artifacts to create Git repos at runtime and hand out clone tokens, all from a tiny Worker.
+sidebar:
+  order: 15
+---
+
+**Cloudflare Artifacts** is a Git server you can drive from a
+Worker — create repos, then `git clone`/`push`/`pull` against them.
+This tutorial keeps it deliberately small: one Worker that creates a
+repo and hands back a clone URL plus a token.
+
+## Declare the namespace
+
+An Artifacts namespace is the container for your repos. It's
+*implicit* — nothing to provision — so the resource is just a
+binding marker. Repos are created at runtime through the binding.
+
+```typescript
+// src/Repos.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Repos = Cloudflare.Artifacts.Namespace("Repos");
+```
+
+## Create a repo from the Worker
+
+Bind the namespace in the Worker's init phase, then call
+`artifacts.create(name)` inside `fetch`. It returns the repo's
+`remote` URL and a clone `token`:
+
+```typescript
+// src/Worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Repos } from "./Repos.ts";
+
+export default class Worker extends Cloudflare.Worker<Worker>()(
+  "Api",
+  {
+    main: import.meta.url,
+    compatibility: { flags: ["nodejs_compat"], date: "2026-03-17" },
+  },
+  Effect.gen(function* () {
+    const artifacts = yield* Cloudflare.Artifacts.ReadWriteNamespace(Repos);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const name = new URL(request.url).pathname.slice(1);
+
+        const repo = yield* artifacts.create(name, { setDefaultBranch: "main" });
+
+        return yield* HttpServerResponse.json({
+          remote: repo.remote,
+          token: repo.token,
+        });
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(Cloudflare.Artifacts.ReadWriteNamespaceBinding)),
+) {}
+```
+
+`Cloudflare.Artifacts.ReadWriteNamespace(Repos)` resolves an Effect-native client
+whose methods (`create`, `get`, `list`, `delete`) each return an
+Effect. `Effect.orDie` turns any `ArtifactsError` into a 500 — fine
+for this demo.
+
+## Mint a fresh clone token
+
+The token from `create` expires. To hand out a new one without
+recreating the repo, look it up with `artifacts.get(name)` and call
+`createToken`:
+
+```diff lang="typescript"
+ fetch: Effect.gen(function* () {
+   const request = yield* HttpServerRequest;
+   const name = new URL(request.url).pathname.slice(1);
+
++  if (request.method === "GET") {
++    const repo = yield* artifacts.get(name);
++    const token = yield* repo.createToken("read", 3600);
++    return yield* HttpServerResponse.json({ token: token.plaintext });
++  }
+
+   const repo = yield* artifacts.create(name, { setDefaultBranch: "main" });
+
+   return yield* HttpServerResponse.json({
+     remote: repo.remote,
+     token: repo.token,
+   });
+ }).pipe(Effect.orDie),
+```
+
+`POST /my-repo` creates the repo; `GET /my-repo` mints a fresh,
+short-lived (1 hour) read token for it.
+
+## Test it
+
+Deploy the Stack once and hit both routes over HTTP:
+
+```typescript
+// test/integ.test.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: Cloudflare.providers(),
+  state: Cloudflare.state(),
+});
+
+const stack = beforeAll(deploy(Stack));
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
+
+const repoName = `tutorial-${Date.now().toString(36)}`;
+
+test(
+  "create repo and mint token",
+  Effect.gen(function* () {
+    const { url } = yield* stack;
+    const client = yield* HttpClient.HttpClient;
+
+    const created = yield* (yield* client.post(`${url}/${repoName}`)).json;
+    expect((created as { remote: string }).remote).toBeString();
+
+    const minted = yield* (yield* client.get(`${url}/${repoName}`)).json;
+    expect((minted as { token: string }).token).toBeString();
+  }),
+  { timeout: 120_000 },
+);
+```
+
+```sh
+bun test
+```
+
+Alchemy deploys the Worker, `POST /<name>` creates the repo, and
+`GET /<name>` mints a clone token. With the `remote` and `token` you
+can `git clone` against the repo right away.
+
+## Where to go next
+
+From here you can layer on the things a real Git host needs:
+
+- Front the Worker with a schema-typed [HttpApi](/cloudflare/apis/effect-http-api)
+  so every route is validated end-to-end.
+- Add a [Durable Object](/cloudflare/compute/durable-objects) per
+  repo to hold metadata that doesn't live in Git — description,
+  topics, stars.

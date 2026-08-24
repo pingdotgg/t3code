@@ -1,6 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
-import * as Test from "@/Test/Vitest";
-import { expect } from "@effect/vitest";
+import * as Test from "@/Test/Alchemy";
+import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -31,9 +31,10 @@ const readJson = (url: string) =>
   ).pipe(
     Effect.retry({
       while: (e): e is WorkerNotReady => e instanceof WorkerNotReady,
-      schedule: Schedule.exponential("500 millis").pipe(
-        Schedule.both(Schedule.recurs(20)),
-      ),
+      schedule: Schedule.max([
+        Schedule.exponential("500 millis"),
+        Schedule.recurs(20),
+      ]),
     }),
   );
 
@@ -56,15 +57,134 @@ test(
 );
 
 test(
-  "effect worker renders a page title through Browser Rendering",
+  "effect worker exercises content via quickAction wrapper",
   Effect.gen(function* () {
     const { effectWorkerUrl } = yield* stack;
-    const body = (yield* readJson(`${effectWorkerUrl}/title`)) as {
-      mode: string;
+    const body = (yield* readJson(`${effectWorkerUrl}/content`)) as {
+      title: string;
+      contentLength: number;
+    };
+
+    expect(body.title).toBe("Example Domain");
+    expect(body.contentLength).toBeGreaterThan(0);
+  }),
+  { timeout: 180_000 },
+);
+
+test(
+  "effect worker converts a page to markdown",
+  Effect.gen(function* () {
+    const { effectWorkerUrl } = yield* stack;
+    const body = (yield* readJson(`${effectWorkerUrl}/markdown`)) as {
+      markdownLength: number;
+    };
+
+    expect(body.markdownLength).toBeGreaterThan(0);
+  }),
+  { timeout: 180_000 },
+);
+
+test(
+  "effect worker extracts links",
+  Effect.gen(function* () {
+    const { effectWorkerUrl } = yield* stack;
+    const body = (yield* readJson(`${effectWorkerUrl}/links`)) as {
+      linkCount: number;
+    };
+
+    expect(body.linkCount).toBeGreaterThan(0);
+  }),
+  { timeout: 180_000 },
+);
+
+test(
+  "effect worker scrapes elements by selector",
+  Effect.gen(function* () {
+    const { effectWorkerUrl } = yield* stack;
+    const body = (yield* readJson(`${effectWorkerUrl}/scrape`)) as {
+      heading: string | null;
+    };
+
+    expect(body.heading).toBe("Example Domain");
+  }),
+  { timeout: 180_000 },
+);
+
+test(
+  "effect worker takes a page snapshot",
+  Effect.gen(function* () {
+    const { effectWorkerUrl } = yield* stack;
+    const body = (yield* readJson(`${effectWorkerUrl}/snapshot`)) as {
+      title: string;
+      screenshotLength: number;
+    };
+
+    expect(body.title).toBe("Example Domain");
+    expect(body.screenshotLength).toBeGreaterThan(0);
+  }),
+  { timeout: 180_000 },
+);
+
+test(
+  "effect worker streams a screenshot",
+  Effect.gen(function* () {
+    const { effectWorkerUrl } = yield* stack;
+    const body = (yield* readJson(`${effectWorkerUrl}/screenshot`)) as {
+      bytes: number;
+    };
+
+    expect(body.bytes).toBeGreaterThan(0);
+  }),
+  { timeout: 180_000 },
+);
+
+test(
+  "effect worker streams a PDF",
+  Effect.gen(function* () {
+    const { effectWorkerUrl } = yield* stack;
+    const body = (yield* readJson(`${effectWorkerUrl}/pdf`)) as {
+      bytes: number;
+    };
+
+    expect(body.bytes).toBeGreaterThan(0);
+  }),
+  { timeout: 180_000 },
+);
+
+test(
+  "effect worker extracts JSON with AI",
+  Effect.gen(function* () {
+    const { effectWorkerUrl } = yield* stack;
+    const body = (yield* readJson(`${effectWorkerUrl}/json`)) as {
+      success: boolean;
+    };
+
+    expect(body.success).toBe(true);
+  }),
+  { timeout: 180_000 },
+);
+
+test(
+  "effect worker calls the generic quickAction",
+  Effect.gen(function* () {
+    const { effectWorkerUrl } = yield* stack;
+    const body = (yield* readJson(`${effectWorkerUrl}/quickAction`)) as {
       title: string;
     };
 
-    expect(body.mode).toBe("effect");
+    expect(body.title).toBe("Example Domain");
+  }),
+  { timeout: 180_000 },
+);
+
+test(
+  "effect worker exposes the raw BrowserRun binding",
+  Effect.gen(function* () {
+    const { effectWorkerUrl } = yield* stack;
+    const body = (yield* readJson(`${effectWorkerUrl}/raw`)) as {
+      title: string;
+    };
+
     expect(body.title).toBe("Example Domain");
   }),
   { timeout: 180_000 },

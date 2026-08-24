@@ -18,6 +18,7 @@ describe("ProviderSettingsForm helpers", () => {
       "binaryPath",
       "homePath",
       "shadowHomePath",
+      "launchArgs",
     ]);
   });
 
