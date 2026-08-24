@@ -1333,20 +1333,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             )
         ),
         active_plan_activities AS (
-          SELECT
-            activity.activity_id,
-            ROW_NUMBER() OVER (
-              ORDER BY
-                CASE WHEN activity.sequence IS NULL THEN 0 ELSE 1 END DESC,
-                activity.sequence DESC,
-                activity.created_at DESC,
-                activity.activity_id DESC
-            ) AS plan_order
+          SELECT activity.activity_id
           FROM latest_unsettled_turn AS active_turn
           CROSS JOIN projection_thread_activities AS activity
           WHERE activity.thread_id = ${threadId}
             AND activity.turn_id = active_turn.turn_id
             AND activity.kind = 'turn.plan.updated'
+          ORDER BY
+            activity.sequence DESC,
+            activity.created_at DESC,
+            activity.activity_id DESC
+          LIMIT 1
         ),
         pinned_activity_ids AS (
           SELECT activity_id
@@ -1360,7 +1357,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           UNION ALL
           SELECT activity_id
           FROM active_plan_activities
-          WHERE plan_order = 1
         )
         SELECT
           activity.activity_id AS "activityId",
