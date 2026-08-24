@@ -204,6 +204,33 @@ const AGENT_HEADER_RE = /^(.+)\s+\((\S+)\)\s*$/;
 // definitions (in the OpenCode repo: packages/opencode/src/agent/agent.ts).
 const KNOWN_HIDDEN_AGENTS = new Set(["compaction", "summary", "title"]);
 
+/**
+ * The CLI models listing carries only provider ids; the SDK path returns real
+ * display names. Title-case the id so section labels and model subtitles stay
+ * readable on the fallback path, with overrides for ids whose title-cased form
+ * reads wrong.
+ */
+const PROVIDER_DISPLAY_NAME_OVERRIDES: ReadonlyMap<string, string> = new Map([
+  ["openai", "OpenAI"],
+  ["openrouter", "OpenRouter"],
+  ["opencode", "OpenCode"],
+  ["xai", "xAI"],
+  ["deepseek", "DeepSeek"],
+  ["github-copilot", "GitHub Copilot"],
+]);
+
+function providerDisplayNameFromId(providerID: string): string {
+  const override = PROVIDER_DISPLAY_NAME_OVERRIDES.get(providerID);
+  if (override) {
+    return override;
+  }
+  return providerID
+    .split(/[-_]+/)
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
 /** @internal */
 export function parseModelsCliOutput(stdout: string): {
   readonly providers: ReadonlyMap<
@@ -232,7 +259,11 @@ export function parseModelsCliOutput(stdout: string): {
             const modelID = currentSlug.slice(separator + 1);
             let provider = providers.get(providerID);
             if (!provider) {
-              provider = { id: providerID, name: providerID, models: {} };
+              provider = {
+                id: providerID,
+                name: providerDisplayNameFromId(providerID),
+                models: {},
+              };
               providers.set(providerID, provider);
             }
             provider.models[modelID] = model;

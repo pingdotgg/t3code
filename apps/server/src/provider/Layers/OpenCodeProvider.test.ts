@@ -213,6 +213,52 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("orders the catalog by upstream provider, then model name", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["anthropic", "openai"],
+          all: [
+            {
+              id: "openai",
+              name: "OpenAI",
+              models: {
+                "gpt-5.4": { id: "gpt-5.4", name: "GPT-5.4", variants: {} },
+                o3: { id: "o3", name: "o3", variants: {} },
+              },
+            },
+            {
+              id: "anthropic",
+              name: "Anthropic",
+              models: {
+                "claude-sonnet-4-5": { id: "claude-sonnet-4-5", name: "Sonnet 4.5", variants: {} },
+                "claude-haiku-4-5": { id: "claude-haiku-4-5", name: "Haiku 4.5", variants: {} },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.deepEqual(
+        snapshot.models.map((model) => model.slug),
+        [
+          "anthropic/claude-haiku-4-5",
+          "anthropic/claude-sonnet-4-5",
+          "openai/gpt-5.4",
+          "openai/o3",
+        ],
+      );
+      NodeAssert.deepEqual(
+        snapshot.models.map((model) => model.subProvider),
+        ["Anthropic", "Anthropic", "OpenAI", "OpenAI"],
+      );
+    }),
+  );
+
   it.effect("includes OpenCode skills in the provider snapshot", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventory = {

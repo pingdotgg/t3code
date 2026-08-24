@@ -55,6 +55,7 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { RUNTIME_MODE_CHOICES, selectableChoices } from "./thread-settings-options";
 import {
+  catalogVendorRuns,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
   providerSectionIsCollapsed,
@@ -180,6 +181,62 @@ function ProviderHeader(props: {
 
   return (
     <View accessibilityRole="header" className="mx-4 min-h-9 flex-row items-center gap-2 px-1 pt-1">
+      {content}
+    </View>
+  );
+}
+
+/**
+ * Vendor disclosure inside an aggregator provider's catalog (OpenCode
+ * connects several upstream providers). Subordinate to ProviderHeader:
+ * indented, no harness icon.
+ */
+function SubProviderHeader(props: {
+  readonly label: string;
+  readonly collapsible: boolean;
+  readonly collapsed: boolean;
+  readonly modelCount: number;
+  readonly onToggle: () => void;
+}) {
+  const iconSubtle = useThemeColor("--color-icon-subtle");
+  const content = (
+    <>
+      <Text className="text-sm font-t3-medium text-foreground-muted">{props.label}</Text>
+      {props.collapsible ? (
+        <>
+          <View className="flex-1" />
+          {props.collapsed ? (
+            <Text className="text-2xs font-t3-medium text-foreground-muted">
+              {props.modelCount}
+            </Text>
+          ) : null}
+          <SymbolView
+            name={props.collapsed ? "chevron.down" : "chevron.up"}
+            size={12}
+            tintColor={iconSubtle}
+            type="monochrome"
+          />
+        </>
+      ) : null}
+    </>
+  );
+
+  if (props.collapsible) {
+    return (
+      <Pressable
+        accessibilityLabel={`${props.label}, ${props.modelCount} models`}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: !props.collapsed }}
+        className="mx-6 min-h-10 flex-row items-center gap-2 rounded-xl px-1 pt-1 active:opacity-60"
+        onPress={props.onToggle}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return (
+    <View accessibilityRole="header" className="mx-6 min-h-8 flex-row items-center gap-2 px-1 pt-1">
       {content}
     </View>
   );
@@ -515,11 +572,24 @@ type ThreadSettingsProviderCatalog = {
   readonly models: ReadonlyArray<ModelOption>;
 };
 
+type ThreadSettingsSubProviderCatalog = {
+  readonly key: string;
+  readonly label: string;
+  readonly collapsible: boolean;
+  readonly collapsed: boolean;
+  readonly modelCount: number;
+};
+
 type ThreadSettingsCatalogItem =
   | {
       readonly kind: "provider";
       readonly key: string;
       readonly provider: ThreadSettingsProviderCatalog;
+    }
+  | {
+      readonly kind: "subProvider";
+      readonly key: string;
+      readonly section: ThreadSettingsSubProviderCatalog;
     }
   | {
       readonly kind: "model";
@@ -580,6 +650,84 @@ function ThreadSettingsProviderListHeader(props: {
   );
 }
 
+function ThreadSettingsSubProviderListHeader(props: {
+  readonly section: ThreadSettingsSubProviderCatalog;
+}) {
+  const session = useThreadSettingsSession();
+  const onToggle = useCallback(
+    () => session.toggleProvider(props.section.key),
+    [props.section.key, session.toggleProvider],
+  );
+
+  return (
+    <SubProviderHeader
+      collapsible={props.section.collapsible}
+      collapsed={props.section.collapsed}
+      label={props.section.label}
+      modelCount={props.section.modelCount}
+      onToggle={onToggle}
+    />
+  );
+}
+
+/**
+ * Rows for one provider's visible models. When the catalog spans multiple
+ * upstream vendors, each vendor becomes its own collapsible sub-section (the
+ * vendor holding the applied selection starts open); models without a vendor
+ * stay flat. Sub-sections share the provider expansion override set, keyed
+ * `${providerKey}:${subProvider}`.
+ */
+function catalogModelItems(input: {
+  readonly providerKey: string;
+  readonly models: ReadonlyArray<ModelOption>;
+  readonly isNarrowed: boolean;
+  readonly expansionOverrides: ReadonlySet<string>;
+  readonly isApplied: (option: ModelOption) => boolean;
+}): ReadonlyArray<ThreadSettingsCatalogItem> {
+  const modelItems = (models: ReadonlyArray<ModelOption>) =>
+    models.map((option, index) => ({
+      kind: "model" as const,
+      key: `model:${option.key}`,
+      option,
+      isFirst: index === 0,
+      isLast: index === models.length - 1,
+    }));
+
+  const runs = catalogVendorRuns(input.models);
+  if (!runs) {
+    return modelItems(input.models);
+  }
+
+  // At least one vendor starts open: the one holding the applied selection,
+  // else the first.
+  const defaultOpenRun =
+    runs.find((run) => run.subProvider && run.models.some(input.isApplied)) ??
+    runs.find((run) => run.subProvider !== undefined);
+
+  return runs.flatMap((run) => {
+    if (!run.subProvider) {
+      return modelItems(run.models);
+    }
+    const sectionKey = `${input.providerKey}:${run.subProvider}`;
+    const collapsed = providerSectionIsCollapsed({
+      defaultExpanded: run === defaultOpenRun,
+      hasExpansionOverride: input.expansionOverrides.has(sectionKey),
+      isNarrowed: input.isNarrowed,
+    });
+    const section: ThreadSettingsSubProviderCatalog = {
+      key: sectionKey,
+      label: run.subProvider,
+      collapsible: !input.isNarrowed,
+      collapsed,
+      modelCount: run.models.length,
+    };
+    return [
+      { kind: "subProvider" as const, key: `sub-provider:${sectionKey}`, section },
+      ...(collapsed ? [] : modelItems(run.models)),
+    ];
+  });
+}
+
 function useThreadSettingsCatalogItems(
   session: ThreadSettingsSessionValue,
 ): ReadonlyArray<ThreadSettingsCatalogItem> {
@@ -630,13 +778,13 @@ function useThreadSettingsCatalogItems(
             key: `provider:${group.providerKey}`,
             provider,
           },
-          ...provider.models.map((option, index) => ({
-            kind: "model" as const,
-            key: `model:${option.key}`,
-            option,
-            isFirst: index === 0,
-            isLast: index === provider.models.length - 1,
-          })),
+          ...catalogModelItems({
+            providerKey: group.providerKey,
+            models: provider.models,
+            isNarrowed,
+            expansionOverrides: session.providerExpansionOverrides,
+            isApplied: session.isApplied,
+          }),
         ];
       }),
     [
@@ -761,6 +909,8 @@ function ThreadSettingsMainContent(props: {
 
       if (item.kind === "provider") {
         content = <ThreadSettingsProviderListHeader provider={item.provider} />;
+      } else if (item.kind === "subProvider") {
+        content = <ThreadSettingsSubProviderListHeader section={item.section} />;
       } else if (item.kind === "model") {
         content = (
           <ThreadSettingsModelListRow

@@ -34,7 +34,7 @@ describe("parseModelsCliOutput", () => {
     const provider = result.providers.get("anthropic")!;
     NodeAssert.ok(provider);
     NodeAssert.equal(provider.id, "anthropic");
-    NodeAssert.equal(provider.name, "anthropic");
+    NodeAssert.equal(provider.name, "Anthropic");
     NodeAssert.equal(Object.keys(provider.models).length, 1);
 
     const model = provider.models["claude-sonnet-4-5"]!;
@@ -60,6 +60,26 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.equal([...result.connected].sort().join(","), "anthropic,openai");
     NodeAssert.equal(Object.keys(result.providers.get("anthropic")!.models).length, 2);
     NodeAssert.equal(Object.keys(result.providers.get("openai")!.models).length, 1);
+  });
+
+  it("derives readable provider display names from ids", () => {
+    const stdout = [
+      "openrouter/qwen3-coder",
+      JSON.stringify({ id: "qwen3-coder", providerID: "openrouter", name: "Qwen3 Coder" }),
+      "github-copilot/gpt-4o",
+      JSON.stringify({ id: "gpt-4o", providerID: "github-copilot", name: "GPT-4o" }),
+      "amazon-bedrock/claude-sonnet-4-5",
+      JSON.stringify({
+        id: "claude-sonnet-4-5",
+        providerID: "amazon-bedrock",
+        name: "Sonnet 4.5",
+      }),
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    NodeAssert.equal(result.providers.get("openrouter")!.name, "OpenRouter");
+    NodeAssert.equal(result.providers.get("github-copilot")!.name, "GitHub Copilot");
+    NodeAssert.equal(result.providers.get("amazon-bedrock")!.name, "Amazon Bedrock");
   });
 
   it("handles empty input", () => {

@@ -36,6 +36,23 @@ describe("mobile model options", () => {
             },
           ],
         },
+        {
+          instanceId: "opencode",
+          driver: "opencode",
+          displayName: "OpenCode",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "anthropic/claude-haiku-4-5",
+              name: "Haiku 4.5",
+              subProvider: "Anthropic",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
       ],
     } as unknown as ServerConfig;
 
@@ -46,6 +63,17 @@ describe("mobile model options", () => {
         models: [
           { key: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol", isLegacy: false },
           { key: "codex:gpt-5.4", label: "GPT-5.4", isLegacy: true },
+        ],
+      },
+      {
+        providerKey: "opencode",
+        providerLabel: "OpenCode",
+        models: [
+          {
+            key: "opencode:anthropic/claude-haiku-4-5",
+            label: "Haiku 4.5",
+            subProvider: "Anthropic",
+          },
         ],
       },
     ]);

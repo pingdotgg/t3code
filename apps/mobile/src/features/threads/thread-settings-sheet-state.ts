@@ -14,9 +14,33 @@ export function modelMatchesCatalogQuery(input: {
   return [
     input.model.label,
     input.model.subtitle,
+    input.model.subProvider ?? "",
     input.model.selection.model,
     input.providerLabel,
   ].some((value) => value.toLocaleLowerCase().includes(query));
+}
+
+/**
+ * Chunk one provider's catalog into consecutive vendor runs. The server sorts
+ * aggregator catalogs by (subProvider, name), so each vendor arrives as one
+ * run; models without a vendor form their own runs and render flat. Returns
+ * null when fewer than two vendors are present — a single header is noise.
+ */
+export function catalogVendorRuns(models: ReadonlyArray<ModelOption>): ReadonlyArray<{
+  readonly subProvider: string | undefined;
+  readonly models: ReadonlyArray<ModelOption>;
+}> | null {
+  const runs: Array<{ subProvider: string | undefined; models: ModelOption[] }> = [];
+  for (const model of models) {
+    const current = runs[runs.length - 1];
+    if (current && current.subProvider === model.subProvider) {
+      current.models.push(model);
+    } else {
+      runs.push({ subProvider: model.subProvider, models: [model] });
+    }
+  }
+  const vendors = new Set(runs.flatMap((run) => (run.subProvider ? [run.subProvider] : [])));
+  return vendors.size < 2 ? null : runs;
 }
 
 /** Preserve staged provider options when the highlighted model is tapped again. */

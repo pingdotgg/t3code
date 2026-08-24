@@ -15,6 +15,8 @@ export type ModelOption = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly providerDriver: string;
+  /** Upstream vendor for aggregator providers (OpenCode connects several). */
+  readonly subProvider?: string;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly capabilities: ModelCapabilities | null;
@@ -125,6 +127,7 @@ export function buildModelOptions(
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
+        ...(model.subProvider ? { subProvider: model.subProvider } : {}),
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,

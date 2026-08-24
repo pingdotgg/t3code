@@ -3,8 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   modelPickerLegacySectionKey,
   modelPickerModelKey,
+  modelPickerSubProviderSectionKey,
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
+  parseModelPickerSubProviderSectionKey,
 } from "./modelPickerKeys";
 
 describe("model picker item keys", () => {
@@ -27,5 +29,19 @@ describe("model picker item keys", () => {
     const key = modelPickerModelKey(instanceId, slug);
 
     expect(parseModelPickerModelKey(key)).toEqual({ instanceId, slug });
+  });
+
+  it("round-trips sub-provider section keys and keeps them distinct from model keys", () => {
+    const instanceId = ProviderInstanceId.make("opencode");
+    const subProvider = "OpenCode Zen";
+
+    const sectionKey = modelPickerSubProviderSectionKey(instanceId, subProvider);
+
+    expect(parseModelPickerSubProviderSectionKey(sectionKey)).toEqual({ instanceId, subProvider });
+    expect(parseModelPickerModelKey(sectionKey)).toBeNull();
+    expect(parseModelPickerLegacySectionKey(sectionKey)).toBeNull();
+    expect(
+      parseModelPickerSubProviderSectionKey(modelPickerModelKey(instanceId, subProvider)),
+    ).toBeNull();
   });
 });

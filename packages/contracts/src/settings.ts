@@ -221,6 +221,13 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  // Expanded sub-provider sections in the model picker, keyed by provider
+  // instance. A present entry is the user's explicit choice (empty array =
+  // all collapsed); a missing entry lets the picker apply its default
+  // (open the active model's vendor, else the first section).
+  modelPickerExpandedSections: Schema.Record(ProviderInstanceId, Schema.Array(Schema.String)).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   // Legacy plan mode. The composer's Build/Plan toggle was removed from the
   // default UI; this beta flag restores it (plus the /plan and /default slash
   // commands) for users who still rely on the old workflow.
@@ -912,6 +919,9 @@ export const ClientSettingsPatch = Schema.Struct({
         ),
       }),
     ),
+  ),
+  modelPickerExpandedSections: Schema.optionalKey(
+    Schema.Record(ProviderInstanceId, Schema.Array(Schema.String)),
   ),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),

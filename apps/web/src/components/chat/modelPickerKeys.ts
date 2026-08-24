@@ -36,6 +36,27 @@ export function parseModelPickerModelKey(
   };
 }
 
+const SUB_PROVIDER_SECTION_KEY_PREFIX = "sub-provider:";
+
+export function modelPickerSubProviderSectionKey(
+  instanceId: ProviderInstanceId,
+  subProvider: string,
+): string {
+  return `${SUB_PROVIDER_SECTION_KEY_PREFIX}${instanceId.length}:${instanceId}${subProvider}`;
+}
+
+export function parseModelPickerSubProviderSectionKey(
+  key: string,
+): { instanceId: ProviderInstanceId; subProvider: string } | null {
+  if (!key.startsWith(SUB_PROVIDER_SECTION_KEY_PREFIX)) {
+    return null;
+  }
+  const parsed = parseModelPickerModelKey(
+    `${MODEL_KEY_PREFIX}${key.slice(SUB_PROVIDER_SECTION_KEY_PREFIX.length)}`,
+  );
+  return parsed ? { instanceId: parsed.instanceId, subProvider: parsed.slug } : null;
+}
+
 export function modelPickerLegacySectionKey(instanceId: ProviderInstanceId): string {
   return `${LEGACY_SECTION_KEY_PREFIX}${instanceId}`;
 }

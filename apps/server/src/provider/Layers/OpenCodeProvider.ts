@@ -248,7 +248,11 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
     }
   }
 
-  return models.toSorted((left, right) => left.name.localeCompare(right.name));
+  return models.toSorted(
+    (left, right) =>
+      (left.subProvider ?? "").localeCompare(right.subProvider ?? "") ||
+      left.name.localeCompare(right.name),
+  );
 }
 
 function trimOptional(value: string | null | undefined): string | undefined {

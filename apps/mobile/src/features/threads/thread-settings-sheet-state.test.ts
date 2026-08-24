@@ -3,11 +3,16 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contracts";
 
 import type { ModelOption } from "../../lib/modelOptions";
-import { modelMatchesCatalogQuery, pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  catalogVendorRuns,
+  modelMatchesCatalogQuery,
+  pendingModelAfterPress,
+} from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
   options: ReadonlyArray<ProviderOptionSelection> = [],
+  subProvider?: string,
 ): ModelOption {
   return {
     key: `codex:${model}`,
@@ -16,6 +21,7 @@ function modelOption(
     providerKey: "codex",
     providerLabel: "Codex",
     providerDriver: "codex",
+    ...(subProvider ? { subProvider } : {}),
     isDefault: false,
     isLegacy: false,
     capabilities: null,
@@ -80,5 +86,40 @@ describe("thread settings sheet state", () => {
         pressedIsApplied: false,
       }),
     ).toBe(pressed);
+  });
+
+  it("matches the vendor of an aggregated model", () => {
+    const model = modelOption("claude-haiku", [], "Anthropic");
+
+    expect(modelMatchesCatalogQuery({ model, providerLabel: "OpenCode", query: "anthropic" })).toBe(
+      true,
+    );
+  });
+
+  it("chunks a multi-vendor catalog into runs, keeping vendorless models flat", () => {
+    const models = [
+      modelOption("claude-haiku", [], "Anthropic"),
+      modelOption("claude-sonnet", [], "Anthropic"),
+      modelOption("gpt-5.4", [], "OpenAI"),
+      modelOption("my-custom-model"),
+    ];
+
+    const runs = catalogVendorRuns(models);
+
+    expect(runs).toEqual([
+      { subProvider: "Anthropic", models: [models[0], models[1]] },
+      { subProvider: "OpenAI", models: [models[2]] },
+      { subProvider: undefined, models: [models[3]] },
+    ]);
+  });
+
+  it("skips vendor runs for single-vendor catalogs", () => {
+    expect(catalogVendorRuns([modelOption("gpt-5.4"), modelOption("gpt-5.5")])).toBeNull();
+    expect(
+      catalogVendorRuns([
+        modelOption("gpt-5.4", [], "OpenAI"),
+        modelOption("gpt-5.5", [], "OpenAI"),
+      ]),
+    ).toBeNull();
   });
 });

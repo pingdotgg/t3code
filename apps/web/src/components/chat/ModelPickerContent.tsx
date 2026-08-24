@@ -12,8 +12,10 @@ import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import {
   modelPickerLegacySectionKey,
   modelPickerModelKey,
+  modelPickerSubProviderSectionKey,
   parseModelPickerLegacySectionKey,
   parseModelPickerModelKey,
+  parseModelPickerSubProviderSectionKey,
 } from "./modelPickerKeys";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
@@ -127,6 +129,25 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           : [],
       ),
   );
+  const storedExpandedSections = useClientSettings((s) => s.modelPickerExpandedSections ?? {});
+  // Sub-provider expansion starts from the user's persisted choices, plus the
+  // section holding the active model so the current selection is visible when
+  // the picker opens.
+  const [expandedSubProviderKeys, setExpandedSubProviderKeys] = useState(() => {
+    const keys = new Set<string>();
+    for (const [instanceId, subProviders] of Object.entries(storedExpandedSections)) {
+      for (const subProvider of subProviders) {
+        keys.add(modelPickerSubProviderSectionKey(instanceId as ProviderInstanceId, subProvider));
+      }
+    }
+    const activeModel = modelOptionsByInstance
+      .get(props.activeInstanceId)
+      ?.find((model) => model.slug === props.model);
+    if (activeModel?.subProvider) {
+      keys.add(modelPickerSubProviderSectionKey(props.activeInstanceId, activeModel.subProvider));
+    }
+    return keys;
+  });
   const keybindings = useMemo<ResolvedKeybindingsConfig>(
     () => providedKeybindings ?? [],
     [providedKeybindings],
@@ -394,7 +415,83 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   }, [expandedLegacyInstances, filteredModels, isSearching, selectedInstanceId]);
 
+  /**
+   * Collapsible per-vendor sections for aggregator instances (OpenCode
+   * connects several upstream providers, each contributing its own models).
+   * Favorited models and models without a sub-provider stay above the fold;
+   * a single-vendor instance renders flat since one header is just noise.
+   */
+  const subProviderSections = useMemo(() => {
+    if (isSearching || selectedInstanceId === "favorites") {
+      return null;
+    }
+    const ungrouped: ModelPickerItem[] = [];
+    const groups = new Map<
+      string,
+      { key: string; label: string; models: ModelPickerItem[]; isExpanded: boolean }
+    >();
+    for (const model of filteredModels) {
+      if (model.isLegacy) {
+        continue;
+      }
+      if (!model.subProvider || favoritesSet.has(providerModelKey(model.instanceId, model.slug))) {
+        ungrouped.push(model);
+        continue;
+      }
+      const key = modelPickerSubProviderSectionKey(model.instanceId, model.subProvider);
+      const group = groups.get(key);
+      if (group) {
+        group.models.push(model);
+      } else {
+        groups.set(key, {
+          key,
+          label: model.subProvider,
+          models: [model],
+          isExpanded: expandedSubProviderKeys.has(key),
+        });
+      }
+    }
+    if (groups.size < 2) {
+      return null;
+    }
+    const sections = [...groups.values()].toSorted((a, b) => a.label.localeCompare(b.label));
+    // Until the user makes an explicit choice for this instance, keep at
+    // least one section open: the active model's vendor when it lives here,
+    // otherwise the first section.
+    const hasStoredChoice = storedExpandedSections[selectedInstanceId] !== undefined;
+    if (!hasStoredChoice && !sections.some((section) => section.isExpanded)) {
+      const fallback =
+        sections.find((section) =>
+          section.models.some(
+            (model) => model.instanceId === props.activeInstanceId && model.slug === props.model,
+          ),
+        ) ?? sections[0];
+      if (fallback) {
+        fallback.isExpanded = true;
+      }
+    }
+    return { ungrouped, sections };
+  }, [
+    expandedSubProviderKeys,
+    favoritesSet,
+    filteredModels,
+    isSearching,
+    props.activeInstanceId,
+    props.model,
+    selectedInstanceId,
+    storedExpandedSections,
+  ]);
+
   const visibleModels = useMemo(() => {
+    if (subProviderSections) {
+      return [
+        ...subProviderSections.ungrouped,
+        ...subProviderSections.sections.flatMap((section) =>
+          section.isExpanded ? section.models : [],
+        ),
+        ...(legacySection?.isExpanded ? legacySection.legacyModels : []),
+      ];
+    }
     if (!legacySection) {
       return filteredModels;
     }
@@ -402,7 +499,41 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       ...legacySection.currentModels,
       ...(legacySection.isExpanded ? legacySection.legacyModels : []),
     ];
-  }, [filteredModels, legacySection]);
+  }, [filteredModels, legacySection, subProviderSections]);
+
+  // Toggle against the rendered expansion (which includes the default-open
+  // fallback), then persist the instance's expanded set so the choice
+  // survives a relaunch. Writing an entry — even an empty one — marks the
+  // choice as explicit and disables the fallback for that instance.
+  const toggleSubProviderSection = useCallback(
+    (sectionKey: string) => {
+      const parsed = parseModelPickerSubProviderSectionKey(sectionKey);
+      if (!parsed || !subProviderSections) {
+        return;
+      }
+      const nextKeys = new Set(
+        [...expandedSubProviderKeys].filter(
+          (key) => parseModelPickerSubProviderSectionKey(key)?.instanceId !== parsed.instanceId,
+        ),
+      );
+      const nextLabels: string[] = [];
+      for (const section of subProviderSections.sections) {
+        const isExpanded = section.key === sectionKey ? !section.isExpanded : section.isExpanded;
+        if (isExpanded) {
+          nextKeys.add(section.key);
+          nextLabels.push(section.label);
+        }
+      }
+      setExpandedSubProviderKeys(nextKeys);
+      updateSettings({
+        modelPickerExpandedSections: {
+          ...storedExpandedSections,
+          [parsed.instanceId]: nextLabels,
+        },
+      });
+    },
+    [expandedSubProviderKeys, storedExpandedSections, subProviderSections, updateSettings],
+  );
 
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
@@ -485,10 +616,39 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           .filter((model) => model.isLegacy)
           .map((model) => modelPickerLegacySectionKey(model.instanceId)),
       ),
+      ...new Set(
+        flatModels.flatMap((model) =>
+          model.subProvider && !model.isLegacy
+            ? [modelPickerSubProviderSectionKey(model.instanceId, model.subProvider)]
+            : [],
+        ),
+      ),
     ],
     [flatModels],
   );
   const filteredItemKeys = useMemo((): string[] => {
+    if (subProviderSections) {
+      const keys = subProviderSections.ungrouped.map((model) =>
+        modelPickerModelKey(model.instanceId, model.slug),
+      );
+      for (const section of subProviderSections.sections) {
+        keys.push(section.key);
+        if (section.isExpanded) {
+          for (const model of section.models) {
+            keys.push(modelPickerModelKey(model.instanceId, model.slug));
+          }
+        }
+      }
+      if (legacySection) {
+        keys.push(legacySection.key);
+        if (legacySection.isExpanded) {
+          for (const model of legacySection.legacyModels) {
+            keys.push(modelPickerModelKey(model.instanceId, model.slug));
+          }
+        }
+      }
+      return keys;
+    }
     const modelKeys = visibleModels.map((model) =>
       modelPickerModelKey(model.instanceId, model.slug),
     );
@@ -497,7 +657,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     modelKeys.splice(legacySection.currentModels.length, 0, legacySection.key);
     return modelKeys;
-  }, [legacySection, visibleModels]);
+  }, [legacySection, subProviderSections, visibleModels]);
+  const subProviderSectionByKey = useMemo(
+    () =>
+      new Map(
+        (subProviderSections?.sections ?? []).map((section) => [section.key, section] as const),
+      ),
+    [subProviderSections],
+  );
   const filteredModelByKey = useMemo(
     (): ReadonlyMap<string, ModelPickerItem> =>
       new Map(
@@ -647,6 +814,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               toggleLegacySection(legacyInstanceId);
               return;
             }
+            if (parseModelPickerSubProviderSectionKey(modelKey)) {
+              toggleSubProviderSection(modelKey);
+              return;
+            }
             const model = parseModelPickerModelKey(modelKey);
             if (model) {
               handleModelSelect(model.slug, model.instanceId);
@@ -693,6 +864,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         toggleLegacySection(legacyInstanceId);
                         return;
                       }
+                      if (parseModelPickerSubProviderSectionKey(highlightedModelKeyRef.current)) {
+                        toggleSubProviderSection(highlightedModelKeyRef.current);
+                        return;
+                      }
                       const model = parseModelPickerModelKey(highlightedModelKeyRef.current);
                       if (model) {
                         handleModelSelect(model.slug, model.instanceId);
@@ -718,6 +893,34 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   extraData={modelListExtraData}
                   keyExtractor={(modelKey) => modelKey}
                   renderItem={({ item: modelKey, index }) => {
+                    const subProviderSection = subProviderSectionByKey.get(modelKey);
+                    if (subProviderSection) {
+                      return (
+                        <ComboboxItem
+                          hideIndicator
+                          index={index}
+                          value={modelKey}
+                          aria-expanded={subProviderSection.isExpanded}
+                          className="group w-full cursor-pointer rounded-md px-2 py-2"
+                          contentClassName="flex w-full items-center gap-3"
+                        >
+                          <div className="min-w-0 flex-1 text-left">
+                            <div className="truncate text-xs font-medium leading-snug">
+                              {subProviderSection.label}
+                            </div>
+                            <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70">
+                              {subProviderSection.models.length} models
+                            </div>
+                          </div>
+                          <ChevronRightIcon
+                            className={cn(
+                              "size-4 transition-transform",
+                              subProviderSection.isExpanded && "rotate-90",
+                            )}
+                          />
+                        </ComboboxItem>
+                      );
+                    }
                     if (legacySection?.key === modelKey) {
                       return (
                         <ComboboxItem
