@@ -518,6 +518,40 @@ it.effect("proves Homebrew ownership and fails closed for unresolved shims", () 
   });
 });
 
+it.effect("accepts Homebrew cask metadata with a scalar installed version", () => {
+  const brew = "/opt/homebrew/bin/brew";
+  const caskPrefix = "/opt/homebrew/Caskroom/codex";
+  return resolveInstallation(
+    context({
+      binaryPath: "codex",
+      resolvedCommandPath: "/opt/homebrew/bin/codex",
+      realCommandPath: `${caskPrefix}/0.149.1/codex-aarch64-apple-darwin`,
+      commands: { brew },
+      probes: {
+        [`${brew} --prefix --installed codex`]: { stdout: "", stderr: "", exitCode: 1 },
+        [`${brew} --caskroom codex`]: { stdout: caskPrefix, stderr: "", exitCode: 0 },
+        [`${brew} info --json=v2 codex`]: {
+          stdout: JSON.stringify({
+            casks: [{ installed: "0.149.1", version: "0.150.0" }],
+          }),
+          stderr: "",
+          exitCode: 0,
+        },
+      },
+    }),
+    catalog,
+  ).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Managed by Homebrew",
+        currentVersion: "0.149.1",
+        latestVersion: "0.150.0",
+        update: { executable: brew, args: ["upgrade", "codex"] },
+      });
+    }),
+  );
+});
+
 it.effect("keeps an unclassified explicit path manual-only", () =>
   resolveInstallation(
     context({

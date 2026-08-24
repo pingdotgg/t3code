@@ -456,7 +456,9 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
           ? text((versions as Record<string, unknown>).stable)
           : null;
       const installedFormula = records(formulaInfo?.installed)[0];
-      const installedCask = Array.isArray(caskInfo?.installed) ? text(caskInfo.installed[0]) : null;
+      const installedCask = Array.isArray(caskInfo?.installed)
+        ? text(caskInfo.installed[0])
+        : text(caskInfo?.installed);
       const currentVersion = normalizeMaintenanceVersion(
         text(installedFormula?.version) ?? installedCask,
       );
