@@ -316,7 +316,7 @@ function GitHubIssuesRoute() {
               {listQuery.data &&
               listQuery.data.entries.length > 0 &&
               listQuery.data.errors.length > 0 ? (
-                <div className="border-b border-warning/25 bg-warning/8 px-4 py-2 text-warning-foreground text-xs">
+                <div className="border-b border-warning/25 bg-warning-surface px-4 py-2 text-warning-foreground text-xs">
                   {listQuery.data.errors.length} GitHub-backed project
                   {listQuery.data.errors.length === 1 ? " was" : "s were"} unavailable.
                 </div>
@@ -395,8 +395,9 @@ function IssueRow({
       type="button"
       aria-current={selected ? "true" : undefined}
       className={cn(
-        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] gap-3 px-4 py-3 text-left [contain-intrinsic-block-size:72px] [content-visibility:auto] hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        selected && "bg-accent",
+        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] gap-3 px-4 py-3 text-left transition-colors [contain-intrinsic-block-size:72px] [content-visibility:auto] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        // Exclusive, or hovering the open issue would wash its own selection back out.
+        selected ? "bg-accent" : "hover:bg-accent/60",
       )}
       onClick={() => onSelect(issue)}
     >

@@ -21,6 +21,17 @@ describe("GitHub issues route chrome", () => {
     expect(routeSource).not.toMatch(/<select[\s>]/);
   });
 
+  it("takes its warning banner from the semantic role, not a fixed alpha", () => {
+    // `bg-warning/8` freezes the light value: `--warning-surface` carries the dark bump and the
+    // runtime theme bridge that `Alert` and the file preview banner already read.
+    expect(routeSource).toContain("bg-warning-surface");
+    expect(routeSource).not.toContain("bg-warning/");
+  });
+
+  it("keeps the row hover tone off the selected row", () => {
+    expect(routeSource).toContain('selected ? "bg-accent" : "hover:bg-accent/60"');
+  });
+
   it("renders the one empty state the issue module owns", () => {
     expect(routeSource).toContain("GitHubIssueEmptyState");
     expect(routeSource).not.toContain("function IssueEmptyState");

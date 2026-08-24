@@ -16,6 +16,7 @@ import { githubIssueEnvironment } from "../../state/githubIssues";
 import { useEnvironmentQuery } from "../../state/query";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { PullRequestMarkdown } from "../pullRequest/PullRequestMarkdown";
+import { GitHubIssueDetailGhost } from "./GitHubIssueGhosts";
 import { Button } from "../ui/button";
 import {
   Empty,
@@ -25,7 +26,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../ui/empty";
-import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 
 export function GitHubIssueDetailPanel({
@@ -96,11 +96,7 @@ export function GitHubIssueDetailContent({
   };
 
   if (loading && detail === null) {
-    return (
-      <div className="flex min-h-full items-center justify-center gap-2 p-8 text-muted-foreground text-sm">
-        <Spinner className="size-4" /> Loading issue...
-      </div>
-    );
+    return <GitHubIssueDetailGhost />;
   }
   if (error && detail === null) {
     return (

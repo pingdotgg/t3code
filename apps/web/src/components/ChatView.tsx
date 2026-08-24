@@ -168,6 +168,7 @@ import {
   GitHubIssueDetailPanel,
   GitHubIssueEmptyState,
 } from "./githubIssue/GitHubIssueDetailPanel";
+import { GitHubIssueDetailGhost } from "./githubIssue/GitHubIssueGhosts";
 import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
 import { AgentsPanel } from "./AgentsPanel";
 import {
@@ -6495,7 +6496,7 @@ function ChatViewContent(props: ChatViewProps) {
         />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "github-issue" && !sourceControlCapabilityKnown ? (
-      <PullRequestDetailGhost />
+      <GitHubIssueDetailGhost />
     ) : activeRightPanelSurface?.kind === "github-issue" && !supportsGitHubIssues ? (
       <GitHubIssueEmptyState
         title="GitHub issues unavailable"
