@@ -33,7 +33,10 @@ import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GiteaCli from "../sourceControl/GiteaCli.ts";
+import * as GiteaSourceControlProvider from "../sourceControl/GiteaSourceControlProvider.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
+import * as SourceControlProvider from "../sourceControl/SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -620,6 +623,8 @@ function makeManager(input?: {
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+  /** Replaces the default GitHub provider, for exercising another host's workflow. */
+  sourceControlProvider?: SourceControlProvider.SourceControlProvider["Service"];
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -637,14 +642,15 @@ function makeManager(input?: {
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     GitHubSourceControlProvider.make.pipe(
-      Effect.map((provider) =>
-        SourceControlProviderRegistry.SourceControlProviderRegistry.of({
+      Effect.map((gitHubProvider) => {
+        const provider = input?.sourceControlProvider ?? gitHubProvider;
+        return SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           get: () => Effect.succeed(provider),
           resolveHandle: () => Effect.succeed({ provider, context: null }),
           resolve: () => Effect.succeed(provider),
           discover: Effect.succeed([]),
-        }),
-      ),
+        });
+      }),
       Effect.provide(Layer.succeed(GitHubCli.GitHubCli, gitHubCli)),
     ),
   );
@@ -4833,6 +4839,111 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           label: "Creating pull request...",
         }),
       ]);
+    }),
+  );
+  // The original bug this provider fixes: a Gitea remote resolved to `unknown`, whose stub failed
+  // every call, so "Commit, push & create PR" died with "No unknown source control provider is
+  // registered." This drives the whole stacked action through the real Gitea provider.
+  it.effect("commits, pushes and creates a PR against a Gitea remote", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "t3code/gitea-flow"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "gitea.txt"), "gitea\n");
+
+      const createdPullRequest = {
+        number: 7,
+        title: "Add Gitea flow",
+        url: "https://git.example.com/owner/repo/pulls/7",
+        baseRefName: "main",
+        headRefName: "t3code/gitea-flow",
+        state: "open" as const,
+      };
+      // GitManager looks for an existing PR, creates one when there is none, then looks again.
+      let listCalls = 0;
+      let createCalls = 0;
+
+      const giteaProvider = yield* GiteaSourceControlProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(GiteaCli.GiteaCli)({
+            listPullRequests: () => {
+              listCalls += 1;
+              return Effect.succeed(listCalls === 1 ? [] : [createdPullRequest]);
+            },
+            createPullRequest: () => {
+              createCalls += 1;
+              return Effect.void;
+            },
+            getDefaultBranch: () => Effect.succeed("main"),
+          }),
+        ),
+      );
+
+      const { manager } = yield* makeManager({ sourceControlProvider: giteaProvider });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(result.push.status).toBe("pushed");
+      expect(result.pr.status).toBe("created");
+      expect(result.pr.number).toBe(7);
+      expect(createCalls).toBe(1);
+      expect(result.toast?.cta).toEqual({
+        kind: "open_pr",
+        label: "View PR",
+        url: "https://git.example.com/owner/repo/pulls/7",
+      });
+    }),
+  );
+
+  it.effect("reports an existing Gitea PR instead of opening a duplicate", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "t3code/gitea-existing"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "t3code/gitea-existing"]);
+
+      let createCalls = 0;
+      const giteaProvider = yield* GiteaSourceControlProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(GiteaCli.GiteaCli)({
+            listPullRequests: () =>
+              Effect.succeed([
+                {
+                  number: 12,
+                  title: "Already open",
+                  url: "https://git.example.com/owner/repo/pulls/12",
+                  baseRefName: "main",
+                  headRefName: "t3code/gitea-existing",
+                  state: "open" as const,
+                },
+              ]),
+            createPullRequest: () => {
+              createCalls += 1;
+              return Effect.void;
+            },
+            getDefaultBranch: () => Effect.succeed("main"),
+          }),
+        ),
+      );
+
+      const { manager } = yield* makeManager({ sourceControlProvider: giteaProvider });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.pr.status).toBe("opened_existing");
+      expect(result.pr.number).toBe(12);
+      expect(createCalls).toBe(0);
     }),
   );
 });
