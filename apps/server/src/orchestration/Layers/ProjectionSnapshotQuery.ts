@@ -1253,9 +1253,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  // Blocking request payloads must remain available even if they predate the
-  // recent activity window. Each CTE returns at most one unresolved row per
-  // request, so the merge below stays bounded by actionable work.
+  // Blocking request payloads and the current turn's latest plan must remain
+  // available even if they predate the recent activity window. Each CTE
+  // returns at most one row per request or active plan, so the merge below
+  // stays bounded by actionable work.
   const listPinnedThreadActivityRowsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadActivityDbRowSchema,
@@ -1315,6 +1316,38 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             )
             AND json_extract(activity.payload_json, '$.requestId') IS NOT NULL
         ),
+        latest_unsettled_turn AS (
+          SELECT thread.latest_turn_id AS turn_id
+          FROM projection_threads AS thread
+          LEFT JOIN projection_turns AS turn
+            ON turn.thread_id = thread.thread_id
+            AND turn.turn_id = thread.latest_turn_id
+          LEFT JOIN projection_thread_sessions AS session
+            ON session.thread_id = thread.thread_id
+          WHERE thread.thread_id = ${threadId}
+            AND thread.latest_turn_id IS NOT NULL
+            AND (
+              turn.started_at IS NULL
+              OR turn.completed_at IS NULL
+              OR session.status = 'running'
+            )
+        ),
+        active_plan_activities AS (
+          SELECT
+            activity.activity_id,
+            ROW_NUMBER() OVER (
+              ORDER BY
+                CASE WHEN activity.sequence IS NULL THEN 0 ELSE 1 END DESC,
+                activity.sequence DESC,
+                activity.created_at DESC,
+                activity.activity_id DESC
+            ) AS plan_order
+          FROM latest_unsettled_turn AS active_turn
+          CROSS JOIN projection_thread_activities AS activity
+          WHERE activity.thread_id = ${threadId}
+            AND activity.turn_id = active_turn.turn_id
+            AND activity.kind = 'turn.plan.updated'
+        ),
         pinned_activity_ids AS (
           SELECT activity_id
           FROM pending_approval_activities
@@ -1324,6 +1357,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           FROM user_input_lifecycle
           WHERE request_order = 1
             AND kind = 'user-input.requested'
+          UNION ALL
+          SELECT activity_id
+          FROM active_plan_activities
+          WHERE plan_order = 1
         )
         SELECT
           activity.activity_id AS "activityId",
