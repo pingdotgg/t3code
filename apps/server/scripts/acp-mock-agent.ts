@@ -428,7 +428,10 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!grokAcpModels().some((model) => model.modelId === request.modelId)) {
+      const catalogModel = grokAcpModels().find(
+        (model) => model.modelId.trim() === request.modelId.trim(),
+      );
+      if (!catalogModel) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {
@@ -437,7 +440,7 @@ const program = Effect.gen(function* () {
           },
         );
       }
-      currentModelId = request.modelId;
+      currentModelId = catalogModel.modelId;
       if (
         request._meta &&
         typeof request._meta.reasoningEffort === "string" &&

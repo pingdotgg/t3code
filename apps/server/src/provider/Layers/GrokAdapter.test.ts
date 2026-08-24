@@ -482,7 +482,15 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         runtimeMode: "full-access",
         modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
       });
-      yield* adapter.sendTurn({ threadId, input: "report xAI metadata", attachments: [] });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "report xAI metadata",
+        attachments: [],
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-mock-alt",
+        },
+      });
       yield* Deferred.await(turnCompleted);
       yield* Fiber.interrupt(eventsFiber);
 
