@@ -13,7 +13,8 @@ import { Command, Flag } from "effect/unstable/cli";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-const CURRENT_SCHEMA_RELEASE = "v0.11.3";
+const V2_SCHEMA_RELEASE = "schema-v2.0.0-alpha.3";
+const V1_SCHEMA_RELEASE = "schema-v1.21.0";
 
 interface GenerateCommandError {
   readonly _tag: "GenerateCommandError";
@@ -24,7 +25,10 @@ interface GeneratedPaths {
   readonly generatedDir: string;
   readonly upstreamSchemaPath: string;
   readonly upstreamMetaPath: string;
+  readonly upstreamV1SchemaPath: string;
+  readonly upstreamV1MetaPath: string;
   readonly schemaOutputPath: string;
+  readonly v1SchemaOutputPath: string;
   readonly metaOutputPath: string;
 }
 
@@ -54,7 +58,10 @@ const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
     generatedDir,
     upstreamSchemaPath: path.join(generatedDir, "upstream-schema.json"),
     upstreamMetaPath: path.join(generatedDir, "upstream-meta.json"),
+    upstreamV1SchemaPath: path.join(generatedDir, "upstream-schema-v1.json"),
+    upstreamV1MetaPath: path.join(generatedDir, "upstream-meta-v1.json"),
     schemaOutputPath: path.join(generatedDir, "schema.gen.ts"),
+    v1SchemaOutputPath: path.join(generatedDir, "schema-v1.gen.ts"),
     metaOutputPath: path.join(generatedDir, "meta.gen.ts"),
   } satisfies GeneratedPaths;
 });
@@ -80,16 +87,23 @@ const downloadFile = Effect.fn("downloadFile")(function* (url: string, outputPat
   yield* fs.writeFileString(outputPath, text);
 });
 
-const downloadSchemas = Effect.fn("downloadSchemas")(function* (tag: string) {
-  const { upstreamMetaPath, upstreamSchemaPath } = yield* getGeneratedPaths();
+const downloadSchemas = Effect.fn("downloadSchemas")(function* (
+  tag: string,
+  paths: { readonly schema: string; readonly meta: string },
+) {
   const fs = yield* FileSystem.FileSystem;
   const baseUrl = `https://github.com/agentclientprotocol/agent-client-protocol/releases/download/${tag}`;
 
-  yield* downloadFile(`${baseUrl}/schema.unstable.json`, upstreamSchemaPath);
-  yield* downloadFile(`${baseUrl}/meta.unstable.json`, upstreamMetaPath);
+  yield* Effect.all(
+    [
+      downloadFile(`${baseUrl}/schema.unstable.json`, paths.schema),
+      downloadFile(`${baseUrl}/meta.unstable.json`, paths.meta),
+    ],
+    { concurrency: 2 },
+  );
 
   yield* Effect.addFinalizer(() =>
-    Effect.all([fs.remove(upstreamSchemaPath), fs.remove(upstreamMetaPath)]).pipe(
+    Effect.all([fs.remove(paths.schema), fs.remove(paths.meta)]).pipe(
       Effect.ignoreCause({ log: true }),
     ),
   );
@@ -102,12 +116,14 @@ const readFileString = Effect.fn("readJsonFile")(function* (filePath: string) {
 
 const writeGeneratedFiles = Effect.fn("writeGeneratedFiles")(function* (
   schemaOutput: string,
+  v1SchemaOutput: string,
   metaOutput: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const { metaOutputPath, schemaOutputPath } = yield* getGeneratedPaths();
+  const { metaOutputPath, schemaOutputPath, v1SchemaOutputPath } = yield* getGeneratedPaths();
 
   yield* fs.writeFileString(schemaOutputPath, schemaOutput);
+  yield* fs.writeFileString(v1SchemaOutputPath, v1SchemaOutput);
   yield* fs.writeFileString(metaOutputPath, metaOutput);
 });
 
@@ -194,27 +210,16 @@ function normalizeNullableTypes(value: Schema.Json): Schema.Json {
   };
 }
 
-const generateSchemas = Effect.fn("generateSchemas")(function* (skipDownload: boolean) {
-  const { upstreamMetaPath, upstreamSchemaPath } = yield* getGeneratedPaths();
-
-  yield* ensureGeneratedDir();
-
-  if (!skipDownload) {
-    yield* Effect.log(`Downloading ACP schema assets for ${CURRENT_SCHEMA_RELEASE}`);
-    yield* downloadSchemas(CURRENT_SCHEMA_RELEASE);
-  }
-
-  const upstreamSchema = yield* readFileString(upstreamSchemaPath).pipe(
-    Effect.flatMap(decodeUpstreamSchema),
-  );
-  const upstreamMeta = yield* readFileString(upstreamMetaPath).pipe(Effect.flatMap(decodeMetaJson));
+function generateSchemaOutput(
+  upstreamSchema: { readonly $defs: Readonly<Record<string, Schema.Json>> },
+  release: string,
+): { readonly output: string; readonly count: number } {
   const normalizedDefinitions = Object.fromEntries(
     Object.entries(upstreamSchema.$defs).map(([name, schema]) => [
       name,
       normalizeNullableTypes(schema),
     ]),
   );
-
   const sortedEntries = Object.entries(normalizedDefinitions).toSorted(([left], [right]) =>
     left.localeCompare(right),
   );
@@ -225,28 +230,69 @@ const generateSchemas = Effect.fn("generateSchemas")(function* (skipDownload: bo
     generator.addSchema(name, schema as never);
   }
 
-  const output = generator.generate("openapi-3.1", normalizedDefinitions as never, false).trim();
-  if (output.length > 0) {
-    for (const entry of collectSchemaEntries(output)) {
+  const generated = generator.generate("openapi-3.1", normalizedDefinitions as never, false).trim();
+  if (generated.length > 0) {
+    for (const entry of collectSchemaEntries(generated)) {
       if (!generatedEntries.has(entry.name)) {
         generatedEntries.set(entry.name, entry.code);
       }
     }
   }
 
+  return {
+    output: [
+      "// This file is generated by the effect-acp package. Do not edit manually.",
+      `// Current ACP schema release: ${release}`,
+      "",
+      'import * as Schema from "effect/Schema";',
+      "",
+      [...generatedEntries.values()].join("\n\n"),
+      "",
+    ].join("\n"),
+    count: generatedEntries.size,
+  };
+}
+
+const generateSchemas = Effect.fn("generateSchemas")(function* (skipDownload: boolean) {
+  const { upstreamMetaPath, upstreamSchemaPath, upstreamV1MetaPath, upstreamV1SchemaPath } =
+    yield* getGeneratedPaths();
+
+  yield* ensureGeneratedDir();
+
+  if (!skipDownload) {
+    yield* Effect.log(
+      `Downloading ACP schema assets for ${V2_SCHEMA_RELEASE} and ${V1_SCHEMA_RELEASE}`,
+    );
+    yield* Effect.all(
+      [
+        downloadSchemas(V2_SCHEMA_RELEASE, {
+          schema: upstreamSchemaPath,
+          meta: upstreamMetaPath,
+        }),
+        downloadSchemas(V1_SCHEMA_RELEASE, {
+          schema: upstreamV1SchemaPath,
+          meta: upstreamV1MetaPath,
+        }),
+      ],
+      { concurrency: 2 },
+    );
+  }
+
+  const upstreamSchema = yield* readFileString(upstreamSchemaPath).pipe(
+    Effect.flatMap(decodeUpstreamSchema),
+  );
+  const upstreamV1Schema = yield* readFileString(upstreamV1SchemaPath).pipe(
+    Effect.flatMap(decodeUpstreamSchema),
+  );
+  const upstreamMeta = yield* readFileString(upstreamMetaPath).pipe(Effect.flatMap(decodeMetaJson));
+  const v2Schema = generateSchemaOutput(upstreamSchema, V2_SCHEMA_RELEASE);
+  const v1Schema = generateSchemaOutput(upstreamV1Schema, V1_SCHEMA_RELEASE);
+
   const prelude = [
     `// This file is generated by the effect-acp package. Do not edit manually.`,
-    `// Current ACP schema release: ${CURRENT_SCHEMA_RELEASE}`,
+    `// Current ACP schema release: ${V2_SCHEMA_RELEASE}`,
     "",
   ];
-
-  const schemaOutput = [
-    ...prelude,
-    'import * as Schema from "effect/Schema";',
-    "",
-    [...generatedEntries.values()].join("\n\n"),
-    "",
-  ].join("\n");
 
   const metaOutput = [
     ...prelude,
@@ -258,14 +304,16 @@ const generateSchemas = Effect.fn("generateSchemas")(function* (skipDownload: bo
     "",
   ].join("\n");
 
-  yield* writeGeneratedFiles(schemaOutput, metaOutput);
+  yield* writeGeneratedFiles(v2Schema.output, v1Schema.output, metaOutput);
   yield* Effect.log(
-    `Generated ${generatedEntries.size} ACP schemas from ${CURRENT_SCHEMA_RELEASE}`,
+    `Generated ${v2Schema.count} ACP v2 schemas and ${v1Schema.count} ACP v1 compatibility schemas`,
   );
 
   const { generatedDir } = yield* getGeneratedPaths();
   yield* Effect.service(ChildProcessSpawner.ChildProcessSpawner).pipe(
-    Effect.flatMap((spawner) => spawner.spawn(ChildProcess.make("bun", ["oxfmt", generatedDir]))),
+    Effect.flatMap((spawner) =>
+      spawner.spawn(ChildProcess.make("pnpm", ["exec", "vp", "fmt", generatedDir])),
+    ),
     Effect.flatMap((child) => child.exitCode),
     Effect.tap((code) =>
       code === 0

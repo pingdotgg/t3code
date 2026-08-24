@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   getThreadSortTimestamp,
@@ -12,6 +12,11 @@ import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  type ProviderInstanceEntry,
+} from "../providerInstances";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -22,6 +27,37 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // so this limit is a direct renderer-heap and server-load multiplier — keep
 // it small; cold opens still render instantly from the cached snapshot.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
+
+export type SidebarProviderEntriesByEnvironment = ReadonlyMap<
+  EnvironmentId,
+  ReadonlyMap<ProviderInstanceEntry["instanceId"], ProviderInstanceEntry>
+>;
+
+/**
+ * Project each environment's provider snapshots together with that same
+ * environment's settings. Registry agent identity lives in settings, so this
+ * keeps remote rows and duplicate instance ids from borrowing primary-server
+ * icon metadata.
+ */
+export function buildSidebarProviderEntriesByEnvironment(
+  serverConfigs: ReadonlyMap<EnvironmentId, Pick<ServerConfig, "providers" | "settings">>,
+): SidebarProviderEntriesByEnvironment {
+  const entriesByEnvironment = new Map<
+    EnvironmentId,
+    ReadonlyMap<ProviderInstanceEntry["instanceId"], ProviderInstanceEntry>
+  >();
+  for (const [environmentId, config] of serverConfigs) {
+    const entries = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(config.providers),
+      config.settings,
+    );
+    entriesByEnvironment.set(
+      environmentId,
+      new Map(entries.map((entry) => [entry.instanceId, entry] as const)),
+    );
+  }
+  return entriesByEnvironment;
+}
 
 type SidebarProject = {
   id: string;

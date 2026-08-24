@@ -26,15 +26,16 @@ export const callRpc = <A>(
     }),
   );
 
-export const runHandler = Effect.fnUntraced(function* <A, B>(
-  handler: ((payload: A) => Effect.Effect<B, AcpError.AcpError>) | undefined,
+export const runHandler = Effect.fnUntraced(function* <A, B, Args extends ReadonlyArray<unknown>>(
+  handler: ((payload: A, ...args: Args) => Effect.Effect<B, AcpError.AcpError>) | undefined,
   payload: A,
   method: string,
+  ...args: Args
 ) {
   if (!handler) {
     return yield* Effect.fail(AcpError.AcpRequestError.methodNotFound(method).toProtocolError());
   }
-  return yield* handler(payload).pipe(
+  return yield* handler(payload, ...args).pipe(
     Effect.mapError((error) =>
       AcpError.AcpRequestError.fromCoreHandlerError(error, method).toProtocolError(),
     ),
@@ -44,12 +45,18 @@ export const runHandler = Effect.fnUntraced(function* <A, B>(
 export function decodeExtRequestRegistration<A, I>(
   method: string,
   payload: Schema.Codec<A, I>,
-  handler: (payload: A) => Effect.Effect<unknown, AcpError.AcpError>,
+  handler: (
+    payload: A,
+    context: { readonly requestId: string; readonly method: string },
+  ) => Effect.Effect<unknown, AcpError.AcpError>,
 ) {
-  return (params: unknown): Effect.Effect<unknown, AcpError.AcpError> =>
+  return (
+    params: unknown,
+    context: { readonly requestId: string; readonly method: string },
+  ): Effect.Effect<unknown, AcpError.AcpError> =>
     Schema.decodeUnknownEffect(payload)(params).pipe(
       Effect.mapError((error) => AcpError.AcpRequestError.invalidExtensionPayload(method, error)),
-      Effect.flatMap((decoded) => handler(decoded)),
+      Effect.flatMap((decoded) => handler(decoded, context)),
     );
 }
 

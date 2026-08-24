@@ -22,7 +22,11 @@ import {
   resolveSelectableProvider,
 } from "./providerModels";
 import { ModelEsque } from "./components/chat/providerIconUtils";
-import { type ProviderInstanceEntry, deriveProviderInstanceEntries } from "./providerInstances";
+import {
+  type ProviderInstanceEntry,
+  deriveProviderInstanceEntries,
+  isProviderInstanceTextGenerationCapable,
+} from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -285,7 +289,11 @@ export function resolveAppModelSelectionState(
     instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
     model: DEFAULT_TEXT_GENERATION_MODEL,
   };
-  const entries = deriveProviderInstanceEntries(providers);
+  // A persisted selection pointing at an instance that cannot generate app
+  // text (e.g. an ACP Registry agent) self-heals to a capable instance.
+  const entries = deriveProviderInstanceEntries(providers).filter(
+    isProviderInstanceTextGenerationCapable,
+  );
   const selectedEntry = entries.find(
     (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
   );

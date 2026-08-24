@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ProviderThread,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ServerSettingsError,
   type ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -339,7 +340,10 @@ function makeTestLayer(input: {
   readonly failReleaseEventWrites?: boolean;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
-  readonly serverSettingsLayer?: Layer.Layer<ServerSettings.ServerSettingsService>;
+  readonly serverSettingsLayer?: Layer.Layer<
+    ServerSettings.ServerSettingsService,
+    ServerSettingsError
+  >;
 }) {
   const configuredEventSinkLayer = input.failReleaseEventWrites
     ? FailingReleaseEventSinkLayer
@@ -579,6 +583,62 @@ it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", ()
           state,
           idleTimeoutMs: 60_000,
           beforeOpen,
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 closes every live session for a provider instance", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const firstThreadId = ThreadId.make("thread-provider-session-manager-logout-a");
+      const secondThreadId = ThreadId.make("thread-provider-session-manager-logout-b");
+      const firstProviderSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: firstThreadId,
+      });
+      const secondProviderSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: secondThreadId,
+      });
+
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId: firstThreadId, now }),
+          yield* makeThreadCreatedEvent({ idAllocator, threadId: secondThreadId, now }),
+        ],
+      });
+      yield* manager.open({
+        threadId: firstThreadId,
+        providerSessionId: firstProviderSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* manager.open({
+        threadId: secondThreadId,
+        providerSessionId: secondProviderSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+
+      yield* manager.closeInstance(modelSelection.instanceId);
+
+      assert.isTrue(Option.isNone(yield* manager.get(firstProviderSessionId)));
+      assert.isTrue(Option.isNone(yield* manager.get(secondProviderSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 2);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 60_000,
         }),
       ),
     );

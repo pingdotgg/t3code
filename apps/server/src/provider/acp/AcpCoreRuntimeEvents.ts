@@ -142,13 +142,34 @@ export function makeAcpPlanUpdatedEvent(input: {
   readonly method: string;
   readonly rawPayload: unknown;
 }): ProviderRuntimeEvent {
+  const payload =
+    input.payload.kind === "items"
+      ? {
+          plan: input.payload.plan,
+          ...(input.payload.explanation == null ? {} : { explanation: input.payload.explanation }),
+        }
+      : input.payload.kind === "removed"
+        ? { plan: [] }
+        : {
+            plan: [
+              {
+                step:
+                  input.payload.kind === "markdown"
+                    ? input.payload.markdown
+                    : input.payload.kind === "file"
+                      ? `Plan file: ${input.payload.uri}`
+                      : `[Unsupported ACP plan content: ${input.payload.contentType}]`,
+                status: "pending" as const,
+              },
+            ],
+          };
   return {
     type: "turn.plan.updated",
     ...input.stamp,
     provider: input.provider,
     threadId: input.threadId,
     turnId: input.turnId,
-    payload: input.payload,
+    payload,
     raw: {
       source: input.source,
       method: input.method,

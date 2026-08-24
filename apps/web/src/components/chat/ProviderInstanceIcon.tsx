@@ -3,6 +3,23 @@ import { type ProviderDriverKind } from "@t3tools/contracts";
 
 import { PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
 import { cn } from "~/lib/utils";
+import {
+  AcpRegistryAgentIcon,
+  officialAcpRegistryIconUrlForAgentId,
+  resolveOfficialAcpRegistryIconUrl,
+} from "../settings/AcpRegistryIcon";
+
+export function resolveProviderInstanceAcpRegistryIconUrl(input: {
+  readonly driverKind: ProviderDriverKind;
+  readonly agentId?: string | undefined;
+  readonly iconUrl?: string | undefined;
+}): string | null {
+  if (input.driverKind !== "acpRegistry") return null;
+  return (
+    resolveOfficialAcpRegistryIconUrl(input.iconUrl ?? null) ??
+    officialAcpRegistryIconUrlForAgentId(input.agentId?.trim() || null)
+  );
+}
 
 export function providerInstanceInitials(label: string): string {
   const words = label.replace(/[_-]+/g, " ").split(/\s+/u).filter(Boolean);
@@ -18,6 +35,8 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
   accentColor?: string | undefined;
+  acpRegistryAgentId?: string | undefined;
+  acpRegistryIconUrl?: string | undefined;
   showBadge?: boolean;
   badgeContent?: "initials" | "none";
   className?: string;
@@ -32,6 +51,12 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)
     : undefined;
   const badgeContent = props.badgeContent ?? "initials";
+  const isAcpRegistry = props.driverKind === "acpRegistry";
+  const acpRegistryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
+    driverKind: props.driverKind,
+    agentId: props.acpRegistryAgentId,
+    iconUrl: props.acpRegistryIconUrl,
+  });
 
   return (
     <span
@@ -42,7 +67,15 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={props.accentColor}
     >
-      {Icon ? (
+      {isAcpRegistry ? (
+        <AcpRegistryAgentIcon
+          // The search-tile radius would crop most of the glyph at these
+          // inline sizes.
+          className={cn("size-5 rounded-none bg-transparent", props.iconClassName)}
+          fallbackClassName="size-full"
+          icon={acpRegistryIconUrl}
+        />
+      ) : Icon ? (
         <Icon className={cn("size-5 shrink-0", props.iconClassName)} aria-hidden />
       ) : (
         <span className={cn("text-[10px] font-semibold leading-none", props.iconClassName)}>

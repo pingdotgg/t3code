@@ -192,6 +192,40 @@ describe("makeManagedServerProvider", () => {
       ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
 
+  it.effect("coalesces a manual refresh with an in-flight provider check", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const checkStarted = yield* Deferred.make<void>();
+        const releaseCheck = yield* Deferred.make<void>();
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
+            Effect.andThen(Deferred.succeed(checkStarted, undefined).pipe(Effect.ignore)),
+            Effect.andThen(Deferred.await(releaseCheck)),
+            Effect.as(refreshedSnapshot),
+          ),
+          refreshInterval: "1 hour",
+        });
+
+        yield* Deferred.await(checkStarted);
+        const refreshFiber = yield* provider.refresh.pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        const completed = refreshFiber.pollUnsafe();
+        assert.isDefined(completed);
+        assert.deepStrictEqual(yield* Fiber.join(refreshFiber), initialSnapshot);
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+
+        yield* Deferred.succeed(releaseCheck, undefined);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
   it.effect("skips periodic provider refreshes without foreground provider-status demand", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -266,6 +300,8 @@ describe("makeManagedServerProvider", () => {
             ready: Effect.void,
             getSettings: Ref.get(serverSettingsRef),
             updateSettings: () => Effect.die(new Error("unused in this test")),
+            updateProviderInstance: () => Effect.die(new Error("unused in this test")),
+            withSettingsSnapshot: (use) => Ref.get(serverSettingsRef).pipe(Effect.flatMap(use)),
             streamChanges: Stream.empty,
             subscribeChanges: PubSub.subscribe(serverSettingsChanges).pipe(
               Effect.map((subscription) => Stream.fromSubscription(subscription)),

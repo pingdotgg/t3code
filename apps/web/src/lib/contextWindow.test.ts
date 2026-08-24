@@ -32,6 +32,25 @@ describe("V2 context window presentation", () => {
     expect(snapshot?.totalProcessedTokens).toBe(10_000);
   });
 
+  it("prefers current provider usage and preserves ACP cost", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([], {
+      contextUsage: {
+        usedTokens: 2_500,
+        maxTokens: 10_000,
+        cost: { amount: 0.42, currency: "USD" },
+      },
+      updatedAt: DateTime.makeUnsafe("2026-08-23T00:00:00.000Z"),
+    });
+
+    expect(snapshot).toMatchObject({
+      usedTokens: 2_500,
+      maxTokens: 10_000,
+      remainingTokens: 7_500,
+      usedPercentage: 25,
+      cost: { amount: 0.42, currency: "USD" },
+    });
+  });
+
   it("formats compact token values", () => {
     expect(formatContextWindowTokens(1_500)).toBe("1.5k");
   });

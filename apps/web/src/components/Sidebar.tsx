@@ -122,6 +122,7 @@ import { cn } from "~/lib/utils";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   filterSidebarV2VisibleThreads,
+  buildSidebarProviderEntriesByEnvironment,
   buildBulkTitleRegenerationContextMenuItem,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
@@ -140,6 +141,7 @@ import {
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
+  type SidebarProviderEntriesByEnvironment,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -164,12 +166,7 @@ import {
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
-import {
-  deriveProviderInstanceEntries,
-  shouldShowInstanceBadge,
-  type ProviderInstanceEntry,
-} from "../providerInstances";
-import { primaryServerProvidersAtom } from "../state/server";
+import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../providerInstances";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
@@ -281,7 +278,6 @@ function SidebarThreadTooltip({
   terminalStatus: TerminalStatusIndicator | null;
   terminalProcessCount: number;
 }) {
-  const driverKind = providerEntry?.driverKind ?? null;
   return (
     <TooltipPopup
       side="right"
@@ -326,14 +322,16 @@ function SidebarThreadTooltip({
               </div>
             </div>
           ) : null}
-          {driverKind ? (
+          {providerEntry ? (
             <div className="flex min-w-0 items-center gap-2">
               <ProviderInstanceIcon
-                driverKind={driverKind}
+                driverKind={providerEntry.driverKind}
                 displayName={
                   providerEntry?.displayName ?? thread.runtime?.providerName ?? modelInstanceId
                 }
                 accentColor={providerEntry?.accentColor}
+                acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+                acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
                 // Initials would swallow a size-3 glyph: accent dot, name in label.
                 showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
                 badgeContent="none"
@@ -724,7 +722,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   projectCwd: string | null;
   projectFaviconPath: string | null;
   projectTitle: string | null;
-  providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
+  providerEntriesByEnvironment: SidebarProviderEntriesByEnvironment;
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
@@ -920,11 +918,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   ]);
 
   const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-  const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
+  const environmentProviderEntries = props.providerEntriesByEnvironment.get(thread.environmentId);
+  const providerEntry = environmentProviderEntries?.get(modelInstanceId) ?? null;
   const driverKind = providerEntry?.driverKind ?? null;
   const showInstanceBadge =
     providerEntry !== null &&
-    shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId.values());
+    shouldShowInstanceBadge(providerEntry, environmentProviderEntries?.values() ?? []);
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
   );
@@ -1561,6 +1560,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         modelInstanceId
                       }
                       accentColor={providerEntry?.accentColor}
+                      acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+                      acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
                       showBadge={showInstanceBadge}
                       // Glyph dims, badge stays saturated; offset matches the composer trigger.
                       iconClassName="size-3.5 opacity-60"
@@ -1594,7 +1595,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   projectFaviconPath: string | null;
   projectTitle: string | null;
   environmentLabel: string | null;
-  providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
+  providerEntriesByEnvironment: SidebarProviderEntriesByEnvironment;
   isHighlighted: boolean;
   isRouteActive: boolean;
   resultId: string;
@@ -1620,10 +1621,11 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     currentGitBranch: gitStatus.data?.refName ?? null,
   });
   const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-  const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
+  const environmentProviderEntries = props.providerEntriesByEnvironment.get(thread.environmentId);
+  const providerEntry = environmentProviderEntries?.get(modelInstanceId) ?? null;
   const showInstanceBadge =
     providerEntry !== null &&
-    shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId.values());
+    shouldShowInstanceBadge(providerEntry, environmentProviderEntries?.values() ?? []);
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
   );
@@ -1858,15 +1860,10 @@ export default function Sidebar() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
-  const providerEntryByInstanceId = useMemo(
-    () =>
-      new Map(
-        deriveProviderInstanceEntries(serverProviders).map(
-          (entry) => [entry.instanceId as string, entry] as const,
-        ),
-      ),
-    [serverProviders],
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const providerEntriesByEnvironment = useMemo(
+    () => buildSidebarProviderEntriesByEnvironment(serverConfigs),
+    [serverConfigs],
   );
   const projectCwdByKey = useMemo(
     () =>
@@ -1987,7 +1984,6 @@ export default function Sidebar() {
   // the partition works directly off live shells: no archived-snapshot
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const {
     pinnedThreads,
     reorderablePinnedKeys,
@@ -3590,7 +3586,7 @@ export default function Sidebar() {
                           ) ?? null
                         }
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
-                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        providerEntriesByEnvironment={providerEntriesByEnvironment}
                         isHighlighted={activeSearchResultIndex === index}
                         isRouteActive={routeThreadKey === threadKey}
                         resultId={`sidebar-thread-search-result-${index}`}
@@ -3699,7 +3695,7 @@ export default function Sidebar() {
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }
-                        providerEntryByInstanceId={providerEntryByInstanceId}
+                        providerEntriesByEnvironment={providerEntriesByEnvironment}
                         timestampFormat={timestampFormat}
                         onThreadClick={handleThreadClick}
                         onThreadActivate={navigateToThread}

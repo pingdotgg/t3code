@@ -44,6 +44,7 @@ import {
 } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
+import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -265,6 +266,19 @@ export const OrchestrationV2CheckpointCapabilities = Schema.Struct({
 export type OrchestrationV2CheckpointCapabilities =
   typeof OrchestrationV2CheckpointCapabilities.Type;
 
+export const OrchestrationV2RuntimePolicyCapabilities = Schema.Struct({
+  /**
+   * Where T3 runtime modes are actually enforced. "native" providers receive
+   * the approval and sandbox policy each turn and confine their own execution.
+   * "client-boundary" providers only have policy applied where T3 mediates the
+   * work (permission requests and client fs/terminal handlers); provider-owned
+   * execution is not confined, so sandbox guarantees are reduced.
+   */
+  enforcement: Schema.Literals(["native", "client-boundary"]),
+});
+export type OrchestrationV2RuntimePolicyCapabilities =
+  typeof OrchestrationV2RuntimePolicyCapabilities.Type;
+
 export const OrchestrationV2IdentityCapabilities = Schema.Struct({
   nativeThreadIds: OrchestrationV2NativeRefStrength,
   nativeTurnIds: OrchestrationV2NativeRefStrength,
@@ -285,6 +299,11 @@ export const OrchestrationV2ProviderCapabilities = Schema.Struct({
   context: OrchestrationV2ContextCapabilities,
   checkpointing: OrchestrationV2CheckpointCapabilities,
   identity: OrchestrationV2IdentityCapabilities,
+  // Events persisted before this field existed decode to the weaker
+  // client-boundary guarantee so replay never overclaims enforcement.
+  runtimePolicy: OrchestrationV2RuntimePolicyCapabilities.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ enforcement: "client-boundary" as const })),
+  ),
 });
 export type OrchestrationV2ProviderCapabilities = typeof OrchestrationV2ProviderCapabilities.Type;
 
@@ -572,6 +591,16 @@ export const OrchestrationV2PendingBackgroundTask = Schema.Struct({
 });
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
+/** Provider and adapter metadata that should not overwrite the app thread's title. */
+export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
+  title: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  updatedAt: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  /** Version 2 scopes provider-derived item ids by provider instance. */
+  itemIdentityVersion: Schema.optional(Schema.Literal(2)),
+});
+export type OrchestrationV2ProviderThreadNativeMetadata =
+  typeof OrchestrationV2ProviderThreadNativeMetadata.Type;
+
 export const OrchestrationV2ProviderThread = Schema.Struct({
   id: ProviderThreadId,
   driver: ProviderDriverKind,
@@ -595,6 +624,12 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   // Optional Type so adapters can omit empty rosters; historical JSON decodes to [].
   pendingBackgroundTasks: Schema.optional(Schema.Array(OrchestrationV2PendingBackgroundTask)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  contextUsage: Schema.optional(Schema.NullOr(ThreadTokenUsageSnapshot)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  nativeMetadata: Schema.optional(Schema.NullOr(OrchestrationV2ProviderThreadNativeMetadata)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
@@ -785,7 +820,18 @@ export const OrchestrationV2TurnItemStatus = Schema.Literals([
   "cancelled",
   "interrupted",
 ]);
+
 export type OrchestrationV2TurnItemStatus = typeof OrchestrationV2TurnItemStatus.Type;
+
+/** One structured file operation reported by a provider inside a file_change item. */
+export const OrchestrationV2FileChangeDetail = Schema.Struct({
+  operation: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyString,
+  oldPath: Schema.optional(TrimmedNonEmptyString),
+  fileType: Schema.optional(TrimmedNonEmptyString),
+  mimeType: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationV2FileChangeDetail = typeof OrchestrationV2FileChangeDetail.Type;
 
 export const OrchestrationV2ProviderFailureClass = Schema.Literals([
   "provider_error",
@@ -923,6 +969,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     diffStr: Schema.optional(Schema.String),
     oldStr: Schema.optional(Schema.String),
     newStr: Schema.optional(Schema.String),
+    changes: Schema.optional(Schema.Array(OrchestrationV2FileChangeDetail)),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1593,6 +1640,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     diffStr: Schema.optional(Schema.String),
     oldStr: Schema.optional(Schema.String),
     newStr: Schema.optional(Schema.String),
+    changes: Schema.optional(Schema.Array(OrchestrationV2FileChangeDetail)),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -1966,6 +2014,16 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    importedNativeThread: Schema.optional(
+      Schema.Struct({
+        ref: Schema.Struct({
+          driver: ProviderDriverKind,
+          nativeId: TrimmedNonEmptyString,
+          strength: Schema.Literal("strong"),
+        }),
+        metadata: Schema.optional(OrchestrationV2ProviderThreadNativeMetadata),
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.archive"),
@@ -2055,6 +2113,8 @@ export const OrchestrationV2Command = Schema.Union([
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    /** Reject unless no message or run has landed on this thread. */
+    expectedEmpty: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.title.regeneration.complete"),

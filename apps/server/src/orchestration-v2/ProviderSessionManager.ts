@@ -139,12 +139,17 @@ export interface ProviderSessionManagerV2Shape {
     readonly modelSelection: ModelSelection;
     readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
     readonly resumeFromSession?: OrchestrationV2ProviderSession;
+    readonly initialNativeThreadId?: string;
   }) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderSessionManagerV2Error>;
   readonly get: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<Option.Option<ProviderAdapterV2SessionRuntime>, ProviderSessionManagerV2Error>;
   readonly close: (
     providerSessionId: ProviderSessionId,
+  ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
+  /** Closes every live runtime owned by one provider instance. */
+  readonly closeInstance: (
+    instanceId: ProviderInstanceId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   readonly release: (input: {
     readonly providerSessionId: ProviderSessionId;
@@ -1453,6 +1458,9 @@ export const layerWithOptions = (
                   ...(input.resumeFromSession === undefined
                     ? {}
                     : { resumeFromSession: input.resumeFromSession }),
+                  ...(input.initialNativeThreadId === undefined
+                    ? {}
+                    : { initialNativeThreadId: input.initialNativeThreadId }),
                 })
                 .pipe(
                   Effect.provideService(Scope.Scope, sessionScope),
@@ -1558,6 +1566,36 @@ export const layerWithOptions = (
               (cause) =>
                 new ProviderSessionCloseError({
                   providerSessionId,
+                  cause,
+                }),
+            ),
+          ),
+        closeInstance: (instanceId) =>
+          Effect.gen(function* () {
+            const active = [...(yield* Ref.get(sessions)).values()].filter(
+              (entry) => entry.runtime.instanceId === instanceId,
+            );
+            const outcomes = yield* Effect.forEach(
+              active,
+              (entry) =>
+                releaseEntry({
+                  providerSessionId: entry.runtime.providerSessionId,
+                  reason: "manual_shutdown",
+                  detail: `Provider instance ${instanceId} logged out.`,
+                }).pipe(Effect.exit),
+              { concurrency: "unbounded" },
+            );
+            const failure = outcomes.find(Exit.isFailure);
+            if (failure !== undefined && Exit.isFailure(failure)) {
+              return yield* Effect.failCause(failure.cause);
+            }
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderSessionCloseError({
+                  providerSessionId: ProviderSessionId.make(
+                    `provider-session:provider-instance:${instanceId}`,
+                  ),
                   cause,
                 }),
             ),

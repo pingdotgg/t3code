@@ -40,6 +40,12 @@ export interface VcsDeleteCheckpointRefsInput {
 
 export interface VcsCheckpointOps {
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
+  /**
+   * Optional background warm-up so the first blocking capture in a fresh
+   * workspace is fast (for git: hash the worktree into the object store
+   * through a throwaway index). Purely an optimization; results are unused.
+   */
+  readonly warmCheckpoint?: (input: { readonly cwd: string }) => Effect.Effect<void, VcsError>;
   readonly hasCheckpointRef: (
     input: Omit<VcsRestoreCheckpointInput, "fallbackToHead">,
   ) => Effect.Effect<boolean, VcsError>;

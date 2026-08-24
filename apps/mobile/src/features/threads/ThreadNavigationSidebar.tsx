@@ -930,6 +930,13 @@ function ThreadNavigationSidebarPane(
         case "v2-thread": {
           const thread = item.item.thread;
           const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
+          const provider = serverConfigs
+            .get(thread.environmentId)
+            ?.providers.find(
+              (candidate) =>
+                candidate.instanceId ===
+                (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
+            );
           return (
             <ThreadListV2Row
               thread={thread}
@@ -940,15 +947,8 @@ function ThreadNavigationSidebarPane(
               snoozeWakeLabelText={item.snoozeWakeLabelText}
               project={projectByKey.get(scopeKey) ?? null}
               projectTitle={projectTitleByProjectKey.get(scopeKey)}
-              providerDriver={
-                serverConfigs
-                  .get(thread.environmentId)
-                  ?.providers.find(
-                    (provider) =>
-                      provider.instanceId ===
-                      (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
-                  )?.driver ?? null
-              }
+              providerDriver={provider?.driver ?? null}
+              providerIconUrl={provider?.iconUrl}
               environmentLabel={
                 Object.keys(savedConnectionsById).length > 1
                   ? (savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)

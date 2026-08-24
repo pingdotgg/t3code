@@ -1,7 +1,10 @@
 import { Button } from "../ui/button";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
+import {
+  formatContextWindowCompactionMessage,
+  formatContextWindowCost,
+} from "./ContextWindowMeter.logic";
 
 function formatPercentage(value: number | null): string | null {
   if (value === null || !Number.isFinite(value)) {
@@ -123,6 +126,14 @@ export function ContextWindowMeter(props: {
               <span className="text-secondary-label">Total processed</span>
               <span className="font-medium tabular-nums text-secondary-label">
                 {formatContextWindowTokens(totalProcessedTokens)}
+              </span>
+            </div>
+          ) : null}
+          {usage.cost != null ? (
+            <div className="flex items-center justify-between gap-3 text-[11px] leading-4">
+              <span className="text-secondary-label">Cost</span>
+              <span className="font-medium tabular-nums text-secondary-label">
+                {formatContextWindowCost(usage.cost)}
               </span>
             </div>
           ) : null}

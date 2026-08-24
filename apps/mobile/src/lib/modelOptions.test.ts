@@ -51,6 +51,44 @@ describe("mobile model options", () => {
     ]);
   });
 
+  it("carries configured ACP identity into model and provider catalogs", () => {
+    const iconUrl = "https://cdn.agentclientprotocol.com/registry/v1/latest/antigravity-acp.svg";
+    const config = {
+      providers: [
+        {
+          instanceId: "acpRegistry_antigravity",
+          driver: "acpRegistry",
+          displayName: "Antigravity",
+          iconUrl,
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "default",
+              name: "Default",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const [group] = groupByProvider(buildModelOptions(config, null));
+
+    expect(group).toMatchObject({
+      providerKey: "acpRegistry_antigravity",
+      providerLabel: "Antigravity",
+      models: [
+        {
+          providerDriver: "acpRegistry",
+          providerIconUrl: iconUrl,
+        },
+      ],
+    });
+  });
+
   it("normalizes a legacy fallback selection against current capabilities", () => {
     const config = {
       providers: [

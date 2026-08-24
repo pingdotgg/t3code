@@ -23,12 +23,7 @@ import {
   sanitizePrTitle,
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
-import {
-  applyGrokAcpModelSelection,
-  currentGrokModelIdFromSessionSetup,
-  makeGrokAcpRuntime,
-  resolveGrokAcpBaseModelId,
-} from "../provider/acp/GrokAcpSupport.ts";
+import { makeGrokAcpRuntime } from "../provider/acp/GrokAcpSupport.ts";
 
 const GROK_TIMEOUT_MS = 180_000;
 
@@ -59,7 +54,6 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
-      const resolvedModel = resolveGrokAcpBaseModelId(modelSelection.model);
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeGrokAcpRuntime({
         grokSettings,
@@ -82,19 +76,9 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       });
 
       const promptResult = yield* Effect.gen(function* () {
-        const started = yield* runtime.start();
-        yield* applyGrokAcpModelSelection({
-          runtime,
-          currentModelId: currentGrokModelIdFromSessionSetup(started.sessionSetupResult),
-          requestedModelId: resolvedModel,
-          mapError: (cause) =>
-            new TextGenerationError({
-              operation,
-              detail: "Failed to set Grok ACP base model for text generation.",
-              cause,
-            }),
-        });
-
+        // ACP has no client-side model selection outside config options, so
+        // text generation runs on the agent's own default model.
+        yield* runtime.start();
         return yield* runtime.prompt({
           prompt: [{ type: "text", text: prompt }],
         });

@@ -5,6 +5,7 @@ import {
   type MessageId,
   type ModelSelection,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ProviderThread,
   type ProjectScript,
   type ProjectId,
   type ProviderApprovalDecision,
@@ -2364,6 +2365,13 @@ function ChatViewContent(props: ChatViewProps) {
     threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const activeProviderThread = useMemo<OrchestrationV2ProviderThread | undefined>(() => {
+    const activeProviderThreadId = serverProjection?.thread.activeProviderThreadId;
+    if (activeProviderThreadId === null || activeProviderThreadId === undefined) return undefined;
+    return serverProjection?.providerThreads.find(
+      (providerThread) => providerThread.id === activeProviderThreadId,
+    );
+  }, [serverProjection]);
   const pendingBackgroundTasks = useMemo(() => {
     if (serverProjection === null || serverProjection === undefined) {
       return [];
@@ -6586,6 +6594,7 @@ function ChatViewContent(props: ChatViewProps) {
                             }
                             activeThreadModelSelection={activeThread?.modelSelection}
                             activeThreadVisibleTurnItems={serverVisibleTurnItems}
+                            activeProviderThread={activeProviderThread}
                             resolvedTheme={resolvedTheme}
                             settings={settings}
                             keybindings={keybindings}

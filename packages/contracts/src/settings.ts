@@ -468,7 +468,7 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
         title: "Executable override",
         description:
           "Optional local executable to use instead of installing the registry distribution. Registry arguments and environment are still applied.",
-        providerSettingsForm: { placeholder: "devin", clearWhenEmpty: "omit" },
+        providerSettingsForm: { placeholder: "Registry default", clearWhenEmpty: "omit" },
       }),
     ),
     authMethodId: TrimmedString.pipe(
@@ -705,6 +705,7 @@ export const DEFAULT_SERVER_SETTINGS: ServerSettings = Schema.decodeSync(ServerS
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",
+  "create-provider-instance",
   "read-file",
   "read-secret",
   "remove-secret",
@@ -722,7 +723,9 @@ export class ServerSettingsError extends Schema.TaggedErrorClass<ServerSettingsE
     operation: ServerSettingsOperation,
     providerInstanceId: Schema.optional(Schema.String),
     environmentVariable: Schema.optional(Schema.String),
-    cause: Schema.Defect(),
+    // Validation failures (e.g. a create colliding with an existing
+    // instance) originate without an upstream defect.
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {

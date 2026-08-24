@@ -400,6 +400,50 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
+  it.effect("dispatches Stop for a waiting run", () =>
+    Effect.gen(function* () {
+      const waitingRunId = RunId.make("run-waiting");
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        runs: [
+          {
+            id: waitingRunId,
+            threadId: v2ThreadId,
+            ordinal: 1,
+            providerInstanceId: v2Projection.thread.providerInstanceId,
+            modelSelection: v2Projection.thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make("message-waiting"),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "waiting",
+            requestedAt: v2Now,
+            startedAt: v2Now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+      };
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+
+      const result = yield* interruptThreadTurn({ threadId: v2ThreadId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(result).toEqual({ sequence: 1 });
+      expect(commands).toEqual([
+        {
+          type: "run.interrupt",
+          commandId: expect.any(String),
+          threadId: v2ThreadId,
+          runId: waitingRunId,
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
   it.effect(
     "dispatches V2-native relationship and queue commands without compatibility shaping",
     () =>

@@ -138,6 +138,14 @@ export const layer: Layer.Layer<
         modelSelection,
         runtimePolicy: resolvedRuntimePolicy,
         ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
+        ...(providerThread.nativeThreadRef?.nativeId == null
+          ? {}
+          : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
+        ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+          ? {}
+          : {
+              initialProviderItemIdentityVersion: providerThread.nativeMetadata.itemIdentityVersion,
+            }),
       });
 
       const targetOrdinal = checkpoint.appRunOrdinal ?? 0;

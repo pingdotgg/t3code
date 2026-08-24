@@ -79,6 +79,19 @@ const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean 
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
+  if (provider.driver === ProviderDriverKind.make("acpRegistry")) {
+    // ACP Registry discovery probes return the agent's complete inventory, so
+    // a completed probe (ready and authenticated) replaces the model list —
+    // otherwise agents that rename or collapse models leave stale entries
+    // pinned forever through the snapshot cache. Readiness-only and failed
+    // probe snapshots only know the "default" placeholder and stay partial.
+    return !(
+      provider.installed &&
+      provider.status === "ready" &&
+      provider.auth.status === "authenticated"
+    );
+  }
+
   if (provider.driver !== ProviderDriverKind.make("opencode")) {
     return true;
   }

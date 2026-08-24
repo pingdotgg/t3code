@@ -230,6 +230,7 @@ it.effect(
               providerSessionId === oldSessionId ? Option.some(runtime) : Option.none(),
             ),
           close: () => Effect.void,
+          closeInstance: () => Effect.void,
           release: () => Effect.void,
           detach: () => Effect.void,
         }),

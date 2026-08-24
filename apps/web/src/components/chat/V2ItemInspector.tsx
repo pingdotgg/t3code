@@ -148,24 +148,39 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "file_change" ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-muted-foreground">
-            {formatWorkspaceRelativePath(item.fileName, props.workspaceRoot)}
-          </span>
-          {item.additions !== undefined || item.deletions !== undefined ? (
-            <span>
-              <span className="text-emerald-600">+{item.additions ?? 0}</span>{" "}
-              <span className="text-destructive">-{item.deletions ?? 0}</span>
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-muted-foreground">
+              {formatWorkspaceRelativePath(item.fileName, props.workspaceRoot)}
             </span>
-          ) : null}
-          {item.runId !== null ? (
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => props.onOpenTurnDiff(item.runId!, item.fileName)}
-            >
-              Open diff
-            </Button>
+            {item.additions !== undefined || item.deletions !== undefined ? (
+              <span>
+                <span className="text-emerald-600">+{item.additions ?? 0}</span>{" "}
+                <span className="text-destructive">-{item.deletions ?? 0}</span>
+              </span>
+            ) : null}
+            {item.runId !== null ? (
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => props.onOpenTurnDiff(item.runId!, item.fileName)}
+              >
+                Open diff
+              </Button>
+            ) : null}
+          </div>
+          {item.changes !== undefined && item.changes.length > 0 ? (
+            <ul className="space-y-1 font-mono text-muted-foreground">
+              {item.changes.map((change, index) => (
+                <li key={`${change.operation}:${change.path}:${index}`}>
+                  {change.operation} {change.oldPath ? `${change.oldPath} → ` : ""}
+                  {formatWorkspaceRelativePath(change.path, props.workspaceRoot)}
+                  {change.fileType || change.mimeType
+                    ? ` (${[change.fileType, change.mimeType].filter(Boolean).join(", ")})`
+                    : ""}
+                </li>
+              ))}
+            </ul>
           ) : null}
           {item.diffStr ? <StructuredValue value={item.diffStr} /> : null}
         </div>

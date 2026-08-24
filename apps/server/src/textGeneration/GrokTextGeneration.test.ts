@@ -114,13 +114,6 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
           });
-          expect(
-            requests.some(
-              (request) =>
-                request.method === "session/set_model" &&
-                request.params?.modelId === "grok-mock-alt",
-            ),
-          ).toBe(true);
         }),
     );
   });
@@ -148,7 +141,7 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
   it.effect("surfaces ACP request failures as text generation errors", () =>
     withFakeAcpGrok(
       {
-        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({ branch: "unreachable" }),
+        T3_ACP_FAIL_PROMPT: "1",
       },
       (textGeneration) =>
         Effect.gen(function* () {
@@ -156,14 +149,11 @@ it.layer(GrokTextGenerationTestLayer)("GrokTextGeneration", (it) => {
             textGeneration.generateBranchName({
               cwd: process.cwd(),
               message: "wire up grok",
-              modelSelection: createModelSelection(
-                ProviderInstanceId.make("grok"),
-                "missing-grok-model",
-              ),
+              modelSelection: createModelSelection(ProviderInstanceId.make("grok"), "grok-build"),
             }),
           );
           expect(error._tag).toBe("TextGenerationError");
-          expect(error.detail).toContain("Grok ACP base model");
+          expect(error.detail).toContain("Grok ACP request failed");
         }),
     ),
   );

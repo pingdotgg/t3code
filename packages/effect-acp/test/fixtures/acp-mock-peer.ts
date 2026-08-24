@@ -16,22 +16,40 @@ if (process.env.ACP_MOCK_EXIT_IMMEDIATELY_CODE !== undefined) {
 }
 
 const sessionId = "mock-session-1";
+const v2Management = process.env.ACP_MOCK_V2_MANAGEMENT === "1";
+const unknownVariants = process.env.ACP_MOCK_UNKNOWN_VARIANTS === "1";
+const mcpOverAcp = process.env.ACP_MOCK_MCP_OVER_ACP === "1";
 
 const program = Effect.gen(function* () {
   const agent = yield* AcpAgent.AcpAgent;
 
   yield* agent.handleInitialize(() =>
     Effect.succeed({
-      protocolVersion: 1,
-      agentCapabilities: {
-        sessionCapabilities: {
-          list: {},
+      protocolVersion: 2,
+      capabilities: {
+        session: {
+          ...(v2Management ? { delete: {} } : {}),
+          ...(mcpOverAcp ? { mcp: { acp: {} } } : {}),
         },
+        ...(v2Management ? { providers: {} } : {}),
       },
-      agentInfo: {
+      info: {
         name: "mock-agent",
         version: "0.0.0",
       },
+      ...(process.env.ACP_MOCK_ENV_VAR_AUTH === "1"
+        ? {
+            authMethods: [
+              {
+                type: "env_var",
+                methodId: "api_key",
+                name: "API key",
+                vars: [{ name: "MOCK_API_KEY", label: "Mock API key" }],
+                link: "https://example.test/keys",
+              },
+            ],
+          }
+        : {}),
     }),
   );
 
@@ -53,11 +71,55 @@ const program = Effect.gen(function* () {
       ],
     }),
   );
+  yield* agent.handleDeleteSession(() => Effect.succeed({}));
+  yield* agent.handleListProviders(() =>
+    Effect.succeed({
+      providers: [
+        {
+          providerId: "mock-provider",
+          supported: ["openai"],
+          required: false,
+          current: null,
+        },
+      ],
+    }),
+  );
+  yield* agent.handleSetProvider(() => Effect.succeed({}));
+  yield* agent.handleDisableProvider(() => Effect.succeed({}));
 
   yield* agent.handlePrompt(() =>
     Effect.gen(function* () {
+      if (mcpOverAcp) {
+        const connected = yield* agent.client.connectMcp({ serverId: "t3-code" });
+        yield* agent.client.messageMcp({
+          connectionId: connected.connectionId,
+          method: "tools/list",
+        });
+        yield* agent.client.notifyMcp({
+          connectionId: connected.connectionId,
+          method: "notifications/initialized",
+        });
+        yield* agent.client.disconnectMcp({ connectionId: connected.connectionId });
+      }
+
+      if (unknownVariants) {
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "future-content",
+            content: { type: "chart", points: [] },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: { sessionUpdate: "timeline_update", entries: [] },
+        });
+      }
+
       yield* agent.client.requestPermission({
         sessionId,
+        title: "Read project files",
         options: [
           {
             optionId: "allow",
@@ -65,9 +127,12 @@ const program = Effect.gen(function* () {
             kind: "allow_once",
           },
         ],
-        toolCall: {
-          toolCallId: "tool-1",
-          title: "Read project files",
+        subject: {
+          type: "tool_call",
+          toolCall: {
+            toolCallId: "tool-1",
+            title: "Read project files",
+          },
         },
       });
 
@@ -91,16 +156,48 @@ const program = Effect.gen(function* () {
       yield* agent.client.sessionUpdate({
         sessionId,
         update: {
-          sessionUpdate: "plan",
-          entries: [
-            {
-              content: "Inspect the repository",
-              priority: "high",
-              status: "in_progress",
-            },
-          ],
+          sessionUpdate: "plan_update",
+          plan: {
+            type: "items",
+            planId: "mock-plan",
+            entries: [
+              {
+                content: "Inspect the repository",
+                priority: "high",
+                status: "in_progress",
+              },
+            ],
+          },
         },
       });
+
+      if (process.env.ACP_MOCK_V2_DIFF === "1") {
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-diff",
+            content: [
+              {
+                type: "diff",
+                changes: [
+                  {
+                    operation: "move",
+                    oldPath: "/workspace/old.ts",
+                    path: "/workspace/new.ts",
+                    fileType: "text",
+                    mimeType: "text/typescript",
+                  },
+                ],
+                patch: {
+                  format: "git_patch",
+                  text: "diff --git a/old.ts b/new.ts\nsimilarity index 100%\nrename from old.ts\nrename to new.ts\n",
+                },
+              },
+            ],
+          },
+        });
+      }
 
       yield* agent.client.elicitationComplete({
         elicitationId: "elicitation-1",
@@ -114,9 +211,11 @@ const program = Effect.gen(function* () {
         count: 2,
       });
 
-      return {
-        stopReason: "end_turn" as const,
-      };
+      yield* agent.client.sessionUpdate({
+        sessionId,
+        update: { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" },
+      });
+      return {};
     }),
   );
 

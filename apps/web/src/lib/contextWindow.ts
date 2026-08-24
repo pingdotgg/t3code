@@ -1,4 +1,8 @@
-import type { OrchestrationV2TurnItem, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ProviderThread,
+  OrchestrationV2TurnItem,
+  ThreadTokenUsageSnapshot,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 function asFiniteNumber(value: unknown): number | null {
@@ -44,7 +48,42 @@ export function deriveLatestContextWindowSnapshot(
   entries: ReadonlyArray<{
     readonly item: OrchestrationV2TurnItem;
   }>,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt"> | null,
 ): ContextWindowSnapshot | null {
+  const providerUsage = providerThread?.contextUsage;
+  const providerUsageUpdatedAt = providerThread?.updatedAt;
+  if (
+    providerUsage !== null &&
+    providerUsage !== undefined &&
+    providerUsageUpdatedAt !== undefined
+  ) {
+    const maxTokens = asFiniteNumber(providerUsage.maxTokens);
+    const usedTokens = providerUsage.usedTokens;
+    const usedPercentage =
+      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
+    return {
+      usedTokens,
+      totalProcessedTokens: asFiniteNumber(providerUsage.totalProcessedTokens),
+      maxTokens,
+      remainingTokens: maxTokens === null ? null : Math.max(0, Math.round(maxTokens - usedTokens)),
+      usedPercentage,
+      remainingPercentage: usedPercentage === null ? null : Math.max(0, 100 - usedPercentage),
+      inputTokens: asFiniteNumber(providerUsage.inputTokens),
+      cachedInputTokens: asFiniteNumber(providerUsage.cachedInputTokens),
+      outputTokens: asFiniteNumber(providerUsage.outputTokens),
+      reasoningOutputTokens: asFiniteNumber(providerUsage.reasoningOutputTokens),
+      lastUsedTokens: asFiniteNumber(providerUsage.lastUsedTokens),
+      lastInputTokens: asFiniteNumber(providerUsage.lastInputTokens),
+      lastCachedInputTokens: asFiniteNumber(providerUsage.lastCachedInputTokens),
+      lastOutputTokens: asFiniteNumber(providerUsage.lastOutputTokens),
+      lastReasoningOutputTokens: asFiniteNumber(providerUsage.lastReasoningOutputTokens),
+      toolUses: asFiniteNumber(providerUsage.toolUses),
+      durationMs: asFiniteNumber(providerUsage.durationMs),
+      compactsAutomatically: providerUsage.compactsAutomatically ?? null,
+      cost: providerUsage.cost ?? null,
+      updatedAt: DateTime.formatIso(providerUsageUpdatedAt),
+    };
+  }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (!entry || entry.item.type !== "compaction") {
@@ -82,6 +121,7 @@ export function deriveLatestContextWindowSnapshot(
       toolUses: null,
       durationMs: null,
       compactsAutomatically: true,
+      cost: null,
       updatedAt: DateTime.formatIso(payload.startedAt ?? payload.updatedAt),
     };
   }

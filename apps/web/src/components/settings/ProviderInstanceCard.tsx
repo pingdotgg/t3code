@@ -5,6 +5,7 @@ import {
   ChevronDownIcon,
   CopyIcon,
   DownloadIcon,
+  ExternalLinkIcon,
   LoaderIcon,
   PlusIcon,
   Trash2Icon,
@@ -18,6 +19,9 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
+  type AcpRegistryUrlAuthAction,
+  type EnvironmentId,
+  type ProjectId,
   type ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
@@ -43,6 +47,7 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -88,6 +93,12 @@ function readConfigStringArray(config: unknown, key: string): ReadonlyArray<stri
   const value = (config as Record<string, unknown>)[key];
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function readConfigString(config: unknown, key: string): string | null {
+  if (config === null || typeof config !== "object") return null;
+  const value = (config as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 /**
@@ -445,7 +456,19 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
+  readonly environmentId?: EnvironmentId | undefined;
+  readonly acpProjects?:
+    | ReadonlyArray<{
+        readonly id: ProjectId;
+        readonly title: string;
+        readonly workspaceRoot: string;
+      }>
+    | undefined;
+  readonly readOnly?: boolean | undefined;
 }
+
+const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> = [];
 
 /**
  * A single configured provider-instance row in the Providers settings
@@ -457,7 +480,7 @@ interface ProviderInstanceCardProps {
  *
  * Behavior notes:
  *   - `liveProvider` is matched by the caller via `instanceId`; when no
- *     match is available (e.g. the server hasn't probed yet, or the
+ *     match is available (e.g. the server hasn't checked it yet, or the
  *     driver is not shipped by the current build) the card still renders
  *     with a neutral "checking" summary.
  *   - Unknown drivers (`driverOption === undefined`) get a read-only
@@ -465,8 +488,8 @@ interface ProviderInstanceCardProps {
  *     without accidentally destroying their config.
  *   - The enabled Switch writes to the envelope's `instance.enabled`
  *     field; the server's registry consults this at `entry.enabled ?? true`
- *     before materializing the instance, and the probe also checks its
- *     driver-specific `config.enabled`. We treat the envelope flag as the
+ *     before materializing the instance, and provider health checks also
+ *     honor its driver-specific `config.enabled`. We treat the envelope flag as the
  *     single source of truth from the UI — built-in cards used to write
  *     the inner flag, but on the promotion-to-instance path every edit
  *     flows through the envelope.
@@ -489,11 +512,15 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  onAcceptUrlAuth,
+  environmentId,
+  acpProjects = EMPTY_ACP_PROJECTS,
+  readOnly = false,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
   // "disabled"/"warning" based on the local `enabled` flag so the dot
-  // reflects the persisted intent even before the first probe completes.
+  // reflects the persisted intent even before the first health check completes.
   const statusKey: ProviderStatusKey =
     (liveProvider?.status as ProviderStatusKey | undefined) ?? (enabled ? "warning" : "disabled");
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
@@ -507,6 +534,7 @@ export function ProviderInstanceCard({
   const summary = rawSummary;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  const urlAuthAction = liveProvider?.auth.action;
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
@@ -546,7 +574,7 @@ export function ProviderInstanceCard({
     instance.environment,
     environmentFieldNames,
   );
-  // Server-returned models may lag behind settings writes. Treat probe
+  // Server-returned models may lag behind settings writes. Treat server
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
   const modelsForDisplay = deriveProviderModelsForDisplay({
@@ -625,6 +653,8 @@ export function ProviderInstanceCard({
       driverKind={driverKind}
       displayName={displayName}
       accentColor={accentColor}
+      acpRegistryAgentId={readConfigString(instance.config, "agentId") ?? undefined}
+      acpRegistryIconUrl={readConfigString(instance.config, "registryIconUrl") ?? undefined}
       showBadge={Boolean(accentColor)}
       statusDotClassName={statusStyle.dot}
       indicatorBackground="var(--card)"
@@ -824,6 +854,30 @@ export function ProviderInstanceCard({
               {titleTailNode}
             </div>
             {authRowNode}
+            {urlAuthAction && onAcceptUrlAuth ? (
+              <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
+                <p className="text-foreground/80">{urlAuthAction.message}</p>
+                <code className="break-all text-[11px] text-muted-foreground">
+                  {urlAuthAction.url}
+                </code>
+                <Button
+                  render={
+                    <a
+                      href={urlAuthAction.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => onAcceptUrlAuth(urlAuthAction)}
+                    />
+                  }
+                  size="xs"
+                  variant="outline"
+                  className="w-fit"
+                >
+                  <ExternalLinkIcon />
+                  Continue authentication
+                </Button>
+              </div>
+            ) : null}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
             <Button
@@ -930,6 +984,16 @@ export function ProviderInstanceCard({
                 </p>
               </div>
             )}
+
+            {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
+              <AcpSessionManagementSection
+                environmentId={environmentId}
+                instanceId={instanceId}
+                provider={liveProvider}
+                projects={acpProjects}
+                readOnly={readOnly}
+              />
+            ) : null}
           </div>
         </CollapsibleContent>
       </Collapsible>

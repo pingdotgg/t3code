@@ -271,7 +271,9 @@ function itemSummary(
     case "command_execution":
       return "Command";
     case "file_change":
-      return `Changed ${item.fileName}`;
+      return item.changes !== undefined && item.changes.length > 1
+        ? `Changed ${item.changes.length} files`
+        : `Changed ${item.fileName}`;
     case "file_search":
       return "Searched files";
     case "web_search":
@@ -289,7 +291,13 @@ function itemSummary(
     case "error":
       return "Provider error";
     case "compaction":
-      return "Context compacted";
+      return item.status === "failed"
+        ? "Context compaction failed"
+        : item.status === "cancelled" || item.status === "interrupted"
+          ? "Context compaction stopped"
+          : item.status === "pending" || item.status === "running" || item.status === "waiting"
+            ? "Compacting context"
+            : "Context compacted";
     case "handoff":
       return "Context handed off";
     case "fork":

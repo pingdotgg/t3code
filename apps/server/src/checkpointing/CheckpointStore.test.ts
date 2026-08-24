@@ -114,6 +114,35 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
     );
   });
 
+  describe("warmCheckpoint", () => {
+    it.effect("hashes the worktree without touching the real index or leaving temp files", () =>
+      Effect.gen(function* () {
+        const store = yield* CheckpointStore.CheckpointStore;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(NodePath.join(cwd, "untracked.txt"), "warm me\n");
+
+        yield* store.warmCheckpoint({ cwd });
+
+        // The real index is untouched: the untracked file stays untracked.
+        const status = yield* git(cwd, ["status", "--porcelain"]);
+        expect(status).toContain("?? untracked.txt");
+        // No throwaway index files remain.
+        const gitEntries = yield* fileSystem.readDirectory(NodePath.join(cwd, ".git"));
+        expect(gitEntries.filter((entry) => entry.startsWith("t3-checkpoint-warm-"))).toEqual([]);
+        // The blob was hashed into the object store, so a capture reuses it.
+        const blobOid = yield* git(cwd, ["hash-object", "untracked.txt"]);
+        yield* git(cwd, ["cat-file", "-e", blobOid]);
+
+        yield* store.captureCheckpoint({
+          cwd,
+          checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-warm"), 1),
+        });
+      }).pipe(Effect.provide(TestLayer), Effect.scoped),
+    );
+  });
+
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {

@@ -51,6 +51,8 @@ type ModelPickerItem = {
   driverKind: ProviderDriverKind;
   instanceDisplayName: string;
   instanceAccentColor?: string | undefined;
+  acpRegistryAgentId?: string | undefined;
+  acpRegistryIconUrl?: string | undefined;
   continuationGroupKey?: string | undefined;
   isLegacy?: boolean | undefined;
 };
@@ -226,6 +228,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
           ...(entry.accentColor ? { instanceAccentColor: entry.accentColor } : {}),
+          ...(entry.acpRegistryAgentId ? { acpRegistryAgentId: entry.acpRegistryAgentId } : {}),
+          ...(entry.acpRegistryIconUrl ? { acpRegistryIconUrl: entry.acpRegistryIconUrl } : {}),
           ...(entry.continuationGroupKey
             ? { continuationGroupKey: entry.continuationGroupKey }
             : {}),
@@ -758,6 +762,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         driverKind={model.driverKind}
                         providerDisplayName={model.instanceDisplayName}
                         providerAccentColor={model.instanceAccentColor}
+                        acpRegistryAgentId={model.acpRegistryAgentId}
+                        acpRegistryIconUrl={model.acpRegistryIconUrl}
                         isFavorite={favoritesSet.has(
                           providerModelKey(model.instanceId, model.slug),
                         )}

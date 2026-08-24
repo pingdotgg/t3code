@@ -2,6 +2,31 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import {
+  AcpRegistryAcceptUrlAuthInput,
+  AcpRegistryAcceptUrlAuthResult,
+  AcpRegistryDeleteSessionInput,
+  AcpRegistryDeleteSessionResult,
+  AcpRegistryDisableProviderInput,
+  AcpRegistryDisableProviderResult,
+  AcpRegistryImportSessionInput,
+  AcpRegistryImportSessionResult,
+  AcpRegistryListSessionsInput,
+  AcpRegistryListSessionsResult,
+  AcpRegistryListProvidersInput,
+  AcpRegistryListProvidersResult,
+  AcpRegistryLogoutInput,
+  AcpRegistryLogoutResult,
+  AcpRegistryManagedBinaryUninstallInput,
+  AcpRegistryManagedBinaryUninstallResult,
+  AcpRegistryOperationError,
+  AcpRegistryPrepareInput,
+  AcpRegistryPrepareResult,
+  AcpRegistrySearchInput,
+  AcpRegistrySearchResult,
+  AcpRegistrySetProviderInput,
+  AcpRegistrySetProviderResult,
+} from "./acpRegistry.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -66,7 +91,7 @@ import {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
 } from "./orchestration.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   PullRequestActionInput,
   PullRequestActivity,
@@ -287,6 +312,17 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  serverSearchAcpRegistry: "server.searchAcpRegistry",
+  serverPrepareAcpRegistryAgent: "server.prepareAcpRegistryAgent",
+  serverUninstallAcpRegistryManagedBinary: "server.uninstallAcpRegistryManagedBinary",
+  serverAcceptAcpRegistryUrlAuth: "server.acceptAcpRegistryUrlAuth",
+  serverListAcpRegistrySessions: "server.listAcpRegistrySessions",
+  serverImportAcpRegistrySession: "server.importAcpRegistrySession",
+  serverDeleteAcpRegistrySession: "server.deleteAcpRegistrySession",
+  serverListAcpRegistryProviders: "server.listAcpRegistryProviders",
+  serverSetAcpRegistryProvider: "server.setAcpRegistryProvider",
+  serverDisableAcpRegistryProvider: "server.disableAcpRegistryProvider",
+  serverLogoutAcpRegistry: "server.logoutAcpRegistry",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
@@ -414,7 +450,10 @@ export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
 });
 
 export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
-  payload: Schema.Struct({ patch: ServerSettingsPatch }),
+  payload: Schema.Struct({
+    patch: ServerSettingsPatch,
+    providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+  }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
@@ -423,6 +462,96 @@ export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscov
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
   error: EnvironmentAuthorizationError,
+});
+
+export const WsServerSearchAcpRegistryRpc = Rpc.make(WS_METHODS.serverSearchAcpRegistry, {
+  payload: AcpRegistrySearchInput,
+  success: AcpRegistrySearchResult,
+  error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerPrepareAcpRegistryAgentRpc = Rpc.make(
+  WS_METHODS.serverPrepareAcpRegistryAgent,
+  {
+    payload: AcpRegistryPrepareInput,
+    success: AcpRegistryPrepareResult,
+    error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerUninstallAcpRegistryManagedBinaryRpc = Rpc.make(
+  WS_METHODS.serverUninstallAcpRegistryManagedBinary,
+  {
+    payload: AcpRegistryManagedBinaryUninstallInput,
+    success: AcpRegistryManagedBinaryUninstallResult,
+    error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerAcceptAcpRegistryUrlAuthRpc = Rpc.make(
+  WS_METHODS.serverAcceptAcpRegistryUrlAuth,
+  {
+    payload: AcpRegistryAcceptUrlAuthInput,
+    success: AcpRegistryAcceptUrlAuthResult,
+    error: EnvironmentAuthorizationError,
+  },
+);
+
+export const WsServerListAcpRegistrySessionsRpc = Rpc.make(
+  WS_METHODS.serverListAcpRegistrySessions,
+  {
+    payload: AcpRegistryListSessionsInput,
+    success: AcpRegistryListSessionsResult,
+    error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerImportAcpRegistrySessionRpc = Rpc.make(
+  WS_METHODS.serverImportAcpRegistrySession,
+  {
+    payload: AcpRegistryImportSessionInput,
+    success: AcpRegistryImportSessionResult,
+    error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerDeleteAcpRegistrySessionRpc = Rpc.make(
+  WS_METHODS.serverDeleteAcpRegistrySession,
+  {
+    payload: AcpRegistryDeleteSessionInput,
+    success: AcpRegistryDeleteSessionResult,
+    error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerListAcpRegistryProvidersRpc = Rpc.make(
+  WS_METHODS.serverListAcpRegistryProviders,
+  {
+    payload: AcpRegistryListProvidersInput,
+    success: AcpRegistryListProvidersResult,
+    error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerSetAcpRegistryProviderRpc = Rpc.make(WS_METHODS.serverSetAcpRegistryProvider, {
+  payload: AcpRegistrySetProviderInput,
+  success: AcpRegistrySetProviderResult,
+  error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerDisableAcpRegistryProviderRpc = Rpc.make(
+  WS_METHODS.serverDisableAcpRegistryProvider,
+  {
+    payload: AcpRegistryDisableProviderInput,
+    success: AcpRegistryDisableProviderResult,
+    error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerLogoutAcpRegistryRpc = Rpc.make(WS_METHODS.serverLogoutAcpRegistry, {
+  payload: AcpRegistryLogoutInput,
+  success: AcpRegistryLogoutResult,
+  error: Schema.Union([AcpRegistryOperationError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
@@ -1107,6 +1236,17 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,
+  WsServerSearchAcpRegistryRpc,
+  WsServerPrepareAcpRegistryAgentRpc,
+  WsServerUninstallAcpRegistryManagedBinaryRpc,
+  WsServerAcceptAcpRegistryUrlAuthRpc,
+  WsServerListAcpRegistrySessionsRpc,
+  WsServerImportAcpRegistrySessionRpc,
+  WsServerDeleteAcpRegistrySessionRpc,
+  WsServerListAcpRegistryProvidersRpc,
+  WsServerSetAcpRegistryProviderRpc,
+  WsServerDisableAcpRegistryProviderRpc,
+  WsServerLogoutAcpRegistryRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,

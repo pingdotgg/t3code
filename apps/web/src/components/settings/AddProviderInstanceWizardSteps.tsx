@@ -11,6 +11,12 @@ interface AddProviderInstanceWizardStepsProps {
   readonly currentStep: number;
   readonly summaries: readonly (string | null)[];
   readonly instanceIdError: string | null;
+  readonly steps?: readonly string[];
+  readonly identityStep?: number;
+  readonly prerequisite?: {
+    readonly step: number;
+    readonly error: string | null;
+  };
   readonly onNavigation: (navigation: WizardNavigation) => void;
 }
 
@@ -18,6 +24,9 @@ export function AddProviderInstanceWizardSteps({
   currentStep,
   summaries,
   instanceIdError,
+  steps = ADD_PROVIDER_WIZARD_STEPS,
+  identityStep,
+  prerequisite,
   onNavigation,
 }: AddProviderInstanceWizardStepsProps) {
   return (
@@ -25,7 +34,7 @@ export function AddProviderInstanceWizardSteps({
       className="grid grid-cols-3 gap-1 rounded-xl bg-zinc-25 p-1 ring-1 ring-black/5 dark:bg-white/4 dark:ring-white/5"
       role="list"
     >
-      {ADD_PROVIDER_WIZARD_STEPS.map((step, index) => (
+      {steps.map((step, index) => (
         <li key={step} className="min-w-0">
           <button
             type="button"
@@ -38,8 +47,10 @@ export function AddProviderInstanceWizardSteps({
             aria-label={`${step}, step ${index + 1}${index < currentStep && summaries[index] ? `, ${summaries[index]}` : ""}`}
             onClick={() =>
               onNavigation(
-                resolveWizardNavigation(currentStep, index, ADD_PROVIDER_WIZARD_STEPS.length, {
+                resolveWizardNavigation(currentStep, index, steps.length, {
                   instanceIdError,
+                  ...(identityStep === undefined ? {} : { identityStep }),
+                  ...(prerequisite === undefined ? {} : { prerequisite }),
                 }),
               )
             }

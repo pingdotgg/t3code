@@ -60,9 +60,11 @@ import {
   type ProviderOrchestrationAdapterInfrastructure,
   ProviderOrchestrationAdapterInfrastructureLive,
 } from "./ProviderOrchestrationAdapterInfrastructure.ts";
+import { AcpRegistryCatalog } from "../acp/AcpRegistrySupport.ts";
+import { AcpRegistryCatalogLive } from "./AcpRegistryCatalog.ts";
 
 type ProviderInstanceRegistryHydrationEnv =
-  | Exclude<BuiltInDriversEnv, ProviderOrchestrationAdapterInfrastructure>
+  | Exclude<BuiltInDriversEnv, ProviderOrchestrationAdapterInfrastructure | AcpRegistryCatalog>
   | ServerSettingsService;
 
 /**
@@ -175,7 +177,10 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
     const mutableLayer = ProviderInstanceRegistryMutableLayer({
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
-    }).pipe(Layer.provide(ProviderOrchestrationAdapterInfrastructureLive));
+    }).pipe(
+      Layer.provide(ProviderOrchestrationAdapterInfrastructureLive),
+      Layer.provide(AcpRegistryCatalogLive),
+    );
 
     return SettingsWatcherLive.pipe(Layer.provideMerge(mutableLayer));
   }),

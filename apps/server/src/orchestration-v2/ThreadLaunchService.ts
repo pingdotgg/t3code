@@ -5,7 +5,9 @@ import {
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2ProviderThreadNativeMetadata,
   type OrchestrationV2ThreadProjection,
+  type ProviderDriverKind,
   type ProviderInteractionMode,
   ProjectId,
   type RunId,
@@ -23,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import { buildTemporaryWorktreeBranchName, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -67,6 +70,14 @@ export interface ThreadLaunchInput {
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
   readonly initialMessage?: ThreadLaunchInitialMessage;
+  readonly importedNativeThread?: {
+    readonly ref: {
+      readonly driver: ProviderDriverKind;
+      readonly nativeId: string;
+      readonly strength: "strong";
+    };
+    readonly metadata?: OrchestrationV2ProviderThreadNativeMetadata;
+  };
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }
@@ -126,6 +137,7 @@ function failureDetail(error: unknown): string {
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const git = yield* GitWorkflow.GitWorkflowService;
+  const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -314,6 +326,20 @@ export const make = Effect.gen(function* () {
     }
 
     const cwd = worktreePath ?? project.workspaceRoot;
+    // Warm the checkpoint object store while the provider session starts, so
+    // the first blocking baseline capture (measured ~10s cold on a large
+    // fresh worktree) reuses the hashed blobs instead of paying that on the
+    // prompt critical path. Best effort in the background.
+    yield* checkpointStore.warmCheckpoint({ cwd }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logDebug("Thread launch checkpoint warm-up failed", {
+          commandId: input.commandId,
+          threadId,
+          cause,
+        }),
+      ),
+      Effect.forkIn(preparationScope),
+    );
     if (runId !== null) {
       yield* threads
         .dispatch({
@@ -459,6 +485,7 @@ export const make = Effect.gen(function* () {
                 type: "thread.metadata.update",
                 commandId: input.commandId,
                 threadId: candidateThreadId,
+                expectedEmpty: true,
               })
             : threads.dispatch({
                 type: "thread.create",
@@ -471,6 +498,9 @@ export const make = Effect.gen(function* () {
                 interactionMode: input.interactionMode,
                 branch: initialBranch,
                 worktreePath: initialWorktreePath,
+                ...(input.importedNativeThread === undefined
+                  ? {}
+                  : { importedNativeThread: input.importedNativeThread }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
               });

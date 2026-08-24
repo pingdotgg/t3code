@@ -322,6 +322,12 @@ export const ThreadTokenUsageSnapshot = Schema.Struct({
   toolUses: Schema.optional(NonNegativeInt),
   durationMs: Schema.optional(NonNegativeInt),
   compactsAutomatically: Schema.optional(Schema.Boolean),
+  cost: Schema.optional(
+    Schema.Struct({
+      amount: Schema.Number.check(Schema.isFinite()),
+      currency: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(32)),
+    }),
+  ),
 });
 export type ThreadTokenUsageSnapshot = typeof ThreadTokenUsageSnapshot.Type;
 

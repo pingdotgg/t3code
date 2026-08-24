@@ -15,6 +15,10 @@
       "types": "./src/schema.ts",
       "import": "./src/schema.ts"
     },
+    "./compat": {
+      "types": "./src/compat.ts",
+      "import": "./src/compat.ts"
+    },
     "./rpc": {
       "types": "./src/rpc.ts",
       "import": "./src/rpc.ts"

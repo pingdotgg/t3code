@@ -793,6 +793,13 @@ export function HomeScreen(props: HomeScreenProps) {
         );
       }
       const thread = item.item.thread;
+      const provider = serverConfigs
+        .get(thread.environmentId)
+        ?.providers.find(
+          (candidate) =>
+            candidate.instanceId ===
+            (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
+        );
       return (
         <ThreadListV2Row
           thread={thread}
@@ -808,15 +815,8 @@ export function HomeScreen(props: HomeScreenProps) {
           projectTitle={v2ProjectTitleByProjectKey.get(
             scopedProjectKey(thread.environmentId, thread.projectId),
           )}
-          providerDriver={
-            serverConfigs
-              .get(thread.environmentId)
-              ?.providers.find(
-                (provider) =>
-                  provider.instanceId ===
-                  (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
-              )?.driver ?? null
-          }
+          providerDriver={provider?.driver ?? null}
+          providerIconUrl={provider?.iconUrl}
           environmentLabel={
             Object.keys(props.savedConnectionsById).length > 1
               ? (props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)

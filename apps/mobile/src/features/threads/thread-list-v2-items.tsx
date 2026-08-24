@@ -319,6 +319,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
   readonly providerDriver: string | null;
+  readonly providerIconUrl?: string | null;
   /** Which machine hosts the thread. Null when only one environment is
       connected — repeating the same label on every row is noise. Mirrors
       the web sidebar's remote-environment cloud icon, but as text since
@@ -779,7 +780,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : null}
         {props.providerDriver ? (
           <View className="opacity-60">
-            <ProviderIcon provider={props.providerDriver} size={14} />
+            <ProviderIcon
+              iconUrl={props.providerIconUrl}
+              provider={props.providerDriver}
+              size={14}
+            />
           </View>
         ) : null}
       </View>

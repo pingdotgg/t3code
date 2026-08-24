@@ -29,6 +29,7 @@ import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistr
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -130,6 +131,9 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(TextGeneration.TextGeneration)({
       generateThreadTitle,
       generateBranchName,
+    }),
+    Layer.mock(CheckpointStore.CheckpointStore)({
+      warmCheckpoint: () => Effect.void,
     }),
     ServerSettings.layerTest(options.serverSettings),
     makeProviderRegistryLayer(options.providers),
@@ -1079,6 +1083,50 @@ it.effect("schedules an accepted preparing message exactly once across concurren
     }).pipe(Effect.provide(harness.layer));
   }),
 );
+
+it.effect("creates a strong provider-thread mapping for an imported native session", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const input = {
+      ...launchInput({
+        command: "command:launch:imported-native-session",
+        thread: "thread:launch:imported-native-session",
+      }),
+      importedNativeThread: {
+        ref: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "native-session-42",
+          strength: "strong" as const,
+        },
+        metadata: {
+          title: "Native session",
+          updatedAt: "2026-08-23T00:00:00Z",
+        },
+      },
+    };
+
+    const launched = yield* launches.launch(input);
+
+    assert.deepInclude(launched.projection.providerThreads[0], {
+      id: IdAllocator.deriveProviderThread({
+        driver: input.importedNativeThread.ref.driver,
+        providerInstanceId: modelSelection.instanceId,
+        nativeThreadId: input.importedNativeThread.ref.nativeId,
+      }),
+      driver: input.importedNativeThread.ref.driver,
+      providerInstanceId: modelSelection.instanceId,
+      appThreadId: input.threadId,
+      nativeThreadRef: input.importedNativeThread.ref,
+      status: "not_loaded",
+      nativeMetadata: input.importedNativeThread.metadata,
+    });
+    assert.equal(
+      launched.projection.thread.activeProviderThreadId,
+      launched.projection.providerThreads[0]?.id,
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect("does not depend on the legacy launch workflow table", () => {
   const harness = makeHarness();
