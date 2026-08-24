@@ -30,11 +30,13 @@ export function useSidebarActiveThreadScroll(input: {
 
     if (!sidebarIsVisible) {
       sidebarWasVisibleRef.current = false;
+      sidebarNavigationThreadKeyRef.current = null;
       return;
     }
     if (!routeThreadKey) {
       sidebarWasVisibleRef.current = true;
       if (!hasThreadRoute) {
+        initialScrollPendingRef.current = true;
         sidebarNavigationThreadKeyRef.current = null;
       }
       return;
