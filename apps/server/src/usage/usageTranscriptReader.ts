@@ -87,9 +87,12 @@ export async function listTranscriptFiles(
         if (stats.mtimeMs >= sinceMs) {
           found.push({ path: child, size: stats.size, mtimeMs: stats.mtimeMs });
         }
-      } catch {
-        // Vanished between readdir and stat.
-        hadReadError = true;
+      } catch (cause) {
+        // Rotating transcripts can vanish between readdir and stat. Other
+        // failures mean the listing may have silently omitted usable data.
+        if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT")) {
+          hadReadError = true;
+        }
       }
     }
   };

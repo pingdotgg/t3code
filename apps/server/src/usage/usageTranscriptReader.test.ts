@@ -155,4 +155,39 @@ describe("listTranscriptFiles", () => {
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "ignores transcripts that vanish while the directory is being listed",
+    async () => {
+      const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-transcripts-"));
+      try {
+        NodeFS.symlinkSync(
+          NodePath.join(directory, "vanished"),
+          NodePath.join(directory, "gone.jsonl"),
+        );
+
+        const listing = await listTranscriptFiles(directory, 0);
+
+        expect(listing.files).toEqual([]);
+        expect(listing.hadReadError).toBe(false);
+      } finally {
+        NodeFS.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("reports non-missing stat failures", async () => {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-transcripts-"));
+    const transcript = NodePath.join(directory, "loop.jsonl");
+    try {
+      NodeFS.symlinkSync(transcript, transcript);
+
+      const listing = await listTranscriptFiles(directory, 0);
+
+      expect(listing.files).toEqual([]);
+      expect(listing.hadReadError).toBe(true);
+    } finally {
+      NodeFS.rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
