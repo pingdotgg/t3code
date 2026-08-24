@@ -329,6 +329,7 @@ export const make = Effect.fn("desktop.sshPasswordPrompts.make")(function* (
       username: input.username,
       prompt: input.prompt,
       expiresAt,
+      expiresInMs: passwordPromptTimeoutMs,
     };
     const deferred = yield* Deferred.make<string, DesktopSshPasswordPromptRequestError>();
     const pending: PendingSshPasswordPrompt = {

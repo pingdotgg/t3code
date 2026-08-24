@@ -40,6 +40,7 @@ import {
 } from "@t3tools/shared/dpop";
 import { RELAY_HEALTH_REQUEST_TYP, RELAY_MINT_REQUEST_TYP } from "@t3tools/shared/relayJwt";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { SshPasswordPrompt } from "@t3tools/ssh/auth";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
@@ -396,6 +397,7 @@ const buildAppUnderTest = (options?: {
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
     gitManager?: Partial<GitManager.GitManager["Service"]>;
+    gitWorkflow?: Partial<GitWorkflowService.GitWorkflowService["Service"]>;
     sourceControlRepositoryService?: Partial<
       SourceControlRepositoryService.SourceControlRepositoryService["Service"]
     >;
@@ -580,11 +582,15 @@ const buildAppUnderTest = (options?: {
         Layer.provide(T3ProjectFileLoader.layer),
       ),
     );
-    const gitWorkflowLayer = GitWorkflowService.layer.pipe(
-      Layer.provideMerge(vcsDriverRegistryLayer),
-      Layer.provideMerge(gitVcsDriverLayer),
-      Layer.provideMerge(gitManagerLayer),
-    );
+    const gitWorkflowLayer = options?.layers?.gitWorkflow
+      ? Layer.mock(GitWorkflowService.GitWorkflowService)({
+          ...options.layers.gitWorkflow,
+        })
+      : GitWorkflowService.layer.pipe(
+          Layer.provideMerge(vcsDriverRegistryLayer),
+          Layer.provideMerge(gitVcsDriverLayer),
+          Layer.provideMerge(gitManagerLayer),
+        );
     const vcsProvisioningLayer = VcsProvisioningService.layer.pipe(
       Layer.provide(vcsDriverRegistryLayer),
     );
@@ -4834,6 +4840,311 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(second?.type, "ready");
         assert.equal(second?.sequence, 2);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes interactive source-control SSH prompts to the publishing client", () =>
+    Effect.gen(function* () {
+      const receivedPasswords: Array<string | null> = [];
+      const publishResult = {
+        repository: {
+          provider: "github" as const,
+          nameWithOwner: "octocat/t3code",
+          url: "https://github.com/octocat/t3code",
+          sshUrl: "git@github.com:octocat/t3code.git",
+        },
+        remoteName: "origin",
+        remoteUrl: "git@github.com:octocat/t3code.git",
+        branch: "main",
+        upstreamBranch: "origin/main",
+        status: "pushed" as const,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          sourceControlRepositoryService: {
+            publishRepository: () =>
+              Effect.gen(function* () {
+                const prompt = Option.getOrThrow(yield* Effect.serviceOption(SshPasswordPrompt));
+                const password = yield* prompt
+                  .request({
+                    destination: "github.com",
+                    username: null,
+                    prompt: "Enter the SSH key passphrase or password.",
+                    attempt: 1,
+                  })
+                  .pipe(Effect.orDie);
+                receivedPasswords.push(password);
+                return publishResult;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.sourceControlPublishRepositoryWithPrompts]({
+            cwd: "/tmp/project",
+            provider: "github",
+            repository: "octocat/t3code",
+            visibility: "private",
+            protocol: "ssh",
+          }).pipe(
+            Stream.tap((event) => {
+              if (event._tag !== "ssh_password_prompt") return Effect.void;
+              return client[WS_METHODS.sourceControlResolveSshPasswordPrompt]({
+                requestId: event.request.requestId,
+                password: "correct horse battery staple",
+              });
+            }),
+            Stream.runCollect,
+          ),
+        ),
+      );
+
+      assert.deepEqual(
+        Array.from(events, (event) => event._tag),
+        ["ssh_password_prompt", "complete"],
+      );
+      assert.deepEqual(receivedPasswords, ["correct horse battery staple"]);
+      assert.deepEqual(events[1], { _tag: "complete", result: publishResult });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("isolates interactive source-control SSH prompts by websocket connection", () =>
+    Effect.gen(function* () {
+      const receivedPasswords: Array<string | null> = [];
+      const publishResult = {
+        repository: {
+          provider: "github" as const,
+          nameWithOwner: "octocat/t3code",
+          url: "https://github.com/octocat/t3code",
+          sshUrl: "git@github.com:octocat/t3code.git",
+        },
+        remoteName: "origin",
+        remoteUrl: "git@github.com:octocat/t3code.git",
+        branch: "main",
+        upstreamBranch: "origin/main",
+        status: "pushed" as const,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          sourceControlRepositoryService: {
+            publishRepository: () =>
+              Effect.gen(function* () {
+                const prompt = Option.getOrThrow(yield* Effect.serviceOption(SshPasswordPrompt));
+                const password = yield* prompt
+                  .request({
+                    destination: "github.com",
+                    username: null,
+                    prompt: "Enter the SSH key passphrase or password.",
+                    attempt: 1,
+                  })
+                  .pipe(Effect.orDie);
+                receivedPasswords.push(password);
+                return publishResult;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (ownerClient) =>
+          withWsRpcClient(wsUrl, (otherClient) =>
+            Effect.gen(function* () {
+              const promptPublished = yield* Deferred.make<string>();
+              const eventsFiber = yield* ownerClient[
+                WS_METHODS.sourceControlPublishRepositoryWithPrompts
+              ]({
+                cwd: "/tmp/project",
+                provider: "github",
+                repository: "octocat/t3code",
+                visibility: "private",
+                protocol: "ssh",
+              }).pipe(
+                Stream.tap((event) =>
+                  event._tag === "ssh_password_prompt"
+                    ? Deferred.succeed(promptPublished, event.request.requestId)
+                    : Effect.void,
+                ),
+                Stream.runCollect,
+                Effect.forkChild({ startImmediately: true }),
+              );
+              const requestId = yield* Deferred.await(promptPublished);
+
+              yield* otherClient[WS_METHODS.sourceControlResolveSshPasswordPrompt]({
+                requestId,
+                password: "password from another connection",
+              });
+              yield* ownerClient[WS_METHODS.sourceControlResolveSshPasswordPrompt]({
+                requestId,
+                password: "password from the owning connection",
+              });
+
+              return yield* Fiber.join(eventsFiber);
+            }),
+          ),
+        ),
+      );
+
+      assert.deepEqual(
+        Array.from(events, (event) => event._tag),
+        ["ssh_password_prompt", "complete"],
+      );
+      assert.deepEqual(receivedPasswords, ["password from the owning connection"]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes SSH prompts for clone, pull, and stacked push operations", () =>
+    Effect.gen(function* () {
+      const receivedPasswords: Array<string | null> = [];
+      const requestPassword = Effect.fn("server.test.requestSshPassword")(function* (
+        destination: string,
+      ) {
+        const prompt = Option.getOrThrow(yield* Effect.serviceOption(SshPasswordPrompt));
+        const password = yield* prompt
+          .request({
+            destination,
+            username: null,
+            prompt: "Enter the SSH key passphrase or password.",
+            attempt: 1,
+          })
+          .pipe(Effect.orDie);
+        receivedPasswords.push(password);
+      });
+      const actionResult = {
+        action: "push" as const,
+        branch: { status: "skipped_not_requested" as const },
+        commit: { status: "skipped_not_requested" as const },
+        push: { status: "pushed" as const, branch: "main", upstreamBranch: "origin/main" },
+        pr: { status: "skipped_not_requested" as const },
+        toast: {
+          title: "Pushed main",
+          cta: { kind: "none" as const },
+        },
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          sourceControlRepositoryService: {
+            cloneRepository: (input) =>
+              requestPassword("clone.example.com").pipe(
+                Effect.as({
+                  cwd: input.destinationPath,
+                  remoteUrl: "git@clone.example.com:octocat/t3code.git",
+                  repository: null,
+                }),
+              ),
+          },
+          gitWorkflow: {
+            pullCurrentBranch: () =>
+              requestPassword("pull.example.com").pipe(
+                Effect.as({
+                  status: "skipped_up_to_date" as const,
+                  refName: "main",
+                  upstreamRef: "origin/main",
+                }),
+              ),
+            runStackedAction: (input, options) =>
+              Effect.gen(function* () {
+                yield* requestPassword("push.example.com");
+                yield* (
+                  options?.progressReporter?.publish({
+                    actionId: options.actionId ?? input.actionId,
+                    cwd: input.cwd,
+                    action: input.action,
+                    kind: "action_finished",
+                    result: actionResult,
+                  }) ?? Effect.void
+                );
+                return actionResult;
+              }),
+          },
+          vcsStatusBroadcaster: {
+            refreshStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: true,
+                refName: "main",
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                pr: null,
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => {
+          const resolvePrompt = (requestId: string) =>
+            client[WS_METHODS.sourceControlResolveSshPasswordPrompt]({
+              requestId,
+              password: "correct horse battery staple",
+            });
+          return Effect.gen(function* () {
+            const cloneEvents = yield* client[WS_METHODS.sourceControlCloneRepositoryWithPrompts]({
+              remoteUrl: "git@clone.example.com:octocat/t3code.git",
+              destinationPath: "/tmp/clone",
+            }).pipe(
+              Stream.tap((event) =>
+                event._tag === "ssh_password_prompt"
+                  ? resolvePrompt(event.request.requestId)
+                  : Effect.void,
+              ),
+              Stream.runCollect,
+            );
+            const pullEvents = yield* client[WS_METHODS.vcsPullWithPrompts]({
+              cwd: "/tmp/project",
+            }).pipe(
+              Stream.tap((event) =>
+                event._tag === "ssh_password_prompt"
+                  ? resolvePrompt(event.request.requestId)
+                  : Effect.void,
+              ),
+              Stream.runCollect,
+            );
+            const pushEvents = yield* client[WS_METHODS.gitRunStackedActionWithPrompts]({
+              actionId: "push-action",
+              cwd: "/tmp/project",
+              action: "push",
+            }).pipe(
+              Stream.tap((event) =>
+                event.kind === "ssh_password_prompt"
+                  ? resolvePrompt(event.request.requestId)
+                  : Effect.void,
+              ),
+              Stream.runCollect,
+            );
+
+            assert.deepEqual(
+              Array.from(cloneEvents, (event) => event._tag),
+              ["ssh_password_prompt", "complete"],
+            );
+            assert.deepEqual(
+              Array.from(pullEvents, (event) => event._tag),
+              ["ssh_password_prompt", "complete"],
+            );
+            assert.deepEqual(
+              Array.from(pushEvents, (event) => event.kind),
+              ["ssh_password_prompt", "action_finished"],
+            );
+          });
+        }),
+      );
+
+      assert.deepEqual(receivedPasswords, [
+        "correct horse battery staple",
+        "correct horse battery staple",
+        "correct horse battery staple",
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("routes websocket rpc projects.searchEntries", () =>

@@ -341,6 +341,7 @@ describe("vcsActionState", () => {
       const target = { environmentId, cwd };
       const transportActionId = createVcsActionTransportId(target, actionId);
       const observed: GitActionProgressEvent[] = [];
+      const promptRequests: string[] = [];
       const events: GitActionProgressEvent[] = [
         {
           actionId: "unrelated-action",
@@ -349,6 +350,21 @@ describe("vcsActionState", () => {
           kind: "phase_started",
           phase: "commit",
           label: "Ignored",
+        },
+        {
+          actionId: transportActionId,
+          action,
+          cwd,
+          kind: "ssh_password_prompt",
+          request: {
+            requestId: "prompt-1",
+            destination: "github.com",
+            username: "git",
+            prompt: "Enter the SSH key passphrase or password.",
+            attempt: 1,
+            expiresAt: "2026-08-17T10:00:00.000Z",
+            expiresInMs: 3 * 60 * 1_000,
+          },
         },
         {
           actionId: transportActionId,
@@ -376,9 +392,14 @@ describe("vcsActionState", () => {
           Effect.sync(() => {
             observed.push(event);
           }),
+        resolveSshPasswordPrompt: (request) =>
+          Effect.sync(() => {
+            promptRequests.push(request.requestId);
+          }),
       });
 
       expect(actual).toEqual(result);
+      expect(promptRequests).toEqual(["prompt-1"]);
       expect(observed.map((event) => event.actionId)).toEqual([actionId, actionId]);
       expect(observed.map((event) => event.kind)).toEqual(["phase_started", "action_finished"]);
     }),
@@ -422,6 +443,55 @@ describe("vcsActionState", () => {
       expect(error).not.toHaveProperty("detail");
       expect(error.message).toBe("Source control action 'commit_push' failed during push.");
       expect(error.message).not.toContain(remoteMessage);
+    }),
+  );
+
+  it.effect("consumes a terminal failure while an SSH prompt is still open", () =>
+    Effect.gen(function* () {
+      const target = { environmentId, cwd };
+      const transportActionId = createVcsActionTransportId(target, actionId);
+      let promptCalls = 0;
+      const error = yield* consumeVcsActionProgress(
+        Stream.fromIterable<GitActionProgressEvent>([
+          {
+            actionId: transportActionId,
+            action,
+            cwd,
+            kind: "ssh_password_prompt",
+            request: {
+              requestId: "prompt-1",
+              destination: "github.com",
+              username: "git",
+              prompt: "Enter the SSH key passphrase or password.",
+              attempt: 1,
+              expiresAt: "2026-08-17T10:00:00.000Z",
+              expiresInMs: 3 * 60 * 1_000,
+            },
+          },
+          {
+            actionId: transportActionId,
+            action,
+            cwd,
+            kind: "action_failed",
+            phase: "push",
+            message: "The SSH password prompt expired.",
+          },
+        ]),
+        {
+          target,
+          transportActionId,
+          actionId,
+          action,
+          onProgress: () => Effect.void,
+          resolveSshPasswordPrompt: () =>
+            Effect.sync(() => {
+              promptCalls += 1;
+            }).pipe(Effect.zipRight(Effect.never)),
+        },
+      ).pipe(Effect.flip, Effect.timeout("1 second"));
+
+      expect(error).toBeInstanceOf(VcsActionRemoteFailureError);
+      expect(promptCalls).toBe(1);
     }),
   );
 

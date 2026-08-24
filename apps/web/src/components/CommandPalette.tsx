@@ -103,6 +103,7 @@ import {
   newProjectId,
 } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { SshPasswordRequestDialog, useSshPasswordRequest } from "./SshPasswordRequestDialog";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import {
   applyWslEnvironmentConfiguration,
@@ -642,6 +643,12 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
+  const {
+    prompt: cloneSshPasswordPrompt,
+    request: requestCloneSshPassword,
+    resolve: resolveCloneSshPasswordPrompt,
+    cancel: cancelCloneSshPasswordPrompt,
+  } = useSshPasswordRequest();
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
     [clientSettings],
@@ -1962,7 +1969,9 @@ function OpenCommandPaletteDialog(props: {
         remoteUrl: addProjectCloneFlow.remoteUrl,
         destinationPath,
       },
+      onSshPasswordPrompt: requestCloneSshPassword,
     });
+    cancelCloneSshPasswordPrompt();
     setIsRemoteProjectCloning(false);
     if (cloneResult._tag === "Failure") {
       if (!isAtomCommandInterrupted(cloneResult)) {
@@ -2425,95 +2434,110 @@ function OpenCommandPaletteDialog(props: {
   ) : null;
 
   return (
-    <CommandPaletteContent
-      key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${addProjectCloneFlow?.step ?? "none"}`}
-      aria-label="Command palette"
-      autoHighlight={isBrowsing || isRemoteProjectCloneFlow ? false : "always"}
-      footerActionLabel={footerActionLabel}
-      footerTrailing={footerTrailing}
-      inputAccessory={inputAccessory}
-      inputProps={{
-        // The submit button is absolutely positioned over the field, so the
-        // inner input must reserve enough room for the full action label.
-        className:
-          addProjectCloneFlow?.step === "repository"
-            ? "*:data-[slot=autocomplete-input]:pe-32!"
+    <>
+      <CommandPaletteContent
+        key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${addProjectCloneFlow?.step ?? "none"}`}
+        aria-label="Command palette"
+        autoHighlight={isBrowsing || isRemoteProjectCloneFlow ? false : "always"}
+        footerActionLabel={footerActionLabel}
+        footerTrailing={footerTrailing}
+        inputAccessory={inputAccessory}
+        inputProps={{
+          // The submit button is absolutely positioned over the field, so the
+          // inner input must reserve enough room for the full action label.
+          className:
+            addProjectCloneFlow?.step === "repository"
+              ? "*:data-[slot=autocomplete-input]:pe-32!"
+              : isBrowsing
+                ? browseInputEndPaddingClass({
+                    willCreateProjectPath,
+                    hasHighlightedBrowseItem,
+                  })
+                : undefined,
+          placeholder: inputPlaceholder,
+          wrapperClassName: isSubmenu
+            ? "[&_[data-slot=autocomplete-start-addon]]:pointer-events-auto"
+            : undefined,
+          ...(isSubmenu
+            ? {
+                startAddon: (
+                  <button
+                    type="button"
+                    className="flex cursor-pointer items-center"
+                    aria-label="Back"
+                    onClick={popView}
+                  >
+                    <ArrowLeftIcon />
+                  </button>
+                ),
+              }
             : isBrowsing
-              ? browseInputEndPaddingClass({
-                  willCreateProjectPath,
-                  hasHighlightedBrowseItem,
-                })
-              : undefined,
-        placeholder: inputPlaceholder,
-        wrapperClassName: isSubmenu
-          ? "[&_[data-slot=autocomplete-start-addon]]:pointer-events-auto"
-          : undefined,
-        ...(isSubmenu
-          ? {
-              startAddon: (
-                <button
-                  type="button"
-                  className="flex cursor-pointer items-center"
-                  aria-label="Back"
-                  onClick={popView}
-                >
-                  <ArrowLeftIcon />
-                </button>
-              ),
-            }
-          : isBrowsing
-            ? { startAddon: <FolderPlusIcon /> }
-            : {}),
-        onKeyDown: handleKeyDown,
-      }}
-      mode="none"
-      onItemHighlighted={(value) => {
-        setHighlightedItemValue(typeof value === "string" ? value : null);
-      }}
-      onValueChange={handleQueryChange}
-      panelClassName="max-h-[min(28rem,70vh)]"
-      showBackHint={isSubmenu}
-      value={query}
-    >
-      {remoteProjectContext ? (
-        <div className="p-2 pb-0">
-          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Repository</div>
-          <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
-            {remoteProjectContext.icon}
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate text-foreground text-sm">{remoteProjectContext.title}</span>
-              <span className="truncate text-muted-foreground/85 text-xs">
-                {remoteProjectContext.description}
+              ? { startAddon: <FolderPlusIcon /> }
+              : {}),
+          onKeyDown: handleKeyDown,
+        }}
+        mode="none"
+        onItemHighlighted={(value) => {
+          setHighlightedItemValue(typeof value === "string" ? value : null);
+        }}
+        onValueChange={handleQueryChange}
+        panelClassName="max-h-[min(28rem,70vh)]"
+        showBackHint={isSubmenu}
+        value={query}
+      >
+        {remoteProjectContext ? (
+          <div className="p-2 pb-0">
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Repository</div>
+            <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
+              {remoteProjectContext.icon}
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-foreground text-sm">
+                  {remoteProjectContext.title}
+                </span>
+                <span className="truncate text-muted-foreground/85 text-xs">
+                  {remoteProjectContext.description}
+                </span>
               </span>
-            </span>
+            </div>
           </div>
-        </div>
+        ) : null}
+        <CommandPaletteResults
+          groups={displayedGroups}
+          highlightedItemValue={highlightedItemValue}
+          isActionsOnly={isActionsOnly}
+          keybindings={keybindings}
+          onExecuteItem={executeItem}
+          {...(addProjectCloneFlow?.step === "repository"
+            ? {
+                emptyStateMessage:
+                  addProjectCloneFlow.source === "url"
+                    ? "Enter a Git clone URL and press Enter to continue."
+                    : "Enter a repository path and press Enter to look it up.",
+              }
+            : addProjectCloneFlow?.step === "confirm"
+              ? { emptyStateMessage: "Choose a destination path and press Enter to clone." }
+              : relativePathNeedsActiveProject
+                ? { emptyStateMessage: "Relative paths require an active project." }
+                : willCreateProjectPath
+                  ? {
+                      emptyStateMessage:
+                        "Press Enter to create this folder and add it as a project.",
+                    }
+                  : threadSearch.isPending
+                    ? { emptyStateMessage: "Searching thread messages…" }
+                    : {})}
+        />
+      </CommandPaletteContent>
+      {cloneSshPasswordPrompt ? (
+        <SshPasswordRequestDialog
+          key={cloneSshPasswordPrompt.requestId}
+          request={cloneSshPasswordPrompt}
+          onRespond={async (password) => {
+            resolveCloneSshPasswordPrompt(cloneSshPasswordPrompt.requestId, password);
+          }}
+          onRemove={(requestId) => resolveCloneSshPasswordPrompt(requestId, null)}
+        />
       ) : null}
-      <CommandPaletteResults
-        groups={displayedGroups}
-        highlightedItemValue={highlightedItemValue}
-        isActionsOnly={isActionsOnly}
-        keybindings={keybindings}
-        onExecuteItem={executeItem}
-        {...(addProjectCloneFlow?.step === "repository"
-          ? {
-              emptyStateMessage:
-                addProjectCloneFlow.source === "url"
-                  ? "Enter a Git clone URL and press Enter to continue."
-                  : "Enter a repository path and press Enter to look it up.",
-            }
-          : addProjectCloneFlow?.step === "confirm"
-            ? { emptyStateMessage: "Choose a destination path and press Enter to clone." }
-            : relativePathNeedsActiveProject
-              ? { emptyStateMessage: "Relative paths require an active project." }
-              : willCreateProjectPath
-                ? {
-                    emptyStateMessage: "Press Enter to create this folder and add it as a project.",
-                  }
-                : threadSearch.isPending
-                  ? { emptyStateMessage: "Searching thread messages…" }
-                  : {})}
-      />
-    </CommandPaletteContent>
+    </>
   );
 }

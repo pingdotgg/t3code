@@ -45,6 +45,7 @@ export interface ExecuteGitInput {
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;
   readonly progress?: ExecuteGitProgress;
+  readonly sshAuthentication?: GitSshAuthentication;
 }
 
 export interface ExecuteGitResult {
@@ -121,6 +122,16 @@ export interface GitPushResult {
   branch: string;
   upstreamBranch?: string | undefined;
   setUpstream?: boolean | undefined;
+}
+
+export interface GitPushOptions {
+  readonly remoteName?: string | null;
+  readonly sshAuthentication?: GitSshAuthentication;
+}
+
+export interface GitSshAuthentication {
+  readonly destination: string;
+  readonly username?: string | null;
 }
 
 export interface GitRangeContext {
@@ -250,7 +261,7 @@ export class GitVcsDriver extends Context.Service<
     readonly pushCurrentBranch: (
       cwd: string,
       fallbackBranch: string | null,
-      options?: { readonly remoteName?: string | null },
+      options?: GitPushOptions,
     ) => Effect.Effect<GitPushResult, GitCommandError>;
     readonly readRangeContext: (
       cwd: string,
