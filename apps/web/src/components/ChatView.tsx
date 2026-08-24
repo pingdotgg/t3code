@@ -2615,13 +2615,14 @@ function ChatViewContent(props: ChatViewProps) {
             }
 
             let changed = false;
-            let imageIndex = 0;
+            // The handoff list is positional over every attachment (images
+            // and videos both stage blob previews), so the index advances
+            // for each one — a type-filtered walk would pair attachments
+            // with the wrong URLs in mixed messages.
+            let attachmentIndex = 0;
             const attachments = message.attachments.map((attachment) => {
-              if (attachment.type !== "image") {
-                return attachment;
-              }
-              const handoffPreviewUrl = handoffPreviewUrls[imageIndex];
-              imageIndex += 1;
+              const handoffPreviewUrl = handoffPreviewUrls[attachmentIndex];
+              attachmentIndex += 1;
               if (!handoffPreviewUrl || attachment.previewUrl === handoffPreviewUrl) {
                 return attachment;
               }
@@ -5520,17 +5521,17 @@ function ChatViewContent(props: ChatViewProps) {
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
 
-    let firstComposerImageName: string | null = null;
+    let firstComposerAttachmentLabel: string | null = null;
     if (composerImagesSnapshot.length > 0) {
       const firstComposerImage = composerImagesSnapshot[0];
       if (firstComposerImage) {
-        firstComposerImageName = firstComposerImage.name;
+        firstComposerAttachmentLabel = `${firstComposerImage.type === "video" ? "Video" : "Image"}: ${firstComposerImage.name}`;
       }
     }
     let titleSeed = trimmed;
     if (!titleSeed) {
-      if (firstComposerImageName) {
-        titleSeed = `Image: ${firstComposerImageName}`;
+      if (firstComposerAttachmentLabel) {
+        titleSeed = firstComposerAttachmentLabel;
       } else if (composerTerminalContextsSnapshot.length > 0) {
         titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
       } else if (composerElementContextsSnapshot.length > 0) {

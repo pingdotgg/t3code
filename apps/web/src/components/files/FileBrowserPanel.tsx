@@ -70,7 +70,7 @@ function ShowHiddenFilesButton(props: { showHidden: boolean; onToggle: () => voi
           />
         }
       >
-        {props.showHidden ? <Eye /> : <EyeOff />}
+        {props.showHidden ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
       </TooltipTrigger>
       <TooltipPopup>{label}</TooltipPopup>
     </Tooltip>
