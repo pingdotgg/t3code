@@ -28,6 +28,12 @@ Log in with Codex normally:
 codex login
 ```
 
+T3 Code automatically discovers conversations created by Codex CLI and other Codex clients that
+use the same `CODEX_HOME`. Conversations whose working directory matches a T3 Code project appear
+in that project. Other conversations remain available under **Unassigned Codex threads**. Opening
+an imported conversation shows its user and assistant history, and sending a message continues the
+original Codex thread.
+
 ## Send feedback to OpenAI
 
 In an existing Codex thread, send `/feedback` or `/feedback` followed by a description of the
