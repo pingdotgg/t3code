@@ -71,4 +71,51 @@ describe("ComposerStashMenu", () => {
     expect(markup).toContain("size-3.5 stroke-2");
     expect(markup).not.toContain("bg-background/90");
   });
+
+  it("renders empty state hint with provided shortcutLabel", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerStashMenu
+        entries={[]}
+        shortcutLabel="Ctrl+S"
+        onRestore={() => {}}
+        onDelete={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(markup).toContain(
+      "Nothing stashed yet. Press Ctrl+S with a prompt in the composer to stash it.",
+    );
+  });
+
+  it("renders empty state hint with macOS shortcutLabel", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerStashMenu
+        entries={[]}
+        shortcutLabel="⌘S"
+        onRestore={() => {}}
+        onDelete={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(markup).toContain(
+      "Nothing stashed yet. Press ⌘S with a prompt in the composer to stash it.",
+    );
+  });
+
+  it("renders base empty state message when shortcutLabel is null or omitted", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerStashMenu
+        entries={[]}
+        shortcutLabel={null}
+        onRestore={() => {}}
+        onDelete={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Nothing stashed yet.");
+    expect(markup).not.toContain("Press");
+  });
 });

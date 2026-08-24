@@ -24,18 +24,19 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
 }
 
 /**
- * Popover listing the stashed prompts. Keyboard-first: opened by ⌘S on an
+ * Popover listing the stashed prompts. Keyboard-first: opened by Mod+S on an
  * empty composer, navigated with arrows, restored with Enter, dismissed
  * with Escape. The listener runs capture-phase on window so it wins over
  * the Lexical editor's handlers while the menu is open.
  */
 export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   entries: ReadonlyArray<PromptStashEntry>;
+  shortcutLabel?: string | null;
   onRestore: (entry: PromptStashEntry) => void;
   onDelete: (entry: PromptStashEntry) => void;
   onClose: () => void;
 }) {
-  const { entries, onRestore, onDelete, onClose } = props;
+  const { entries, shortcutLabel, onRestore, onDelete, onClose } = props;
   const drawerRef = useRef<HTMLDivElement>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
 
@@ -128,7 +129,9 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
           <CommandGroup>
             {entries.length === 0 ? (
               <p className="px-3 py-1.5 text-secondary-label text-xs">
-                Nothing stashed yet. Press ⌘S with a prompt in the composer to stash it.
+                {shortcutLabel
+                  ? `Nothing stashed yet. Press ${shortcutLabel} with a prompt in the composer to stash it.`
+                  : "Nothing stashed yet."}
               </p>
             ) : (
               entries.map((entry) => (
