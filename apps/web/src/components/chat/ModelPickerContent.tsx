@@ -170,11 +170,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         keys.add(modelPickerSubProviderSectionKey(instanceId as ProviderInstanceId, subProvider));
       }
     }
-    const activeModel = modelOptionsByInstance
-      .get(props.activeInstanceId)
-      ?.find((model) => model.slug === props.model);
-    if (activeModel?.subProvider && storedExpandedSections[props.activeInstanceId] === undefined) {
-      keys.add(modelPickerSubProviderSectionKey(props.activeInstanceId, activeModel.subProvider));
+    const activeInstanceModels = modelOptionsByInstance.get(props.activeInstanceId) ?? [];
+    const activeModel = activeInstanceModels.find((model) => model.slug === props.model);
+    if (activeModel?.subProvider) {
+      // A stored entry's omissions only count as an explicit collapse when
+      // every label it names exists in this catalog; labels from a different
+      // environment's catalog mean the entry was not written against this one,
+      // so it may expand what it names but cannot hide the active model.
+      const storedChoice = storedExpandedSections[props.activeInstanceId];
+      const catalogVendors = new Set(
+        activeInstanceModels.flatMap((model) => (model.subProvider ? [model.subProvider] : [])),
+      );
+      const storedChoiceTrusted =
+        storedChoice !== undefined && storedChoice.every((label) => catalogVendors.has(label));
+      if (!storedChoiceTrusted) {
+        keys.add(modelPickerSubProviderSectionKey(props.activeInstanceId, activeModel.subProvider));
+      }
     }
     return keys;
   });
