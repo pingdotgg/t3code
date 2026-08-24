@@ -595,7 +595,9 @@ function SurfaceIcon({
       return <GitPullRequest className={cn("size-3 shrink-0", toneClassName)} />;
     }
     case "github-issue":
-      return <CircleDot className="size-3 shrink-0 text-emerald-600 dark:text-emerald-300/90" />;
+      // The tab carries no issue state, and a closed issue reads as muted everywhere else it is
+      // drawn. Stays neutral until a tab status feeds this the way pull requests do.
+      return <CircleDot className="size-3 shrink-0 text-muted-foreground" />;
     case "agents":
       return <Bot className="size-3 shrink-0" />;
   }

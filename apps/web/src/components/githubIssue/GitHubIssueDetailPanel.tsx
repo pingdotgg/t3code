@@ -2,6 +2,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, GitHubIssueDetail, GitHubIssueRef } from "@t3tools/contracts";
 import {
   CircleDotIcon,
+  CircleSlash2Icon,
   ExternalLinkIcon,
   GithubIcon,
   MessageSquareIcon,
@@ -16,9 +17,16 @@ import { githubIssueEnvironment } from "../../state/githubIssues";
 import { useEnvironmentQuery } from "../../state/query";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { PullRequestMarkdown } from "../pullRequest/PullRequestMarkdown";
+import { GitHubIssueDetailGhost } from "./GitHubIssueGhosts";
 import { Button } from "../ui/button";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
-import { Spinner } from "../ui/spinner";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../ui/empty";
 import { toastManager } from "../ui/toast";
 
 export function GitHubIssueDetailPanel({
@@ -89,11 +97,7 @@ export function GitHubIssueDetailContent({
   };
 
   if (loading && detail === null) {
-    return (
-      <div className="flex min-h-full items-center justify-center gap-2 p-8 text-muted-foreground text-sm">
-        <Spinner className="size-4" /> Loading issue...
-      </div>
-    );
+    return <GitHubIssueDetailGhost />;
   }
   if (error && detail === null) {
     return (
@@ -115,32 +119,40 @@ export function GitHubIssueDetailContent({
 
   return (
     <article className="mx-auto w-full max-w-3xl px-5 py-6 sm:px-8">
-      <div className="flex items-start gap-4">
-        <CircleDotIcon
-          className={cn(
-            "mt-1 size-5 shrink-0",
-            detail.state === "open" ? "text-success-foreground" : "text-muted-foreground",
-          )}
-        />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-balance font-semibold text-xl leading-tight">{detail.title}</h2>
-          <p className="mt-1 text-muted-foreground text-sm">
-            {detail.repository} #{detail.number} · opened by {detail.author?.login ?? "unknown"} ·{" "}
-            {formatRelativeTimeLabel(detail.createdAt)}
-          </p>
+      {/* Both buttons are shrink-0, and the right panel leaves roughly 290px of content below
+          760px, so on one row they would squeeze the title into a ribbon. The action group drops
+          to its own line instead, the way the pull request panel gives its title a full row. */}
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-4">
+          <GitHubIssueStateIcon
+            state={detail.state}
+            className={cn(
+              "mt-1 size-5 shrink-0",
+              detail.state === "open" ? "text-success-foreground" : "text-muted-foreground",
+            )}
+          />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-balance font-semibold text-xl leading-tight">{detail.title}</h2>
+            <p className="mt-1 text-muted-foreground text-sm">
+              {detail.repository} #{detail.number} · opened by {detail.author?.login ?? "unknown"} ·{" "}
+              {formatRelativeTimeLabel(detail.createdAt)}
+            </p>
+          </div>
         </div>
-        <Button size="sm" onClick={() => void fixInThread()} disabled={preparing}>
-          <WrenchIcon className="size-4" />
-          {preparing ? "Preparing..." : "Fix in a thread"}
-        </Button>
-        <Button
-          render={<a href={detail.url} target="_blank" rel="noreferrer noopener" />}
-          size="icon-sm"
-          variant="outline"
-          aria-label="Open issue on GitHub"
-        >
-          <ExternalLinkIcon className="size-4" />
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => void fixInThread()} disabled={preparing}>
+            <WrenchIcon className="size-4" />
+            {preparing ? "Preparing..." : "Fix in a thread"}
+          </Button>
+          <Button
+            render={<a href={detail.url} target="_blank" rel="noreferrer noopener" />}
+            size="icon-sm"
+            variant="outline"
+            aria-label="Open issue on GitHub"
+          >
+            <ExternalLinkIcon className="size-4" />
+          </Button>
+        </div>
       </div>
 
       <div className="mt-5 flex flex-wrap gap-1.5">
@@ -196,17 +208,23 @@ export function GitHubIssueDetailContent({
   );
 }
 
-export function GitHubIssuesUnavailableState({
-  title,
-  description,
+export function GitHubIssueStateIcon({
+  state,
+  className,
 }: {
-  title: string;
-  description: string;
+  state: GitHubIssueDetail["state"];
+  className?: string;
 }) {
-  return <GitHubIssueEmptyState title={title} description={description} />;
+  const Icon = state === "open" ? CircleDotIcon : CircleSlash2Icon;
+  return <Icon className={className} />;
 }
 
-function GitHubIssueEmptyState({
+/**
+ * Every empty answer this feature can give — the route's list and both detail surfaces — so the
+ * two never drift apart. `Empty` owns the spacing between its slots, and `EmptyContent` is the
+ * slot an action belongs in.
+ */
+export function GitHubIssueEmptyState({
   title,
   description,
   action,
@@ -223,8 +241,8 @@ function GitHubIssueEmptyState({
         </EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>
         <EmptyDescription>{description}</EmptyDescription>
-        {action ? <div className="mt-4">{action}</div> : null}
       </EmptyHeader>
+      {action ? <EmptyContent>{action}</EmptyContent> : null}
     </Empty>
   );
 }

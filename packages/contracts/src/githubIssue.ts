@@ -92,17 +92,29 @@ export const GitHubIssueDetail = Schema.Struct({
 });
 export type GitHubIssueDetail = typeof GitHubIssueDetail.Type;
 
-export class GitHubIssueUnavailableError extends Schema.TaggedErrorClass<GitHubIssueUnavailableError>()(
-  "GitHubIssueUnavailableError",
+export class GitHubIssueCliMissingError extends Schema.TaggedErrorClass<GitHubIssueCliMissingError>()(
+  "GitHubIssueCliMissingError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "GitHub CLI (`gh`) is required to browse issues. Install it from https://cli.github.com/ and reload.";
+  }
+}
+
+export class GitHubIssueCliUnauthenticatedError extends Schema.TaggedErrorClass<GitHubIssueCliUnauthenticatedError>()(
+  "GitHubIssueCliUnauthenticatedError",
   {
-    reason: Schema.Literals(["cli-missing", "cli-unauthenticated"]),
-    cause: Schema.optional(Schema.Defect()),
+    cause: Schema.Defect(),
+    // Optional keeps the error decodable while an older server is still in the wild.
+    host: Schema.optional(TrimmedNonEmptyString),
   },
 ) {
   override get message(): string {
-    return this.reason === "cli-missing"
-      ? "GitHub CLI (`gh`) is required to browse issues. Install it from https://cli.github.com/ and reload."
-      : "GitHub CLI is not authenticated. Run `gh auth login` and retry.";
+    const loginCommand =
+      this.host === undefined || this.host === "github.com"
+        ? "gh auth login"
+        : `gh auth login --hostname ${this.host}`;
+    return `GitHub CLI is not authenticated. Run \`${loginCommand}\` and retry.`;
   }
 }
 

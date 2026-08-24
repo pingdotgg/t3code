@@ -8,6 +8,7 @@ import {
   createEnvironmentSnapshotAtom,
   createShellEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -21,6 +22,16 @@ export const environmentShellSummaryAtom = createEnvironmentShellSummaryAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   shellStateValueAtom: environmentShell.stateValueAtom,
 });
+
+/**
+ * Whether one environment's shell snapshot has landed. A page reading a single server wants this
+ * rather than the all-environments gate below, which a second server still connecting holds shut.
+ */
+export const environmentShellBootstrappedAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) =>
+    Option.isSome(get(environmentShell.stateValueAtom(environmentId)).snapshot),
+  ).pipe(Atom.withLabel(`web-environment-shell-bootstrapped:${environmentId}`)),
+);
 
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));

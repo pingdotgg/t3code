@@ -281,3 +281,102 @@ it.effect("loads issue detail with its discussion and workspace", () =>
     assert.strictEqual(detail.comments[0]?.author?.login, "reviewer");
   }),
 );
+
+it.effect("keeps issues from signed-in hosts when one remote is unauthenticated", () =>
+  Effect.gen(function* () {
+    const execute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>((input) =>
+      input.cwd === "/enterprise"
+        ? Effect.fail(
+            new GitHubCli.GitHubCliAuthenticationError({
+              command: "gh",
+              cwd: input.cwd,
+              cause: new Error("gh auth login"),
+            }),
+          )
+        : Effect.succeed(output(JSON.stringify([issue(7)]))),
+    );
+    const service = yield* makeService(
+      [
+        project({ id: "p1", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+        project({
+          id: "p2",
+          title: "internal",
+          workspaceRoot: "/enterprise",
+          repository: "acme/internal",
+          host: "ghe.acme.dev",
+        }),
+      ],
+      execute,
+    );
+
+    const result = yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual(
+      result.entries.map((entry) => entry.number),
+      [7],
+    );
+    assert.strictEqual(result.errors.length, 1);
+    assert.strictEqual(result.errors[0]?.projectId, "p2");
+    // The host is named because it is the one the reader has to sign in to.
+    assert.include(result.errors[0]?.message ?? "", "ghe.acme.dev");
+  }),
+);
+
+it.effect("returns host-scoped errors when every host is unauthenticated", () =>
+  Effect.gen(function* () {
+    const execute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>((input) =>
+      Effect.fail(
+        new GitHubCli.GitHubCliAuthenticationError({
+          command: "gh",
+          cwd: input.cwd,
+          cause: new Error("gh auth login"),
+        }),
+      ),
+    );
+    const service = yield* makeService(
+      [
+        project({
+          id: "p1",
+          title: "internal",
+          workspaceRoot: "/enterprise",
+          repository: "acme/internal",
+          host: "ghe.acme.dev",
+        }),
+      ],
+      execute,
+    );
+
+    const result = yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual(result.entries, []);
+    assert.strictEqual(result.errors.length, 1);
+    assert.include(result.errors[0]?.message ?? "", "gh auth login --hostname ghe.acme.dev");
+  }),
+);
+
+it.effect("fails the whole read when the GitHub CLI is missing", () =>
+  Effect.gen(function* () {
+    const execute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>((input) =>
+      input.cwd === "/web"
+        ? Effect.fail(
+            new GitHubCli.GitHubCliUnavailableError({
+              command: "gh",
+              cwd: input.cwd,
+              cause: new Error("spawn gh ENOENT"),
+            }),
+          )
+        : Effect.succeed(output(JSON.stringify([issue(9)]))),
+    );
+    const service = yield* makeService(
+      [
+        project({ id: "p1", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+        project({ id: "p2", title: "api", workspaceRoot: "/api", repository: "acme/api" }),
+      ],
+      execute,
+    );
+
+    const error = yield* service.list({ state: "open" }).pipe(Effect.flip);
+
+    assert.strictEqual(error._tag, "GitHubIssueCliMissingError");
+  }),
+);

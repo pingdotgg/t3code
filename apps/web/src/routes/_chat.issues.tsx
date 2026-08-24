@@ -1,36 +1,45 @@
 import type { GitHubIssueListEntry, GitHubIssueListState, ProjectId } from "@t3tools/contracts";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import {
-  CircleDotIcon,
-  CircleSlash2Icon,
-  GithubIcon,
-  RefreshCwIcon,
-  SearchIcon,
-} from "lucide-react";
+import { CircleDotIcon, CircleSlash2Icon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
-import type { ReactNode } from "react";
 
-import { GitHubIssueDetailContent } from "../components/githubIssue/GitHubIssueDetailPanel";
-import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../components/WorkspaceBreadcrumb";
-import { Button } from "../components/ui/button";
 import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "../components/ui/empty";
-import { Input } from "../components/ui/input";
+  GitHubIssueDetailContent,
+  GitHubIssueEmptyState,
+} from "../components/githubIssue/GitHubIssueDetailPanel";
+import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../components/WorkspaceBreadcrumb";
+import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
+import { Button } from "../components/ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../components/ui/input-group";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { SidebarInset } from "../components/ui/sidebar";
 import { Spinner } from "../components/ui/spinner";
+import { isElectron } from "../env";
 import { cn } from "../lib/utils";
 import { githubIssueEnvironment } from "../state/githubIssues";
-import { useProjects } from "../state/entities";
+import { useEnvironmentShellBootstrapped, useProjects } from "../state/entities";
 import { usePrimaryEnvironment } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { formatRelativeTimeLabel } from "../timestampFormat";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
+
+/**
+ * "Every project" wears a value no project id can be, matching the pull request filters. A
+ * project id is a UUID, so this can never collide with one.
+ */
+const ALL_PROJECTS_VALUE = "all";
+
+const STATE_OPTIONS = [
+  { value: "open", label: "Open" },
+  { value: "closed", label: "Closed" },
+  { value: "all", label: "All" },
+] as const satisfies ReadonlyArray<{ value: GitHubIssueListState; label: string }>;
 
 export interface IssuesSearch {
   readonly state: GitHubIssueListState;
@@ -70,6 +79,10 @@ function GitHubIssuesRoute() {
   const supported =
     primaryEnvironment?.serverConfig?.environment.capabilities.githubIssues === true;
   const projects = useProjects();
+  // An unread shell has no projects yet, which is not the same answer as having none. Scoped to
+  // the primary environment because that is the only one this page reads: the all-environments
+  // gate would stay shut while some other server is still connecting.
+  const projectsKnown = useEnvironmentShellBootstrapped(environmentId);
   const githubProjects = useMemo(
     () =>
       projects
@@ -81,9 +94,12 @@ function GitHubIssuesRoute() {
         .toSorted((left, right) => left.title.localeCompare(right.title)),
     [environmentId, projects],
   );
-  const scopedProjectId = githubProjects.some((project) => project.id === search.projectId)
-    ? search.projectId
-    : undefined;
+  // Kept until the projects are known: dropping it early would fetch the whole workspace once
+  // and then narrow, which reads as the filter forgetting itself.
+  const scopedProjectId =
+    !projectsKnown || githubProjects.some((project) => project.id === search.projectId)
+      ? search.projectId
+      : undefined;
   const [sentQuery] = useDebouncedValue(search.q?.trim() ?? "", { wait: 250 });
   const listQuery = useEnvironmentQuery(
     supported && environmentId
@@ -125,12 +141,19 @@ function GitHubIssuesRoute() {
     [navigate],
   );
 
+  const stateLabel = STATE_OPTIONS.find((option) => option.value === search.state)?.label ?? "Open";
+  const projectLabel =
+    githubProjects.find((project) => project.id === scopedProjectId)?.title ?? "All projects";
+
   const updateFilters = (patch: {
     state?: GitHubIssueListState;
     projectId?: ProjectId | undefined;
     q?: string | undefined;
   }) => {
     void navigate({
+      // Filters are transient edits, not places: without this every keystroke of a search would
+      // push a history entry and Back would walk the query one character at a time.
+      replace: true,
       search: (current) => {
         const {
           repository: _repository,
@@ -157,12 +180,12 @@ function GitHubIssuesRoute() {
       <Spinner className="size-4" /> Connecting to the environment...
     </div>
   ) : !supported ? (
-    <IssueEmptyState
+    <GitHubIssueEmptyState
       title="GitHub issues unavailable"
       description="Update this environment's T3 Code server to browse GitHub issues."
     />
-  ) : githubProjects.length === 0 ? (
-    <IssueEmptyState
+  ) : projectsKnown && githubProjects.length === 0 ? (
+    <GitHubIssueEmptyState
       title="No GitHub projects"
       description="Add a project backed by a GitHub repository and its issues will appear here."
     />
@@ -171,19 +194,19 @@ function GitHubIssuesRoute() {
       <Spinner className="size-4" /> Loading issues...
     </div>
   ) : listQuery.error && listQuery.data === null ? (
-    <IssueEmptyState
+    <GitHubIssueEmptyState
       title="Could not load issues"
       description={listQuery.error}
       action={<Button onClick={listQuery.refresh}>Try again</Button>}
     />
   ) : listQuery.data?.entries.length === 0 && listQuery.data.errors.length > 0 ? (
-    <IssueEmptyState
+    <GitHubIssueEmptyState
       title="Could not load issues"
       description={listQuery.data.errors[0]?.message ?? "GitHub did not answer."}
       action={<Button onClick={listQuery.refresh}>Try again</Button>}
     />
   ) : listQuery.data?.entries.length === 0 ? (
-    <IssueEmptyState
+    <GitHubIssueEmptyState
       title="No issues"
       description={search.q ? "Nothing matched this search." : "No issues matched these filters."}
     />
@@ -208,18 +231,13 @@ function GitHubIssuesRoute() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header
-          className={cn(
-            "workspace-topbar drag-region gap-2 border-b border-border px-3 sm:px-5",
-            COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-          )}
-        >
+        <WorkspacePageHeader electron={isElectron} className="border-b border-border">
           <WorkspaceBreadcrumb ariaLabel="GitHub issues breadcrumb">
             <WorkspaceBreadcrumbItem current>
               <h1 className="truncate">GitHub Issues</h1>
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
-          <div className="flex-1" />
+          <div className="min-w-0 flex-1" />
           <Button
             size="icon-sm"
             variant="ghost"
@@ -231,56 +249,74 @@ function GitHubIssuesRoute() {
           >
             <RefreshCwIcon className={cn("size-4", listQuery.isPending && "animate-spin")} />
           </Button>
-        </header>
+        </WorkspacePageHeader>
 
         <div className="grid min-h-0 flex-1 md:grid-cols-[minmax(20rem,0.9fr)_minmax(24rem,1.1fr)]">
           <section className="flex min-h-0 min-w-0 flex-col border-r border-border">
             <div className="grid gap-2 border-b border-border/70 p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-              <label className="relative min-w-0">
-                <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
+              <InputGroup className="min-w-0">
+                <InputGroupAddon>
+                  <SearchIcon aria-hidden />
+                </InputGroupAddon>
+                <InputGroupInput
+                  type="search"
                   aria-label="Search GitHub issues"
-                  className="pl-8"
                   placeholder="Search issues"
                   value={search.q ?? ""}
-                  onChange={(event) => updateFilters({ q: event.target.value || undefined })}
+                  onChange={(event) => updateFilters({ q: event.currentTarget.value || undefined })}
                 />
-              </label>
-              <select
-                aria-label="Filter GitHub issues by state"
-                className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+              </InputGroup>
+              <Select
                 value={search.state}
-                onChange={(event) =>
-                  updateFilters({ state: event.target.value as GitHubIssueListState })
-                }
+                onValueChange={(value: string | null) => {
+                  const next = STATE_OPTIONS.find((option) => option.value === value);
+                  if (next) updateFilters({ state: next.value });
+                }}
               >
-                <option value="open">Open</option>
-                <option value="closed">Closed</option>
-                <option value="all">All</option>
-              </select>
-              <select
-                aria-label="Filter GitHub issues by project"
-                className="h-8 min-w-32 rounded-md border border-input bg-background px-2 text-sm"
-                value={scopedProjectId ?? ""}
-                onChange={(event) =>
+                <SelectTrigger
+                  aria-label="Filter GitHub issues by state"
+                  className="min-w-28 sm:w-auto"
+                >
+                  <SelectValue>{stateLabel}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {STATE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+              <Select
+                value={scopedProjectId ?? ALL_PROJECTS_VALUE}
+                onValueChange={(value: string | null) =>
                   updateFilters({
-                    projectId: event.target.value ? (event.target.value as ProjectId) : undefined,
+                    projectId:
+                      value && value !== ALL_PROJECTS_VALUE ? (value as ProjectId) : undefined,
                   })
                 }
               >
-                <option value="">All projects</option>
-                {githubProjects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.title}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  aria-label="Filter GitHub issues by project"
+                  className="min-w-32 sm:w-auto"
+                >
+                  <SelectValue>{projectLabel}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value={ALL_PROJECTS_VALUE}>All projects</SelectItem>
+                  {githubProjects.map((project) => (
+                    <SelectItem key={project.id} value={project.id}>
+                      {project.title}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
               {listQuery.data &&
               listQuery.data.entries.length > 0 &&
               listQuery.data.errors.length > 0 ? (
-                <div className="border-b border-warning/25 bg-warning/8 px-4 py-2 text-warning-foreground text-xs">
+                <div className="border-b border-warning/25 bg-warning-surface px-4 py-2 text-warning-foreground text-xs">
                   {listQuery.data.errors.length} GitHub-backed project
                   {listQuery.data.errors.length === 1 ? " was" : "s were"} unavailable.
                 </div>
@@ -359,8 +395,9 @@ function IssueRow({
       type="button"
       aria-current={selected ? "true" : undefined}
       className={cn(
-        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] gap-3 px-4 py-3 text-left [contain-intrinsic-block-size:72px] [content-visibility:auto] hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-        selected && "bg-accent",
+        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] gap-3 px-4 py-3 text-left transition-colors [contain-intrinsic-block-size:72px] [content-visibility:auto] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        // Exclusive, or hovering the open issue would wash its own selection back out.
+        selected ? "bg-accent" : "hover:bg-accent/60",
       )}
       onClick={() => onSelect(issue)}
     >
@@ -394,28 +431,5 @@ function IssueRow({
         {formatRelativeTimeLabel(issue.updatedAt)}
       </span>
     </button>
-  );
-}
-
-function IssueEmptyState({
-  title,
-  description,
-  action,
-}: {
-  title: string;
-  description: string;
-  action?: ReactNode;
-}) {
-  return (
-    <Empty className="min-h-72">
-      <EmptyHeader>
-        <EmptyMedia variant="icon">
-          <GithubIcon />
-        </EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{description}</EmptyDescription>
-        {action ? <div className="mt-4">{action}</div> : null}
-      </EmptyHeader>
-    </Empty>
   );
 }

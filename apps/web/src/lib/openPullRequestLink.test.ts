@@ -239,9 +239,9 @@ describe("parseGitHubIssueUrl", () => {
       number: 123,
     });
     expect(
-      parseGitHubIssueUrl("https://github.acme.test/platform/api/issues/7#issuecomment-1"),
+      parseGitHubIssueUrl("https://code.acme.test/platform/api/issues/7#issuecomment-1"),
     ).toEqual({
-      host: "github.acme.test",
+      host: "code.acme.test",
       repository: "platform/api",
       number: 7,
     });
@@ -251,7 +251,7 @@ describe("parseGitHubIssueUrl", () => {
     for (const link of [
       "https://github.com/t3tools/t3code/pull/123",
       "https://github.com/t3tools/t3code/issues/new",
-      "https://example.test/t3tools/t3code/issues/123",
+      "https://example.test/t3tools/t3code/issues/not-a-number",
       "not a url",
     ]) {
       expect(parseGitHubIssueUrl(link), link).toBeNull();
@@ -268,6 +268,24 @@ describe("findProjectForGitHubIssue", () => {
       project({
         canonicalKey: "github.com/pingdotgg/t3code",
         provider: "github",
+        owner: "pingdotgg",
+        name: "t3code",
+      }),
+    ];
+    expect(
+      findProjectForGitHubIssue(projects, {
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 7966,
+      }),
+    ).toBe(projects[0]);
+  });
+
+  it("treats a GitHub project without a canonical key as public GitHub", () => {
+    const projects = [
+      project({
+        provider: "github",
+        displayName: "pingdotgg/t3code",
         owner: "pingdotgg",
         name: "t3code",
       }),
