@@ -98,7 +98,6 @@ import {
   deriveTimelineEntries,
   deriveActiveComposerTasks,
   deriveActiveWorkStartedAt,
-  deriveActivePlanState,
   deriveTurnPlans,
   findLatestProposedPlan,
   deriveWorkLogEntries,
@@ -2361,18 +2360,14 @@ function ChatViewContent(props: ChatViewProps) {
       activeLatestTurn?.turnId ?? null,
     );
   }, [activeLatestTurn?.turnId, activeThread?.proposedPlans, latestTurnSettled]);
-  const activePlan = useMemo(
-    () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
-  );
   const activeComposerTasks = useMemo(
     () =>
       deriveActiveComposerTasks({
-        activePlan,
+        activities: threadActivities,
         activeTurnId: activeLatestTurn?.turnId ?? null,
         latestTurnSettled,
       }),
-    [activeLatestTurn?.turnId, activePlan, latestTurnSettled],
+    [activeLatestTurn?.turnId, latestTurnSettled, threadActivities],
   );
   const workingStepLabel = activeComposerTasks?.progress.step ?? null;
   const showPlanFollowUpPrompt =

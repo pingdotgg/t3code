@@ -156,11 +156,12 @@ export interface ActiveComposerTasks {
 }
 
 export function deriveActiveComposerTasks(input: {
-  activePlan: ActivePlanState | null;
+  activities: ReadonlyArray<OrchestrationThreadActivity>;
   activeTurnId: TurnId | null;
   latestTurnSettled: boolean;
 }): ActiveComposerTasks | null {
-  const { activePlan, activeTurnId, latestTurnSettled } = input;
+  const { activities, activeTurnId, latestTurnSettled } = input;
+  const activePlan = deriveActivePlanState(activities, activeTurnId ?? undefined);
   if (latestTurnSettled || activeTurnId === null || activePlan?.turnId !== activeTurnId) {
     return null;
   }

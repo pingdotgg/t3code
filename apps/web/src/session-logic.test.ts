@@ -501,30 +501,27 @@ describe("deriveActivePlanState", () => {
 describe("deriveActiveComposerTasks", () => {
   it("restores unfinished tasks from the persisted plan for the active turn", () => {
     const activeTurnId = TurnId.make("turn-relaunch");
-    const activePlan = deriveActivePlanState(
-      [
-        makeActivity({
-          id: "plan-before-relaunch",
-          createdAt: "2026-08-24T12:00:00.000Z",
-          kind: "turn.plan.updated",
-          summary: "Plan updated",
-          tone: "info",
-          turnId: activeTurnId,
-          payload: {
-            plan: [
-              { step: "Inspect persistence", status: "completed" },
-              { step: "Restore Tasks tab", status: "inProgress" },
-              { step: "Verify reconnect", status: "pending" },
-            ],
-          },
-        }),
-      ],
-      activeTurnId,
-    );
+    const activities = [
+      makeActivity({
+        id: "plan-before-relaunch",
+        createdAt: "2026-08-24T12:00:00.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: activeTurnId,
+        payload: {
+          plan: [
+            { step: "Inspect persistence", status: "completed" },
+            { step: "Restore Tasks tab", status: "inProgress" },
+            { step: "Verify reconnect", status: "pending" },
+          ],
+        },
+      }),
+    ];
 
     expect(
       deriveActiveComposerTasks({
-        activePlan,
+        activities,
         activeTurnId,
         latestTurnSettled: false,
       }),
@@ -547,14 +544,18 @@ describe("deriveActiveComposerTasks", () => {
 
     expect(
       deriveActiveComposerTasks({
-        activePlan: {
-          createdAt: "2026-08-24T12:00:00.000Z",
-          turnId: activeTurnId,
-          steps: [
-            { step: "Inspect persistence", status: "completed" },
-            { step: "Restore Tasks tab", status: "completed" },
-          ],
-        },
+        activities: [
+          makeActivity({
+            kind: "turn.plan.updated",
+            turnId: activeTurnId,
+            payload: {
+              plan: [
+                { step: "Inspect persistence", status: "completed" },
+                { step: "Restore Tasks tab", status: "completed" },
+              ],
+            },
+          }),
+        ],
         activeTurnId,
         latestTurnSettled: false,
       }),
@@ -564,11 +565,13 @@ describe("deriveActiveComposerTasks", () => {
   it("does not attach a previous turn's plan to the active composer", () => {
     expect(
       deriveActiveComposerTasks({
-        activePlan: {
-          createdAt: "2026-08-24T12:00:00.000Z",
-          turnId: TurnId.make("turn-previous"),
-          steps: [{ step: "Old task", status: "inProgress" }],
-        },
+        activities: [
+          makeActivity({
+            kind: "turn.plan.updated",
+            turnId: "turn-previous",
+            payload: { plan: [{ step: "Old task", status: "inProgress" }] },
+          }),
+        ],
         activeTurnId: TurnId.make("turn-active"),
         latestTurnSettled: false,
       }),
@@ -580,11 +583,13 @@ describe("deriveActiveComposerTasks", () => {
 
     expect(
       deriveActiveComposerTasks({
-        activePlan: {
-          createdAt: "2026-08-24T12:00:00.000Z",
-          turnId: activeTurnId,
-          steps: [{ step: "Last task", status: "inProgress" }],
-        },
+        activities: [
+          makeActivity({
+            kind: "turn.plan.updated",
+            turnId: activeTurnId,
+            payload: { plan: [{ step: "Last task", status: "inProgress" }] },
+          }),
+        ],
         activeTurnId,
         latestTurnSettled: true,
       }),
