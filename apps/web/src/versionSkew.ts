@@ -1,4 +1,5 @@
 import type { EnvironmentId, ServerConfig, ServerSelfUpdateCapability } from "@t3tools/contracts";
+import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
@@ -23,16 +24,39 @@ function normalizeVersion(version: string | null | undefined): string | null {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
+/** Core `major.minor.patch`, dropping any prerelease or build suffix. */
+function versionCore(version: string): string {
+  return version.replace(/[-+].*$/, "");
+}
+
+/**
+ * The skew a user can act on: the connected server runs an older T3 Code than
+ * this client, so the server is the side that needs updating.
+ *
+ * Versions compare as semver on their core `major.minor.patch` only. Nightlies
+ * are `<core>-nightly.<date>.<run>` builds of the release they precede, so a
+ * stable client on a nightly server (or the reverse, at the same core) shares a
+ * wire contract and is not skew. A server *ahead* of the client is not skew
+ * either: the client is the stale side, and every consumer of this result tells
+ * the user to update their server. Versions that do not parse as semver fall
+ * back to plain string inequality.
+ */
 export function resolveVersionMismatch(
   serverVersion: string | null | undefined,
 ): VersionMismatch | null {
   const normalizedClientVersion = normalizeVersion(APP_VERSION);
   const normalizedServerVersion = normalizeVersion(serverVersion);
-  if (
-    !normalizedClientVersion ||
-    !normalizedServerVersion ||
-    normalizedClientVersion === normalizedServerVersion
-  ) {
+  if (!normalizedClientVersion || !normalizedServerVersion) {
+    return null;
+  }
+
+  const clientCore = versionCore(normalizedClientVersion);
+  const serverCore = versionCore(normalizedServerVersion);
+  const serverIsBehind =
+    parseSemver(clientCore) && parseSemver(serverCore)
+      ? compareSemverVersions(serverCore, clientCore) < 0
+      : normalizedServerVersion !== normalizedClientVersion;
+  if (!serverIsBehind) {
     return null;
   }
 
