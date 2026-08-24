@@ -33,13 +33,11 @@ function versionCore(version: string): string {
  * The skew a user can act on: the connected server runs an older T3 Code than
  * this client, so the server is the side that needs updating.
  *
- * Versions compare as semver on their core `major.minor.patch` only. Nightlies
- * are `<core>-nightly.<date>.<run>` builds of the release they precede, so a
- * stable client on a nightly server (or the reverse, at the same core) shares a
- * wire contract and is not skew. A server *ahead* of the client is not skew
- * either: the client is the stale side, and every consumer of this result tells
- * the user to update their server. Versions that do not parse as semver fall
- * back to plain string inequality.
+ * Two nightly builds compare their full versions, including the date and run.
+ * Other combinations compare their core `major.minor.patch` only, so a stable
+ * build and a nightly build with the same core do not cause an update warning.
+ * A server ahead of the client does not need an update. Versions that do not
+ * parse as semver fall back to plain string inequality.
  */
 export function resolveVersionMismatch(
   serverVersion: string | null | undefined,
@@ -52,9 +50,15 @@ export function resolveVersionMismatch(
 
   const clientCore = versionCore(normalizedClientVersion);
   const serverCore = versionCore(normalizedServerVersion);
+  const compareNightlyBuilds =
+    parseSemver(normalizedClientVersion)?.prerelease[0] === "nightly" &&
+    parseSemver(normalizedServerVersion)?.prerelease[0] === "nightly";
   const serverIsBehind =
     parseSemver(clientCore) && parseSemver(serverCore)
-      ? compareSemverVersions(serverCore, clientCore) < 0
+      ? compareSemverVersions(
+          compareNightlyBuilds ? normalizedServerVersion : serverCore,
+          compareNightlyBuilds ? normalizedClientVersion : clientCore,
+        ) < 0
       : normalizedServerVersion !== normalizedClientVersion;
   if (!serverIsBehind) {
     return null;
