@@ -26,4 +26,14 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.pullRequests,
     ).toBe(true);
   });
+
+  it("negotiates GitHub issue support independently", () => {
+    expect(decodeDescriptor(descriptor).capabilities.githubIssues).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, githubIssues: true },
+      }).capabilities.githubIssues,
+    ).toBe(true);
+  });
 });

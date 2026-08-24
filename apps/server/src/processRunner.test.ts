@@ -19,6 +19,7 @@ type ChildProcessCommand = {
   readonly args: ReadonlyArray<string>;
   readonly options: {
     readonly shell?: boolean | string;
+    readonly stdin?: "pipe" | "ignore";
   };
 };
 
@@ -86,6 +87,7 @@ describe("runProcess", () => {
         Effect.sync(() => {
           expect(command.command).toBe("fake");
           expect(command.args).toEqual(["stdout-bytes", "32"]);
+          expect(command.options.stdin).toBe("ignore");
           return makeHandle({ stdout: "x".repeat(32) });
         }),
       );
@@ -293,8 +295,9 @@ describe("runProcess", () => {
     Effect.gen(function* () {
       const stdinWritten = yield* Deferred.make<void>();
       const decoder = new TextDecoder();
-      const spawner = makeSpawner(() =>
-        Effect.succeed(
+      const spawner = makeSpawner((command) => {
+        expect(command.options.stdin).toBe("pipe");
+        return Effect.succeed(
           makeHandle({
             stdout: "stdin payload",
             stdin: Sink.forEach((chunk: Uint8Array) => {
@@ -305,8 +308,8 @@ describe("runProcess", () => {
             }),
             exitCode: Deferred.await(stdinWritten).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
           }),
-        ),
-      );
+        );
+      });
 
       const result = yield* runWith(spawner)({
         command: "fake",

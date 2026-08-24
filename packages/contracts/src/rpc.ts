@@ -99,6 +99,14 @@ import {
   PullRequestUpdateInput,
 } from "./pullRequest.ts";
 import {
+  GitHubIssueDetail,
+  GitHubIssueListInput,
+  GitHubIssueListResult,
+  GitHubIssueOperationError,
+  GitHubIssueRef,
+  GitHubIssueUnavailableError,
+} from "./githubIssue.ts";
+import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
@@ -304,6 +312,10 @@ export const WS_METHODS = {
   pullRequestsInvalidate: "pullRequests.invalidate",
   pullRequestsReviewerCandidates: "pullRequests.reviewerCandidates",
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
+
+  // GitHub issue methods
+  githubIssuesList: "githubIssues.list",
+  githubIssuesDetail: "githubIssues.detail",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -600,6 +612,24 @@ export const WsPullRequestsRequestReviewersRpc = Rpc.make(WS_METHODS.pullRequest
   payload: PullRequestReviewerRequestInput,
   success: Schema.Void,
   error: PullRequestRpcError,
+});
+
+const GitHubIssueRpcError = Schema.Union([
+  GitHubIssueUnavailableError,
+  GitHubIssueOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+export const WsGitHubIssuesListRpc = Rpc.make(WS_METHODS.githubIssuesList, {
+  payload: GitHubIssueListInput,
+  success: GitHubIssueListResult,
+  error: GitHubIssueRpcError,
+});
+
+export const WsGitHubIssuesDetailRpc = Rpc.make(WS_METHODS.githubIssuesDetail, {
+  payload: GitHubIssueRef,
+  success: GitHubIssueDetail,
+  error: GitHubIssueRpcError,
 });
 
 export const WsSourceControlLookupRepositoryRpc = Rpc.make(
@@ -1037,6 +1067,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsInvalidateRpc,
   WsPullRequestsReviewerCandidatesRpc,
   WsPullRequestsRequestReviewersRpc,
+  WsGitHubIssuesListRpc,
+  WsGitHubIssuesDetailRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,

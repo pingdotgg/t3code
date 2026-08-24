@@ -55,6 +55,8 @@ const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 
 const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
+  const executable = command.split(/[\\/]/).at(-1)?.toLowerCase();
+  const isGitHubCli = executable === "gh" || executable === "gh.exe";
 
   if (
     normalized.includes("authentication failed") ||
@@ -80,7 +82,7 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
   }
 
   if (
-    (command === "gh" &&
+    (isGitHubCli &&
       (normalized.includes("could not resolve to a pullrequest") ||
         normalized.includes("repository.pullrequest") ||
         normalized.includes("no pull requests found for branch") ||

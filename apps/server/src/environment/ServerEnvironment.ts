@@ -147,6 +147,7 @@ export const make = Effect.gen(function* () {
       repositoryIdentity: true,
       connectionProbe: true,
       pullRequests: true,
+      githubIssues: true,
       threadSettlement: true,
       threadSnooze: true,
       threadPinning: true,

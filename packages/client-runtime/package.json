@@ -71,6 +71,10 @@
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
     },
+    "./state/github-issues": {
+      "types": "./src/state/githubIssues.ts",
+      "default": "./src/state/githubIssues.ts"
+    },
     "./state/models": {
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"

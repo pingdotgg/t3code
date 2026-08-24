@@ -164,6 +164,10 @@ import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
+import {
+  GitHubIssueDetailPanel,
+  GitHubIssuesUnavailableState,
+} from "./githubIssue/GitHubIssueDetailPanel";
 import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
 import { AgentsPanel } from "./AgentsPanel";
 import {
@@ -2092,8 +2096,9 @@ function ChatViewContent(props: ChatViewProps) {
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
-  const pullRequestsCapabilityKnown = serverConfig !== null;
+  const sourceControlCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
+  const supportsGitHubIssues = serverConfig?.environment.capabilities.githubIssues === true;
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -6489,7 +6494,24 @@ function ChatViewContent(props: ChatViewProps) {
           initialGitScope={initialDiffPanelGitScope}
         />
       </Suspense>
-    ) : activeRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
+    ) : activeRightPanelSurface?.kind === "github-issue" && !sourceControlCapabilityKnown ? (
+      <PullRequestDetailGhost />
+    ) : activeRightPanelSurface?.kind === "github-issue" && !supportsGitHubIssues ? (
+      <GitHubIssuesUnavailableState
+        title="GitHub issues unavailable"
+        description="Update this environment's T3 Code server to browse GitHub issues."
+      />
+    ) : activeRightPanelSurface?.kind === "github-issue" ? (
+      <GitHubIssueDetailPanel
+        key={`${activeRightPanelSurface.repository}#${activeRightPanelSurface.number}`}
+        environmentId={activeThread.environmentId}
+        reference={{
+          projectId: activeRightPanelSurface.projectId as ProjectId,
+          repository: activeRightPanelSurface.repository,
+          number: activeRightPanelSurface.number,
+        }}
+      />
+    ) : activeRightPanelSurface?.kind === "pull-request" && !sourceControlCapabilityKnown ? (
       <PullRequestDetailGhost />
     ) : activeRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
       <PullRequestsUnavailableState

@@ -1,6 +1,7 @@
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
+  CircleDotIcon,
   GitPullRequestIcon,
   SettingsIcon,
 } from "lucide-react";
@@ -155,13 +156,18 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           ? "usage"
           : location.pathname === "/pull-requests"
             ? "pull-requests"
-            : null,
+            : location.pathname === "/issues"
+              ? "github-issues"
+              : null,
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
   // the link to lead somewhere.
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
+  );
+  const githubIssuesSupported = environments.some(
+    (environment) => environment.serverConfig?.environment.capabilities.githubIssues === true,
   );
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
@@ -175,6 +181,10 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handleSettingsClick = useCallback(() => {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
+  }, [closeMobileSidebar, navigate]);
+  const handleIssuesClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/issues", search: { state: "open" } });
   }, [closeMobileSidebar, navigate]);
 
   const handleUsageClick = useCallback(() => {
@@ -214,6 +224,13 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               icon={<GitPullRequestIcon />}
               label="Pull Requests"
               onClick={handlePullRequestsClick}
+            />
+          ) : null}
+          {githubIssuesSupported ? (
+            <SidebarUtilityItem
+              icon={<CircleDotIcon />}
+              label="GitHub Issues"
+              onClick={handleIssuesClick}
             />
           ) : null}
           <SidebarUtilityItem

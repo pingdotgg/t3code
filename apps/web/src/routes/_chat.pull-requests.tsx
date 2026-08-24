@@ -569,6 +569,11 @@ function PullRequestsRouteView() {
   const pageSize = page.key === filterKey ? page.size : PAGE_SIZE;
   const sentCursors = page.key === filterKey ? page.cursors : null;
   const sentRegrown = page.key === filterKey ? page.regrown : [];
+  // With the default page and no search, listQuery and baselineQuery point at
+  // the same cached query. Refresh it once: a second refresh cancels the first
+  // request and can leave a false failure banner after the replacement wins.
+  const listUsesBaselineQuery =
+    sentQuery.length === 0 && sentCursors === null && pageSize === PAGE_SIZE;
 
   // Typing a search, or clearing one, starts the list again at its first page. Without this the
   // paging state from before the search is still filed under these filters and comes back with
@@ -719,7 +724,7 @@ function PullRequestsRouteView() {
       setInvalidating(false);
     }
     refreshList();
-    baselineQuery.refresh();
+    if (!listUsesBaselineQuery) baselineQuery.refresh();
     authoredQuery.refresh();
     reviewingQuery.refresh();
     statsQuery.refresh();
@@ -865,9 +870,7 @@ function PullRequestsRouteView() {
   // a host with no cursor to continue from — where "more" means asking for a longer page — would
   // have its extra rows thrown away for the ninety-nine the baseline keeps answering with.
   const answered =
-    (sentQuery.length === 0 && sentCursors === null && pageSize === PAGE_SIZE
-      ? baselineQuery.data
-      : listQuery.data) ??
+    (listUsesBaselineQuery ? baselineQuery.data : listQuery.data) ??
     (loaded?.scope === scopeKey && loaded.query === sentQuery ? loaded.data : null);
   // Clearing a search returns to a list that has already been read, so it comes back at once
   // rather than after another round trip: the search was the temporary state, not the list.

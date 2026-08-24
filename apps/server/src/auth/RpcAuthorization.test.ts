@@ -54,6 +54,13 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("reads GitHub issues without granting mutation access", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.githubIssuesList)).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.githubIssuesDetail)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
+import { HostProcessPlatform, HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCli from "./GitHubCli.ts";
@@ -24,6 +25,17 @@ const layer = GitHubCli.layer.pipe(
       run: mockRun,
     }),
   ),
+  Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
+);
+
+const windowsLayer = GitHubCli.layer.pipe(
+  Layer.provide(
+    Layer.mock(VcsProcess.VcsProcess)({
+      run: mockRun,
+    }),
+  ),
+  Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+  Layer.provide(Layer.succeed(HostProcessWorkingDirectory, "C:\\t3")),
 );
 
 afterEach(() => {
@@ -31,6 +43,59 @@ afterEach(() => {
 });
 
 describe("GitHubCli.layer", () => {
+  it.effect("skips unrelated gh shims when resolving GitHub CLI on Windows", () => {
+    mockRun
+      .mockReturnValueOnce(
+        Effect.succeed(
+          processOutput("C:\\npm\\gh.exe\r\nC:\\Program Files\\GitHub CLI\\gh.exe\r\n"),
+        ),
+      )
+      .mockReturnValueOnce(Effect.succeed(processOutput("npm gh helper\n")))
+      .mockReturnValueOnce(Effect.succeed(processOutput("gh version 2.96.0 (test)\n")))
+      .mockReturnValueOnce(Effect.succeed(processOutput("main\n")));
+
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      const branch = yield* gh.getDefaultBranch({ cwd: "C:\\repo" });
+
+      assert.equal(branch, "main");
+      expect(mockRun).toHaveBeenNthCalledWith(1, {
+        operation: "GitHubCli.resolveExecutable",
+        command: "where.exe",
+        args: ["gh.exe"],
+        cwd: "C:\\t3",
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 64 * 1024,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(2, {
+        operation: "GitHubCli.resolveExecutable",
+        command: "C:\\npm\\gh.exe",
+        args: ["--version"],
+        cwd: "C:\\t3",
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 64 * 1024,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(3, {
+        operation: "GitHubCli.resolveExecutable",
+        command: "C:\\Program Files\\GitHub CLI\\gh.exe",
+        args: ["--version"],
+        cwd: "C:\\t3",
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 64 * 1024,
+      });
+      expect(mockRun).toHaveBeenNthCalledWith(4, {
+        operation: "GitHubCli.execute",
+        command: "C:\\Program Files\\GitHub CLI\\gh.exe",
+        args: ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"],
+        cwd: "C:\\repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(windowsLayer));
+  });
+
   it("does not classify a missing cwd as an unavailable gh executable", () => {
     const context = { command: "gh", cwd: "/repo" } as const;
     const missingCwd = new VcsProcessSpawnError({

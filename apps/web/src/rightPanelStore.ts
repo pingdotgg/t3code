@@ -21,6 +21,7 @@ export const RIGHT_PANEL_KINDS = [
   "preview",
   "terminal",
   "pull-request",
+  "github-issue",
   "agents",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
@@ -62,6 +63,13 @@ export type RightPanelSurface =
       repository: string;
       number: number;
     }
+  | {
+      id: `github-issue:${string}`;
+      kind: "github-issue";
+      projectId: string;
+      repository: string;
+      number: number;
+    }
   | { id: "agents"; kind: "agents" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
@@ -86,13 +94,17 @@ interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "github-issue">,
   ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
     target: { environmentId?: string; projectId: string; repository: string; number: number },
+  ) => void;
+  openGitHubIssue: (
+    ref: ScopedThreadRef,
+    target: { projectId: string; repository: string; number: number },
   ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
@@ -115,7 +127,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "github-issue">,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -127,7 +139,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "github-issue">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -210,6 +222,20 @@ export function updatePullRequestTabStatus<Status extends { state: unknown; isDr
     statuses[surfaceId]?.isDraft === status.isDraft
     ? statuses
     : { ...statuses, [surfaceId]: status };
+}
+
+export type GitHubIssueSurface = Extract<RightPanelSurface, { kind: "github-issue" }>;
+
+export function githubIssueSurface(target: {
+  projectId: string;
+  repository: string;
+  number: number;
+}): GitHubIssueSurface {
+  return {
+    id: `github-issue:${encodeURIComponent(target.projectId)}:${encodeURIComponent(target.repository)}:${target.number}`,
+    kind: "github-issue",
+    ...target,
+  };
 }
 
 const upsertSurface = (
@@ -298,6 +324,18 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           ...(typeof environmentId === "string" ? { environmentId } : {}),
                         }),
                       ];
+                    }
+                    if (surface.kind === "github-issue") {
+                      if (
+                        typeof surface.projectId !== "string" ||
+                        typeof surface.repository !== "string" ||
+                        typeof surface.number !== "number" ||
+                        !Number.isSafeInteger(surface.number) ||
+                        surface.number < 1
+                      ) {
+                        return [];
+                      }
+                      return [githubIssueSurface(surface)];
                     }
                     if (surface.kind !== "terminal") return [surface];
                     if (
@@ -389,6 +427,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             return upsertSurface(current, pullRequestSurface(target));
           }),
+        })),
+      openGitHubIssue: (ref, target) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, githubIssueSurface(target)),
+          ),
         })),
       openFile: (ref, relativePath, line) =>
         set((state) => ({

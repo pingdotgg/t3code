@@ -306,6 +306,10 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         ...((input.spawnCwd ?? input.cwd) ? { cwd: input.spawnCwd ?? input.cwd } : {}),
+        // On Windows, leaving an unused stdin pipe open can emit ECONNRESET after
+        // short-lived CLI processes exit. With no stream consumer attached that
+        // becomes an uncaught Socket error and takes down the server.
+        stdin: input.stdin === undefined ? "ignore" : "pipe",
         ...(input.env !== undefined
           ? {
               env: input.env,

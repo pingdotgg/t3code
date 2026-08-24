@@ -1,12 +1,12 @@
 # Source Control Integrations
 
-T3 Code connects to your Git hosting provider so you can create pull requests, review code, and manage repositories without leaving the app.
+T3 Code connects to your Git hosting provider so you can create pull requests, review code, browse GitHub issues, and manage repositories without leaving the app.
 
 ## Supported Providers
 
 T3 Code works with the platforms your team already uses:
 
-- **GitHub** – Pull requests, repository creation, and clone integration
+- **GitHub** – Pull requests, issues, repository creation, and clone integration
 - **GitLab** – Merge requests, repository publishing, and hosted clones
 - **Bitbucket** – Pull request workflows (via API token authentication)
 - **Azure DevOps** – Pull request support for Microsoft-hosted repositories
@@ -53,6 +53,12 @@ T3 Code works with the platforms your team already uses:
 - Works on GitHub, GitLab, and Bitbucket. Azure DevOps takes a new title and description; its
   comments stay read-only here, as they already were
 
+### Turn GitHub Issues Into Agent Tasks
+
+- Open **GitHub Issues** from the sidebar to browse issues across your GitHub-backed projects
+- Filter by project or state, search GitHub, and open an issue to read its description and discussion
+- Choose **Fix in a thread** to open the issue's project and place a focused task in the composer for an agent
+
 ### Know Your Setup at a Glance
 
 The **Source Control settings** page shows you exactly what's connected:
@@ -77,7 +83,7 @@ Run a quick **Rescan** after setting up a new machine or changing credentials.
    ```
 3. Open **Settings → Source Control** in T3 Code and verify GitHub shows as authenticated
 
-You can now clone, publish, and create pull requests.
+You can now clone, publish, create pull requests, and hand GitHub issues to an agent.
 
 ### For GitLab
 

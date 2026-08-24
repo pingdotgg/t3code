@@ -62,6 +62,12 @@ export interface ChangeRequestLink {
   readonly number: number;
 }
 
+export interface GitHubIssueLink {
+  readonly host: string;
+  readonly repository: string;
+  readonly number: number;
+}
+
 /** The host itself, one of its subdomains, or an install named after the provider. */
 function isHostOf(hostname: string, apex: string, label?: string): boolean {
   if (hostname === apex || hostname.endsWith(`.${apex}`)) return true;
@@ -135,6 +141,20 @@ export function changeRequestRepositoryUrl(targetUrl: string): string | null {
   return url.toString();
 }
 
+export function parseGitHubIssueUrl(targetUrl: string): GitHubIssueLink | null {
+  let url: URL;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  const host = url.hostname.toLowerCase();
+  if (!isHostOf(host, "github.com", "github")) return null;
+  const match = /^\/([^/]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u.exec(url.pathname);
+  return claim(host, match);
+}
+
 function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {
   const repository = match?.[1];
   const number = Number(match?.[2]);
@@ -172,6 +192,24 @@ export function findProjectForChangeRequest(
       repository !== null &&
       repository.toLowerCase() === link.repository.toLowerCase() &&
       pullRequestHostOf(identity, kind) === link.host.toLowerCase()
+    );
+  });
+}
+
+export function findProjectForGitHubIssue(
+  projects: ReadonlyArray<EnvironmentProject>,
+  link: GitHubIssueLink,
+): EnvironmentProject | undefined {
+  return projects.find((project) => {
+    const identity = project.repositoryIdentity;
+    if (!identity || identity.provider !== "github") return false;
+    const repository =
+      identity.displayName ??
+      (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null);
+    return (
+      repository !== null &&
+      repository.toLowerCase() === link.repository.toLowerCase() &&
+      pullRequestHostOf(identity, "github") === link.host.toLowerCase()
     );
   });
 }
@@ -214,6 +252,42 @@ export function useOpenChangeRequestLink(
     (event, targetUrl, targetThreadRef) => {
       if (shouldOpenPullRequestExternally(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
+      const parsedIssue = parseGitHubIssueUrl(targetUrl);
+      if (parsedIssue !== null) {
+        const environmentId = resolvedThreadRef?.environmentId ?? primaryEnvironmentId;
+        if (environmentId === null) return false;
+        // Beside a thread the panel reads on that thread's environment, so a project from another
+        // one could not be read there whatever its remote says: two environments can hold the same
+        // repository, and handing the panel the wrong one's id opens a surface that never loads.
+        const projects = allProjects.filter((project) => project.environmentId === environmentId);
+        const capabilities = serverConfigs.get(environmentId)?.environment.capabilities;
+        const issueProject =
+          capabilities?.githubIssues === true
+            ? findProjectForGitHubIssue(projects, parsedIssue)
+            : undefined;
+        if (issueProject === undefined) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        const repository = issueProject.repositoryIdentity?.displayName ?? parsedIssue.repository;
+        if (resolvedThreadRef) {
+          useRightPanelStore.getState().openGitHubIssue(resolvedThreadRef, {
+            projectId: issueProject.id,
+            repository,
+            number: parsedIssue.number,
+          });
+          return true;
+        }
+        void navigate({
+          to: "/issues",
+          search: {
+            state: "all",
+            repository,
+            number: parsedIssue.number,
+            selectedProjectId: issueProject.id,
+          },
+        });
+        return true;
+      }
       const parsed = parseChangeRequestUrl(targetUrl);
       if (parsed === null) return false;
       const reads = (environmentId: string) =>

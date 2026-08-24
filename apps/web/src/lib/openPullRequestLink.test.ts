@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   changeRequestRepositoryUrl,
   findProjectForChangeRequest,
+  findProjectForGitHubIssue,
   openPullRequestLink,
   parseChangeRequestUrl,
+  parseGitHubIssueUrl,
   PullRequestLinkOpenError,
   shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
@@ -222,6 +224,88 @@ describe("findProjectForChangeRequest", () => {
     expect(
       findProjectForChangeRequest(projects, {
         host: "github.com-evil.test",
+        repository: "pingdotgg/t3code",
+        number: 1,
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("parseGitHubIssueUrl", () => {
+  it("reads public and Enterprise GitHub issue URLs", () => {
+    expect(parseGitHubIssueUrl("https://github.com/T3Tools/T3Code/issues/123")).toEqual({
+      host: "github.com",
+      repository: "t3tools/t3code",
+      number: 123,
+    });
+    expect(
+      parseGitHubIssueUrl("https://github.acme.test/platform/api/issues/7#issuecomment-1"),
+    ).toEqual({
+      host: "github.acme.test",
+      repository: "platform/api",
+      number: 7,
+    });
+  });
+
+  it("leaves pull requests and unrelated links alone", () => {
+    for (const link of [
+      "https://github.com/t3tools/t3code/pull/123",
+      "https://github.com/t3tools/t3code/issues/new",
+      "https://example.test/t3tools/t3code/issues/123",
+      "not a url",
+    ]) {
+      expect(parseGitHubIssueUrl(link), link).toBeNull();
+    }
+  });
+});
+
+describe("findProjectForGitHubIssue", () => {
+  const project = (identity: Record<string, unknown>) =>
+    ({ id: "p1", repositoryIdentity: identity }) as never;
+
+  it("matches the GitHub project by repository and host", () => {
+    const projects = [
+      project({
+        canonicalKey: "github.com/pingdotgg/t3code",
+        provider: "github",
+        owner: "pingdotgg",
+        name: "t3code",
+      }),
+    ];
+    expect(
+      findProjectForGitHubIssue(projects, {
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 7966,
+      }),
+    ).toBe(projects[0]);
+  });
+
+  it("does not claim another host or a non-GitHub project", () => {
+    const projects = [
+      project({
+        canonicalKey: "github.com/pingdotgg/t3code",
+        provider: "github",
+        owner: "pingdotgg",
+        name: "t3code",
+      }),
+      project({
+        canonicalKey: "gitlab.com/pingdotgg/t3code",
+        provider: "gitlab",
+        owner: "pingdotgg",
+        name: "t3code",
+      }),
+    ];
+    expect(
+      findProjectForGitHubIssue(projects, {
+        host: "github.acme.test",
+        repository: "pingdotgg/t3code",
+        number: 1,
+      }),
+    ).toBeUndefined();
+    expect(
+      findProjectForGitHubIssue([projects[1]!], {
+        host: "gitlab.com",
         repository: "pingdotgg/t3code",
         number: 1,
       }),

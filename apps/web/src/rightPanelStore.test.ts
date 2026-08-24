@@ -3,6 +3,7 @@ import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  githubIssueSurface,
   migratePersistedRightPanelState,
   pullRequestSurfaceId,
   selectActiveRightPanel,
@@ -539,6 +540,21 @@ describe("rightPanelStore", () => {
       expect(second).not.toBe(first);
       expect(second["pull-request:1"]).toEqual(status(true));
     });
+  });
+
+  it("tracks one surface per GitHub issue", () => {
+    const first = { projectId: "project-a", repository: "pingdotgg/t3code", number: 7966 };
+    const second = { projectId: "project-a", repository: "pingdotgg/t3code", number: 7967 };
+    useRightPanelStore.getState().openGitHubIssue(refA, first);
+    useRightPanelStore.getState().openGitHubIssue(refA, second);
+    useRightPanelStore.getState().openGitHubIssue(refA, first);
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      githubIssueSurface(first).id,
+      githubIssueSurface(second).id,
+    ]);
+    expect(state.activeSurfaceId).toBe(githubIssueSurface(first).id);
   });
 
   it("tracks one surface per terminal session", () => {

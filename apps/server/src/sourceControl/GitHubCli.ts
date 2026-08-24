@@ -10,6 +10,7 @@ import {
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
+import { HostProcessPlatform, HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
@@ -18,6 +19,66 @@ import {
 } from "./gitHubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const EXECUTABLE_PROBE_TIMEOUT_MS = 5_000;
+const EXECUTABLE_PROBE_MAX_OUTPUT_BYTES = 64 * 1024;
+
+const resolveGitHubCliExecutable = Effect.fn("GitHubCli.resolveExecutable")(function* (
+  process: VcsProcess.VcsProcess["Service"],
+) {
+  if ((yield* HostProcessPlatform) !== "win32") return "gh";
+
+  const cwd = yield* HostProcessWorkingDirectory;
+  const candidates = yield* process
+    .run({
+      operation: "GitHubCli.resolveExecutable",
+      command: "where.exe",
+      args: ["gh.exe"],
+      cwd,
+      allowNonZeroExit: true,
+      timeoutMs: EXECUTABLE_PROBE_TIMEOUT_MS,
+      maxOutputBytes: EXECUTABLE_PROBE_MAX_OUTPUT_BYTES,
+    })
+    .pipe(
+      Effect.match({
+        onFailure: () => [] as ReadonlyArray<string>,
+        onSuccess: (output) =>
+          output.exitCode === 0
+            ? Array.from(
+                new Set(
+                  output.stdout
+                    .split(/\r?\n/g)
+                    .map((candidate) => candidate.trim())
+                    .filter((candidate) => candidate.length > 0),
+                ),
+              )
+            : [],
+      }),
+    );
+
+  for (const candidate of candidates) {
+    const isGitHubCli = yield* process
+      .run({
+        operation: "GitHubCli.resolveExecutable",
+        command: candidate,
+        args: ["--version"],
+        cwd,
+        allowNonZeroExit: true,
+        timeoutMs: EXECUTABLE_PROBE_TIMEOUT_MS,
+        maxOutputBytes: EXECUTABLE_PROBE_MAX_OUTPUT_BYTES,
+      })
+      .pipe(
+        Effect.match({
+          onFailure: () => false,
+          onSuccess: (output) => output.exitCode === 0 && /^gh version \d+/m.test(output.stdout),
+        }),
+      );
+    if (isGitHubCli) return candidate;
+  }
+
+  // Preserve the normal unavailable/command-error path when no genuine CLI
+  // can be verified. The execute call below will carry the useful failure.
+  return "gh.exe";
+});
 
 const gitHubCliFailureFields = {
   command: Schema.Literal("gh"),
@@ -325,12 +386,16 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
 
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
+  // `gh` is also the name of an unrelated npm package that installs both .cmd
+  // and .exe shims. Verify Windows PATH candidates once so all GitHub features
+  // use the genuine CLI, even when an npm bin directory appears first.
+  const executable = yield* resolveGitHubCliExecutable(process);
 
   const execute: GitHubCli["Service"]["execute"] = (input) =>
     process
       .run({
         operation: "GitHubCli.execute",
-        command: "gh",
+        command: executable,
         args: input.args,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,

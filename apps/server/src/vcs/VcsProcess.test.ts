@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   VcsProcessExitError,
@@ -34,13 +35,14 @@ const baseInput = {
 
 const captureProcessResult = (
   result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  input: VcsProcess.VcsProcessInput = baseInput,
 ) =>
   VcsProcess.make.pipe(
     Effect.provideService(
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({ run: () => result }),
     ),
-    Effect.flatMap((service) => service.run(baseInput)),
+    Effect.flatMap((service) => service.run(input)),
     Effect.flip,
   );
 
@@ -181,6 +183,32 @@ describe("VcsProcess.run", () => {
       });
       expect(error.message).not.toContain(providerStderr);
     }).pipe(provideLive),
+  );
+
+  it.effect("classifies GitHub failures when the CLI uses an absolute Windows path", () =>
+    Effect.gen(function* () {
+      const error = yield* captureProcessResult(
+        Effect.succeed({
+          stdout: "",
+          stderr: "pull request not found",
+          code: ChildProcessSpawner.ExitCode(1),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+        {
+          ...baseInput,
+          command: "C:\\Program Files\\GitHub CLI\\gh.exe",
+        },
+      );
+
+      expect(error).toMatchObject({
+        _tag: "VcsProcessExitError",
+        failureKind: "not-found",
+      });
+    }),
   );
 
   it.effect("retains spawn causes without exposing process arguments in the error message", () =>
