@@ -4,6 +4,7 @@ import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
   resolveDesktopBackendControlState,
+  resolveDesktopCurrentSessionScopes,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 
@@ -60,6 +61,30 @@ describe("resolveDesktopBackendControlState", () => {
         existingBackendStateLoadFailed: true,
       }),
     ).toEqual({ isAttached: false, canManageDesktopBackend: true });
+  });
+});
+
+describe("resolveDesktopCurrentSessionScopes", () => {
+  it("keeps Desktop administrative scopes until an attached session resolves", () => {
+    expect(
+      resolveDesktopCurrentSessionScopes({
+        isAttached: true,
+        hasDesktopBridge: true,
+        hasResolvedPrimarySession: false,
+        authenticatedSessionScopes: null,
+      }),
+    ).toContain("access:write");
+  });
+
+  it("uses the attached server scopes after the session resolves", () => {
+    expect(
+      resolveDesktopCurrentSessionScopes({
+        isAttached: true,
+        hasDesktopBridge: true,
+        hasResolvedPrimarySession: true,
+        authenticatedSessionScopes: ["orchestration:read"],
+      }),
+    ).toEqual(["orchestration:read"]);
   });
 });
 

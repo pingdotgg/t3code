@@ -4,6 +4,7 @@ import type {
   DesktopExistingLocalBackendState,
   DesktopWslState,
 } from "@t3tools/contracts";
+import { AuthAdministrativeScopes, type AuthEnvironmentScope } from "@t3tools/contracts";
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
 
@@ -22,6 +23,18 @@ export function resolveDesktopBackendControlState(input: {
         input.existingBackendStateLoadFailed ||
         input.existingBackendState?.attached === false),
   } as const;
+}
+
+export function resolveDesktopCurrentSessionScopes(input: {
+  readonly isAttached: boolean;
+  readonly hasDesktopBridge: boolean;
+  readonly hasResolvedPrimarySession: boolean;
+  readonly authenticatedSessionScopes: ReadonlyArray<AuthEnvironmentScope> | null;
+}): ReadonlyArray<AuthEnvironmentScope> | null {
+  if (input.isAttached && input.hasResolvedPrimarySession) {
+    return input.authenticatedSessionScopes;
+  }
+  return input.hasDesktopBridge ? AuthAdministrativeScopes : input.authenticatedSessionScopes;
 }
 
 /**

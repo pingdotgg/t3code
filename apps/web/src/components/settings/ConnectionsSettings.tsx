@@ -10,7 +10,6 @@ import { type ReactNode, memo, useCallback, useEffect, useId, useMemo, useState 
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
-  AuthAdministrativeScopes,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -45,6 +44,7 @@ import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
   resolveDesktopBackendControlState,
+  resolveDesktopCurrentSessionScopes,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 import {
@@ -1773,11 +1773,12 @@ export function ConnectionsSettings() {
   const authenticatedSessionScopes = primarySessionState.data?.authenticated
     ? (primarySessionState.data.scopes ?? null)
     : null;
-  const currentSessionScopes = isAttachedToExistingLocalBackend
-    ? authenticatedSessionScopes
-    : desktopBridge
-      ? AuthAdministrativeScopes
-      : authenticatedSessionScopes;
+  const currentSessionScopes = resolveDesktopCurrentSessionScopes({
+    isAttached: isAttachedToExistingLocalBackend,
+    hasDesktopBridge: Boolean(desktopBridge),
+    hasResolvedPrimarySession: primarySessionState.data !== null,
+    authenticatedSessionScopes,
+  });
   const currentAuthPolicy = primarySessionState.data?.auth.policy ?? null;
   const savedEnvironments = useMemo(
     () =>
