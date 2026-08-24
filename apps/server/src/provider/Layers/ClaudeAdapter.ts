@@ -4262,16 +4262,32 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
 
       const queryRuntime = yield* Effect.tryPromise({
-        try: async () =>
-          createQuery
-            ? createQuery({
-                prompt,
-                options: queryOptions,
-              })
-            : ((await import(/* @vite-ignore */ "@anthropic-ai/claude-agent-sdk")).query({
-                prompt,
-                options: queryOptions,
-              }) as ClaudeQueryRuntime),
+        try: async (signal) => {
+          const query =
+            createQuery ??
+            (await import(/* @vite-ignore */ "@anthropic-ai/claude-agent-sdk")).query;
+          signal.throwIfAborted();
+          const runtime = query({
+            prompt,
+            options: queryOptions,
+          }) as ClaudeQueryRuntime;
+          let closed = false;
+          const close = () => {
+            if (closed) return;
+            closed = true;
+            try {
+              runtime.close();
+            } catch {
+              // Interruption remains authoritative when late runtime cleanup fails.
+            }
+          };
+          signal.addEventListener("abort", close, { once: true });
+          if (signal.aborted) {
+            close();
+            signal.throwIfAborted();
+          }
+          return runtime;
+        },
         catch: (cause) =>
           new ProviderAdapterProcessError({
             provider: PROVIDER,
