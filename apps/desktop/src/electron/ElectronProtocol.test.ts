@@ -1,6 +1,11 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { handleMock, netFetchMock, unhandleMock } = vi.hoisted(() => ({
@@ -15,6 +20,8 @@ vi.mock("electron", () => ({
 }));
 
 import * as ElectronProtocol from "./ElectronProtocol.ts";
+
+const fileProtocolTestLayer = Layer.mergeAll(NodeServices.layer, ElectronProtocol.layer);
 
 describe("ElectronProtocol", () => {
   beforeEach(() => {
@@ -139,6 +146,104 @@ describe("ElectronProtocol", () => {
       assert.equal(yield* Effect.promise(() => response.text()), "ready");
       assert.equal(netFetchMock.mock.calls.length, 2);
     }).pipe(Effect.provide(ElectronProtocol.layer)),
+  );
+
+  it.effect("serves packaged renderer assets with SPA fallback", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const rendererRootPath = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-renderer-test-",
+      });
+      const assetsPath = path.join(rendererRootPath, "assets");
+      const assetPath = path.join(assetsPath, "app.js");
+      const indexPath = path.join(rendererRootPath, "index.html");
+      yield* fileSystem.makeDirectory(assetsPath);
+      yield* fileSystem.writeFileString(assetPath, "export const ready = true;\n");
+      yield* fileSystem.writeFileString(indexPath, "<!doctype html>\n");
+
+      let handler = Option.none<(request: Request) => Promise<Response>>();
+      handleMock.mockImplementation(
+        (_scheme: string, nextHandler: (request: Request) => Promise<Response>) => {
+          handler = Option.some(nextHandler);
+        },
+      );
+      netFetchMock.mockImplementation(() =>
+        Promise.resolve(
+          new Response("file", {
+            headers: { "content-type": "application/javascript" },
+          }),
+        ),
+      );
+
+      const protocol = yield* ElectronProtocol.ElectronProtocol;
+      yield* protocol.registerDesktopFileProtocol({
+        scheme: "t3code",
+        rendererRootPath,
+        clerkFrontendApiHostname: undefined,
+      });
+      const registeredHandler = Option.getOrThrow(handler);
+
+      const assetResponse = yield* Effect.promise(() =>
+        registeredHandler(new Request("t3code://app/assets/app.js")),
+      );
+      const routeResponse = yield* Effect.promise(() =>
+        registeredHandler(new Request("t3code://app/settings/connections")),
+      );
+      const assetUrl = yield* path.toFileUrl(assetPath);
+      const indexUrl = yield* path.toFileUrl(indexPath);
+
+      assert.equal(yield* Effect.promise(() => assetResponse.text()), "file");
+      assert.equal(assetResponse.headers.get("content-type"), "application/javascript");
+      assert.include(
+        assetResponse.headers.get("content-security-policy") ?? "",
+        "default-src 'self'",
+      );
+      assert.equal(yield* Effect.promise(() => routeResponse.text()), "file");
+      assert.deepEqual(netFetchMock.mock.calls, [
+        [assetUrl.href, { method: "GET" }],
+        [indexUrl.href, { method: "GET" }],
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(fileProtocolTestLayer)),
+  );
+
+  it.effect("rejects unsafe packaged renderer requests", () =>
+    Effect.gen(function* () {
+      let handler = Option.none<(request: Request) => Promise<Response>>();
+      handleMock.mockImplementation(
+        (_scheme: string, nextHandler: (request: Request) => Promise<Response>) => {
+          handler = Option.some(nextHandler);
+        },
+      );
+      netFetchMock.mockResolvedValue(new Response("unexpected"));
+
+      const protocol = yield* ElectronProtocol.ElectronProtocol;
+      yield* protocol.registerDesktopFileProtocol({
+        scheme: "t3code",
+        rendererRootPath: "/renderer",
+        clerkFrontendApiHostname: undefined,
+      });
+      const registeredHandler = Option.getOrThrow(handler);
+
+      const wrongHost = yield* Effect.promise(() =>
+        registeredHandler(new Request("t3code://other/assets/app.js")),
+      );
+      const unsupportedMethod = yield* Effect.promise(() =>
+        registeredHandler(new Request("t3code://app/assets/app.js", { method: "POST" })),
+      );
+      const traversal = yield* Effect.promise(() =>
+        registeredHandler(new Request("t3code://app/%2e%2e%2foutside.txt")),
+      );
+      const malformedPath = yield* Effect.promise(() =>
+        registeredHandler(new Request("t3code://app/%E0%A4%A")),
+      );
+
+      assert.equal(wrongHost.status, 404);
+      assert.equal(unsupportedMethod.status, 405);
+      assert.equal(traversal.status, 404);
+      assert.equal(malformedPath.status, 404);
+      assert.equal(netFetchMock.mock.calls.length, 0);
+    }).pipe(Effect.scoped, Effect.provide(ElectronProtocol.layer)),
   );
 
   it.effect("preserves protocol registration failures", () =>

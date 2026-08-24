@@ -114,6 +114,10 @@ describe("DesktopEnvironment", () => {
         environment.backendEntryPath,
         "/install/resources/server.asar/apps/server/dist/bin.mjs",
       );
+      assert.equal(
+        environment.rendererRootPath,
+        "/install/resources/server.asar/apps/server/dist/client",
+      );
     }),
   );
 
