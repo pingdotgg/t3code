@@ -219,11 +219,7 @@ export function applyGrokAcpModelSelection<E>(input: {
     requestedReasoningEffort !== undefined &&
     requestedReasoningEffort !== input.currentReasoningEffort;
 
-  if (
-    (!modelChanged && !effortChanged) ||
-    targetModelId === undefined ||
-    targetModelId === GROK_LEGACY_DEFAULT_MODEL_ID
-  ) {
+  if ((!modelChanged && !effortChanged) || targetModelId === undefined) {
     return Effect.succeed({
       modelId: input.currentModelId,
       reasoningEffort: input.currentReasoningEffort,

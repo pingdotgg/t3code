@@ -112,7 +112,7 @@ describe("applyGrokAcpModelSelection", () => {
     }),
   );
 
-  it.effect("never sends the legacy grok-build sentinel when only reasoning changes", () =>
+  it.effect("changes reasoning when the CLI reports grok-build as the current model", () =>
     Effect.gen(function* () {
       const { runtime, modelCalls } = makeRecordingRuntime();
       const result = yield* applyGrokAcpModelSelection({
@@ -123,8 +123,24 @@ describe("applyGrokAcpModelSelection", () => {
         requestedReasoningEffort: "high",
         mapError: (cause) => cause.message,
       });
-      expect(modelCalls).toEqual([]);
-      expect(result).toEqual({ modelId: "grok-build", reasoningEffort: "medium" });
+      expect(modelCalls).toEqual([{ modelId: "grok-build", meta: { reasoningEffort: "high" } }]);
+      expect(result).toEqual({ modelId: "grok-build", reasoningEffort: "high" });
+    }),
+  );
+
+  it.effect("uses the CLI-selected model when the sentinel changes reasoning", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-4.6",
+        currentReasoningEffort: "medium",
+        requestedModelId: "grok-build",
+        requestedReasoningEffort: "high",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([{ modelId: "grok-4.6", meta: { reasoningEffort: "high" } }]);
+      expect(result).toEqual({ modelId: "grok-4.6", reasoningEffort: "high" });
     }),
   );
 
