@@ -459,6 +459,23 @@ export function resolveThreadRowClassName(input: {
   );
 }
 
+// A worktree belongs to exactly one thread, so whichever ref is checked out
+// there is that thread's branch — an agent switching branches mid-run makes the
+// stamped `branch` stale, it does not make the checkout wrong. The shared local
+// checkout is the opposite: its ref is whatever any thread last switched it to,
+// so those rows keep the branch of record and let the mismatch warning explain
+// the difference. Detached HEAD reports no ref, so the stamp stays the fallback.
+export function resolveSidebarThreadBranchLabel(input: {
+  worktreePath: string | null;
+  threadBranch: string | null;
+  currentGitBranch: string | null;
+}): string | null {
+  if (input.worktreePath === null) {
+    return input.threadBranch;
+  }
+  return input.currentGitBranch ?? input.threadBranch;
+}
+
 // ── Sidebar thread status model ─────────────────────────────────────
 // Five visual states, three colors: color is reserved for "act now"
 // (approval), "in motion" (working), and "broken" (failed). Ready is the

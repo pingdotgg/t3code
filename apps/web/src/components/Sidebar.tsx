@@ -134,6 +134,7 @@ import {
   planPinnedReorder,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
+  resolveSidebarThreadBranchLabel,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
   shouldCreateNewThreadInCurrentProject,
@@ -264,6 +265,7 @@ function SidebarThreadTooltip({
   showInstanceBadge,
   modelInstanceId,
   modelLabel,
+  branchLabel,
   branchMismatch,
   terminalStatus,
   terminalProcessCount,
@@ -277,6 +279,7 @@ function SidebarThreadTooltip({
   showInstanceBadge: boolean;
   modelInstanceId: string;
   modelLabel: string;
+  branchLabel: string | null;
   branchMismatch: {
     threadBranch: string;
     currentBranch: string;
@@ -315,10 +318,10 @@ function SidebarThreadTooltip({
               <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
             </div>
           ) : null}
-          {thread.branch ? (
+          {branchLabel ? (
             <div className="flex min-w-0 items-center gap-2">
               <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
-              <div className="min-w-0 truncate text-foreground/75">{thread.branch}</div>
+              <div className="min-w-0 truncate text-foreground/75">{branchLabel}</div>
             </div>
           ) : null}
           {branchMismatch ? (
@@ -896,6 +899,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     activeThreadBranch: thread.branch,
     currentGitBranch: gitStatus.data?.refName ?? null,
   });
+  const branchLabel = resolveSidebarThreadBranchLabel({
+    worktreePath: thread.worktreePath,
+    threadBranch: thread.branch,
+    currentGitBranch: gitStatus.data?.refName ?? null,
+  });
   const prProvider = resolveDisplayedThreadPrProvider({
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
@@ -949,6 +957,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       showInstanceBadge={showInstanceBadge}
       modelInstanceId={modelInstanceId}
       modelLabel={modelLabel}
+      branchLabel={branchLabel}
       branchMismatch={branchMismatch}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
@@ -1538,10 +1547,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {/* Always the branch. The plan step used to take this slot while
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
-              {thread.branch ? (
+              {branchLabel ? (
                 <>
                   <ThreadWorktreeIndicator thread={thread} />
-                  <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+                  <span className="min-w-0 flex-1 truncate whitespace-nowrap">{branchLabel}</span>
                 </>
               ) : (
                 <span className="flex-1" />
@@ -1631,6 +1640,11 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     activeThreadBranch: thread.branch,
     currentGitBranch: gitStatus.data?.refName ?? null,
   });
+  const branchLabel = resolveSidebarThreadBranchLabel({
+    worktreePath: thread.worktreePath,
+    threadBranch: thread.branch,
+    currentGitBranch: gitStatus.data?.refName ?? null,
+  });
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
   const showInstanceBadge =
@@ -1697,6 +1711,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           showInstanceBadge={showInstanceBadge}
           modelInstanceId={modelInstanceId}
           modelLabel={modelLabel}
+          branchLabel={branchLabel}
           branchMismatch={branchMismatch}
           terminalStatus={terminalStatus}
           terminalProcessCount={runningTerminalIds.length}

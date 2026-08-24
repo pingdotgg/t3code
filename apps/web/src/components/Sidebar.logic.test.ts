@@ -19,6 +19,7 @@ import {
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarThreadBranchLabel,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
@@ -690,6 +691,60 @@ describe("isContextMenuPointerDown", () => {
         isMac: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveSidebarThreadBranchLabel", () => {
+  it("follows the worktree's live ref when the agent switched branches inside it", () => {
+    expect(
+      resolveSidebarThreadBranchLabel({
+        worktreePath: "/tmp/wt/thread-1",
+        threadBranch: "seth/original",
+        currentGitBranch: "seth/switched",
+      }),
+    ).toBe("seth/switched");
+  });
+
+  it("keeps the stamped branch for a worktree in detached HEAD", () => {
+    expect(
+      resolveSidebarThreadBranchLabel({
+        worktreePath: "/tmp/wt/thread-1",
+        threadBranch: "seth/original",
+        currentGitBranch: null,
+      }),
+    ).toBe("seth/original");
+  });
+
+  it("labels a worktree that was never stamped with its live ref", () => {
+    expect(
+      resolveSidebarThreadBranchLabel({
+        worktreePath: "/tmp/wt/thread-1",
+        threadBranch: null,
+        currentGitBranch: "seth/switched",
+      }),
+    ).toBe("seth/switched");
+  });
+
+  it("keeps the branch of record on the shared local checkout", () => {
+    // The checkout's ref belongs to whichever thread last switched it, so
+    // adopting it here would relabel every row in the project at once.
+    expect(
+      resolveSidebarThreadBranchLabel({
+        worktreePath: null,
+        threadBranch: "seth/original",
+        currentGitBranch: "someone-elses-branch",
+      }),
+    ).toBe("seth/original");
+  });
+
+  it("returns null when a local thread has no branch at all", () => {
+    expect(
+      resolveSidebarThreadBranchLabel({
+        worktreePath: null,
+        threadBranch: null,
+        currentGitBranch: null,
+      }),
+    ).toBeNull();
   });
 });
 
