@@ -849,6 +849,23 @@ describe("ProviderRuntimeIngestion", () => {
     expect(
       shellAfterActiveAbort.threads.find((entry) => entry.id === "thread-1")?.planProgress,
     ).toBeNull();
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-late-turn-aborted"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { reason: "Late duplicate abort." },
+    });
+    await harness.drain();
+    const afterLateAbort = await harness.readModel();
+    const threadAfterLateAbort = afterLateAbort.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(threadAfterLateAbort?.session?.status).toBe("interrupted");
+    expect(threadAfterLateAbort?.session?.activeTurnId).toBeNull();
   });
 
   it("accepts claude turn lifecycle when seeded thread id is a synthetic placeholder", async () => {
