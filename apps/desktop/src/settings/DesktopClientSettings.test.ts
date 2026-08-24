@@ -38,6 +38,7 @@ const clientSettings: ClientSettings = {
   planModeEnabled: false,
   showSkillsInSlashMenu: false,
   providerModelPreferences: {},
+  showContextWindowTokenCount: false,
   sidebarAutoSettleAfterDays: 3,
   sidebarAutoSettleOnMerge: true,
   sidebarProjectGroupingMode: "repository_path",
