@@ -6,19 +6,18 @@
  *
  * @module ClaudeAdapterLive
  */
-import {
-  type CanUseTool,
-  query,
-  type Options as ClaudeQueryOptions,
-  type PermissionMode,
-  type PermissionResult,
-  type PermissionUpdate,
-  type SDKMessage,
-  type SDKControlGetContextUsageResponse,
-  type SDKResultMessage,
-  type SettingSource,
-  type SDKUserMessage,
-  type ModelUsage,
+import type {
+  CanUseTool,
+  Options as ClaudeQueryOptions,
+  PermissionMode,
+  PermissionResult,
+  PermissionUpdate,
+  SDKMessage,
+  SDKControlGetContextUsageResponse,
+  SDKResultMessage,
+  SettingSource,
+  SDKUserMessage,
+  ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import {
@@ -1706,16 +1705,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
 
-  const createQuery =
-    options?.createQuery ??
-    ((input: {
-      readonly prompt: AsyncIterable<SDKUserMessage>;
-      readonly options: ClaudeQueryOptions;
-    }) =>
-      query({
-        prompt: input.prompt,
-        options: input.options,
-      }) as ClaudeQueryRuntime);
+  const createQuery = options?.createQuery;
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -4271,12 +4261,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.path_to_executable": claudeBinaryPath,
       });
 
-      const queryRuntime = yield* Effect.try({
-        try: () =>
-          createQuery({
-            prompt,
-            options: queryOptions,
-          }),
+      const queryRuntime = yield* Effect.tryPromise({
+        try: async () =>
+          createQuery
+            ? createQuery({
+                prompt,
+                options: queryOptions,
+              })
+            : ((await import(/* @vite-ignore */ "@anthropic-ai/claude-agent-sdk")).query({
+                prompt,
+                options: queryOptions,
+              }) as ClaudeQueryRuntime),
         catch: (cause) =>
           new ProviderAdapterProcessError({
             provider: PROVIDER,

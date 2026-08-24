@@ -20,12 +20,11 @@ import {
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
-import {
-  query as claudeQuery,
-  type Options as ClaudeQueryOptions,
-  type SlashCommand as ClaudeSlashCommand,
-  type SDKUserMessage,
-  type SettingSource,
+import type {
+  Options as ClaudeQueryOptions,
+  SlashCommand as ClaudeSlashCommand,
+  SDKUserMessage,
+  SettingSource,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import {
@@ -742,6 +741,9 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     return yield* Effect.tryPromise(async () => {
+      const { query: claudeQuery } = await import(
+        /* @vite-ignore */ "@anthropic-ai/claude-agent-sdk"
+      );
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
         // This prevents any prompt from reaching the Anthropic API.
