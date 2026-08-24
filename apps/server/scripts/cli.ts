@@ -172,6 +172,18 @@ const buildCmd = Command.make(
       } else {
         yield* Effect.logWarning("[cli] Web dist not found — skipping client bundle.");
       }
+
+      // The t3 Claude plugin is resolved at runtime from dist/claude-plugin next
+      // to the bundle (see resolveT3ClaudePluginDir); without this copy bundled
+      // builds silently lose the t3:handoff skill.
+      const pluginSource = path.join(serverDir, "claude-plugin");
+      const pluginTarget = path.join(serverDir, "dist/claude-plugin");
+      if (yield* fs.exists(pluginSource)) {
+        yield* fs.copy(pluginSource, pluginTarget);
+        yield* Effect.log("[cli] Bundled t3 Claude plugin into dist/claude-plugin");
+      } else {
+        yield* Effect.logWarning("[cli] Claude plugin not found — skipping plugin bundle.");
+      }
     }),
 ).pipe(Command.withDescription("Build the server package (tsdown + bundle web client)."));
 
