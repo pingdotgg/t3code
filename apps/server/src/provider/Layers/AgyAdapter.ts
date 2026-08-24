@@ -870,6 +870,15 @@ export const makeAgyAdapter = Effect.fn("makeAgyAdapter")(function* (
       Effect.timeoutOption(AGY_INIT_TIMEOUT_MS),
     );
     if (Option.isNone(initialized)) {
+      yield* stopChildProcess(context);
+      context.activeTurnId = undefined;
+      context.currentTurnState = undefined;
+      context.session = {
+        ...context.session,
+        status: "ready",
+        activeTurnId: undefined,
+        updatedAt: yield* nowIso,
+      };
       return yield* new ProviderAdapterRequestError({
         provider: PROVIDER,
         method: "sendTurn",

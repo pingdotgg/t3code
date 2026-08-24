@@ -127,7 +127,7 @@ export const AgyDriver: ProviderDriver<AgySettings, AgyDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Antigravity snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build the Antigravity provider snapshot.",
               cause,
             }),
         ),

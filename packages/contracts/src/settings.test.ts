@@ -307,6 +307,28 @@ describe("ServerSettingsPatch.providerInstances", () => {
   });
 });
 
+describe("ServerSettingsPatch.providers", () => {
+  it("preserves Antigravity provider updates", () => {
+    const patch = decodeServerSettingsPatch({
+      providers: {
+        agy: {
+          enabled: false,
+          binaryPath: "  /usr/local/bin/agy  ",
+          customModels: ["gemini-custom"],
+          launchArgs: "  --agent reviewer  ",
+        },
+      },
+    });
+
+    expect(patch.providers?.agy).toEqual({
+      enabled: false,
+      binaryPath: "/usr/local/bin/agy",
+      customModels: ["gemini-custom"],
+      launchArgs: "--agent reviewer",
+    });
+  });
+});
+
 describe("ServerSettingsPatch string normalization", () => {
   it("trims string settings while decoding patches", () => {
     const patch = decodeServerSettingsPatch({

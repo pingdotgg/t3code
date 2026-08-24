@@ -198,7 +198,7 @@ export const makeAgyTextGeneration = Effect.fn("makeAgyTextGeneration")(function
         (cause) =>
           new TextGenerationError({
             operation,
-            detail: `Failed to parse Antigravity output envelope: ${result.stdout}`,
+            detail: "Antigravity CLI returned unexpected output format.",
             cause,
           }),
       ),
