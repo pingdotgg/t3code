@@ -94,10 +94,9 @@ const extractT3HomeAssignment = (
   envValue: string,
   options?: { readonly remainderIsValue?: boolean },
 ): string | null => {
-  const marker = "T3CODE_HOME=";
-  const index = envValue.indexOf(marker);
-  if (index === -1) return null;
-  const rest = envValue.slice(index + marker.length);
+  const assignment = /(?:^|\s)T3CODE_HOME=/u.exec(envValue);
+  if (assignment === null) return null;
+  const rest = envValue.slice(assignment.index + assignment[0].length);
   if (rest.startsWith('"')) {
     let value = "";
     for (let index = 1; index < rest.length; index += 1) {
@@ -121,7 +120,9 @@ const extractT3HomeAssignment = (
     return value.replaceAll("%%", "%");
   }
   if (options?.remainderIsValue === true) {
-    return rest.length > 0 ? rest.replaceAll("%%", "%") : null;
+    const quote = rest.indexOf('"');
+    const value = quote === -1 ? rest : rest.slice(0, quote);
+    return value.length > 0 ? value.replaceAll("%%", "%") : null;
   }
   const space = rest.search(/\s/);
   const home = space === -1 ? rest : rest.slice(0, space);

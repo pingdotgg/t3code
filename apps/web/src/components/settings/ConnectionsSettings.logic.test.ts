@@ -14,6 +14,7 @@ describe("resolveDesktopBackendControlState", () => {
         hasDesktopBridge: true,
         supportsExistingBackendState: false,
         existingBackendState: null,
+        existingBackendStateLoadFailed: false,
       }),
     ).toEqual({ isAttached: false, canManageDesktopBackend: true });
     expect(
@@ -21,6 +22,7 @@ describe("resolveDesktopBackendControlState", () => {
         hasDesktopBridge: true,
         supportsExistingBackendState: true,
         existingBackendState: { available: true, enabled: true, attached: false, origin: null },
+        existingBackendStateLoadFailed: false,
       }),
     ).toEqual({ isAttached: false, canManageDesktopBackend: true });
   });
@@ -31,6 +33,7 @@ describe("resolveDesktopBackendControlState", () => {
         hasDesktopBridge: true,
         supportsExistingBackendState: true,
         existingBackendState: null,
+        existingBackendStateLoadFailed: false,
       }),
     ).toEqual({ isAttached: false, canManageDesktopBackend: false });
     expect(
@@ -43,8 +46,20 @@ describe("resolveDesktopBackendControlState", () => {
           attached: true,
           origin: "http://127.0.0.1:3773",
         },
+        existingBackendStateLoadFailed: false,
       }),
     ).toEqual({ isAttached: true, canManageDesktopBackend: false });
+  });
+
+  it("keeps managed controls visible when attachment state fails to load", () => {
+    expect(
+      resolveDesktopBackendControlState({
+        hasDesktopBridge: true,
+        supportsExistingBackendState: true,
+        existingBackendState: null,
+        existingBackendStateLoadFailed: true,
+      }),
+    ).toEqual({ isAttached: false, canManageDesktopBackend: true });
   });
 });
 

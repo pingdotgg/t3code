@@ -11,13 +11,16 @@ export function resolveDesktopBackendControlState(input: {
   readonly hasDesktopBridge: boolean;
   readonly supportsExistingBackendState: boolean;
   readonly existingBackendState: DesktopExistingLocalBackendState | null;
+  readonly existingBackendStateLoadFailed: boolean;
 }) {
   const isAttached = input.existingBackendState?.attached === true;
   return {
     isAttached,
     canManageDesktopBackend:
       input.hasDesktopBridge &&
-      (!input.supportsExistingBackendState || input.existingBackendState?.attached === false),
+      (!input.supportsExistingBackendState ||
+        input.existingBackendStateLoadFailed ||
+        input.existingBackendState?.attached === false),
   } as const;
 }
 

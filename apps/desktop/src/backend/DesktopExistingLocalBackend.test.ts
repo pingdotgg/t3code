@@ -45,6 +45,21 @@ describe("parseSystemdT3Home", () => {
     );
   });
 
+  it("matches only complete T3CODE_HOME assignment names", () => {
+    assert.equal(
+      parseSystemdT3Home("Environment=OLD_T3CODE_HOME=/wrong T3CODE_HOME=/srv/t3\n"),
+      "/srv/t3",
+    );
+    assert.equal(parseSystemdT3Home("Environment=OLD_T3CODE_HOME=/wrong\n"), null);
+  });
+
+  it("stops at the end of a quoted assignment in an assignment list", () => {
+    assert.equal(
+      parseSystemdT3Home('Environment="T3CODE_HOME=/srv/t3" "OTHER=value"\n'),
+      "/srv/t3",
+    );
+  });
+
   it("uses the last assignment so systemd drop-ins override the base unit", () => {
     assert.equal(
       parseSystemdT3Home(

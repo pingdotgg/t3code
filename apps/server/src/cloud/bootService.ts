@@ -34,11 +34,6 @@ import {
   type ServiceState,
 } from "./serviceProtocol.ts";
 
-export {
-  BOOT_SERVICE_LAUNCHD_LABEL,
-  BOOT_SERVICE_PLIST_FILE,
-  BOOT_SERVICE_UNIT_FILE,
-} from "@t3tools/shared/bootServiceIdentity";
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */

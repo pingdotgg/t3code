@@ -1749,6 +1749,8 @@ export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
   const [existingLocalBackendState, setExistingLocalBackendState] =
     useState<DesktopExistingLocalBackendState | null>(null);
+  const [existingLocalBackendStateLoadFailed, setExistingLocalBackendStateLoadFailed] =
+    useState(false);
   const [isUpdatingAttachExistingLocalBackend, setIsUpdatingAttachExistingLocalBackend] =
     useState(false);
   const { environments } = useEnvironments();
@@ -1766,6 +1768,7 @@ export function ConnectionsSettings() {
       hasDesktopBridge: Boolean(desktopBridge),
       supportsExistingBackendState: Boolean(desktopBridge?.getExistingLocalBackendState),
       existingBackendState: existingLocalBackendState,
+      existingBackendStateLoadFailed: existingLocalBackendStateLoadFailed,
     });
   const authenticatedSessionScopes = primarySessionState.data?.authenticated
     ? (primarySessionState.data.scopes ?? null)
@@ -1989,15 +1992,23 @@ export function ConnectionsSettings() {
   useEffect(() => {
     if (!desktopBridge?.getExistingLocalBackendState) {
       setExistingLocalBackendState(null);
+      setExistingLocalBackendStateLoadFailed(false);
       return;
     }
     let cancelled = false;
+    setExistingLocalBackendStateLoadFailed(false);
     void desktopBridge.getExistingLocalBackendState().then(
       (state) => {
-        if (!cancelled) setExistingLocalBackendState(state);
+        if (!cancelled) {
+          setExistingLocalBackendState(state);
+          setExistingLocalBackendStateLoadFailed(false);
+        }
       },
       () => {
-        if (!cancelled) setExistingLocalBackendState(null);
+        if (!cancelled) {
+          setExistingLocalBackendState(null);
+          setExistingLocalBackendStateLoadFailed(true);
+        }
       },
     );
     return () => {

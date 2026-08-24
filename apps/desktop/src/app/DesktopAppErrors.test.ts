@@ -1,9 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import {
-  DesktopBackendPortUnavailableError,
-  DesktopDevelopmentBackendPortRequiredError,
-} from "./DesktopApp.ts";
+import { DesktopBackendPortUnavailableError } from "../backend/DesktopBackendPort.ts";
+import { DesktopDevelopmentBackendPortRequiredError } from "./DesktopApp.ts";
 
 describe("DesktopApp errors", () => {
   it("preserves unavailable backend port context", () => {
