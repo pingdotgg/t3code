@@ -149,6 +149,18 @@ const npmGlobalUpdateArgs = (packageName: string) => [
   `${packageName}@latest`,
 ];
 
+function npmGlobalPrefix(context: InstallationContext, packageRoot: string) {
+  const normalizedRoot = normalize(context, packageRoot);
+  if (context.platform === "win32") {
+    const marker = "/node_modules/";
+    const markerIndex = normalizedRoot.lastIndexOf(marker);
+    return markerIndex > 0 ? packageRoot.replaceAll("\\", "/").slice(0, markerIndex) : null;
+  }
+  const marker = "/lib/node_modules/";
+  const markerIndex = normalizedRoot.lastIndexOf(marker);
+  return markerIndex > 0 ? packageRoot.replaceAll("\\", "/").slice(0, markerIndex) : null;
+}
+
 const nodeManagers = [
   {
     id: "vite-plus",
@@ -188,7 +200,7 @@ type NodeManager = (typeof nodeManagers)[number];
 interface NodeEvidence {
   readonly manager: NodeManager;
   readonly executable: string;
-  readonly root: string;
+  readonly updateRoot: string;
   readonly currentVersion: string | null;
 }
 
@@ -232,11 +244,29 @@ function detectNodePackage(input: ProviderMaintenanceDefinitionInput, manager: N
     root = yield* context.realPath(root);
     const manifest = json(yield* context.readTextFile(pathApi(context).join(root, "package.json")));
     if (text(manifest?.name) !== input.packageName) return notMatched;
-    if (!within(context, root, ownershipRoot)) return notMatched;
+    let updateRoot = resolvedManagerRoot;
+    if (manager.id === "npm") {
+      const prefix = npmGlobalPrefix(context, root);
+      if (!prefix) {
+        return undetermined("The npm global prefix owning this package could not be verified.");
+      }
+      if (
+        context.platform === "win32" &&
+        !within(context, root, ownershipRoot) &&
+        (!context.resolvedCommandPath ||
+          normalize(context, pathApi(context).dirname(context.resolvedCommandPath)) !==
+            normalize(context, prefix))
+      ) {
+        return undetermined("The npm wrapper does not belong to the detected global prefix.");
+      }
+      updateRoot = prefix;
+    } else if (!within(context, root, ownershipRoot)) {
+      return notMatched;
+    }
     return matched({
       manager,
       executable,
-      root: resolvedManagerRoot,
+      updateRoot,
       currentVersion: normalizeMaintenanceVersion(text(manifest?.version)),
     });
   });
@@ -252,11 +282,19 @@ function resolveNodePackage(input: ProviderMaintenanceDefinitionInput, manager: 
       evidence.manager.latestArgs(input.packageName),
       context.environment,
     );
-    const updateArgs = evidence.manager.updateArgs(input.packageName);
+    const updateArgs =
+      evidence.manager.id === "npm"
+        ? [
+            ...npmGlobalUpdateArgs(input.packageName).slice(0, 2),
+            "--prefix",
+            evidence.updateRoot,
+            ...npmGlobalUpdateArgs(input.packageName).slice(2),
+          ]
+        : evidence.manager.updateArgs(input.packageName);
     return resolved(input, context, {
       kind: evidence.manager.id,
       label: `Managed by ${evidence.manager.label}`,
-      root: evidence.root,
+      root: evidence.updateRoot,
       executable: evidence.executable,
       currentVersion: evidence.currentVersion,
       latestVersion: normalizeMaintenanceVersion(output(latest?.stdout)),
@@ -741,40 +779,6 @@ function wingetDefinition(input: ProviderMaintenanceDefinitionInput) {
   });
 }
 
-function legacyFallback(input: ProviderMaintenanceDefinitionInput) {
-  return defineInstallation<{ executable: string; root: string }>({
-    id: `${input.provider}-unknown`,
-    detect: Effect.fn("detect-legacy-npm")(function* (context) {
-      if (!context.isBareCommand) return notMatched;
-      const executable = yield* context.resolveCommand("npm");
-      if (!executable) return notMatched;
-      const probe = yield* context.run(executable, ["root", "-g"], context.environment);
-      const root = output(probe?.stdout);
-      return probe?.exitCode === 0 && root
-        ? matched({ executable, root })
-        : undetermined("Legacy npm target is unavailable.");
-    }),
-    resolve: Effect.fn("resolve-legacy-npm")(function* (evidence, context) {
-      const latest = yield* context.run(
-        evidence.executable,
-        ["view", `${input.packageName}@latest`, "version", "--json"],
-        context.environment,
-      );
-      return resolved(input, context, {
-        kind: "unknown",
-        label: "Unknown installation — legacy npm fallback",
-        root: evidence.root,
-        executable: evidence.executable,
-        currentVersion: null,
-        latestVersion: normalizeMaintenanceVersion(output(latest?.stdout)),
-        args: npmGlobalUpdateArgs(input.packageName),
-        displayCommand: `npm install -g --allow-scripts=${input.packageName} ${input.packageName}@latest`,
-        ownershipVerified: false,
-      });
-    }),
-  });
-}
-
 export function makeProviderInstallationCatalog(
   input: ProviderMaintenanceDefinitionInput,
 ): InstallationCatalog {
@@ -792,6 +796,5 @@ export function makeProviderInstallationCatalog(
         }),
       ),
     ].filter((definition): definition is NonNullable<typeof definition> => definition !== null),
-    fallbacks: [legacyFallback(input)],
   };
 }

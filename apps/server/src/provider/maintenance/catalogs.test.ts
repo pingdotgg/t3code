@@ -136,17 +136,49 @@ it.effect("proves Scoop ownership from the resolved shim and uses that Scoop and
   );
 });
 
-it.effect("uses npm only as the policy for an unknown bare command", () => {
-  const npm = "/usr/local/bin/npm";
+it.effect("keeps an unknown bare command manual-only", () => {
   return resolveInstallation(
     context({
       binaryPath: "codex",
       resolvedCommandPath: "/custom/bin/codex",
+      commands: { npm: "/usr/local/bin/npm" },
+    }),
+    catalog,
+  ).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Unknown installation",
+        ownershipVerified: false,
+        update: null,
+      });
+    }),
+  );
+});
+
+it.effect("pins npm updates to the verified package prefix", () => {
+  const packagePrefix = "/opt/node-a";
+  const packageRoot = `${packagePrefix}/lib/node_modules/@openai/codex`;
+  const npm = "/opt/node-b/bin/npm";
+  return resolveInstallation(
+    context({
+      binaryPath: "codex",
+      resolvedCommandPath: `${packagePrefix}/bin/codex`,
+      realCommandPath: `${packageRoot}/bin/codex.js`,
       commands: { npm },
+      files: {
+        [`${packageRoot}/package.json`]: JSON.stringify({
+          name: "@openai/codex",
+          version: "1.0.0",
+        }),
+      },
       probes: {
-        [`${npm} root -g`]: { stdout: "/usr/local/lib/node_modules", stderr: "", exitCode: 0 },
+        [`${npm} root -g`]: {
+          stdout: "/opt/node-b/lib/node_modules",
+          stderr: "",
+          exitCode: 0,
+        },
         [`${npm} view @openai/codex@latest version --json`]: {
-          stdout: '"2.0.0"',
+          stdout: '"1.1.0"',
           stderr: "",
           exitCode: 0,
         },
@@ -155,16 +187,22 @@ it.effect("uses npm only as the policy for an unknown bare command", () => {
     catalog,
   ).pipe(
     Effect.map((installation) => {
-      expect(installation.label).toBe("Unknown installation — legacy npm fallback");
-      expect(installation.ownershipVerified).toBe(false);
-      expect(installation.update).toMatchObject({
-        executable: npm,
-        args: [
-          "install",
-          "-g",
-          "--allow-scripts=@openai/codex",
-          "@openai/codex@latest",
-        ],
+      expect(installation).toMatchObject({
+        label: "Managed by npm",
+        ownershipVerified: true,
+        currentVersion: "1.0.0",
+        latestVersion: "1.1.0",
+        update: {
+          executable: npm,
+          args: [
+            "install",
+            "-g",
+            "--prefix",
+            packagePrefix,
+            "--allow-scripts=@openai/codex",
+            "@openai/codex@latest",
+          ],
+        },
       });
     }),
   );
@@ -234,7 +272,17 @@ it.effect("proves npm ownership through a Windows global command wrapper", () =>
         ownershipVerified: true,
         currentVersion: "1.0.0",
         latestVersion: "1.1.0",
-        update: { executable: npm },
+        update: {
+          executable: npm,
+          args: [
+            "install",
+            "-g",
+            "--prefix",
+            prefix,
+            "--allow-scripts=@openai/codex",
+            "@openai/codex@latest",
+          ],
+        },
       });
     }),
   );

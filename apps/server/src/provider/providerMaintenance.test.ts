@@ -199,9 +199,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       status: "behind_latest",
       currentVersion: "2.1.110",
       latestVersion: "2.1.117",
-      updateCommand:
-        "npm install -g --allow-scripts=@example/native-package-tool @example/native-package-tool@latest",
-      canUpdate: true,
+      updateCommand: null,
+      canUpdate: false,
       message: "Install the update now or review provider settings.",
     });
   });
@@ -333,7 +332,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  it("switches package-tool to Homebrew updates when the binary resolves through Homebrew", () => {
+  it("does not classify package-managed installations outside the catalog", () => {
     expect(
       packageToolUpdate.resolve({
         binaryPath: "/opt/homebrew/bin/package-tool",
@@ -344,15 +343,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     ).toEqual({
       provider: driver("packageTool"),
       packageName: "@example/package-tool",
-      update: {
-        command: "brew upgrade package-tool",
-
-        executable: "brew",
-
-        args: ["upgrade", "package-tool"],
-
-        lockKey: "homebrew",
-      },
+      update: null,
     });
   });
 
@@ -366,6 +357,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const nativePackageToolPath = NodePath.join(nativeBinDir, "native-package-tool");
         NodeFS.writeFileSync(nativePackageToolPath, "#!/bin/sh\n");
         NodeFS.chmodSync(nativePackageToolPath, 0o755);
+        const realNativePackageToolPath = NodeFS.realpathSync(nativePackageToolPath);
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           nativePackageToolUpdate,
@@ -382,11 +374,11 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           packageName: "@example/native-package-tool",
           ownershipVerified: true,
           update: {
-            executable: nativePackageToolPath,
+            executable: realNativePackageToolPath,
             args: ["update"],
             environment: {
               PATH: nativeBinDir,
-              PACKAGE_TOOL_INSTALL_DIR: nativeBinDir,
+              PACKAGE_TOOL_INSTALL_DIR: NodePath.dirname(realNativePackageToolPath),
             },
           },
         });
@@ -403,6 +395,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const scopedPackageToolPath = NodePath.join(nativeBinDir, "scoped-package-tool");
         NodeFS.writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
         NodeFS.chmodSync(scopedPackageToolPath, 0o755);
+        const realScopedPackageToolPath = NodeFS.realpathSync(scopedPackageToolPath);
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           scopedPackageToolUpdate,
@@ -419,58 +412,12 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           packageName: "@example/scoped-package-tool",
           ownershipVerified: true,
           update: {
-            executable: scopedPackageToolPath,
+            executable: realScopedPackageToolPath,
             args: ["upgrade"],
           },
         });
       }),
   );
-
-  it("switches native-package-tool to Homebrew updates when the binary resolves through Homebrew", () => {
-    expect(
-      nativePackageToolUpdate.resolve({
-        binaryPath: "/opt/homebrew/bin/native-package-tool",
-        env: {
-          PATH: "",
-        },
-      }),
-    ).toEqual({
-      provider: driver("nativePackageTool"),
-      packageName: "@example/native-package-tool",
-      update: {
-        command: "brew upgrade native-package-tool",
-
-        executable: "brew",
-
-        args: ["upgrade", "native-package-tool"],
-
-        lockKey: "homebrew",
-      },
-    });
-  });
-
-  it("switches scoped-package-tool to Homebrew updates when the binary resolves through Homebrew", () => {
-    expect(
-      scopedPackageToolUpdate.resolve({
-        binaryPath: "/opt/homebrew/bin/scoped-package-tool",
-        env: {
-          PATH: "",
-        },
-      }),
-    ).toEqual({
-      provider: driver("scopedPackageTool"),
-      packageName: "@example/scoped-package-tool",
-      update: {
-        command: "brew upgrade example/tap/scoped-package-tool",
-
-        executable: "brew",
-
-        args: ["upgrade", "example/tap/scoped-package-tool"],
-
-        lockKey: "homebrew",
-      },
-    });
-  });
 
   it.effect(
     "keeps npm updates for binaries symlinked into npm's global node_modules tree",
@@ -499,6 +446,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         NodeFS.chmodSync(packageBinPath, 0o755);
         NodeFS.symlinkSync(packageBinPath, symlinkPath);
         writeNodeManagerFixture(binDir, "npm", NodePath.join(tempDir, "lib", "node_modules"));
+        const realTempDir = NodeFS.realpathSync(tempDir);
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           packageToolUpdate,
@@ -517,19 +465,20 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           ownershipVerified: true,
           currentVersion: "1.0.0",
           update: {
-            command:
-              "npm install -g --allow-scripts=@example/package-tool @example/package-tool@latest",
+            command: `npm install -g --prefix ${realTempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
 
             executable: NodePath.join(binDir, "npm"),
 
             args: [
               "install",
               "-g",
+              "--prefix",
+              realTempDir,
               "--allow-scripts=@example/package-tool",
               "@example/package-tool@latest",
             ],
 
-            lockKey: `npm:${NodePath.join(tempDir, "lib", "node_modules")}`,
+            lockKey: `npm:${realTempDir}`,
           },
         });
       }),
@@ -568,6 +517,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         "pnpm",
         NodePath.join(tempDir, ".local", "share", "pnpm", "global", "5", "node_modules"),
       );
+      const realTempDir = NodeFS.realpathSync(tempDir);
 
       const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
         binaryPath: symlinkPath,
@@ -590,7 +540,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           args: ["add", "-g", "@example/package-tool@latest"],
 
           lockKey: `pnpm:${NodePath.join(
-            tempDir,
+            realTempDir,
             ".local",
             "share",
             "pnpm",
@@ -603,7 +553,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  it("allows the package's own install scripts in npm global updates", () => {
+  it("keeps package-managed resolvers manual until installation ownership is resolved", () => {
     const claudeUpdate = makeProviderMaintenanceResolver({
       provider: driver("claudeAgent"),
       packageName: "@anthropic-ai/claude-code",
@@ -619,21 +569,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     expect(claudeUpdate.resolve()).toEqual({
       provider: driver("claudeAgent"),
       packageName: "@anthropic-ai/claude-code",
-      update: {
-        command:
-          "npm install -g --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code@latest",
-
-        executable: "npm",
-
-        args: [
-          "install",
-          "-g",
-          "--allow-scripts=@anthropic-ai/claude-code",
-          "@anthropic-ai/claude-code@latest",
-        ],
-
-        lockKey: "npm-global",
-      },
+      update: null,
     });
   });
 

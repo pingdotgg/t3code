@@ -30,10 +30,7 @@ export const resolveInstallation = Effect.fn("resolveInstallation")(function* (
 ) {
   const owned = yield* resolveFirst(context, catalog.installations);
   if (owned._tag === "Matched") return owned.installation;
-  if (owned._tag === "Undetermined") return manualInstallation(context, true);
-  const fallback = yield* resolveFirst(context, catalog.fallbacks);
-  if (fallback._tag === "Matched") return fallback.installation;
-  return manualInstallation(context, fallback._tag === "Undetermined");
+  return manualInstallation(context, owned._tag === "Undetermined");
 });
 
 function manualInstallation(context: InstallationContext, failed: boolean): ResolvedInstallation {

@@ -98,7 +98,6 @@ export function defineInstallation<Evidence>(
 
 export interface InstallationCatalog {
   readonly installations: ReadonlyArray<AnyInstallationDefinition>;
-  readonly fallbacks: ReadonlyArray<AnyInstallationDefinition>;
 }
 
 export function installationIdentity(input: Readonly<Record<string, string | null>>): string {

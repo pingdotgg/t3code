@@ -214,202 +214,12 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   });
 }
 
-function makeNpmGlobalProviderMaintenanceCapabilities(
-  definition: ProviderMaintenanceDefinition,
-): ProviderMaintenanceCapabilities {
-  return makeProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.packageName,
-    updateExecutable: "npm",
-    // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
-    // and still exits 0, so a package whose postinstall finishes the install
-    // (claude copies its native binary over a placeholder stub) is left broken
-    // while the update reports success. Allow this one package's scripts.
-    // Older npm warns about the unknown config and continues.
-    updateArgs: [
-      "install",
-      "-g",
-      `--allow-scripts=${definition.packageName}`,
-      `${definition.packageName}@latest`,
-    ],
-    updateLockKey: "npm-global",
-  });
-}
-
-function makeBunGlobalProviderMaintenanceCapabilities(
-  definition: ProviderMaintenanceDefinition,
-): ProviderMaintenanceCapabilities {
-  return makeProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.packageName,
-    updateExecutable: "bun",
-    updateArgs: ["i", "-g", `${definition.packageName}@latest`],
-    updateLockKey: "bun-global",
-  });
-}
-
-function makePnpmGlobalProviderMaintenanceCapabilities(
-  definition: ProviderMaintenanceDefinition,
-): ProviderMaintenanceCapabilities {
-  return makeProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.packageName,
-    updateExecutable: "pnpm",
-    updateArgs: ["add", "-g", `${definition.packageName}@latest`],
-    updateLockKey: "pnpm-global",
-  });
-}
-
-function makeVitePlusGlobalProviderMaintenanceCapabilities(
-  definition: ProviderMaintenanceDefinition,
-): ProviderMaintenanceCapabilities {
-  return makeProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.packageName,
-    updateExecutable: "vp",
-    updateArgs: ["i", "-g", definition.packageName],
-    updateLockKey: "vite-plus-global",
-  });
-}
-
-function makeHomebrewProviderMaintenanceCapabilities(
-  definition: ProviderMaintenanceDefinition,
-): ProviderMaintenanceCapabilities {
-  if (!definition.homebrewFormula) {
-    return makeManualOnlyProviderMaintenanceCapabilities({
-      provider: definition.provider,
-      packageName: definition.packageName,
-    });
-  }
-
-  return makeProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.packageName,
-    updateExecutable: "brew",
-    updateArgs: ["upgrade", definition.homebrewFormula],
-    updateLockKey: "homebrew",
-  });
-}
-
-function makeNativeProviderMaintenanceCapabilities(
-  definition: ProviderMaintenanceDefinition,
-): ProviderMaintenanceCapabilities | null {
-  if (!definition.nativeUpdate) {
-    return null;
-  }
-
-  return makeProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.packageName,
-    updateExecutable: definition.nativeUpdate.executable,
-    updateArgs: definition.nativeUpdate.args,
-    updateLockKey: definition.nativeUpdate.lockKey,
-  });
-}
-
 export function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
 }
 
 export function normalizeCommandPath(commandPath: string): string {
   return commandPath.replaceAll("\\", "/").toLowerCase();
-}
-
-function isBunGlobalCommandPath(commandPath: string): boolean {
-  return normalizeCommandPath(commandPath).includes("/.bun/bin/");
-}
-
-function isVitePlusGlobalCommandPath(commandPath: string): boolean {
-  return normalizeCommandPath(commandPath).includes("/.vite-plus/bin/");
-}
-
-function isPnpmGlobalCommandPath(commandPath: string): boolean {
-  const normalized = normalizeCommandPath(commandPath);
-  return (
-    normalized.includes("/.local/share/pnpm/") ||
-    normalized.includes("/library/pnpm/") ||
-    normalized.includes("/local/share/pnpm/") ||
-    normalized.includes("/appdata/local/pnpm/") ||
-    normalized.includes("/pnpm/global/")
-  );
-}
-
-function isNpmGlobalCommandPath(commandPath: string): boolean {
-  const normalized = normalizeCommandPath(commandPath);
-  return (
-    normalized.includes("/node_modules/.bin/") ||
-    normalized.includes("/lib/node_modules/") ||
-    normalized.includes("/npm/node_modules/")
-  );
-}
-
-function isHomebrewCommandPath(commandPath: string): boolean {
-  const normalized = normalizeCommandPath(commandPath);
-  return (
-    normalized.includes("/opt/homebrew/cellar/") ||
-    normalized.includes("/usr/local/cellar/") ||
-    normalized.includes("/homebrew/cellar/") ||
-    normalized.includes("/opt/homebrew/caskroom/") ||
-    normalized.includes("/usr/local/caskroom/") ||
-    normalized.includes("/homebrew/caskroom/") ||
-    normalized.startsWith("/opt/homebrew/bin/") ||
-    normalized.startsWith("/usr/local/bin/")
-  );
-}
-
-function resolveLegacyProviderMaintenance(
-  definition: ProviderMaintenanceDefinition,
-  options?: ProviderMaintenanceCapabilityResolutionOptions,
-): ProviderMaintenanceCapabilities {
-  const binaryPath = nonEmptyString(options?.binaryPath);
-  if (!binaryPath) {
-    return makeNpmGlobalProviderMaintenanceCapabilities(definition);
-  }
-
-  const resolvedCommandPath =
-    options?.resolvedCommandPath ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
-
-  if (resolvedCommandPath) {
-    const commandPaths = [
-      resolvedCommandPath,
-      ...(options?.realCommandPath ? [options.realCommandPath] : []),
-    ];
-
-    const nativeUpdate = definition.nativeUpdate;
-    if (
-      nativeUpdate &&
-      commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))
-    ) {
-      return (
-        makeNativeProviderMaintenanceCapabilities(definition) ??
-        makeNpmGlobalProviderMaintenanceCapabilities(definition)
-      );
-    }
-    if (commandPaths.some(isVitePlusGlobalCommandPath)) {
-      return makeVitePlusGlobalProviderMaintenanceCapabilities(definition);
-    }
-    if (commandPaths.some(isBunGlobalCommandPath)) {
-      return makeBunGlobalProviderMaintenanceCapabilities(definition);
-    }
-    if (commandPaths.some(isPnpmGlobalCommandPath)) {
-      return makePnpmGlobalProviderMaintenanceCapabilities(definition);
-    }
-    if (commandPaths.some(isNpmGlobalCommandPath)) {
-      return makeNpmGlobalProviderMaintenanceCapabilities(definition);
-    }
-    if (commandPaths.some(isHomebrewCommandPath)) {
-      return makeHomebrewProviderMaintenanceCapabilities(definition);
-    }
-  }
-
-  if (!hasPathSeparator(binaryPath)) {
-    return makeNpmGlobalProviderMaintenanceCapabilities(definition);
-  }
-
-  return makeManualOnlyProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.packageName,
-  });
 }
 
 export function makeProviderMaintenanceResolver(
@@ -447,7 +257,11 @@ export function makeProviderMaintenanceResolver(
     ...(definition.wingetPackageId ? { wingetPackageId: definition.wingetPackageId } : {}),
   });
   return {
-    resolve: (options) => resolveLegacyProviderMaintenance(definition, options),
+    resolve: () =>
+      makeManualOnlyProviderMaintenanceCapabilities({
+        provider: definition.provider,
+        packageName: definition.packageName,
+      }),
     resolveInstallation: (context) => resolveInstallation(context, catalog),
   };
 }
@@ -467,11 +281,16 @@ function capabilitiesFromInstallation(
   return makeProviderMaintenanceCapabilities({
     provider,
     packageName: installation.packageName,
-    updateExecutable: installation.update?.executable ?? null,
-    updateArgs: installation.update?.args ?? [],
-    updateLockKey: installation.update ? installation.lockKey : null,
-    ...(installation.update ? { updateCommand: installation.update.displayCommand } : {}),
-    ...(installation.update?.environment
+    updateExecutable:
+      installation.ownershipVerified && installation.update ? installation.update.executable : null,
+    updateArgs:
+      installation.ownershipVerified && installation.update ? installation.update.args : [],
+    updateLockKey:
+      installation.ownershipVerified && installation.update ? installation.lockKey : null,
+    ...(installation.ownershipVerified && installation.update
+      ? { updateCommand: installation.update.displayCommand }
+      : {}),
+    ...(installation.ownershipVerified && installation.update?.environment
       ? { updateEnvironment: installation.update.environment }
       : {}),
     identityKey: installation.identityKey,
