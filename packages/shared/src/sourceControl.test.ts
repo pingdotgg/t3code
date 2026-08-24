@@ -28,6 +28,10 @@ describe("source control presentation", () => {
       shortLabel: "PR",
       singular: "pull request",
     });
+    expect(getChangeRequestTerminologyForKind("gitea")).toEqual({
+      shortLabel: "PR",
+      singular: "pull request",
+    });
   });
 
   it("falls back to generic change request copy for unknown providers", () => {
@@ -56,6 +60,9 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
     ).toBe("bitbucket");
+    expect(detectSourceControlProviderFromRemoteUrl("https://gitea.com/owner/repo.git")?.kind).toBe(
+      "gitea",
+    );
   });
 
   it("detects Azure DevOps SSH remotes", () => {
@@ -104,6 +111,9 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl("https://bitbucket.example.com/workspace/repo.git")
         ?.kind,
     ).toBe("bitbucket");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://gitea.example.com/owner/repo.git")?.kind,
+    ).toBe("gitea");
   });
 
   it("does not match provider names embedded in unrelated DNS labels", () => {
@@ -119,6 +129,9 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl(
         "https://notbitbucket.example.com/workspace/repo.git",
       )?.kind,
+    ).toBe("unknown");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://notgitea.example.com/owner/repo.git")?.kind,
     ).toBe("unknown");
   });
 
@@ -136,6 +149,9 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
     ).toBe("bitbucket");
+    expect(detectSourceControlProviderFromRemoteUrl("https://gitea.com/owner/repo.git")?.kind).toBe(
+      "gitea",
+    );
   });
 });
 
@@ -158,5 +174,59 @@ describe("isSshRemoteUrl", () => {
     expect(isSshRemoteUrl("/home/user/repos/project")).toBe(false);
     expect(isSshRemoteUrl("")).toBe(false);
     expect(isSshRemoteUrl("deploy@github.com/project/repo")).toBe(false);
+  });
+});
+
+describe("Gitea remote detection", () => {
+  it("names gitea.com and self-hosted installations distinctly", () => {
+    expect(detectSourceControlProviderFromRemoteUrl("https://gitea.com/owner/repo.git")).toEqual({
+      kind: "gitea",
+      name: "Gitea",
+      baseUrl: "https://gitea.com",
+    });
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://gitea.example.com/owner/repo.git"),
+    ).toEqual({
+      kind: "gitea",
+      name: "Gitea Self-Hosted",
+      baseUrl: "https://gitea.example.com",
+    });
+  });
+
+  it("detects gitea.com across HTTPS, SCP-style, and ssh:// remotes", () => {
+    for (const remote of [
+      "https://gitea.com/owner/repo.git",
+      "git@gitea.com:owner/repo.git",
+      "ssh://git@gitea.com/owner/repo.git",
+    ]) {
+      expect(detectSourceControlProviderFromRemoteUrl(remote)?.kind).toBe("gitea");
+    }
+  });
+
+  it("normalizes case and preserves explicit ports", () => {
+    expect(detectSourceControlProviderFromRemoteUrl("https://GITEA.example.com/o/r.git")).toEqual({
+      kind: "gitea",
+      name: "Gitea Self-Hosted",
+      baseUrl: "https://gitea.example.com",
+    });
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://gitea.example.com:3000/o/r.git"),
+    ).toEqual({
+      kind: "gitea",
+      name: "Gitea Self-Hosted",
+      baseUrl: "https://gitea.example.com:3000",
+    });
+  });
+
+  // Gitea is usually self-hosted on a hostname that says nothing about it. The static detector must
+  // leave those alone; GiteaSourceControlProvider refines them from `tea`'s authenticated logins.
+  it("leaves arbitrary self-hosted hostnames unknown for tea-based refinement", () => {
+    for (const remote of [
+      "git@git.example.com:owner/repo.git",
+      "https://code.home.internal/team/project.git",
+      "https://192.168.1.10:3000/team/project.git",
+    ]) {
+      expect(detectSourceControlProviderFromRemoteUrl(remote)?.kind).toBe("unknown");
+    }
   });
 });

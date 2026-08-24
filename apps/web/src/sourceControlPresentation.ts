@@ -52,6 +52,9 @@ export function getSourceControlPresentation(
         terminology: getChangeRequestTerminology(provider),
         Icon: BitbucketIcon,
       };
+    // Gitea ships no bundled logo here yet, so it borrows the neutral change-request mark rather
+    // than another host's brand. Swap in a real Gitea icon when one is added to Icons.tsx.
+    case "gitea":
     case "change-request":
       return {
         providerName: provider?.name || presentation.providerName,
