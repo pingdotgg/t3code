@@ -3075,7 +3075,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                   <ComposerStashMenu
                     entries={stashQueue}
-                    shortcutLabel={shortcutLabelForCommand(keybindings, "composer.stash")}
+                    shortcutLabel={shortcutLabelForCommand(keybindings, "composer.stash", {
+                      context: {
+                        terminalFocus: getTerminalFocusOwner() !== null,
+                        terminalOpen,
+                        modelPickerOpen: isComposerModelPickerOpen,
+                      },
+                    })}
                     onRestore={restoreStashEntry}
                     onDelete={deleteStashEntry}
                     onClose={() => setIsStashMenuOpen(false)}
