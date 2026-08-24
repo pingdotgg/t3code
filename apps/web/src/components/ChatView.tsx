@@ -2365,21 +2365,16 @@ function ChatViewContent(props: ChatViewProps) {
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
-  // Current step for the in-chat working row: only for the running turn's own
-  // plan (deriveActivePlanState falls back to older turns' plans, which must
-  // not label fresh work). Falls back to the first pending step so an
-  // all-pending freshly written plan labels the row, matching the chip and
-  // the server's planProgress.
-  const workingStepLabel = useMemo(() => {
-    if (!activePlan || activePlan.turnId !== (activeLatestTurn?.turnId ?? null)) {
-      return null;
-    }
-    return (
-      activePlan.steps.find((step) => step.status === "inProgress")?.step ??
-      activePlan.steps.find((step) => step.status === "pending")?.step ??
-      null
-    );
-  }, [activeLatestTurn?.turnId, activePlan]);
+  const activeComposerTasks = useMemo(
+    () =>
+      deriveActiveComposerTasks({
+        activePlan,
+        activeTurnId: activeLatestTurn?.turnId ?? null,
+        latestTurnSettled,
+      }),
+    [activeLatestTurn?.turnId, activePlan, latestTurnSettled],
+  );
+  const workingStepLabel = activeComposerTasks?.progress.step ?? null;
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&
@@ -4296,15 +4291,6 @@ function ChatViewContent(props: ChatViewProps) {
   // partition (same shell, same capability gate, same PR auto-settle input)
   // so the banner and the sidebar row never disagree.
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
-  const activeComposerTasks = useMemo(
-    () =>
-      deriveActiveComposerTasks({
-        activePlan,
-        activeTurnId: activeLatestTurn?.turnId ?? null,
-        latestTurnSettled,
-      }),
-    [activeLatestTurn?.turnId, activePlan, latestTurnSettled],
-  );
   const activeComposerTasksProgress = activeComposerTasks?.progress ?? null;
   const activeComposerTaskSteps = activeComposerTasks?.steps ?? null;
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
