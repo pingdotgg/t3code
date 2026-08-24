@@ -876,8 +876,11 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           );
           const contextWindowByModelId = new Map(
             (started.sessionSetupResult.models?.availableModels ?? []).flatMap((model) => {
+              const modelId = model.modelId.trim();
               const contextWindow = parseGrokAcpModelMetadata(model._meta).totalContextTokens;
-              return contextWindow === undefined ? [] : ([[model.modelId, contextWindow]] as const);
+              return modelId.length === 0 || contextWindow === undefined
+                ? []
+                : [[modelId, contextWindow] as const];
             }),
           );
           const now = yield* nowIso;

@@ -455,6 +455,8 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         makeMockGrokWrapper({
           T3_ACP_EMIT_XAI_MODEL_CHANGED: "1",
           T3_ACP_EMIT_XAI_PROMPT_METADATA: "1",
+          T3_ACP_GROK_MOCK_ALT_CONTEXT_TOKENS: "131072",
+          T3_ACP_PAD_GROK_MODEL_IDS: "1",
           T3_ACP_PROMPT_METADATA_MODEL_ID: "xai-routing-model",
         }),
       );
@@ -511,7 +513,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
           : undefined,
         {
           usedTokens: 2_048,
-          maxTokens: 262_144,
+          maxTokens: 131_072,
           lastUsedTokens: 1_024,
           lastInputTokens: 900,
           lastCachedInputTokens: 300,

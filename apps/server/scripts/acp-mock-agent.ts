@@ -26,6 +26,14 @@ const emitXAiModelChanged = process.env.T3_ACP_EMIT_XAI_MODEL_CHANGED === "1";
 const emitXAiModelChangedOnSetModel =
   process.env.T3_ACP_EMIT_XAI_MODEL_CHANGED_ON_SET_MODEL === "1";
 const effectiveReasoningOnSetModel = process.env.T3_ACP_EFFECTIVE_REASONING_ON_SET_MODEL?.trim();
+const padGrokModelIds = process.env.T3_ACP_PAD_GROK_MODEL_IDS === "1";
+const requestedGrokMockAltContextTokens = Number(
+  process.env.T3_ACP_GROK_MOCK_ALT_CONTEXT_TOKENS ?? "262144",
+);
+const grokMockAltContextTokens =
+  Number.isSafeInteger(requestedGrokMockAltContextTokens) && requestedGrokMockAltContextTokens > 0
+    ? requestedGrokMockAltContextTokens
+    : 262_144;
 const supportsImages = process.env.T3_ACP_SUPPORTS_IMAGES === "1";
 const failAuthentication = process.env.T3_ACP_FAIL_AUTHENTICATION === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
@@ -298,16 +306,19 @@ const grokReasoningEfforts = [
 ] as const;
 
 function grokAcpModels(): ReadonlyArray<AcpSchema.ModelInfo> {
-  return ["grok-build", "grok-mock-alt"].map((modelId) => ({
-    modelId,
-    name: modelId === "grok-build" ? "Grok Build" : "Grok Mock Alt",
-    _meta: {
-      supportsReasoningEffort: true,
-      reasoningEffort: currentReasoning,
-      reasoningEfforts: grokReasoningEfforts,
-      totalContextTokens: 262_144,
-    },
-  }));
+  return ["grok-build", "grok-mock-alt"].map((modelId) => {
+    const catalogModelId = padGrokModelIds ? ` ${modelId} ` : modelId;
+    return {
+      modelId: catalogModelId,
+      name: modelId === "grok-build" ? "Grok Build" : "Grok Mock Alt",
+      _meta: {
+        supportsReasoningEffort: true,
+        reasoningEffort: currentReasoning,
+        reasoningEfforts: grokReasoningEfforts,
+        totalContextTokens: modelId === "grok-mock-alt" ? grokMockAltContextTokens : 262_144,
+      },
+    };
+  });
 }
 
 function modelState(): AcpSchema.SessionModelState {
