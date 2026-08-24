@@ -1,16 +1,18 @@
 import type {
+  GitHubIssueCliMissingError,
+  GitHubIssueCliUnauthenticatedError,
   GitHubIssueDetail,
   GitHubIssueListEntry,
   GitHubIssueListInput,
   GitHubIssueListResult,
   GitHubIssueOperationError,
   GitHubIssueRef,
-  GitHubIssueUnavailableError,
   OrchestrationProjectShell,
 } from "@t3tools/contracts";
 import {
+  GitHubIssueCliMissingError as GitHubIssueCliMissingErrorClass,
+  GitHubIssueCliUnauthenticatedError as GitHubIssueCliUnauthenticatedErrorClass,
   GitHubIssueOperationError as GitHubIssueOperationErrorClass,
-  GitHubIssueUnavailableError as GitHubIssueUnavailableErrorClass,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -25,7 +27,10 @@ const PROJECT_CONCURRENCY = 8;
 const ISSUE_LIST_FIELDS = "number,title,url,author,assignees,labels,state,createdAt,updatedAt";
 const ISSUE_DETAIL_FIELDS = `${ISSUE_LIST_FIELDS},body,comments,closedAt`;
 
-type GitHubIssueError = GitHubIssueUnavailableError | GitHubIssueOperationError;
+/** Every project reads through the one `gh`, so a CLI failure ends the whole request. */
+type GitHubIssueCliError = GitHubIssueCliMissingError | GitHubIssueCliUnauthenticatedError;
+
+type GitHubIssueError = GitHubIssueCliError | GitHubIssueOperationError;
 
 interface GitHubProject {
   readonly project: OrchestrationProjectShell;
@@ -65,10 +70,10 @@ function cliRepository(project: GitHubProject): string {
 function fromCliError(operation: string) {
   return (error: GitHubCli.GitHubCliError): GitHubIssueError => {
     if (error._tag === "GitHubCliUnavailableError") {
-      return new GitHubIssueUnavailableErrorClass({ reason: "cli-missing", cause: error });
+      return new GitHubIssueCliMissingErrorClass({ cause: error });
     }
     if (error._tag === "GitHubCliAuthenticationError") {
-      return new GitHubIssueUnavailableErrorClass({ reason: "cli-unauthenticated", cause: error });
+      return new GitHubIssueCliUnauthenticatedErrorClass({ cause: error });
     }
     return new GitHubIssueOperationErrorClass({ operation, detail: error.detail, cause: error });
   };
@@ -156,7 +161,10 @@ export const make = Effect.gen(function* () {
       );
 
       const unavailable = batches.find(
-        (batch) => "error" in batch && batch.error._tag === "GitHubIssueUnavailableError",
+        (batch) =>
+          "error" in batch &&
+          (batch.error._tag === "GitHubIssueCliMissingError" ||
+            batch.error._tag === "GitHubIssueCliUnauthenticatedError"),
       );
       if (unavailable && "error" in unavailable) return yield* unavailable.error;
 

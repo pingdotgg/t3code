@@ -17,7 +17,14 @@ import { useEnvironmentQuery } from "../../state/query";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { PullRequestMarkdown } from "../pullRequest/PullRequestMarkdown";
 import { Button } from "../ui/button";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 
@@ -196,17 +203,12 @@ export function GitHubIssueDetailContent({
   );
 }
 
-export function GitHubIssuesUnavailableState({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
-  return <GitHubIssueEmptyState title={title} description={description} />;
-}
-
-function GitHubIssueEmptyState({
+/**
+ * Every empty answer this feature can give — the route's list and both detail surfaces — so the
+ * two never drift apart. `Empty` owns the spacing between its slots, and `EmptyContent` is the
+ * slot an action belongs in.
+ */
+export function GitHubIssueEmptyState({
   title,
   description,
   action,
@@ -223,8 +225,8 @@ function GitHubIssueEmptyState({
         </EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>
         <EmptyDescription>{description}</EmptyDescription>
-        {action ? <div className="mt-4">{action}</div> : null}
       </EmptyHeader>
+      {action ? <EmptyContent>{action}</EmptyContent> : null}
     </Empty>
   );
 }

@@ -11,7 +11,7 @@ import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-ro
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -166,9 +166,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
   );
-  const githubIssuesSupported = environments.some(
-    (environment) => environment.serverConfig?.environment.capabilities.githubIssues === true,
-  );
+  // Issues read the primary server alone, so a link gated on any other one would open a page
+  // that can only say "unavailable".
+  const primaryEnvironment = usePrimaryEnvironment();
+  const githubIssuesSupported =
+    primaryEnvironment?.serverConfig?.environment.capabilities.githubIssues === true;
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);

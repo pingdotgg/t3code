@@ -166,7 +166,7 @@ import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import {
   GitHubIssueDetailPanel,
-  GitHubIssuesUnavailableState,
+  GitHubIssueEmptyState,
 } from "./githubIssue/GitHubIssueDetailPanel";
 import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
 import { AgentsPanel } from "./AgentsPanel";
@@ -6497,7 +6497,7 @@ function ChatViewContent(props: ChatViewProps) {
     ) : activeRightPanelSurface?.kind === "github-issue" && !sourceControlCapabilityKnown ? (
       <PullRequestDetailGhost />
     ) : activeRightPanelSurface?.kind === "github-issue" && !supportsGitHubIssues ? (
-      <GitHubIssuesUnavailableState
+      <GitHubIssueEmptyState
         title="GitHub issues unavailable"
         description="Update this environment's T3 Code server to browse GitHub issues."
       />

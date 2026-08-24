@@ -99,12 +99,13 @@ import {
   PullRequestUpdateInput,
 } from "./pullRequest.ts";
 import {
+  GitHubIssueCliMissingError,
+  GitHubIssueCliUnauthenticatedError,
   GitHubIssueDetail,
   GitHubIssueListInput,
   GitHubIssueListResult,
   GitHubIssueOperationError,
   GitHubIssueRef,
-  GitHubIssueUnavailableError,
 } from "./githubIssue.ts";
 import {
   RelayClientInstallFailedError,
@@ -615,7 +616,8 @@ export const WsPullRequestsRequestReviewersRpc = Rpc.make(WS_METHODS.pullRequest
 });
 
 const GitHubIssueRpcError = Schema.Union([
-  GitHubIssueUnavailableError,
+  GitHubIssueCliMissingError,
+  GitHubIssueCliUnauthenticatedError,
   GitHubIssueOperationError,
   EnvironmentAuthorizationError,
 ]);

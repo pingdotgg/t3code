@@ -92,17 +92,21 @@ export const GitHubIssueDetail = Schema.Struct({
 });
 export type GitHubIssueDetail = typeof GitHubIssueDetail.Type;
 
-export class GitHubIssueUnavailableError extends Schema.TaggedErrorClass<GitHubIssueUnavailableError>()(
-  "GitHubIssueUnavailableError",
-  {
-    reason: Schema.Literals(["cli-missing", "cli-unauthenticated"]),
-    cause: Schema.optional(Schema.Defect()),
-  },
+export class GitHubIssueCliMissingError extends Schema.TaggedErrorClass<GitHubIssueCliMissingError>()(
+  "GitHubIssueCliMissingError",
+  { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return this.reason === "cli-missing"
-      ? "GitHub CLI (`gh`) is required to browse issues. Install it from https://cli.github.com/ and reload."
-      : "GitHub CLI is not authenticated. Run `gh auth login` and retry.";
+    return "GitHub CLI (`gh`) is required to browse issues. Install it from https://cli.github.com/ and reload.";
+  }
+}
+
+export class GitHubIssueCliUnauthenticatedError extends Schema.TaggedErrorClass<GitHubIssueCliUnauthenticatedError>()(
+  "GitHubIssueCliUnauthenticatedError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "GitHub CLI is not authenticated. Run `gh auth login` and retry.";
   }
 }
 

@@ -22,11 +22,10 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const EXECUTABLE_PROBE_TIMEOUT_MS = 5_000;
 const EXECUTABLE_PROBE_MAX_OUTPUT_BYTES = 64 * 1024;
 
-const resolveGitHubCliExecutable = Effect.fn("GitHubCli.resolveExecutable")(function* (
-  process: VcsProcess.VcsProcess["Service"],
-) {
+const resolveGitHubCliExecutable = Effect.fn("GitHubCli.resolveExecutable")(function* () {
   if ((yield* HostProcessPlatform) !== "win32") return "gh";
 
+  const process = yield* VcsProcess.VcsProcess;
   const cwd = yield* HostProcessWorkingDirectory;
   const candidates = yield* process
     .run({
@@ -389,7 +388,7 @@ export const make = Effect.gen(function* () {
   // `gh` is also the name of an unrelated npm package that installs both .cmd
   // and .exe shims. Verify Windows PATH candidates once so all GitHub features
   // use the genuine CLI, even when an npm bin directory appears first.
-  const executable = yield* resolveGitHubCliExecutable(process);
+  const executable = yield* resolveGitHubCliExecutable();
 
   const execute: GitHubCli["Service"]["execute"] = (input) =>
     process
