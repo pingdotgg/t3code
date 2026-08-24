@@ -2405,6 +2405,68 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
     }),
   );
 
+  it.effect("preserves the latest active-turn plan outside the activity hydration limit", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`
+        UPDATE projection_turns
+        SET state = 'running', completed_at = NULL
+        WHERE thread_id = 'thread-w' AND turn_id = 'turn-5'
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        VALUES (
+          'active-plan', 'thread-w', 'turn-5', 'info', 'turn.plan.updated', 'Plan updated',
+          '{"plan":[{"step":"Keep working","status":"inProgress"}]}', 1,
+          '2026-03-01T00:04:00.000Z'
+        )
+      `;
+      yield* sql`
+        WITH RECURSIVE activity_rows(sequence) AS (
+          SELECT 2
+          UNION ALL
+          SELECT sequence + 1 FROM activity_rows WHERE sequence < 501
+        )
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        SELECT
+          printf('activity-%04d', sequence),
+          'thread-w',
+          'turn-5',
+          'tool',
+          'tool.completed',
+          'ran tool',
+          printf('{"sequence":%d}', sequence),
+          sequence,
+          '2026-03-01T00:04:00.000Z'
+        FROM activity_rows
+      `;
+
+      const fullDetail = yield* snapshotQuery.getThreadDetailById(threadW);
+      assert.equal(fullDetail._tag, "Some");
+      if (fullDetail._tag === "Some") {
+        assert.equal(fullDetail.value.activities.length, 501);
+        assert.equal(fullDetail.value.activities[0]?.id, asEventId("active-plan"));
+      }
+
+      const windowedDetail = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+        turnLimit: 2,
+      });
+      assert.equal(windowedDetail._tag, "Some");
+      if (windowedDetail._tag === "Some") {
+        assert.equal(windowedDetail.value.thread.activities.length, 501);
+        assert.equal(windowedDetail.value.thread.activities[0]?.id, asEventId("active-plan"));
+      }
+    }),
+  );
+
   it.effect("a thread with no turns returns its content unwindowed on the first page", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
