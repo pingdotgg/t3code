@@ -193,7 +193,7 @@ private extension UIColor {
   }
 }
 
-public final class T3TerminalView: ExpoView, UITextFieldDelegate {
+public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInteractionDelegate {
   private static let minimumVerticalScrollStepPoints: CGFloat = 18
   private static let verticalScrollStepMultiplier: CGFloat = 1.15
 
@@ -201,6 +201,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private let inputField = TerminalInputField()
   private let focusTapGesture = UITapGestureRecognizer()
   private let scrollPanGesture = UIPanGestureRecognizer()
+  private let pasteLongPressGesture = UILongPressGestureRecognizer()
+  private lazy var pasteMenuInteraction = UIEditMenuInteraction(delegate: self)
   private var lastViewportSize: CGSize = .zero
   private var lastContentScale: CGFloat = 0
   private var lastReportedGrid: (cols: Int, rows: Int)?
@@ -328,6 +330,10 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     scrollPanGesture.maximumNumberOfTouches = 1
     scrollPanGesture.cancelsTouchesInView = false
     terminalViewport.addGestureRecognizer(scrollPanGesture)
+    pasteLongPressGesture.addTarget(self, action: #selector(handleViewportLongPress(_:)))
+    pasteLongPressGesture.cancelsTouchesInView = false
+    terminalViewport.addGestureRecognizer(pasteLongPressGesture)
+    terminalViewport.addInteraction(pasteMenuInteraction)
 
     addSubview(terminalViewport)
     addSubview(inputField)
@@ -393,9 +399,38 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
     return false
   }
 
+  /// Backs the Paste item of the long-press edit menu. Clipboard text is sent
+  /// through the same input path as the keyboard.
+  public func editMenuInteraction(
+    _ interaction: UIEditMenuInteraction,
+    menuFor configuration: UIEditMenuConfiguration,
+    suggestedActions: [UIMenuElement]
+  ) -> UIMenu? {
+    UIMenu(title: "", children: [
+      UIAction(title: "Paste") { [weak self] _ in
+        guard let text = UIPasteboard.general.string else { return }
+        self?.emitInput(TerminalInputSequence.normalizingReturn(text))
+      },
+    ])
+  }
+
   @objc
   private func handleViewportTap() {
     requestKeyboardFocus()
+  }
+
+  /// Offers the system edit menu where the finger landed, the way a text field does.
+  /// `hasStrings` keeps the menu away when there is nothing to paste, and reads the
+  /// clipboard only once the user taps Paste.
+  @objc
+  private func handleViewportLongPress(_ gesture: UILongPressGestureRecognizer) {
+    guard gesture.state == .began, UIPasteboard.general.hasStrings else { return }
+
+    let configuration = UIEditMenuConfiguration(
+      identifier: nil,
+      sourcePoint: gesture.location(in: terminalViewport)
+    )
+    pasteMenuInteraction.presentEditMenu(with: configuration)
   }
 
   @objc
