@@ -29,8 +29,16 @@ interface ProjectQueryState<A> {
   readonly refresh: () => void;
 }
 
-export function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: string) {
-  return projectEnvironment.listEntries({ environmentId, input: { cwd } });
+export function getProjectEntriesQueryAtom(
+  environmentId: EnvironmentId,
+  cwd: string,
+  includeHidden = false,
+) {
+  // Omit the flag when off so existing consumers keep sharing one atom key.
+  return projectEnvironment.listEntries({
+    environmentId,
+    input: includeHidden ? { cwd, includeHidden: true } : { cwd },
+  });
 }
 
 export function getProjectFileQueryAtom(
@@ -124,8 +132,9 @@ function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | 
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
+  includeHidden = false,
 ): ProjectQueryState<ProjectListEntriesResult> {
-  const atom = getProjectEntriesQueryAtom(environmentId, cwd);
+  const atom = getProjectEntriesQueryAtom(environmentId, cwd, includeHidden);
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);

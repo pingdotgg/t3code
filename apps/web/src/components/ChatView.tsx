@@ -1725,7 +1725,12 @@ function ChatViewContent(props: ChatViewProps) {
   const canMaximizeRightPanel = rightPanelOpen && !shouldUseRightPanelSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
-  const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUseRightPanelSheet;
+  const rightPanelSide = useClientSettings((settings) => settings.rightPanelSide);
+  const rightPanelDockedLeft = rightPanelSide === "left" && !shouldUseRightPanelSheet;
+  // Docked left (and not maximized), the chat column reaches the workspace's
+  // right edge, so the chat header is what sits under the titlebar controls.
+  const inlineRightPanelOwnsTitleBar =
+    rightPanelOpen && !shouldUseRightPanelSheet && (!rightPanelDockedLeft || rightPanelMaximized);
 
   useEffect(() => {
     if (!activeThreadRef) return;
@@ -2526,13 +2531,13 @@ function ChatViewContent(props: ChatViewProps) {
         continue;
       }
 
-      const serverPreviewUrls = serverMessage.attachments.flatMap((attachment) =>
-        attachment.type === "image" && attachment.previewUrl ? [attachment.previewUrl] : [],
+      const serverPreviews = serverMessage.attachments.flatMap((attachment) =>
+        attachment.previewUrl ? [{ previewUrl: attachment.previewUrl, type: attachment.type }] : [],
       );
       if (
-        serverPreviewUrls.length === 0 ||
-        serverPreviewUrls.length !== handoffPreviewUrls.length ||
-        serverPreviewUrls.some((previewUrl) => previewUrl.startsWith("blob:"))
+        serverPreviews.length === 0 ||
+        serverPreviews.length !== handoffPreviewUrls.length ||
+        serverPreviews.some((preview) => preview.previewUrl.startsWith("blob:"))
       ) {
         continue;
       }
@@ -2543,19 +2548,21 @@ function ChatViewContent(props: ChatViewProps) {
       const imageInstances: HTMLImageElement[] = [];
 
       const preloadServerPreviews = Promise.all(
-        serverPreviewUrls.map(
-          (previewUrl) =>
-            new Promise<void>((resolve, reject) => {
-              const image = new Image();
-              imageInstances.push(image);
-              const handleLoad = () => resolve();
-              const handleError = () =>
-                reject(new Error(`Failed to load server preview for ${messageId}.`));
-              image.addEventListener("load", handleLoad, { once: true });
-              image.addEventListener("error", handleError, { once: true });
-              image.src = previewUrl;
-            }),
-        ),
+        serverPreviews.map(({ previewUrl, type }) => {
+          // Only images are preload-verified; a video swaps to its asset URL
+          // directly and the <video> element re-buffers from there.
+          if (type !== "image") return Promise.resolve();
+          return new Promise<void>((resolve, reject) => {
+            const image = new Image();
+            imageInstances.push(image);
+            const handleLoad = () => resolve();
+            const handleError = () =>
+              reject(new Error(`Failed to load server preview for ${messageId}.`));
+            image.addEventListener("load", handleLoad, { once: true });
+            image.addEventListener("error", handleError, { once: true });
+            image.src = previewUrl;
+          });
+        }),
       );
 
       void preloadServerPreviews
@@ -5439,22 +5446,30 @@ function ChatViewContent(props: ChatViewProps) {
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
-        type: "image" as const,
+      composerImagesSnapshot.map(async (image) => {
+        const base = {
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(image.file),
+        };
+        return image.type === "video"
+          ? { type: "video" as const, ...base }
+          : { type: "image" as const, ...base };
+      }),
+    );
+    const optimisticAttachments = composerImagesSnapshot.map((image) => {
+      const base = {
+        id: image.id,
         name: image.name,
         mimeType: image.mimeType,
         sizeBytes: image.sizeBytes,
-        dataUrl: await readFileAsDataUrl(image.file),
-      })),
-    );
-    const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
+        previewUrl: image.previewUrl,
+      };
+      return image.type === "video"
+        ? { type: "video" as const, ...base }
+        : { type: "image" as const, ...base };
+    });
     const shouldAnchorFirstMessage =
       activeThread.latestTurn === null &&
       !timelineMessages.some((message) => message.role === "user");
@@ -6553,6 +6568,7 @@ function ChatViewContent(props: ChatViewProps) {
           }
           revealLine={activeFileSurface?.revealLine ?? null}
           revealRequestId={activeFileSurface?.revealRequestId ?? 0}
+          explorerSide={rightPanelDockedLeft ? "left" : "right"}
           onOpenFile={openFileSurface}
           onPendingChange={handleFilePendingChange}
         />
@@ -6568,7 +6584,12 @@ function ChatViewContent(props: ChatViewProps) {
     composerBannerItems.length > 0 || Boolean(threadSyncPhase && !activeEnvironmentUnavailable);
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    <div
+      className={cn(
+        "relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background",
+        rightPanelDockedLeft && "flex-row-reverse",
+      )}
+    >
       {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
       <div
         className={cn(
@@ -6582,6 +6603,12 @@ function ChatViewContent(props: ChatViewProps) {
           data-chat-header
           electron={isElectron}
           reserveNativeControls={reserveTitleBarControlInset && !inlineRightPanelOwnsTitleBar}
+          // Docked left (non-maximized), the panel owns the workspace's left
+          // edge and its tab bar reserves the collapsed-sidebar toggle inset;
+          // the chat header reserving it too would indent the breadcrumb.
+          reserveCollapsedSidebarInset={
+            !(rightPanelOpen && rightPanelDockedLeft && !rightPanelMaximized)
+          }
           className="relative bg-background"
         >
           {!rightPanelOpen ? panelLayoutControls : null}
@@ -6605,7 +6632,7 @@ function ChatViewContent(props: ChatViewProps) {
             }
             keybindings={keybindings}
             availableEditors={availableEditors}
-            rightPanelOpen={rightPanelOpen}
+            rightPanelOpen={rightPanelOpen && inlineRightPanelOwnsTitleBar}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
             onRunProjectScript={runProjectScript}
@@ -6984,6 +7011,7 @@ function ChatViewContent(props: ChatViewProps) {
       {!shouldUseRightPanelSheet && rightPanelOpen && activeThreadRef ? (
         <RightPanelTabs
           mode="inline"
+          side={rightPanelSide}
           maximized={rightPanelMaximized}
           surfaces={rightPanelState.surfaces}
           activeSurfaceId={activeRightPanelSurface?.id ?? null}

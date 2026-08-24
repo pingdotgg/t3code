@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import {
   isWorkspaceImagePreviewPath,
+  isWorkspaceMediaPreviewPath,
   isWorkspacePreviewEntryPath,
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
@@ -257,7 +258,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
-      claims = isWorkspaceImagePreviewPath(resolved.relativePath)
+      claims = isWorkspaceMediaPreviewPath(resolved.relativePath)
         ? {
             version: 1,
             kind: "workspace-file-exact",

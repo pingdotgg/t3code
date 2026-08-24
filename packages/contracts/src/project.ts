@@ -72,6 +72,9 @@ export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Typ
 
 export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  // Bypass the search index and walk the filesystem directly, so gitignored
+  // and dot-prefixed entries show up too (.git and node_modules stay hidden).
+  includeHidden: Schema.optional(Schema.Boolean),
 });
 export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
 

@@ -4,7 +4,11 @@ import type {
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import {
+  isWorkspaceAudioPreviewPath,
+  isWorkspaceImagePreviewPath,
+  isWorkspaceVideoPreviewPath,
+} from "@t3tools/shared/filePreview";
 import { VirtualizedFile, type SelectedLineRange } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/editor";
 import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
@@ -78,6 +82,12 @@ interface FilePreviewPanelProps {
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;
   onPendingChange: (relativePath: string, pending: boolean) => void;
+  /**
+   * Which side the explorer tree hugs. Defaults to "right" (panel docked on
+   * the workspace's right edge); a left-docked panel passes "left" so the
+   * tree stays on the outer edge and files open toward the chat.
+   */
+  explorerSide?: "left" | "right";
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
@@ -128,11 +138,12 @@ const FILE_LINK_REVEAL_UNSAFE_CSS = `
 `;
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 
-function WorkspaceImagePreview(props: {
+function WorkspaceMediaPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly absolutePath: string;
   readonly alt: string;
+  readonly kind: "image" | "video" | "audio";
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, {
     _tag: "workspace-file",
@@ -144,19 +155,39 @@ function WorkspaceImagePreview(props: {
   if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-        Unable to load workspace image.
+        Unable to load workspace {props.kind}.
       </div>
     );
   }
 
   return assetUrl._tag === "Success" ? (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
-      <img
-        className="max-h-full max-w-full object-contain"
-        src={assetUrl.url}
-        alt={props.alt}
-        onError={() => setFailedUrl(assetUrl.url)}
-      />
+      {props.kind === "image" ? (
+        <img
+          className="max-h-full max-w-full object-contain"
+          src={assetUrl.url}
+          alt={props.alt}
+          onError={() => setFailedUrl(assetUrl.url)}
+        />
+      ) : props.kind === "video" ? (
+        <video
+          className="max-h-full max-w-full object-contain"
+          src={assetUrl.url}
+          controls
+          preload="metadata"
+          aria-label={props.alt}
+          onError={() => setFailedUrl(assetUrl.url)}
+        />
+      ) : (
+        <audio
+          className="w-full max-w-md"
+          src={assetUrl.url}
+          controls
+          preload="metadata"
+          aria-label={props.alt}
+          onError={() => setFailedUrl(assetUrl.url)}
+        />
+      )}
     </div>
   ) : (
     <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
@@ -768,6 +799,7 @@ export default function FilePreviewPanel({
   revealRequestId,
   onOpenFile,
   onPendingChange,
+  explorerSide = "right",
 }: FilePreviewPanelProps) {
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
@@ -780,8 +812,18 @@ export default function FilePreviewPanel({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
-  const isImage = relativePath !== null && isWorkspaceImagePreviewPath(relativePath);
-  const file = useProjectFileQuery(environmentId, cwd, relativePath, !isImage);
+  const mediaKind: "image" | "video" | "audio" | null =
+    relativePath === null
+      ? null
+      : isWorkspaceImagePreviewPath(relativePath)
+        ? "image"
+        : isWorkspaceVideoPreviewPath(relativePath)
+          ? "video"
+          : isWorkspaceAudioPreviewPath(relativePath)
+            ? "audio"
+            : null;
+  const isMedia = mediaKind !== null;
+  const file = useProjectFileQuery(environmentId, cwd, relativePath, !isMedia);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   // Reading markdown rendered is a preference, not a property of one file. Keeping
   // it on the panel meant a thread switch dropped it and forced source back.
@@ -987,20 +1029,26 @@ export default function FilePreviewPanel({
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div
+        className={cn(
+          "flex min-h-0 flex-1 overflow-hidden",
+          explorerSide === "left" && "flex-row-reverse",
+        )}
+      >
         <div
           className={cn(
             "min-w-0 flex-1 flex-col overflow-hidden",
             relativePath ? "flex" : "hidden",
           )}
         >
-          {relativePath && isImage && absolutePath ? (
-            <WorkspaceImagePreview
+          {relativePath && mediaKind && absolutePath ? (
+            <WorkspaceMediaPreview
               key={absolutePath}
               environmentId={environmentId}
               threadRef={threadRef}
               absolutePath={absolutePath}
               alt={relativePath}
+              kind={mediaKind}
             />
           ) : relativePath && file.error && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
@@ -1068,7 +1116,12 @@ export default function FilePreviewPanel({
             className={cn(
               "flex min-h-0 shrink-0 bg-background",
               relativePath
-                ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
+                ? cn(
+                    "w-[min(22rem,46%)] min-w-64",
+                    explorerSide === "left"
+                      ? "border-r border-border/60"
+                      : "border-l border-border/60",
+                  )
                 : "min-w-0 flex-1",
             )}
           >
@@ -1080,7 +1133,7 @@ export default function FilePreviewPanel({
               selectedPath={relativePath}
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
-              {...(relativePath && !isImage ? { onRefreshSelectedFile: file.refresh } : {})}
+              {...(relativePath && !isMedia ? { onRefreshSelectedFile: file.refresh } : {})}
             />
           </aside>
         ) : null}

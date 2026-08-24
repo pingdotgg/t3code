@@ -14,10 +14,12 @@ import type {
 } from "@t3tools/contracts";
 import {
   isProviderSendTurnSupportedImageMimeType,
+  isProviderSendTurnSupportedVideoMimeType,
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  PROVIDER_SEND_TURN_MAX_VIDEO_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -1558,6 +1560,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const stagedAttachmentById = new Map<string, PersistedComposerImageAttachment>();
         await Promise.all(
           composerImages.map(async (image) => {
+            // Videos are too large for the localStorage-backed draft store;
+            // they stay in-memory only and show the non-persisted badge.
+            if (image.type !== "image") return;
             try {
               const dataUrl = await readFileAsDataUrl(image.file);
               stagedAttachmentById.set(image.id, {
@@ -2494,16 +2499,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const acceptedFiles: File[] = [];
     let error: string | null = null;
     for (const file of files) {
-      if (!file.type.startsWith("image/")) {
-        error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
+      if (file.type.startsWith("video/")) {
+        if (!isProviderSendTurnSupportedVideoMimeType(file.type)) {
+          error = `'${file.name}' is not a supported video type. Attach MP4, MOV, or WebM videos.`;
+          continue;
+        }
+        if (file.size === 0 || file.size > PROVIDER_SEND_TURN_MAX_VIDEO_BYTES) {
+          error = `'${file.name}' is too large to attach. Videos can be up to ${Math.floor(PROVIDER_SEND_TURN_MAX_VIDEO_BYTES / (1024 * 1024))} MB.`;
+          continue;
+        }
+      } else if (!file.type.startsWith("image/")) {
+        error = `Unsupported file type for '${file.name}'. Please attach image or video files only.`;
         continue;
-      }
-      if (!isProviderSendTurnSupportedImageMimeType(file.type)) {
+      } else if (!isProviderSendTurnSupportedImageMimeType(file.type)) {
         error = `'${file.name}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
         continue;
       }
       if (reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`;
         break;
       }
       acceptedFiles.push(file);
@@ -2517,6 +2530,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const nextImages: ComposerImageAttachment[] = [];
       let compressionError: string | null = null;
       for (const file of acceptedFiles) {
+        if (file.type.startsWith("video/")) {
+          // Videos ship byte-for-byte; there is no client-side recompression.
+          nextImages.push({
+            type: "video",
+            id: randomUUID(),
+            name: file.name || "video",
+            mimeType: file.type,
+            sizeBytes: file.size,
+            previewUrl: URL.createObjectURL(file),
+            file,
+          });
+          continue;
+        }
         // Images over the wire cap are downscaled to fit rather than
         // refused; files already within it pass through byte-for-byte.
         const compressed = await compressImageToByteLimit(file, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
@@ -2572,10 +2598,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) return;
-    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
-    if (imageFiles.length === 0) return;
+    const mediaFiles = files.filter(
+      (file) => file.type.startsWith("image/") || file.type.startsWith("video/"),
+    );
+    if (mediaFiles.length === 0) return;
     event.preventDefault();
-    void addComposerImages(imageFiles);
+    void addComposerImages(mediaFiles);
   };
 
   const insertComposerTextAtEnd = (
@@ -3161,7 +3189,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           key={image.id}
                           className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
                         >
-                          {image.previewUrl ? (
+                          {image.previewUrl && image.type === "video" ? (
+                            <video
+                              src={image.previewUrl}
+                              muted
+                              playsInline
+                              preload="metadata"
+                              aria-label={image.name}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : image.previewUrl ? (
                             <button
                               type="button"
                               className="h-full w-full cursor-zoom-in"

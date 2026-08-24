@@ -72,7 +72,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { resolveAttachmentPath, videoAttachmentPromptText } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
@@ -1265,6 +1265,17 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
 
   for (const attachment of input.attachments ?? []) {
     if (attachment.type !== "image") {
+      // Claude ingests no raw video; hand the agent the stored file's path.
+      const videoPath = resolveAttachmentPath({
+        attachmentsDir: dependencies.attachmentsDir,
+        attachment,
+      });
+      if (videoPath) {
+        sdkContent.push({
+          type: "text",
+          text: videoAttachmentPromptText({ name: attachment.name, path: videoPath }),
+        });
+      }
       continue;
     }
 

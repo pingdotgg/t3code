@@ -9,11 +9,15 @@ export interface ExpandedImagePreview {
 }
 
 export function buildExpandedImagePreview(
-  images: ReadonlyArray<{ id: string; name: string; previewUrl?: string }>,
+  images: ReadonlyArray<{ id: string; name: string; previewUrl?: string; type?: string }>,
   selectedImageId: string,
 ): ExpandedImagePreview | null {
+  // The dialog renders every entry as an <img>; attachment lists can carry
+  // videos alongside images, and those must not enter the gallery.
   const previewableImages = images.flatMap((image) =>
-    image.previewUrl ? [{ id: image.id, src: image.previewUrl, name: image.name }] : [],
+    image.previewUrl && image.type !== "video"
+      ? [{ id: image.id, src: image.previewUrl, name: image.name }]
+      : [],
   );
   if (previewableImages.length === 0) {
     return null;

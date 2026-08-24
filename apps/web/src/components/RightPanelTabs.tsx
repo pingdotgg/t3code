@@ -44,6 +44,8 @@ import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
+  /** Which side of the workspace the panel docks on (inline mode only). */
+  side?: "left" | "right";
   maximized?: boolean;
   /** Forwarded to PreviewPanelShell so this surface persists its own width. */
   widthStorageKey?: string;
@@ -772,6 +774,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   return (
     <PreviewPanelShell
       mode={props.mode}
+      {...(props.side !== undefined ? { side: props.side } : {})}
       {...(props.maximized !== undefined ? { maximized: props.maximized } : {})}
       {...(props.widthStorageKey !== undefined ? { widthStorageKey: props.widthStorageKey } : {})}
       {...(props.defaultWidth !== undefined ? { defaultWidth: props.defaultWidth } : {})}
@@ -782,9 +785,21 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           // The sheet overlays from the viewport top, so its tab bar keeps
           // the titlebar's height: a compact row re-centers the layout
           // controls a few pixels higher and the cluster jumps on open.
-          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
-          ownsDesktopTitleBar && "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
-          props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+          // Docked left (non-maximized) the titlebar controls sit over the
+          // chat column instead, so the tab bar keeps its full width.
+          props.mode === "inline" &&
+            !props.layoutControls &&
+            (props.side !== "left" || props.maximized)
+            ? "pr-28"
+            : "pr-3",
+          ownsDesktopTitleBar &&
+            (props.side !== "left" || props.maximized) &&
+            "wco:pr-[calc(var(--workspace-native-controls-inset)+6rem)]",
+          // Maximized — or docked left — the panel reaches the workspace's
+          // left edge, where the collapsed app sidebar's toggle floats.
+          props.mode === "inline" &&
+            (props.maximized || props.side === "left") &&
+            COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
       >

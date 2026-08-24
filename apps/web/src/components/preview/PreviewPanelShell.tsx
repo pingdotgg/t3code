@@ -61,10 +61,13 @@ export function PreviewPanelShell(props: {
   widthStorageKey?: string;
   /** Overrides the initial width (px) before the user has resized the panel. */
   defaultWidth?: number;
+  /** Which side of the workspace the panel is docked on (inline mode only). */
+  side?: "left" | "right";
   children: ReactNode;
 }) {
   const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
+  const side = props.side ?? "right";
   const hostRef = useRef<HTMLDivElement | null>(null);
   // Only inline non-maximized mode applies `width`/`maxWidth`; skip the
   // container measurement (and its re-renders) everywhere else.
@@ -74,7 +77,7 @@ export function PreviewPanelShell(props: {
     defaultWidth: props.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
     minWidth: PREVIEW_PANEL_MIN_WIDTH,
     maxWidth,
-    edge: "left",
+    edge: side === "right" ? "left" : "right",
   });
 
   return (
@@ -83,16 +86,19 @@ export function PreviewPanelShell(props: {
       className={cn(
         "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch bg-background",
         isInline
-          ? props.maximized
-            ? "flex-1 border-l border-border"
-            : "shrink-0 border-l border-border"
+          ? cn(
+              props.maximized ? "flex-1" : "shrink-0",
+              side === "right" ? "border-l border-border" : "border-r border-border",
+            )
           : "w-full",
       )}
       style={isInline && !props.maximized ? { width: `${width}px` } : undefined}
       data-preview-panel-mode={props.mode}
       data-preview-panel-maximized={props.maximized ? "true" : "false"}
     >
-      {isInline && !props.maximized ? <RightPanelResizeHandle handlers={handlers} /> : null}
+      {isInline && !props.maximized ? (
+        <RightPanelResizeHandle handlers={handlers} side={side} />
+      ) : null}
       {useDragRegion ? <div className="electron-drag-region h-0 w-full" aria-hidden /> : null}
       {props.children}
     </div>

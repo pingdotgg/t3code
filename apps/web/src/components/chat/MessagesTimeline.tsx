@@ -1017,7 +1017,16 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 key={image.id}
                 className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
               >
-                {image.previewUrl ? (
+                {image.previewUrl && image.type === "video" ? (
+                  <video
+                    src={image.previewUrl}
+                    controls
+                    playsInline
+                    preload="metadata"
+                    aria-label={image.name}
+                    className="block h-auto max-h-[220px] w-full object-contain"
+                  />
+                ) : image.previewUrl ? (
                   <button
                     type="button"
                     className="h-full w-full cursor-zoom-in"

@@ -40,7 +40,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { resolveAttachmentPath, videoAttachmentPromptText } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
@@ -982,6 +982,17 @@ export function makeCursorAdapter(
                   method: "session/prompt",
                   detail: `Invalid attachment id '${attachment.id}'.`,
                 });
+              }
+              if (attachment.type !== "image") {
+                // No raw-video ingestion; pass the stored file's path.
+                promptParts.push({
+                  type: "text",
+                  text: videoAttachmentPromptText({
+                    name: attachment.name,
+                    path: attachmentPath,
+                  }),
+                });
+                continue;
               }
               const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
                 Effect.mapError(

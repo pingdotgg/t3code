@@ -93,6 +93,22 @@ function RootRouteView() {
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
 
+  // A file dropped outside an explicit drop target must not make the browser
+  // navigate to (and render) the file, replacing the app. Window-level
+  // preventDefault only suppresses that default; real drop targets handle
+  // their events first.
+  useEffect(() => {
+    const preventWindowFileDrop = (event: DragEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener("dragover", preventWindowFileDrop);
+    window.addEventListener("drop", preventWindowFileDrop);
+    return () => {
+      window.removeEventListener("dragover", preventWindowFileDrop);
+      window.removeEventListener("drop", preventWindowFileDrop);
+    };
+  }, []);
+
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       syncBrowserChromeTheme();

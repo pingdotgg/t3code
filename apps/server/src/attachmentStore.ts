@@ -8,9 +8,18 @@ import {
   normalizeAttachmentRelativePath,
   resolveAttachmentRelativePath,
 } from "./attachmentPaths.ts";
-import { inferImageExtension, SAFE_IMAGE_FILE_EXTENSIONS } from "./imageMime.ts";
+import {
+  inferImageExtension,
+  inferVideoExtension,
+  SAFE_IMAGE_FILE_EXTENSIONS,
+  SAFE_VIDEO_FILE_EXTENSIONS,
+} from "./imageMime.ts";
 
-const ATTACHMENT_FILENAME_EXTENSIONS = [...SAFE_IMAGE_FILE_EXTENSIONS, ".bin"];
+const ATTACHMENT_FILENAME_EXTENSIONS = [
+  ...SAFE_IMAGE_FILE_EXTENSIONS,
+  ...SAFE_VIDEO_FILE_EXTENSIONS,
+  ".bin",
+];
 const ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS = 80;
 const ATTACHMENT_ID_THREAD_SEGMENT_PATTERN = "[a-z0-9_]+(?:-[a-z0-9_]+)*";
 const ATTACHMENT_ID_UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -63,7 +72,25 @@ export function attachmentRelativePath(attachment: ChatAttachment): string {
       });
       return `${attachment.id}${extension}`;
     }
+    case "video": {
+      const extension = inferVideoExtension({
+        mimeType: attachment.mimeType,
+        fileName: attachment.name,
+      });
+      return `${attachment.id}${extension}`;
+    }
   }
+}
+
+/**
+ * No provider ingests raw video, so adapters forward a video attachment as
+ * this prompt line; the agent can then read or process the file with tools.
+ */
+export function videoAttachmentPromptText(input: {
+  readonly name: string;
+  readonly path: string;
+}): string {
+  return `[The user attached the video file '${input.name}'. It is saved at: ${input.path}]`;
 }
 
 export function resolveAttachmentPath(input: {

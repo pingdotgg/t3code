@@ -52,7 +52,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { resolveAttachmentPath, videoAttachmentPromptText } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   CodexResumeCursorSchema,
@@ -1779,6 +1779,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         method: "turn/start",
         detail: `Invalid attachment id '${attachment.id}'.`,
       });
+    }
+    if (attachment.type !== "image") {
+      // No raw-video ingestion; pass the stored file's path.
+      return {
+        type: "text" as const,
+        text: videoAttachmentPromptText({ name: attachment.name, path: attachmentPath }),
+      };
     }
     const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
       Effect.mapError(

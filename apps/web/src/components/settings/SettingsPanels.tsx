@@ -1160,6 +1160,42 @@ export function AppearanceSettingsPanel() {
             }
           />
         ) : null}
+        <SettingsRow
+          {...searchableSetting("panel-side")}
+          description="Choose which side of the workspace the files, terminal, diff, and preview panel docks on."
+          resetAction={
+            settings.rightPanelSide !== DEFAULT_UNIFIED_SETTINGS.rightPanelSide ? (
+              <SettingResetButton
+                label="panel side"
+                onClick={() =>
+                  updateSettings({ rightPanelSide: DEFAULT_UNIFIED_SETTINGS.rightPanelSide })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.rightPanelSide}
+              onValueChange={(value) => {
+                if (value === "left" || value === "right") {
+                  updateSettings({ rightPanelSide: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Panel side">
+                <SelectValue>{settings.rightPanelSide === "left" ? "Left" : "Right"}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="right">
+                  Right
+                </SelectItem>
+                <SelectItem hideIndicator value="left">
+                  Left
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
       </SettingsSection>
 
       <TypographySection />

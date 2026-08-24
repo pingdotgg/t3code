@@ -159,7 +159,27 @@ const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPE_SET = new Set<string>(
 export function isProviderSendTurnSupportedImageMimeType(mimeType: string): boolean {
   return PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPE_SET.has(mimeType.toLowerCase());
 }
+// Videos are stored with the thread and played back in the timeline; providers
+// receive them as a file-path note (no provider ingests raw video today).
+// ponytail: 25 MB keeps the one-shot data-URL upload well under WS frame
+// limits; chunked uploads are the path if users need full-length recordings.
+export const PROVIDER_SEND_TURN_MAX_VIDEO_BYTES = 25 * 1024 * 1024;
+export const PROVIDER_SEND_TURN_SUPPORTED_VIDEO_MIME_TYPES = [
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+] as const;
+const PROVIDER_SEND_TURN_SUPPORTED_VIDEO_MIME_TYPE_SET = new Set<string>(
+  PROVIDER_SEND_TURN_SUPPORTED_VIDEO_MIME_TYPES,
+);
+
+/** Whether a dropped or picked video mime type can be sent on a provider turn. */
+export function isProviderSendTurnSupportedVideoMimeType(mimeType: string): boolean {
+  return PROVIDER_SEND_TURN_SUPPORTED_VIDEO_MIME_TYPE_SET.has(mimeType.toLowerCase());
+}
 const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
+// 25 MB of base64 plus the data-URL header.
+const PROVIDER_SEND_TURN_MAX_VIDEO_DATA_URL_CHARS = 35_000_000;
 const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 // Correlation id is command id by design in this model.
 export const CorrelationId = CommandId;
@@ -191,9 +211,29 @@ const UploadChatImageAttachment = Schema.Struct({
 });
 export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
 
-export const ChatAttachment = Schema.Union([ChatImageAttachment]);
+export const ChatVideoAttachment = Schema.Struct({
+  type: Schema.Literal("video"),
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^video\//i)),
+  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_VIDEO_BYTES)),
+});
+export type ChatVideoAttachment = typeof ChatVideoAttachment.Type;
+
+const UploadChatVideoAttachment = Schema.Struct({
+  type: Schema.Literal("video"),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^video\//i)),
+  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_VIDEO_BYTES)),
+  dataUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_VIDEO_DATA_URL_CHARS),
+  ),
+});
+export type UploadChatVideoAttachment = typeof UploadChatVideoAttachment.Type;
+
+export const ChatAttachment = Schema.Union([ChatImageAttachment, ChatVideoAttachment]);
 export type ChatAttachment = typeof ChatAttachment.Type;
-const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
+const UploadChatAttachment = Schema.Union([UploadChatImageAttachment, UploadChatVideoAttachment]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
 
 export const ProjectScriptIcon = Schema.Literals([

@@ -19,3 +19,11 @@ On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux from
 start it in the background. T3 Code opens another new thread and shows an **Open** action for the
 thread that started. The new thread keeps the selected workspace mode and base branch. If **New
 worktree** is selected, each background thread creates its own worktree.
+
+## Attachments
+
+Drop, paste, or pick images (GIF, JPEG, PNG, WebP) and videos (MP4, MOV, WebM) to attach them to a
+message. Up to 8 files per message; images over 10 MB are compressed to fit, videos can be up to
+25 MB. Attached videos play inline in the conversation. Coding agents cannot watch video directly,
+so the agent receives the saved file's path and can work on it with its tools. Video attachments in
+an unsent draft are not persisted across a reload.

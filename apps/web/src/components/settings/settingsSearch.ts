@@ -102,6 +102,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "panel-side",
+    title: "Panel side",
+    to: "/settings/appearance",
+  },
+  {
     id: "word-wrap",
     title: "Word wrap",
     to: "/settings/appearance",

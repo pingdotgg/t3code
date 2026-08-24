@@ -277,9 +277,6 @@ export function revokeUserMessagePreviewUrls(message: ChatMessage): void {
     return;
   }
   for (const attachment of message.attachments) {
-    if (attachment.type !== "image") {
-      continue;
-    }
     revokeBlobPreviewUrl(attachment.previewUrl);
   }
 }
@@ -289,8 +286,10 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
     return [];
   }
   const previewUrls: string[] = [];
+  // Every attachment kind (image and video) stages a blob preview, and the
+  // handoff promotion compares counts against all server preview URLs — an
+  // image-only collection here would leave mixed messages stuck on blobs.
   for (const attachment of message.attachments) {
-    if (attachment.type !== "image") continue;
     if (!attachment.previewUrl || !attachment.previewUrl.startsWith("blob:")) continue;
     previewUrls.push(attachment.previewUrl);
   }

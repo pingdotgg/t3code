@@ -138,6 +138,52 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   return path.resolve(expandHomePath(input.cwd, path), input.partialPath);
 });
 
+// The search index honors gitignore, so ignored and dot-prefixed entries never
+// reach it. `includeHidden` listings walk the filesystem directly instead;
+// these two are still skipped so the tree stays usable.
+const HIDDEN_WALK_SKIP_DIRS = new Set([".git", "node_modules"]);
+const HIDDEN_WALK_MAX_ENTRIES = 25_000;
+
+async function walkWorkspaceEntries(
+  root: string,
+  join: (left: string, right: string) => string,
+): Promise<ProjectListEntriesResult> {
+  const entries: Array<ProjectListEntriesResult["entries"][number]> = [];
+  let truncated = false;
+  // Breadth-first so a truncated listing keeps the shallow structure intact.
+  const pendingDirs = [""];
+  for (let index = 0; index < pendingDirs.length && !truncated; index += 1) {
+    const relativeDir = pendingDirs[index]!;
+    let dirents: ReadonlyArray<{ readonly name: string; isDirectory(): boolean }>;
+    try {
+      dirents = await NodeFSP.readdir(join(root, relativeDir), { withFileTypes: true });
+    } catch {
+      // Unreadable directories (permissions, races) are skipped, not fatal.
+      continue;
+    }
+    for (const dirent of dirents) {
+      const name = dirent.name;
+      if (entries.length >= HIDDEN_WALK_MAX_ENTRIES) {
+        truncated = true;
+        break;
+      }
+      const relativePath = relativeDir ? `${relativeDir}/${name}` : name;
+      if (dirent.isDirectory()) {
+        if (HIDDEN_WALK_SKIP_DIRS.has(name)) continue;
+        entries.push({ path: relativePath, kind: "directory" });
+        pendingDirs.push(relativePath);
+      } else {
+        // Symlinks are listed but not followed, so cycles cannot recurse.
+        entries.push({ path: relativePath, kind: "file" });
+      }
+    }
+  }
+  return {
+    entries: entries.toSorted((left, right) => left.path.localeCompare(right.path)),
+    truncated,
+  };
+}
+
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -275,6 +321,11 @@ export const make = Effect.gen(function* () {
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      if (input.includeHidden === true) {
+        return yield* Effect.promise(() =>
+          walkWorkspaceEntries(normalizedCwd, (left, right) => path.join(left, right)),
+        );
+      }
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();

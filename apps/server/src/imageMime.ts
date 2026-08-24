@@ -29,6 +29,15 @@ export const SAFE_IMAGE_FILE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
+export const VIDEO_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
+  "video/mp4": ".mp4",
+  "video/quicktime": ".mov",
+  "video/webm": ".webm",
+  "video/x-m4v": ".m4v",
+};
+
+export const SAFE_VIDEO_FILE_EXTENSIONS = new Set([".m4v", ".mov", ".mp4", ".webm"]);
+
 // Whether `code` is a character the base64 payload may contain, aside from
 // the whitespace handled separately below.
 function isBase64Char(code: number): boolean {
@@ -112,26 +121,36 @@ export function parseBase64DataUrl(
   return { mimeType, base64 };
 }
 
-export function inferImageExtension(input: { mimeType: string; fileName?: string }): string {
+function inferAttachmentExtension(
+  input: { mimeType: string; fileName?: string },
+  extensionByMimeType: Record<string, string>,
+  safeExtensions: ReadonlySet<string>,
+): string {
   const key = input.mimeType.toLowerCase();
-  const fromMime = Object.hasOwn(IMAGE_EXTENSION_BY_MIME_TYPE, key)
-    ? IMAGE_EXTENSION_BY_MIME_TYPE[key]
-    : undefined;
+  const fromMime = Object.hasOwn(extensionByMimeType, key) ? extensionByMimeType[key] : undefined;
   if (fromMime) {
     return fromMime;
   }
 
   const fromMimeExtension = Mime.getExtension(input.mimeType);
-  if (fromMimeExtension && SAFE_IMAGE_FILE_EXTENSIONS.has(fromMimeExtension)) {
+  if (fromMimeExtension && safeExtensions.has(fromMimeExtension)) {
     return fromMimeExtension;
   }
 
   const fileName = input.fileName?.trim() ?? "";
   const extensionMatch = /\.([a-z0-9]{1,8})$/i.exec(fileName);
   const fileNameExtension = extensionMatch ? `.${extensionMatch[1]!.toLowerCase()}` : "";
-  if (SAFE_IMAGE_FILE_EXTENSIONS.has(fileNameExtension)) {
+  if (safeExtensions.has(fileNameExtension)) {
     return fileNameExtension;
   }
 
   return ".bin";
+}
+
+export function inferImageExtension(input: { mimeType: string; fileName?: string }): string {
+  return inferAttachmentExtension(input, IMAGE_EXTENSION_BY_MIME_TYPE, SAFE_IMAGE_FILE_EXTENSIONS);
+}
+
+export function inferVideoExtension(input: { mimeType: string; fileName?: string }): string {
+  return inferAttachmentExtension(input, VIDEO_EXTENSION_BY_MIME_TYPE, SAFE_VIDEO_FILE_EXTENSIONS);
 }

@@ -121,6 +121,30 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(result.truncated).toBe(false);
       }),
     );
+
+    it.effect("includeHidden lists dotfiles and gitignored files, still skipping .git and node_modules", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "src/index.ts");
+        yield* writeTextFile(cwd, ".env");
+        yield* writeTextFile(cwd, ".gitignore", "media/\n");
+        yield* writeTextFile(cwd, "media/clip.mp4");
+        yield* writeTextFile(cwd, ".git/HEAD");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.list({ cwd, includeHidden: true });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("src/index.ts");
+        expect(paths).toContain(".env");
+        expect(paths).toContain("media");
+        expect(paths).toContain("media/clip.mp4");
+        expect(paths.some((entryPath) => entryPath.startsWith(".git/") || entryPath === ".git")).toBe(false);
+        expect(paths.some((entryPath) => entryPath.startsWith("node_modules"))).toBe(false);
+        expect(result.truncated).toBe(false);
+      }),
+    );
   });
 
   describe("search", () => {
