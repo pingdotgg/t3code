@@ -18,26 +18,24 @@ jobs:
     name: Merge upstream and publish packages
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: main
-
       - name: Merge upstream main
         id: sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          git remote add upstream https://github.com/pingdotgg/t3code.git
-          git fetch --no-tags upstream main
-          if git merge-base --is-ancestor upstream/main HEAD; then
+          before=$(gh api "repos/$GH_REPO/branches/main" --jq .commit.sha)
+
+          # The fork-sync API can update workflow files with contents:write.
+          # A Git push with GITHUB_TOKEN cannot.
+          gh api --method POST "repos/$GH_REPO/merge-upstream" -f branch=main
+
+          after=$(gh api "repos/$GH_REPO/branches/main" --jq .commit.sha)
+          if [[ "$before" == "$after" ]]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-          git \
-            -c user.name=github-actions[bot] \
-            -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
-            merge --no-edit upstream/main
-          git push origin HEAD:main
-          echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish updated packages
         if: steps.sync.outputs.changed == 'true'
