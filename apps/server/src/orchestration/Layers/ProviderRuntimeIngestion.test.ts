@@ -773,6 +773,28 @@ describe("ProviderRuntimeIngestion", () => {
       turnId,
       payload: { plan: [{ step: "Keep working", status: "inProgress" }] },
     });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-turn-aborted-assistant-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.250Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-turn-aborted"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Partial answer before abort.",
+      },
+    });
+    harness.emit({
+      type: "turn.proposed.delta",
+      eventId: asEventId("evt-turn-aborted-plan-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.250Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { delta: "## Partial plan before abort" },
+    });
     await harness.drain();
     const shellWithPlan = await harness.readShell();
     expect(shellWithPlan.threads.find((entry) => entry.id === "thread-1")?.planProgress).toEqual({
@@ -844,6 +866,19 @@ describe("ProviderRuntimeIngestion", () => {
       turnId,
       state: "interrupted",
       completedAt: abortedAt,
+    });
+    expect(
+      thread?.messages.find((message) => message.id === "assistant:item-turn-aborted"),
+    ).toMatchObject({
+      text: "Partial answer before abort.",
+      streaming: false,
+    });
+    expect(
+      thread?.proposedPlans.find(
+        (proposedPlan) => proposedPlan.id === "plan:thread-1:turn:turn-aborted",
+      ),
+    ).toMatchObject({
+      planMarkdown: "## Partial plan before abort",
     });
     const shellAfterActiveAbort = await harness.readShell();
     expect(
