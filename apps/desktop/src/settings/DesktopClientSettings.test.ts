@@ -35,6 +35,7 @@ const clientSettings: ClientSettings = {
   fontSizeTerminal: 12,
   fontSmoothing: true,
   glassOpacity: 80,
+  modelPickerExpandedSections: {},
   planModeEnabled: false,
   showSkillsInSlashMenu: false,
   providerModelPreferences: {},
