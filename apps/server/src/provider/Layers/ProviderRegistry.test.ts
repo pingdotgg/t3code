@@ -13,6 +13,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import {
   ClaudeSettings,
   CodexSettings,
@@ -55,6 +56,14 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
 
 const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
+/** A second Claude instance pointed at its own CLAUDE_CONFIG_DIR. */
+const workClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({
+  homePath: "/tmp/claude-work",
+});
+/** Home directories with spaces are ordinary; the hint has to survive them. */
+const spacedClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({
+  homePath: "/Users/John Doe/.claude-work",
+});
 const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const disabledCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({
@@ -1802,6 +1811,182 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
+      // A logged-out config directory still initializes fine through the SDK
+      // and reports `tokenSource: "none"`, which used to read as
+      // "authenticated". A second Claude instance points CLAUDE_CONFIG_DIR at a
+      // fresh directory, so this is the default state for every added instance
+      // until the user logs it in.
+      it.effect("reports unauthenticated when the CLI has no credentials", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ tokenSource: "none", apiProvider: "firstParty" }),
+          );
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.auth.status, "unauthenticated");
+          assert.strictEqual(
+            status.message,
+            "Claude Code is not authenticated. Run `claude auth login` and try again.",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.231\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      // The login hint has to name the instance's own config directory,
+      // otherwise the user re-logs-in the default instance and the failing one
+      // stays broken.
+      it.effect("points the login hint at this instance's CLAUDE_CONFIG_DIR", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            workClaudeSettings,
+            claudeCapabilities({ tokenSource: "none", apiProvider: "firstParty" }),
+          );
+          assert.strictEqual(status.auth.status, "unauthenticated");
+          assert.strictEqual(
+            status.message,
+            "Claude Code is not authenticated for this instance. Run `CLAUDE_CONFIG_DIR='/tmp/claude-work' claude auth login` and try again.",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.231\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      // An unquoted path produces a command the shell cannot run, which makes
+      // the hint useless for exactly the users who need it.
+      it.effect("quotes a config directory containing spaces", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            spacedClaudeSettings,
+            claudeCapabilities({ tokenSource: "none", apiProvider: "firstParty" }),
+          );
+          assert.strictEqual(
+            status.message,
+            "Claude Code is not authenticated for this instance. Run `CLAUDE_CONFIG_DIR='/Users/John Doe/.claude-work' claude auth login` and try again.",
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.231\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}\n',
+                  stderr: "",
+                  code: 1,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      // PowerShell has no inline `VAR=value command` form, so the POSIX hint is
+      // not a command a Windows user can run.
+      it.effect("uses PowerShell syntax for the login hint on Windows", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            workClaudeSettings,
+            claudeCapabilities({ tokenSource: "none", apiProvider: "firstParty" }),
+          );
+          assert.strictEqual(
+            status.message,
+            "Claude Code is not authenticated for this instance. Run `$env:CLAUDE_CONFIG_DIR='/tmp/claude-work'; claude auth login` and try again.",
+          );
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.231\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}\n',
+                  stderr: "",
+                  code: 1,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      // Older CLIs predate `claude auth status`. Losing the probe must not
+      // downgrade a working provider to "unauthenticated".
+      it.effect("keeps the SDK verdict when the CLI cannot report auth status", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({ subscriptionType: "max" }),
+          );
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.231\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return { stdout: "", stderr: "unknown command", code: 1 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      // With two Claude accounts configured, the email is what tells the two
+      // instances apart in the provider list.
+      it.effect("labels the account from the CLI when the SDK omits it", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities(),
+          );
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.email, "work@example.com");
+          assert.strictEqual(status.auth.label, "Claude Max Subscription");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.231\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout:
+                    '{"loggedIn":true,"authMethod":"claude.ai","email":"work@example.com","subscriptionType":"max"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("returns ready and labels Bedrock-backed Claude as authenticated", () =>
         Effect.gen(function* () {
           // Bedrock authenticates via external AWS credentials, so the SDK init
@@ -2132,9 +2317,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             claudeCapabilities(),
           );
           assert.strictEqual(status.status, "ready");
+          // Both the version probe and the auth-status probe have to run
+          // against this instance's config directory — an auth check that
+          // leaked to the default home would report the wrong account.
           assert.deepStrictEqual(
             recorded.commands.map((command) => command.env?.CLAUDE_CONFIG_DIR),
-            [claudeConfigDir],
+            [claudeConfigDir, claudeConfigDir],
           );
         }).pipe(Effect.provide(recorded.layer));
       });
@@ -2315,9 +2503,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             mockSpawnerLayer((args) => {
               const joined = args.join(" ");
               if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              // Neither probe can answer: the CLI predates `auth status` and
+              // the SDK returned no initialization result.
+              if (joined === "auth status")
+                return { stdout: "Usage: claude auth\n", stderr: "", code: 1 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      // `claude auth status` exits non-zero *because* the user is logged out,
+      // while still printing a well-formed verdict on stdout. Gating the parse
+      // on the exit code would throw away the only reliable signal there is.
+      it.effect("trusts the auth-status JSON even when the command exits non-zero", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities(),
+          );
+          assert.strictEqual(status.auth.status, "unauthenticated");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.231\n", stderr: "", code: 0 };
               if (joined === "auth status")
                 return {
-                  stdout: '{"loggedIn":false}\n',
+                  stdout: '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}\n',
                   stderr: "",
                   code: 1,
                 };

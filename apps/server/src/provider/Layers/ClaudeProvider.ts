@@ -18,6 +18,7 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
@@ -31,6 +32,7 @@ import {
 import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
+  AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
@@ -40,7 +42,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
-import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { makeClaudeEnvironment, resolveClaudeHomePath } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -798,6 +800,120 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
+/**
+ * Shape of `claude auth status --json`. Only `loggedIn` is load-bearing; the
+ * rest is used to label the account when the CLI knows more than the SDK's
+ * initialization result does.
+ */
+type ClaudeAuthStatusProbe = {
+  readonly loggedIn: boolean;
+  readonly authMethod: string | undefined;
+  readonly apiProvider: string | undefined;
+  readonly email: string | undefined;
+  readonly subscriptionType: string | undefined;
+};
+
+function parseClaudeAuthStatus(stdout: string): ClaudeAuthStatusProbe | undefined {
+  const trimmed = stdout.trim();
+  if (!trimmed.startsWith("{")) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const record = parsed as Record<string, unknown>;
+  if (typeof record["loggedIn"] !== "boolean") return undefined;
+  const readString = (key: string): string | undefined =>
+    typeof record[key] === "string" ? nonEmptyProbeString(record[key]) : undefined;
+  return {
+    loggedIn: record["loggedIn"],
+    authMethod: readString("authMethod"),
+    apiProvider: readString("apiProvider"),
+    email: readString("email"),
+    subscriptionType: readString("subscriptionType"),
+  };
+}
+
+/**
+ * Ask the CLI itself whether this instance has credentials.
+ *
+ * The SDK initialization probe cannot answer this: a logged-out config
+ * directory still initializes fine and reports
+ * `{ tokenSource: "none", apiProvider: "firstParty" }`, which the snapshot used
+ * to read as "authenticated". That mattered little when every install had one
+ * Claude, but a second instance points `CLAUDE_CONFIG_DIR` at a fresh directory
+ * that is logged out by construction — so the provider list claimed
+ * "Authenticated" while every turn died with "Not logged in".
+ *
+ * Returns `undefined` when the command is missing or unparseable (older CLIs
+ * predate `claude auth status`), which leaves the previous behaviour intact.
+ */
+const probeClaudeAuthStatus = (
+  claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
+): Effect.Effect<
+  ClaudeAuthStatusProbe | undefined,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | Path.Path
+> =>
+  Effect.gen(function* () {
+    // `claude auth status` emits JSON by default; the flag is not passed so the
+    // command still works on CLI versions that predate `--json`.
+    const probe = yield* runClaudeCommand(claudeSettings, ["auth", "status"], environment).pipe(
+      // The auth budget, not the generic one: a first run can be slow, and a
+      // timeout here degrades to the SDK's verdict — which is the false
+      // "authenticated" this probe exists to correct.
+      Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+      Effect.result,
+    );
+    if (Result.isFailure(probe) || Option.isNone(probe.success)) return undefined;
+    return parseClaudeAuthStatus(probe.success.value.stdout);
+  }).pipe(
+    // A CLI that cannot answer must never take the health check down with it:
+    // an unknown answer keeps the previous SDK-derived verdict.
+    Effect.catchCause(() => Effect.succeed(undefined)),
+  );
+
+/**
+ * The exact command that logs *this* instance in. Instances with a custom
+ * `homePath` need the `CLAUDE_CONFIG_DIR` prefix, otherwise the user logs the
+ * default instance in again and the failing one stays broken.
+ */
+/**
+ * Quote a path for the shell the hint will be pasted into. Home directories
+ * routinely contain spaces ("C:\\Users\\John Doe"), and an unquoted path
+ * produces a command that cannot run.
+ */
+function quoteForShell(value: string, platform: NodeJS.Platform): string {
+  return platform === "win32"
+    ? `'${value.replaceAll("'", "''")}'`
+    : `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * The exact command that logs *this* instance in. Instances with a custom
+ * `homePath` need the `CLAUDE_CONFIG_DIR` prefix, otherwise the user logs the
+ * default instance in again and the failing one stays broken.
+ */
+const claudeLoginHint = Effect.fn("claudeLoginHint")(function* (
+  claudeSettings: ClaudeSettings,
+): Effect.fn.Return<string, never, Path.Path> {
+  const platform = yield* HostProcessPlatform;
+  if (claudeSettings.homePath.trim().length === 0) {
+    return "Claude Code is not authenticated. Run `claude auth login` and try again.";
+  }
+  const resolvedHomePath = yield* resolveClaudeHomePath(claudeSettings);
+  const quoted = quoteForShell(resolvedHomePath, platform);
+  // PowerShell has no inline `VAR=value command` form.
+  const command =
+    platform === "win32"
+      ? `$env:CLAUDE_CONFIG_DIR=${quoted}; claude auth login`
+      : `CLAUDE_CONFIG_DIR=${quoted} claude auth login`;
+  return `Claude Code is not authenticated for this instance. Run \`${command}\` and try again.`;
+});
+
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
@@ -929,6 +1045,25 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ...(capabilities?.slashCommands ?? []),
   ];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
+  const authStatus = yield* probeClaudeAuthStatus(claudeSettings, resolvedEnvironment);
+
+  if (authStatus?.loggedIn === false) {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      slashCommands: dedupedSlashCommands,
+      skills,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: yield* claudeLoginHint(claudeSettings),
+      },
+    });
+  }
 
   if (!capabilities) {
     return buildServerProvider({
@@ -948,11 +1083,16 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  // The CLI's own auth status is the better source for account identity: with
+  // several instances configured, the email is what tells two Claude accounts
+  // apart in the provider list. Fall back to the SDK probe when the CLI is too
+  // old to answer.
+  const authEmail = authStatus?.email ?? capabilities.email;
   const authMetadata =
     claudeAuthMetadata({
-      subscriptionType: capabilities.subscriptionType,
-      authMethod: capabilities.tokenSource,
-    }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+      subscriptionType: authStatus?.subscriptionType ?? capabilities.subscriptionType,
+      authMethod: authStatus?.authMethod ?? capabilities.tokenSource,
+    }) ?? apiProviderAuthMetadata(authStatus?.apiProvider ?? capabilities.apiProvider);
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -966,7 +1106,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       status: "ready",
       auth: {
         status: "authenticated",
-        ...(capabilities.email ? { email: capabilities.email } : {}),
+        ...(authEmail ? { email: authEmail } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
