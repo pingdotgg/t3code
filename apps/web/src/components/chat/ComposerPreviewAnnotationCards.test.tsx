@@ -1,4 +1,4 @@
-import type { PreviewAnnotationPayload } from "@t3tools/contracts";
+import { EnvironmentId, type PreviewAnnotationPayload } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -57,5 +57,35 @@ describe("ComposerPreviewAnnotationCards", () => {
 
     expect(markup).toContain('aria-label="Remove preview annotation"');
     expect(markup).toContain('data-slot="button"');
+  });
+
+  it("shows a retry action for a failed screenshot upload", () => {
+    const image = {
+      type: "image" as const,
+      id: annotation.id,
+      name: "annotation.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      previewUrl: "blob:annotation",
+      file: new File([new Uint8Array([1, 2, 3])], "annotation.png", { type: "image/png" }),
+    };
+    const markup = renderToStaticMarkup(
+      <ComposerPreviewAnnotationCards
+        annotations={[annotation]}
+        images={[image]}
+        uploadsByImageId={{
+          [image.id]: {
+            status: "failed",
+            environmentId: EnvironmentId.make("environment-1"),
+            reason: "Upload rejected",
+          },
+        }}
+        onRetryUpload={vi.fn()}
+        onRemove={vi.fn()}
+        onExpandImage={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Retry upload for annotation.png"');
   });
 });

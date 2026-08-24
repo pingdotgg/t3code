@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  ClientOrchestrationCommand,
   ModelSelection,
   OrchestrationCommand,
   OrchestrationDispatchCommandError,
@@ -35,6 +36,7 @@ const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateComma
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
@@ -238,6 +240,47 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
     assert.strictEqual(parsed.modelSelection, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+  }),
+);
+
+it.effect("accepts both inline and uploaded image attachments from clients", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeClientOrchestrationCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-attachments",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-attachments",
+        role: "user",
+        text: "hello",
+        attachments: [
+          {
+            type: "image",
+            name: "legacy.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+            dataUrl: "data:image/png;base64,YWJj",
+          },
+          {
+            type: "image",
+            id: "pending-00000000-0000-4000-8000-000000000001",
+            name: "uploaded.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+          },
+        ],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    if (command.type !== "thread.turn.start") {
+      assert.fail(`Expected thread.turn.start, received ${command.type}.`);
+    }
+    assert.strictEqual(command.message.attachments.length, 2);
+    assert.strictEqual("dataUrl" in command.message.attachments[0]!, true);
+    assert.strictEqual("id" in command.message.attachments[1]!, true);
   }),
 );
 

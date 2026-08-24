@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
 
-import { ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { ProjectFaviconPath } from "./orchestration.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
+  ProjectFaviconPath,
+} from "./orchestration.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
@@ -35,6 +39,41 @@ export const AssetCreateUrlResult = Schema.Struct({
   ),
 });
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
+
+export const ATTACHMENT_UPLOAD_URL_TTL_MS = 10 * 60_000;
+
+export const AttachmentCreateUploadUrlInput = Schema.Struct({
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: Schema.Literals(PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES),
+  sizeBytes: NonNegativeInt.check(
+    Schema.isGreaterThanOrEqualTo(1),
+    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES),
+  ),
+});
+export type AttachmentCreateUploadUrlInput = typeof AttachmentCreateUploadUrlInput.Type;
+
+export const AttachmentCreateUploadUrlResult = Schema.Struct({
+  attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  expiresAt: Schema.Number,
+});
+export type AttachmentCreateUploadUrlResult = typeof AttachmentCreateUploadUrlResult.Type;
+
+export const AttachmentDeleteInput = Schema.Struct({
+  attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+});
+export type AttachmentDeleteInput = typeof AttachmentDeleteInput.Type;
+
+export class AttachmentUploadSigningKeyError extends Schema.TaggedErrorClass<AttachmentUploadSigningKeyError>()(
+  "AttachmentUploadSigningKeyError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to load the attachment upload signing key.";
+  }
+}
 
 export class AssetWorkspaceContextNotFoundError extends Schema.TaggedErrorClass<AssetWorkspaceContextNotFoundError>()(
   "AssetWorkspaceContextNotFoundError",

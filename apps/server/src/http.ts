@@ -28,6 +28,11 @@ import { OtlpTracer } from "effect/unstable/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import {
+  ATTACHMENT_UPLOAD_ROUTE_PREFIX,
+  storeAttachmentUpload,
+  validateAttachmentUploadToken,
+} from "./assets/AttachmentUpload.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
@@ -227,6 +232,51 @@ export const assetRouteLayer = HttpRouter.add(
     }).pipe(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );
+  }),
+);
+
+export const attachmentUploadRouteLayer = HttpRouter.add(
+  "POST",
+  `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const token = url.value.pathname.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
+    if (!token) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    const claims = yield* validateAttachmentUploadToken(token);
+    if (!claims) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    const contentLengthHeader = request.headers["content-length"];
+    if (
+      contentLengthHeader !== undefined &&
+      (!Number.isInteger(Number(contentLengthHeader)) ||
+        Number(contentLengthHeader) !== claims.sizeBytes)
+    ) {
+      return HttpServerResponse.text("Content-Length must match the upload size.", {
+        status: 400,
+      });
+    }
+
+    const body = yield* request.arrayBuffer.pipe(
+      Effect.provideService(HttpServerRequest.MaxBodySize, FileSystem.Size(claims.sizeBytes)),
+      Effect.orElseSucceed(() => null),
+    );
+    if (body === null) {
+      return HttpServerResponse.text("Failed to read the upload body.", { status: 400 });
+    }
+
+    const stored = yield* storeAttachmentUpload(claims, new Uint8Array(body));
+    return stored.ok
+      ? HttpServerResponse.empty({ status: 204 })
+      : HttpServerResponse.text(stored.detail, { status: stored.status });
   }),
 );
 
