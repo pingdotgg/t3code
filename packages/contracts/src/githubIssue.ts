@@ -103,10 +103,18 @@ export class GitHubIssueCliMissingError extends Schema.TaggedErrorClass<GitHubIs
 
 export class GitHubIssueCliUnauthenticatedError extends Schema.TaggedErrorClass<GitHubIssueCliUnauthenticatedError>()(
   "GitHubIssueCliUnauthenticatedError",
-  { cause: Schema.Defect() },
+  {
+    cause: Schema.Defect(),
+    // Optional keeps the error decodable while an older server is still in the wild.
+    host: Schema.optional(TrimmedNonEmptyString),
+  },
 ) {
   override get message(): string {
-    return "GitHub CLI is not authenticated. Run `gh auth login` and retry.";
+    const loginCommand =
+      this.host === undefined || this.host === "github.com"
+        ? "gh auth login"
+        : `gh auth login --hostname ${this.host}`;
+    return `GitHub CLI is not authenticated. Run \`${loginCommand}\` and retry.`;
   }
 }
 

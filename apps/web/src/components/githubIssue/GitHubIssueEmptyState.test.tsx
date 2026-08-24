@@ -1,8 +1,9 @@
 import { isValidElement, type ReactElement, type ReactNode } from "react";
+import { CircleDotIcon, CircleSlash2Icon } from "lucide-react";
 import { describe, expect, it } from "vite-plus/test";
 
 import { EmptyContent } from "../ui/empty";
-import { GitHubIssueEmptyState } from "./GitHubIssueDetailPanel";
+import { GitHubIssueEmptyState, GitHubIssueStateIcon } from "./GitHubIssueDetailPanel";
 
 function elementsOf(node: ReactNode): ReactElement[] {
   if (Array.isArray(node)) return node.flatMap(elementsOf);
@@ -41,5 +42,12 @@ describe("GitHubIssueEmptyState", () => {
 
     expect(elementsOf(state).some((element) => element.type === EmptyContent)).toBe(true);
     expect(textOf(state)).toContain("Try again");
+  });
+});
+
+describe("GitHubIssueStateIcon", () => {
+  it("uses the closed-state icon for closed issues", () => {
+    expect(GitHubIssueStateIcon({ state: "closed" }).type).toBe(CircleSlash2Icon);
+    expect(GitHubIssueStateIcon({ state: "open" }).type).toBe(CircleDotIcon);
   });
 });

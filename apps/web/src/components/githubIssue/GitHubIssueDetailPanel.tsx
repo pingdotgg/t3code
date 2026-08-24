@@ -2,6 +2,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, GitHubIssueDetail, GitHubIssueRef } from "@t3tools/contracts";
 import {
   CircleDotIcon,
+  CircleSlash2Icon,
   ExternalLinkIcon,
   GithubIcon,
   MessageSquareIcon,
@@ -123,7 +124,8 @@ export function GitHubIssueDetailContent({
           to its own line instead, the way the pull request panel gives its title a full row. */}
       <div className="flex flex-wrap items-start gap-3">
         <div className="flex min-w-0 flex-1 items-start gap-4">
-          <CircleDotIcon
+          <GitHubIssueStateIcon
+            state={detail.state}
             className={cn(
               "mt-1 size-5 shrink-0",
               detail.state === "open" ? "text-success-foreground" : "text-muted-foreground",
@@ -204,6 +206,17 @@ export function GitHubIssueDetailContent({
       </section>
     </article>
   );
+}
+
+export function GitHubIssueStateIcon({
+  state,
+  className,
+}: {
+  state: GitHubIssueDetail["state"];
+  className?: string;
+}) {
+  const Icon = state === "open" ? CircleDotIcon : CircleSlash2Icon;
+  return <Icon className={className} />;
 }
 
 /**

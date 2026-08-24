@@ -74,6 +74,13 @@ function isHostOf(hostname: string, apex: string, label?: string): boolean {
   return label !== undefined && hostname.startsWith(`${label}.`);
 }
 
+function githubIssueHostOf(
+  identity: { readonly canonicalKey?: string | undefined } | null | undefined,
+): string {
+  const host = identity?.canonicalKey?.split("/")[0]?.trim();
+  return host === undefined || host.length === 0 ? "github.com" : host.toLowerCase();
+}
+
 /**
  * The repository and number behind a change request URL on a host the page can read, or null for
  * anything else — an issue, a commit, a repository root, a host this cannot tell apart from an
@@ -150,7 +157,8 @@ export function parseGitHubIssueUrl(targetUrl: string): GitHubIssueLink | null {
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   const host = url.hostname.toLowerCase();
-  if (!isHostOf(host, "github.com", "github")) return null;
+  // GitHub Enterprise hosts are arbitrary. The workspace project match in the click handler is
+  // the safety gate that keeps an ordinary link from being claimed by the issue surface.
   const match = /^\/([^/]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u.exec(url.pathname);
   return claim(host, match);
 }
@@ -209,7 +217,7 @@ export function findProjectForGitHubIssue(
     return (
       repository !== null &&
       repository.toLowerCase() === link.repository.toLowerCase() &&
-      pullRequestHostOf(identity, "github") === link.host.toLowerCase()
+      githubIssueHostOf(identity) === link.host.toLowerCase()
     );
   });
 }

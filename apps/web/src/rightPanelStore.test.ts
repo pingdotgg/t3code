@@ -149,6 +149,49 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("normalizes persisted GitHub issue surfaces to their reference-keyed tab", () => {
+    const id = githubIssueSurface({
+      projectId: "project-a",
+      repository: "pingdotgg/t3code",
+      number: 42,
+    }).id;
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "github-issue",
+            surfaces: [
+              {
+                id: "github-issue",
+                kind: "github-issue",
+                projectId: "project-a",
+                repository: "pingdotgg/t3code",
+                number: 42,
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: id,
+          surfaces: [
+            {
+              id,
+              kind: "github-issue",
+              projectId: "project-a",
+              repository: "pingdotgg/t3code",
+              number: 42,
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("drops the pull-request list's shared panel so a restart opens the page fresh", () => {
     const id = pullRequestSurfaceId({
       projectId: "project-a",

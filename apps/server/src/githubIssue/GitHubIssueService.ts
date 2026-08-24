@@ -27,7 +27,7 @@ const PROJECT_CONCURRENCY = 8;
 const ISSUE_LIST_FIELDS = "number,title,url,author,assignees,labels,state,createdAt,updatedAt";
 const ISSUE_DETAIL_FIELDS = `${ISSUE_LIST_FIELDS},body,comments,closedAt`;
 
-/** Every project reads through the one `gh`, so a CLI failure ends the whole request. */
+/** Every project reads through the one `gh`; a missing CLI ends the whole request. */
 type GitHubIssueCliError = GitHubIssueCliMissingError | GitHubIssueCliUnauthenticatedError;
 
 type GitHubIssueError = GitHubIssueCliError | GitHubIssueOperationError;
@@ -67,13 +67,17 @@ function cliRepository(project: GitHubProject): string {
     : `${project.host}/${project.repository}`;
 }
 
-function fromCliError(operation: string) {
+function authCommandForHost(host: string): string {
+  return host === "github.com" ? "gh auth login" : `gh auth login --hostname ${host}`;
+}
+
+function fromCliError(operation: string, host: string) {
   return (error: GitHubCli.GitHubCliError): GitHubIssueError => {
     if (error._tag === "GitHubCliUnavailableError") {
       return new GitHubIssueCliMissingErrorClass({ cause: error });
     }
     if (error._tag === "GitHubCliAuthenticationError") {
-      return new GitHubIssueCliUnauthenticatedErrorClass({ cause: error });
+      return new GitHubIssueCliUnauthenticatedErrorClass({ host, cause: error });
     }
     return new GitHubIssueOperationErrorClass({ operation, detail: error.detail, cause: error });
   };
@@ -145,7 +149,7 @@ export const make = Effect.gen(function* () {
               ],
             })
             .pipe(
-              Effect.mapError(fromCliError("list")),
+              Effect.mapError(fromCliError("list", project.host)),
               Effect.flatMap((output) =>
                 decodeGitHubIssueList(output.stdout).pipe(
                   Effect.mapError((cause) => decodeError("list", cause)),
@@ -166,17 +170,6 @@ export const make = Effect.gen(function* () {
       );
       if (cliMissing && "error" in cliMissing) return yield* cliMissing.error;
 
-      // Authentication is per host: an unauthenticated Enterprise remote must not discard the
-      // issues another repository answered with. Only a workspace that is entirely locked out
-      // gets the global "run gh auth login" error, which is the only case where it is the answer.
-      const unauthenticated = batches.filter(
-        (batch) => "error" in batch && batch.error._tag === "GitHubIssueCliUnauthenticatedError",
-      );
-      if (unauthenticated.length > 0 && unauthenticated.length === batches.length) {
-        const [first] = unauthenticated;
-        if (first && "error" in first) return yield* first.error;
-      }
-
       const entries: GitHubIssueListEntry[] = [];
       const errors: GitHubIssueListResult["errors"][number][] = [];
       let truncated = false;
@@ -188,7 +181,7 @@ export const make = Effect.gen(function* () {
             // The failing host is named here because it is the one the reader has to sign in to.
             message:
               batch.error._tag === "GitHubIssueCliUnauthenticatedError"
-                ? `${batch.project.repository} needs GitHub CLI authentication. Run \`gh auth login --hostname ${batch.project.host}\` and retry.`
+                ? `${batch.project.repository} needs GitHub CLI authentication. Run \`${authCommandForHost(batch.project.host)}\` and retry.`
                 : `${batch.project.repository} could not be read.`,
           });
           continue;
@@ -240,7 +233,7 @@ export const make = Effect.gen(function* () {
             ISSUE_DETAIL_FIELDS,
           ],
         })
-        .pipe(Effect.mapError(fromCliError("detail")));
+        .pipe(Effect.mapError(fromCliError("detail", project.host)));
       const issue = yield* decodeGitHubIssueDetail(output.stdout).pipe(
         Effect.mapError((cause) => decodeError("detail", cause)),
       );

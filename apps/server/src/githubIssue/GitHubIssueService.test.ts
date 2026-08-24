@@ -237,7 +237,7 @@ it.effect("keeps issues from signed-in hosts when one remote is unauthenticated"
   }),
 );
 
-it.effect("fails the whole read when every host is unauthenticated", () =>
+it.effect("returns host-scoped errors when every host is unauthenticated", () =>
   Effect.gen(function* () {
     const execute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>((input) =>
       Effect.fail(
@@ -249,13 +249,23 @@ it.effect("fails the whole read when every host is unauthenticated", () =>
       ),
     );
     const service = yield* makeService(
-      [project({ id: "p1", title: "web", workspaceRoot: "/web", repository: "acme/web" })],
+      [
+        project({
+          id: "p1",
+          title: "internal",
+          workspaceRoot: "/enterprise",
+          repository: "acme/internal",
+          host: "ghe.acme.dev",
+        }),
+      ],
       execute,
     );
 
-    const error = yield* service.list({ state: "open" }).pipe(Effect.flip);
+    const result = yield* service.list({ state: "open" });
 
-    assert.strictEqual(error._tag, "GitHubIssueCliUnauthenticatedError");
+    assert.deepStrictEqual(result.entries, []);
+    assert.strictEqual(result.errors.length, 1);
+    assert.include(result.errors[0]?.message ?? "", "gh auth login --hostname ghe.acme.dev");
   }),
 );
 
