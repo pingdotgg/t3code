@@ -3039,9 +3039,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       isMissingWorktreeStderr(result.stderr) &&
       !(yield* fileSystem.exists(input.path).pipe(Effect.orElseSucceed(() => false)));
     if (alreadyGone) {
-      yield* runGit("GitVcsDriver.removeWorktree", input.cwd, ["worktree", "prune"], {
-        timeoutMs: 15_000,
-      });
+      yield* pruneWorktrees({ cwd: input.cwd });
       return;
     }
     // Raw stderr stays out of both the wire error and the log (it can carry
