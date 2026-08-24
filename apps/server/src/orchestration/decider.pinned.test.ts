@@ -140,11 +140,20 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
           type: "thread.pin",
           commandId: CommandId.make("cmd-pin-settled"),
           threadId: ThreadId.make("thread-1"),
+          orderKey: "t",
         },
-        readModel: makeReadModel({ settledOverride: "settled" }),
+        readModel: makeReadModel({
+          pinnedAt: PINNED_AT,
+          pinOrderKey: "g",
+          settledOverride: "settled",
+        }),
       });
       const events = Array.isArray(event) ? event : [event];
       expect(events.map((entry) => entry.type)).toEqual(["thread.pinned", "thread.unsettled"]);
+      expect(events[0]?.type).toBe("thread.pinned");
+      if (events[0]?.type === "thread.pinned") {
+        expect(events[0].payload.pinOrderKey).toBe("t");
+      }
       const unsettled = events.find((entry) => entry.type === "thread.unsettled");
       if (unsettled?.type === "thread.unsettled") {
         expect(unsettled.payload.reason).toBe("user");
@@ -159,14 +168,21 @@ it.layer(NodeServices.layer)("pinned thread decider", (it) => {
           type: "thread.pin",
           commandId: CommandId.make("cmd-pin-snoozed"),
           threadId: ThreadId.make("thread-1"),
+          orderKey: "t",
         },
         readModel: makeReadModel({
+          pinnedAt: PINNED_AT,
+          pinOrderKey: "g",
           settledOverride: "active",
           snoozedUntil: "1970-01-02T09:00:00.000Z",
         }),
       });
       const events = Array.isArray(event) ? event : [event];
       expect(events.map((entry) => entry.type)).toEqual(["thread.pinned", "thread.unsnoozed"]);
+      expect(events[0]?.type).toBe("thread.pinned");
+      if (events[0]?.type === "thread.pinned") {
+        expect(events[0].payload.pinOrderKey).toBe("t");
+      }
     }),
   );
 

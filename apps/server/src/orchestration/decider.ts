@@ -733,8 +733,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      // Re-pinning preserves the original timestamp and key.
+      // Re-pinning preserves the original timestamp.
       const existingPinnedAt = thread.pinnedAt ?? null;
+      const returnsToPinned =
+        existingPinnedAt !== null &&
+        (thread.settledOverride !== "active" || thread.snoozedUntil !== null);
       const pinnedEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -746,8 +749,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           pinnedAt: existingPinnedAt ?? occurredAt,
-          // A fresh pin takes the client's slot in the arranged order.
-          ...(existingPinnedAt === null && command.orderKey !== undefined
+          // A fresh pin or a move back from another category takes the
+          // client's slot. An ordinary repeated pin preserves its old slot.
+          ...((existingPinnedAt === null || returnsToPinned) && command.orderKey !== undefined
             ? { pinOrderKey: command.orderKey }
             : {}),
           updatedAt: existingPinnedAt !== null ? thread.updatedAt : occurredAt,
