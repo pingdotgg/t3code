@@ -44,6 +44,31 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+export interface ProviderPersistedThreadMessage {
+  readonly id: string;
+  readonly sourceOrdinal: number;
+  readonly role: "user" | "assistant";
+  readonly text: string;
+  readonly turnId: TurnId;
+  readonly createdAt: string;
+}
+
+export interface ProviderPersistedThread {
+  readonly providerThreadId: string;
+  readonly cwd: string;
+  readonly title: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly discoveryCursor: string;
+  readonly sourceMetadata: unknown;
+  readonly messages: ReadonlyArray<ProviderPersistedThreadMessage>;
+}
+
+export interface ProviderPersistedThreadDiscoveryInput {
+  readonly excludeProviderThreadIds: ReadonlySet<string>;
+  readonly cursorByProviderThreadId: ReadonlyMap<string, string>;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -107,6 +132,15 @@ export interface ProviderAdapterShape<TError> {
    * Read a provider thread snapshot.
    */
   readonly readThread: (threadId: ThreadId) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  /**
+   * Discover durable provider threads that may have been created by another
+   * compatible client. Adapters omit this capability when their provider has
+   * no supported persisted-thread listing API.
+   */
+  readonly discoverPersistedThreads?: (
+    input?: ProviderPersistedThreadDiscoveryInput,
+  ) => Effect.Effect<ReadonlyArray<ProviderPersistedThread>, TError>;
 
   /**
    * Roll back a provider thread by N turns.

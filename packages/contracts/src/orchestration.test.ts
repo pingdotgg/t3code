@@ -57,6 +57,26 @@ const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
 
+it.effect("decodes provider history message imports as internal commands", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.message.import",
+      commandId: "provider-import:message-1",
+      threadId: "thread-1",
+      messageId: "message-1",
+      role: "assistant",
+      text: "Imported response",
+      turnId: "turn-1",
+      createdAt: "2026-08-21T03:22:43.000Z",
+    });
+
+    assert.strictEqual(command.type, "thread.message.import");
+    if (command.type === "thread.message.import") {
+      assert.strictEqual(command.turnId, "turn-1");
+    }
+  }),
+);
+
 it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
   Effect.gen(function* () {
     const error = yield* decodeDispatchCommandError({

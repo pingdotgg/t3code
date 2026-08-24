@@ -928,6 +928,42 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("backfills continuation identity while recovering a legacy binding", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("thread-legacy-continuation");
+
+      yield* directory.upsert({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        resumeCursor: { opaque: "legacy-resume" },
+        runtimeMode: "full-access",
+        runtimePayload: { cwd: "/tmp/legacy-continuation" },
+      });
+
+      yield* provider.sendTurn({
+        threadId,
+        input: "resume legacy thread",
+        attachments: [],
+      });
+
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        const payload = binding.value.runtimePayload;
+        assert.equal(payload !== null && typeof payload === "object", true);
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          assert.equal(
+            "continuationKey" in payload ? payload.continuationKey : undefined,
+            "codex:instance:codex",
+          );
+        }
+      }
+    }),
+  );
+
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -1491,12 +1527,14 @@ routing.layer("ProviderServiceLive routing", (it) => {
           const runtimePayload = payload as {
             cwd: string;
             model: string | null;
+            continuationKey: string;
             activeTurnId: string | null;
             lastError: string | null;
             lastRuntimeEvent: string | null;
           };
           assert.equal(runtimePayload.cwd, session.cwd);
           assert.equal(runtimePayload.model, null);
+          assert.equal(runtimePayload.continuationKey, "codex:instance:codex");
           assert.equal(runtimePayload.activeTurnId, `turn-${String(session.threadId)}`);
           assert.equal(runtimePayload.lastError, null);
           assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
