@@ -39,6 +39,17 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "antigravity") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path
+          fill="#7C3AED"
+          d="M12 1.5 22.5 12 12 22.5 1.5 12 12 1.5Zm0 4.2L5.7 12l2.1 2.1L12 9.9l4.2 4.2 2.1-2.1L12 5.7Zm0 8.4-2.1 2.1L12 18.3l2.1-2.1L12 14.1Z"
+        />
+      </Svg>
+    );
+  }
+
   if (props.provider === "cursor") {
     return (
       <Svg width={size} height={size} viewBox="0 0 466.73 532.09" fill="none">

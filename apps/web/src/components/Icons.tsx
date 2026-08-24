@@ -643,7 +643,7 @@ const ANTIGRAVITY_ICON_DATA_URL =
 
 export const AntigravityIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 128 128" fill="none">
-    <image href={ANTIGRAVITY_ICON_DATA_URL} width="128" height="128" />
+    <image href={ANTIGRAVITY_ICON_DATA_URL} x="-13" y="-13" width="154" height="154" />
   </svg>
 );
 

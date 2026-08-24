@@ -1,5 +1,5 @@
 import {
-  type ProviderDriverKind,
+  ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
   ServerProvider as ServerProviderSchema,
@@ -16,6 +16,11 @@ const decodeProviderStatusCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ServerProviderSchema),
 );
 
+const ANTIGRAVITY_DRIVER = ProviderDriverKind.make("antigravity");
+
+const providerOrderBucket = (provider: ServerProvider): number =>
+  provider.driver === ANTIGRAVITY_DRIVER ? 1 : 0;
+
 const mergeProviderModels = (
   fallbackModels: ReadonlyArray<ServerProvider["models"][number]>,
   cachedModels: ReadonlyArray<ServerProvider["models"][number]>,
@@ -29,6 +34,7 @@ export const orderProviderSnapshots = (
 ): ReadonlyArray<ServerProvider> =>
   [...providers].toSorted(
     (left, right) =>
+      providerOrderBucket(left) - providerOrderBucket(right) ||
       (left.displayName ?? "").localeCompare(right.displayName ?? "") ||
       left.driver.localeCompare(right.driver) ||
       left.instanceId.localeCompare(right.instanceId),

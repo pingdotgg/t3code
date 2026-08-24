@@ -14,6 +14,7 @@ import * as Logger from "effect/Logger";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
+  orderProviderSnapshots,
   readProviderStatusCache,
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
@@ -23,6 +24,7 @@ const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
+const ANTIGRAVITY_DRIVER = ProviderDriverKind.make("antigravity");
 
 const makeProvider = (
   provider: ProviderDriverKind,
@@ -43,6 +45,20 @@ const makeProvider = (
 });
 
 it.layer(NodeServices.layer)("providerStatusCache", (it) => {
+  it("places Antigravity after OpenCode", () => {
+    const providers = [
+      makeProvider(ANTIGRAVITY_DRIVER, { displayName: "Antigravity" }),
+      makeProvider(OPENCODE_DRIVER, { displayName: "OpenCode" }),
+      makeProvider(CODEX_DRIVER, { displayName: "Codex" }),
+      makeProvider(CLAUDE_AGENT_DRIVER, { displayName: "Claude" }),
+    ];
+
+    assert.deepStrictEqual(
+      orderProviderSnapshots(providers).map((provider) => provider.displayName),
+      ["Claude", "Codex", "OpenCode", "Antigravity"],
+    );
+  });
+
   it.effect("logs structural diagnostics without retaining invalid cache contents", () => {
     const messages: Array<unknown> = [];
     const logger = Logger.make<unknown, void>((options) => {
