@@ -3,9 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { EnvironmentNotRegisteredError, EnvironmentRegistry } from "../connection/registry.ts";
@@ -16,6 +14,7 @@ import {
   type EnvironmentStreamCommandRpcTag,
   type EnvironmentSubscriptionRpcTag,
   type EnvironmentUnaryRpcTag,
+  EnvironmentRpcUnavailableError,
   request,
   runStream,
   subscribe,
@@ -484,22 +483,11 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
 }) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
-  const rpcGenerationAtom = Atom.family((environmentId: EnvironmentIdType) =>
+  const connectionStateAtom = Atom.family((environmentId: EnvironmentIdType) =>
     runtime.atom(
-      followStreamInEnvironment(
-        environmentId,
-        Stream.unwrap(
-          EnvironmentSupervisor.pipe(
-            Effect.map((supervisor) =>
-              SubscriptionRef.changes(supervisor.state).pipe(
-                Stream.filterMap((state) =>
-                  state.phase === "connected" ? Result.succeed(state.generation) : Result.failVoid,
-                ),
-                Stream.changes,
-                Stream.map<number, number | null>((generation) => generation),
-              ),
-            ),
-          ),
+      Stream.unwrap(
+        EnvironmentRegistry.pipe(
+          Effect.map((registry) => registry.stateChanges(environmentId).pipe(Stream.changes)),
         ),
       ),
       { initialValue: null },
@@ -509,14 +497,29 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
     const queryAtom = runtime
-      .atom((get) => {
-        const generation = Option.getOrNull(
-          AsyncResult.value(get(rpcGenerationAtom(target.environmentId))),
+      .atom<A, E | EnvironmentNotRegisteredError | EnvironmentRpcUnavailableError>((get) => {
+        const connectionState = Option.getOrNull(
+          AsyncResult.value(get(connectionStateAtom(target.environmentId))),
         );
-        if (generation === null) {
+        if (connectionState === null) {
           return Effect.never;
         }
-        return runInEnvironment(target.environmentId, options.execute(target.input));
+        switch (connectionState.phase) {
+          case "connected":
+            return runInEnvironment(target.environmentId, options.execute(target.input));
+          case "connecting":
+          case "backoff":
+            return Effect.never;
+          case "available":
+          case "offline":
+          case "blocked":
+            return Effect.fail(
+              new EnvironmentRpcUnavailableError({
+                environmentId: target.environmentId,
+                message: `Environment ${target.environmentId} is not connected.`,
+              }),
+            );
+        }
       })
       .pipe(
         Atom.swr({
