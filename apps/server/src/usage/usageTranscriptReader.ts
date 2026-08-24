@@ -89,6 +89,7 @@ export async function listTranscriptFiles(
         }
       } catch {
         // Vanished between readdir and stat.
+        hadReadError = true;
       }
     }
   };
