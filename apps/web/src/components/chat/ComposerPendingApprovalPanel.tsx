@@ -37,7 +37,9 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
       role="group"
     >
       {approval.appName ? (
-        <span className="shrink-0 text-[11px] font-medium text-foreground">{approval.appName}</span>
+        <span className="max-w-32 shrink truncate text-[11px] font-medium text-foreground">
+          {approval.appName}
+        </span>
       ) : null}
       <code
         aria-label={detailAriaLabel}
