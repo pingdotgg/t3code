@@ -26,6 +26,8 @@ jobs:
         run: |
           gh auth setup-git
           git clone --single-branch --branch main --no-tags "https://github.com/$GH_REPO.git" .
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git remote add upstream https://github.com/pingdotgg/t3code.git
           git fetch --no-tags upstream main
 
@@ -49,10 +51,7 @@ jobs:
             fi
           fi
           git restore --source=HEAD --staged --worktree -- .github/workflows
-          git \
-            -c user.name=github-actions[bot] \
-            -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
-            commit --no-edit
+          git commit --no-edit
           git push origin HEAD:main
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
