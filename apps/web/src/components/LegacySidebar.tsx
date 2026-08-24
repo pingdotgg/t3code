@@ -790,13 +790,15 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               isRemoteThread ? "max-sm:min-w-24" : "max-sm:min-w-20"
             }`}
           >
-            {isRemoteThread && !isDesktopLocalThread && !isConfirmingArchive && (
+            {isRemoteThread && !isDesktopLocalThread && (
               <Tooltip>
                 <TooltipTrigger
                   render={
                     <span
                       aria-label={threadEnvironmentLabel ?? "Remote"}
-                      className="inline-flex shrink-0 items-center justify-center"
+                      className={`inline-flex shrink-0 items-center justify-center ${
+                        isConfirmingArchive ? "invisible" : ""
+                      }`}
                     />
                   }
                 >
