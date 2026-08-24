@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
+import type { ConnectionAttemptError } from "../connection/model.ts";
 import { EnvironmentNotRegisteredError, EnvironmentRegistry } from "../connection/registry.ts";
 import {
   type EnvironmentRpcInput,
@@ -497,7 +498,10 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
     const queryAtom = runtime
-      .atom<A, E | EnvironmentNotRegisteredError | EnvironmentRpcUnavailableError>((get) => {
+      .atom<
+        A,
+        E | ConnectionAttemptError | EnvironmentNotRegisteredError | EnvironmentRpcUnavailableError
+      >((get) => {
         const connectionState = Option.getOrNull(
           AsyncResult.value(get(connectionStateAtom(target.environmentId))),
         );
@@ -513,10 +517,15 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           case "available":
           case "offline":
           case "blocked":
+            if (connectionState.lastFailure !== null) {
+              return Effect.fail(connectionState.lastFailure);
+            }
             return Effect.fail(
               new EnvironmentRpcUnavailableError({
                 environmentId: target.environmentId,
-                message: `Environment ${target.environmentId} is not connected.`,
+                message: `Environment ${target.environmentId} is ${
+                  connectionState.phase === "available" ? "not connected" : connectionState.phase
+                }.`,
               }),
             );
         }

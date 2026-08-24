@@ -50,6 +50,16 @@ class TestQueryError extends Schema.TaggedErrorClass<TestQueryError>()("TestQuer
   message: Schema.String,
 }) {}
 
+const OFFLINE_QUERY_FAILURE = new ConnectionTransientError({
+  reason: "transport",
+  detail: "Relay is unavailable.",
+});
+
+const BLOCKED_QUERY_FAILURE = new ConnectionBlockedError({
+  reason: "permission",
+  detail: "Access denied.",
+});
+
 function queryConnectionState(
   overrides: Partial<SupervisorConnectionState> = {},
 ): SupervisorConnectionState {
@@ -340,23 +350,28 @@ describe("environment query lifecycle", () => {
         stage: null,
         attempt: 0,
       }),
+      expectedFailure: null,
     },
     {
       condition: "while the environment is offline",
-      state: queryConnectionState({ network: "offline", phase: "offline", stage: null }),
+      state: queryConnectionState({
+        network: "offline",
+        phase: "offline",
+        stage: null,
+        lastFailure: OFFLINE_QUERY_FAILURE,
+      }),
+      expectedFailure: OFFLINE_QUERY_FAILURE,
     },
     {
       condition: "when connection recovery is blocked",
       state: queryConnectionState({
         phase: "blocked",
         stage: null,
-        lastFailure: new ConnectionBlockedError({
-          reason: "permission",
-          detail: "Access denied.",
-        }),
+        lastFailure: BLOCKED_QUERY_FAILURE,
       }),
+      expectedFailure: BLOCKED_QUERY_FAILURE,
     },
-  ] as const)("settles as unavailable $condition", ({ state }) =>
+  ] as const)("settles as unavailable $condition", ({ state, expectedFailure }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeEnvironmentQueryHarness(Effect.succeed("connected"));
@@ -374,6 +389,9 @@ describe("environment query lifecycle", () => {
         const result = registry.get(harness.atom);
         expect(AsyncResult.isFailure(result)).toBe(true);
         expect(result.waiting).toBe(false);
+        if (AsyncResult.isFailure(result) && expectedFailure !== null) {
+          expect(Cause.squash(result.cause)).toBe(expectedFailure);
+        }
       }),
     ),
   );
