@@ -336,3 +336,17 @@ export function keybindingFromKeyboardEvent(
   parts.push(keyToken);
   return parts.join("+");
 }
+
+export function shouldPreserveKeybindingCaptureFocusNavigation(
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey">,
+): boolean {
+  return event.key === "Tab" && !event.metaKey && !event.ctrlKey && !event.altKey;
+}
+
+export function keybindingPillTokenLabel(token: string, platform: string): string {
+  if (token === "mod") return isMacPlatform(platform) ? "⌘" : "Ctrl";
+  if (token === "shift") return "⇧";
+  if (token === "alt") return isMacPlatform(platform) ? "⌥" : "Alt";
+  if (token === "ctrl") return isMacPlatform(platform) ? "⌃" : "Ctrl";
+  return token.slice(0, 1).toUpperCase() + token.slice(1);
+}
