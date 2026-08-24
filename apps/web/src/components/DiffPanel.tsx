@@ -583,11 +583,19 @@ export default function DiffPanel({
         {selectedTurnId === null && selectedGitScope === "branch" && selectedGitSource?.baseRef && (
           <div
             className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
-            title={`${selectedGitSource.headRef ?? "HEAD"} → ${selectedGitSource.baseRef}`}
             aria-label={`Comparing ${selectedGitSource.headRef ?? "HEAD"} against ${selectedGitSource.baseRef}`}
           >
-            <span className="min-w-0 max-w-48 truncate">{selectedGitSource.headRef ?? "HEAD"}</span>
-            <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
+            <Tooltip>
+              <TooltipTrigger render={<span className="flex min-w-0 items-center gap-2" />}>
+                <span className="min-w-0 max-w-48 truncate">
+                  {selectedGitSource.headRef ?? "HEAD"}
+                </span>
+                <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {`${selectedGitSource.headRef ?? "HEAD"} → ${selectedGitSource.baseRef}`}
+              </TooltipPopup>
+            </Tooltip>
             <Combobox
               items={baseRefItems}
               filteredItems={filteredBaseRefItems}
@@ -677,12 +685,20 @@ export default function DiffPanel({
                               />
                             </div>
                           ) : choice.remote ? (
-                            <span
-                              className="flex justify-end text-muted-foreground"
-                              title="Remote only"
-                            >
-                              <CheckIcon aria-hidden="true" className="size-3" />
-                            </span>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <span className="flex justify-end text-muted-foreground">
+                                    <CheckIcon
+                                      role="img"
+                                      aria-label="Remote only"
+                                      className="size-3"
+                                    />
+                                  </span>
+                                }
+                              />
+                              <TooltipPopup side="top">Remote only</TooltipPopup>
+                            </Tooltip>
                           ) : null}
                         </div>
                       </ComboboxItem>

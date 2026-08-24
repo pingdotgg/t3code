@@ -38,19 +38,27 @@ catalogs:
       version: 0.2.2
 
 overrides:
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-arm64': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-x64': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-arm64': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-arm64-musl': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-x64': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-x64-musl': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-arm64': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-x64': '-'
   '@clerk/backend': 3.14.0
-  '@clerk/clerk-js': 6.25.13
+  '@clerk/clerk-js': 6.29.2
   '@clerk/clerk-js>@base-org/account': '-'
   '@clerk/clerk-js>@coinbase/wallet-sdk': '-'
   '@clerk/clerk-js>@solana/wallet-adapter-base': '-'
   '@clerk/clerk-js>@solana/wallet-adapter-react': '-'
   '@clerk/clerk-js>@solana/wallet-standard': '-'
   '@clerk/clerk-js>@wallet-standard/core': '-'
-  '@clerk/electron': 0.0.24
+  '@clerk/electron': 0.0.34
   '@clerk/electron-passkeys': 0.0.3
   '@clerk/expo': 4.2.0
-  '@clerk/react': 6.12.10
-  '@clerk/shared': 4.25.10
+  '@clerk/react': 6.14.4
+  '@clerk/shared': 4.29.2
   '@effect/atom-react': 4.0.0-beta.103
   '@effect/platform-bun': 4.0.0-beta.103
   '@effect/platform-node': 4.0.0-beta.103
@@ -76,7 +84,7 @@ patchedDependencies:
   '@effect/vitest@4.0.0-beta.103': a16b1e870d8c29e4a98b17cc4c638a4ff471753d8ca3487f78a22b759caf951b
   '@expo/metro-config@56.0.14': 8cb08b5bb7051ed9d2dbe46a2c293c5a1e17f1bd6ddf30de27909e18c921ff46
   '@ff-labs/fff-node@0.9.4': ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368
-  '@legendapp/list@3.3.5': 6befc76c7f590a0b0915b531386ce7e3bbb364612868e1f04e4ac84f60a39ab5
+  '@legendapp/list@3.3.5': 064530db83875fa671559a81ae42dc159726dc2dd6ec4c982da44ff7c7a74706
   '@pierre/diffs@1.3.0-beta.10': 7ef7cb0cbabb17c15cdb137554068b36f15f6f5265e73fb51452aa3380db91aa
   '@react-native-menu/menu@2.0.0': c7f66d121c726ade4f5c4e1aed11a691e5711d244c544084e289ac26132a0045
   '@react-native/gradle-plugin@0.85.3': c1b594a16e682d621b6a960926f8ce13fc92edfb397884cfe7fcb0518996a784
@@ -114,8 +122,8 @@ importers:
   apps/desktop:
     dependencies:
       '@clerk/electron':
-        specifier: 0.0.24
-        version: 0.0.24(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        specifier: 0.0.34
+        version: 0.0.34(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@clerk/electron-passkeys':
         specifier: 0.0.3
         version: 0.0.3
@@ -216,7 +224,7 @@ importers:
         version: 56.0.18(3cdc0dde9f93166d952f1e1bd0cb25c0)
       '@legendapp/list':
         specifier: 'catalog:'
-        version: 3.3.5(patch_hash=6befc76c7f590a0b0915b531386ce7e3bbb364612868e1f04e4ac84f60a39ab5)(react-dom@19.2.3(react@19.2.3))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
+        version: 3.3.5(patch_hash=064530db83875fa671559a81ae42dc159726dc2dd6ec4c982da44ff7c7a74706)(react-dom@19.2.3(react@19.2.3))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       '@noble/curves':
         specifier: 'catalog:'
         version: 1.9.1
@@ -520,11 +528,11 @@ importers:
         specifier: ^1.4.1
         version: 1.5.0(@types/react@19.2.16)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@clerk/electron':
-        specifier: 0.0.24
-        version: 0.0.24(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        specifier: 0.0.34
+        version: 0.0.34(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@clerk/react':
-        specifier: 6.12.10
-        version: 6.12.10(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        specifier: 6.14.4
+        version: 6.14.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@dnd-kit/core':
         specifier: ^6.3.1
         version: 6.3.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -545,7 +553,7 @@ importers:
         version: 0.9.0
       '@legendapp/list':
         specifier: 'catalog:'
-        version: 3.3.5(patch_hash=6befc76c7f590a0b0915b531386ce7e3bbb364612868e1f04e4ac84f60a39ab5)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        version: 3.3.5(patch_hash=064530db83875fa671559a81ae42dc159726dc2dd6ec4c982da44ff7c7a74706)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@lexical/react':
         specifier: ^0.41.0
         version: 0.41.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(yjs@13.6.31)
@@ -959,50 +967,6 @@ packages:
 
   '@alchemy.run/node-utils@0.0.5':
     resolution: {integrity: sha512-5agdhQxWBodxa5hDRyjnpx91RTU3g+qd5fxYB7uNDCaOzB0XC47UU/KHR6zf6jhz/NXf61gJS+vhYwn8NHeRoQ==}
-
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.170':
-    resolution: {integrity: sha512-rwfgArIa5WI0QPNqFsRBgvtSI0mrtpynUm0oK6+l6/KX4hcgnYGEzciZR1bOeD9/7sSZlTdIgt+T9alKeZmXcg==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.170':
-    resolution: {integrity: sha512-0e58h8UQMtsQxLGIv9r4foxfBFWKZ7NeDtoplLhuD7EwQonehomw1sBXCch77t/IfUS+q5vQ5zv+fOGmap5nLQ==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.170':
-    resolution: {integrity: sha512-SRYfQcsXlOq+CD/FqkQBTSHbaD++w73GnnO+NUV9adLYrca3kfetRwWT1iguY1cNS0l34dCR3rlzCPq78vg1Jg==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [musl]
-
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.170':
-    resolution: {integrity: sha512-gLbaFqcGppFJQd4DLNV4IXoeahejT/p2/M8bSSvRDbla9GOsBr1AxV5XLRyBn1e7xFGozZIAIQr3+1chp7NJgQ==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.170':
-    resolution: {integrity: sha512-m4+I0qBEk7cxRKS+pL+eoWXbXTFOAo83fQ0tQvap4z/mDMm06IWJtEPoYTaMBwsp32GJWLkHWKbZSBCHZnp2DQ==}
-    cpu: [x64]
-    os: [linux]
-    libc: [musl]
-
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.170':
-    resolution: {integrity: sha512-Xl/m7TaSC3T5IDBdHrZQ9fCQYyDmPELN34CL+MoyPIf7uSmuZnjE9fUOqDh2Rv26JxWssi1M6X+BBvVuKd6Cpg==}
-    cpu: [x64]
-    os: [linux]
-    libc: [glibc]
-
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.170':
-    resolution: {integrity: sha512-IG+8isJNNJKbnnhO7m+PGhfVCg+XoQ/MDxGde5eigFI0WsEfitjuWSWwx82bT9ghxI1aa6qNvI+UPgPcZuo5Fg==}
-    cpu: [arm64]
-    os: [win32]
-
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.170':
-    resolution: {integrity: sha512-7cuqSKbHVItPGVwRbd3A0BEJwcNtc7Fhoh6qHN4C6yrmjSrvdYYx3MLvq/VI768/RoG7mAMDxb+j7WfEfoP9BA==}
-    cpu: [x64]
-    os: [win32]
 
   '@anthropic-ai/claude-agent-sdk@0.3.170':
     resolution: {integrity: sha512-pAvhfk+iTodXZ6RF18Kz7BEUWFjL7EcR3tKuhUNdPpE1NAYCR3mSHGbafi72JsrNwKEDIs7FU31z3fqhwy8QzA==}
@@ -1717,8 +1681,8 @@ packages:
     resolution: {integrity: sha512-WsphTvDFHDuQilKI7dyVE5qmt7USu8qSrujAq6SqpEHbVFfNBfINDNuzxlF9M2skOTfHFfgiTE8Jjb1egIBGLg==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/clerk-js@6.25.13':
-    resolution: {integrity: sha512-QXhNzo0BjVSEItBsj9ukreofsi9XSrR5OJpB03ZDMb0QwWB5oXDHBBukC7DyHNmWt+dNHq01k4XUmA6cCvnNjA==}
+  '@clerk/clerk-js@6.29.2':
+    resolution: {integrity: sha512-4i4RE+ZQ0hKDDFSRKCISQPBy07SfFeFAhBUhNj2j01Nx2n4pqV+5iyg2Vf27+NKFNkgq7kdmZGvtug24D++8WQ==}
     engines: {node: '>=20.9.0'}
 
   '@clerk/electron-passkeys-darwin-arm64@0.0.3':
@@ -1745,8 +1709,8 @@ packages:
     resolution: {integrity: sha512-OHhIe88qDL+FxyBalXdXNHAS5eEramr6Rerp+6iNkfkjqT8rx4hHNmfpmjg5/T1/am8QfknbOBZkqoXZlCrjPg==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/electron@0.0.24':
-    resolution: {integrity: sha512-xORO51KLzCqmRQ4IVsa+Amp1M5NjG28QnvsaRBq1v4CUEjH8vAXDKCPiPBKAE+HuQB6HUhzYmzUkyTw2FcDonw==}
+  '@clerk/electron@0.0.34':
+    resolution: {integrity: sha512-ZY6v8G1ArieIWvutMEt5HBJtpHN4ys4F4newNlOTElv//cpW29zaeZ65M8WuKttKr7fB+MH6wzzCoX/Ha+fiSg==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       '@clerk/electron-passkeys': 0.0.3
@@ -1801,15 +1765,15 @@ packages:
       react-dom:
         optional: true
 
-  '@clerk/react@6.12.10':
-    resolution: {integrity: sha512-VDYyCyzRdMsNW6qQsMp1+L2VOXxFwpLfWBxOWPvUNOYCruecnAZjUYEJWS+E+i5MAPhSew9HjuweS4bO0FclTQ==}
+  '@clerk/react@6.14.4':
+    resolution: {integrity: sha512-vMv3SU8dvo/b09/FAY7A0xaAe+YhZ2u4nvkRUUdqmOi8u3HNSJ3s2k2PIb0cNHsLurMvDzw/dD2Hbk97MPnN/A==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
       react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
 
-  '@clerk/shared@4.25.10':
-    resolution: {integrity: sha512-Vjqk74nQGJ8y+cm+eSshoBzRvBhIzuKLOs3Gt13gEHdyQ6yV798Dl2SrBKt0jw2u6I1tOcD3s8/i9P4yJYo0dw==}
+  '@clerk/shared@4.29.2':
+    resolution: {integrity: sha512-9c9Mc1oqumsqo+JY5R37O1ipwcG3RmwPK9oadBLL9E4VxZXthXVaFI9u+1/I4BSFGA/B9BO+17tkVDL4G0Wpbg==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
@@ -10546,44 +10510,11 @@ snapshots:
 
   '@alchemy.run/node-utils@0.0.5': {}
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.170':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.170':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.170':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.170':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.170':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.170':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.170':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.170':
-    optional: true
-
   '@anthropic-ai/claude-agent-sdk@0.3.170(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.93.0(zod@4.4.3)
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       zod: 4.4.3
-    optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.170
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.170
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.170
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.170
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.170
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.170
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.170
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.170
 
   '@anthropic-ai/sdk@0.93.0(zod@4.4.3)':
     dependencies:
@@ -11539,16 +11470,16 @@ snapshots:
 
   '@clerk/backend@3.14.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
-      '@clerk/shared': 4.25.10(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/shared': 4.29.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       standardwebhooks: 1.0.0
       tslib: 2.8.1
     transitivePeerDependencies:
       - react
       - react-dom
 
-  '@clerk/clerk-js@6.25.13(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/clerk-js@6.29.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.25.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.29.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@stripe/stripe-js': 5.6.0
       '@swc/helpers': 0.5.21
       '@tanstack/query-core': 5.100.14
@@ -11563,9 +11494,9 @@ snapshots:
       - react
       - react-dom
 
-  '@clerk/clerk-js@6.25.13(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@clerk/clerk-js@6.29.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
-      '@clerk/shared': 4.25.10(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/shared': 4.29.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@stripe/stripe-js': 5.6.0
       '@swc/helpers': 0.5.21
       '@tanstack/query-core': 5.100.14
@@ -11599,11 +11530,11 @@ snapshots:
       '@clerk/electron-passkeys-win32-arm64-msvc': 0.0.3
       '@clerk/electron-passkeys-win32-x64-msvc': 0.0.3
 
-  '@clerk/electron@0.0.24(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@clerk/electron@0.0.34(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@41.5.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
-      '@clerk/clerk-js': 6.25.13(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      '@clerk/react': 6.12.10(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      '@clerk/shared': 4.25.10(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/clerk-js': 6.29.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/react': 6.14.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/shared': 4.29.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       electron: 41.5.0
       react: 19.2.6
       tslib: 2.8.1
@@ -11614,9 +11545,9 @@ snapshots:
 
   '@clerk/expo@4.2.0(patch_hash=72e426f44fc1cde16fc2cbba3d1e96cdca7c6d957faa73d0fe6b43948608a6c1)(expo-auth-session@56.0.14(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3))(expo-constants@56.0.18)(expo-crypto@56.0.4(expo@56.0.12))(expo-secure-store@56.0.4(expo@56.0.12))(expo-web-browser@56.0.5(expo@56.0.12)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)))(expo@56.0.12)(react-dom@19.2.3(react@19.2.3))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@6.0.3)':
     dependencies:
-      '@clerk/clerk-js': 6.25.13(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/react': 6.12.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/shared': 4.25.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/clerk-js': 6.29.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/react': 6.14.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.29.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@expo/config-plugins': 56.0.9(typescript@6.0.3)
       base-64: 1.0.0
       expo: 56.0.12(8895228379997a2a064f9644cda56ed0)
@@ -11635,21 +11566,21 @@ snapshots:
       - supports-color
       - typescript
 
-  '@clerk/react@6.12.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/react@6.14.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.25.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.29.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       tslib: 2.8.1
 
-  '@clerk/react@6.12.10(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@clerk/react@6.14.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
-      '@clerk/shared': 4.25.10(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/shared': 4.29.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
       tslib: 2.8.1
 
-  '@clerk/shared@4.25.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/shared@4.29.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@tanstack/query-core': 5.100.14
       dequal: 2.0.3
@@ -11659,7 +11590,7 @@ snapshots:
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
 
-  '@clerk/shared@4.25.10(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@clerk/shared@4.29.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
       '@tanstack/query-core': 5.100.14
       dequal: 2.0.3
@@ -13015,7 +12946,7 @@ snapshots:
     dependencies:
       jsbi: 4.3.2
 
-  '@legendapp/list@3.3.5(patch_hash=6befc76c7f590a0b0915b531386ce7e3bbb364612868e1f04e4ac84f60a39ab5)(react-dom@19.2.3(react@19.2.3))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)':
+  '@legendapp/list@3.3.5(patch_hash=064530db83875fa671559a81ae42dc159726dc2dd6ec4c982da44ff7c7a74706)(react-dom@19.2.3(react@19.2.3))(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)':
     dependencies:
       react: 19.2.3
       use-sync-external-store: 1.6.0(react@19.2.3)
@@ -13023,7 +12954,7 @@ snapshots:
       react-dom: 19.2.3(react@19.2.3)
       react-native: 0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6)
 
-  '@legendapp/list@3.3.5(patch_hash=6befc76c7f590a0b0915b531386ce7e3bbb364612868e1f04e4ac84f60a39ab5)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@legendapp/list@3.3.5(patch_hash=064530db83875fa671559a81ae42dc159726dc2dd6ec4c982da44ff7c7a74706)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
       react: 19.2.6
       use-sync-external-store: 1.6.0(react@19.2.6)
