@@ -5,7 +5,7 @@ import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import { showConfirmDialog, showPromptDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import {
@@ -236,6 +236,7 @@ export function useThreadListActions(): {
     thread: EnvironmentThreadShell,
     direction: "up" | "down",
   ) => Promise<boolean>;
+  readonly renameThread: (thread: EnvironmentThreadShell) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
@@ -419,6 +420,45 @@ export function useThreadListActions(): {
     },
     [unpinMutation],
   );
+  /** Same commit rule as web's resolveRenameCommit: trim, drop an empty
+      title, and skip the write when nothing changed. */
+  const commitRename = useCallback(
+    async (thread: EnvironmentThreadShell, title: string) => {
+      const trimmed = title.trim();
+      if (trimmed.length === 0 || trimmed === thread.title) return;
+      selectionHaptic();
+      const result = await updateThreadMetadata({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, title: trimmed },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not rename thread",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The thread could not be renamed.",
+        );
+      }
+    },
+    [updateThreadMetadata],
+  );
+  /** Prompts for a new title, then writes it. Not capability-gated: every
+      server that accepts thread.meta.update accepts a manual title. */
+  const renameThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      showPromptDialog({
+        title: "Rename thread",
+        confirmText: "Rename",
+        initialValue: thread.title,
+        placeholder: "Thread title",
+        onConfirm: (value) => {
+          void commitRename(thread, value);
+        },
+      });
+    },
+    [commitRename],
+  );
   const regenerateThreadTitle = useCallback(
     async (thread: EnvironmentThreadShell) => {
       const key = scopedThreadKey(thread.environmentId, thread.id);
@@ -552,6 +592,7 @@ export function useThreadListActions(): {
     pinThread,
     unpinThread,
     movePinnedThread,
+    renameThread,
     regenerateThreadTitle,
   };
 }
