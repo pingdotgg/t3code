@@ -10,7 +10,17 @@ import { TrimmedString } from "./baseSchemas.ts";
  * reasoning, subagents, tools, MCP, permissions, and context handling.
  */
 export const OhMyPiSettings = Schema.Struct({
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  binaryPath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  enabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  binaryPath: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({
+      title: "Binary path",
+      description: "Path to the Oh My Pi CLI binary on the T3 server.",
+      providerSettingsForm: { placeholder: "omp", clearWhenEmpty: "omit" },
+    }),
+  ),
 });
 export type OhMyPiSettings = typeof OhMyPiSettings.Type;
