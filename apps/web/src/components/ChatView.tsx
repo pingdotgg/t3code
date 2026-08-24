@@ -149,7 +149,6 @@ import {
   deriveAgentPanelModel,
   foldSubagentActivities,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -159,6 +158,7 @@ import {
   ChevronDownIcon,
   GitBranchIcon,
   WifiOffIcon,
+  XIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
@@ -495,6 +495,11 @@ type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
       threadSyncPhase?: ThreadSyncPhase | null;
+      paneId?: string;
+      paneIndex?: number;
+      paneCount?: number;
+      isActivePane?: boolean;
+      onClosePane?: () => void;
       routeKind: "server";
       draftId?: never;
     }
@@ -505,6 +510,11 @@ type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
       threadSyncPhase?: never;
+      paneId?: string;
+      paneIndex?: number;
+      paneCount?: number;
+      isActivePane?: boolean;
+      onClosePane?: () => void;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -1174,6 +1184,11 @@ function ChatViewContent(props: ChatViewProps) {
     onDiffPanelOpen,
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
+    paneId,
+    paneIndex,
+    paneCount,
+    isActivePane = true,
+    onClosePane,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
@@ -1314,7 +1329,20 @@ function ChatViewContent(props: ChatViewProps) {
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
-  const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const sharedComposerRef = useComposerHandleContext();
+  const composerRef = localComposerRef;
+
+  useEffect(() => {
+    if (!isActivePane || !sharedComposerRef) {
+      return;
+    }
+    sharedComposerRef.current = localComposerRef.current;
+    return () => {
+      if (sharedComposerRef.current === localComposerRef.current) {
+        sharedComposerRef.current = null;
+      }
+    };
+  }, [isActivePane, sharedComposerRef]);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -1613,9 +1641,19 @@ function ChatViewContent(props: ChatViewProps) {
   ]);
 
   const existingOpenTerminalThreadKeys = useMemo(() => {
+    if (paneId !== undefined) {
+      return activeThreadKey && terminalUiState.terminalOpen ? [activeThreadKey] : [];
+    }
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
-  }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
+  }, [
+    activeThreadKey,
+    draftThreadKeys,
+    openTerminalThreadKeys,
+    paneId,
+    serverThreadKeys,
+    terminalUiState.terminalOpen,
+  ]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   // Reading a finished thread clears the sidebar's Done badge. The visit is
   // stamped at the turn's completion time — not now/updatedAt — so it clears
@@ -3927,14 +3965,14 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThread?.id]);
 
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    if (!isActivePane || !activeThread?.id || terminalUiState.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, focusComposer, isActivePane, terminalUiState.terminalOpen]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -4553,7 +4591,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadId, terminalUiState.terminalOpen]);
 
   useEffect(() => {
-    if (!activeThreadKey) return;
+    if (!isActivePane || !activeThreadKey) return;
     const previous = terminalUiOpenByThreadRef.current[activeThreadKey] ?? false;
     const current = Boolean(terminalUiState.terminalOpen);
 
@@ -4572,9 +4610,12 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     terminalUiOpenByThreadRef.current[activeThreadKey] = current;
-  }, [activeThreadKey, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThreadKey, focusComposer, isActivePane, terminalUiState.terminalOpen]);
 
   useEffect(() => {
+    if (!isActivePane) {
+      return;
+    }
     const handler = (event: globalThis.KeyboardEvent) => {
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
@@ -4712,6 +4753,7 @@ function ChatViewContent(props: ChatViewProps) {
     closeTerminal,
     closePanelTerminal,
     createNewTerminal,
+    isActivePane,
     setTerminalOpen,
     runProjectScript,
     splitTerminal,
@@ -5932,6 +5974,18 @@ function ChatViewContent(props: ChatViewProps) {
           onToggle={toggleRightPanelMaximized}
         />
       ) : null}
+      {onClosePane ? (
+          <Button
+            aria-label="Close chat pane"
+            title="Close chat pane"
+            className="size-7"
+          size="icon-sm"
+          variant="ghost"
+          onClick={onClosePane}
+        >
+          <XIcon className="size-3.5" />
+        </Button>
+      ) : null}
       {panelToggleControls}
     </div>
   );
@@ -5972,6 +6026,7 @@ function ChatViewContent(props: ChatViewProps) {
         <DiffPanel
           key={`${activeThreadKey}:${diffPanelGitStatusResolutionKey}`}
           mode="embedded"
+          threadRef={activeThreadRef}
           composerDraftTarget={composerDraftTarget}
           initialGitScope={initialDiffPanelGitScope}
         />
@@ -6035,6 +6090,9 @@ function ChatViewContent(props: ChatViewProps) {
         >
           {!rightPanelOpen ? panelLayoutControls : null}
           <ChatHeader
+            paneIndex={paneIndex}
+            paneCount={paneCount}
+            isActivePane={isActivePane}
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
@@ -6465,9 +6523,5 @@ function ChatViewContent(props: ChatViewProps) {
 }
 
 export default function ChatView(props: ChatViewProps) {
-  return (
-    <DiffWorkerPoolProvider>
-      <ChatViewContent {...props} />
-    </DiffWorkerPoolProvider>
-  );
+  return <ChatViewContent {...props} />;
 }

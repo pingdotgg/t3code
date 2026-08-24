@@ -15,6 +15,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback } from "react";
 
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
+import { openChatThreadInSplit } from "../chatWorkspaceStore";
 import {
   buildThreadActionMenuItems,
   type ThreadActionMenuId,
@@ -176,6 +177,9 @@ export function useThreadActionMenu(input: {
           }
         };
         switch (action) {
+          case "open-in-split":
+            openChatThreadInSplit(threadRef);
+            return;
           case "new-thread-on-branch": {
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.

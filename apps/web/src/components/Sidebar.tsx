@@ -125,6 +125,7 @@ import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat"
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
+import { openChatThreadInSplit } from "../chatWorkspaceStore";
 import {
   buildBulkTitleRegenerationContextMenuItem,
   formatWorkingDurationLabel,
@@ -2785,6 +2786,10 @@ export default function Sidebar() {
           return;
         }
         switch (clicked.value) {
+          case "open-in-split":
+            openChatThreadInSplit(threadRef);
+            navigateToThread(threadRef);
+            return;
           case "new-thread-on-branch": {
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.

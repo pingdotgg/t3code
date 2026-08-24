@@ -1,13 +1,13 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import ChatView from "../components/ChatView";
+import { ChatWorkspace } from "../components/ChatWorkspace";
 import { threadHasStarted } from "../components/ChatView.logic";
 import {
   DraftId,
   markPromotedDraftThreadByRef,
   useComposerDraftStore,
 } from "../composerDraftStore";
-import { SidebarInset } from "../components/ui/sidebar";
 import { waitForDraftHeroTransition } from "../components/chat/draftHeroTransition";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useThread, useThreadRefs } from "../state/entities";
@@ -71,15 +71,23 @@ function DraftChatThreadRouteView() {
   }
 
   return (
-    <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-      <ChatView
-        draftId={draftId}
-        environmentId={draftSession.environmentId}
-        threadId={draftSession.threadId}
-        routeKind="draft"
-        forceExpandedMobileComposer
-      />
-    </SidebarInset>
+    <ChatWorkspace
+      activeTarget={{ kind: "draft", draftId }}
+      renderActivePane={({ paneId, paneIndex, paneCount, isActivePane, onClosePane }) => (
+        <ChatView
+          paneId={paneId}
+          paneIndex={paneIndex}
+          paneCount={paneCount}
+          isActivePane={isActivePane}
+          onClosePane={onClosePane}
+          draftId={draftId}
+          environmentId={draftSession.environmentId}
+          threadId={draftSession.threadId}
+          routeKind="draft"
+          forceExpandedMobileComposer
+        />
+      )}
+    />
   );
 }
 
