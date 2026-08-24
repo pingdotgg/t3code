@@ -6,8 +6,8 @@ import { SymbolView } from "../../components/AppSymbol";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 /**
- * Android-only wrapper that overlays a bottom-right new-task FAB on the home
- * screen. Other platforms render children unchanged.
+ * Android-only wrapper that overlays a bottom-right new-task FAB on a thread
+ * list. Other platforms render children unchanged.
  */
 export function AndroidHomeFabLayout(props: {
   readonly onStartNewTask: () => void;
