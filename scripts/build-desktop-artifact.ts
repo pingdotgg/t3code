@@ -852,6 +852,7 @@ export const WINDOWS_SERVER_EXTRA_RESOURCES = [
 ] as const;
 export const WSL_RUNTIME_ARCHIVE_NAME = "wsl-runtime.tar.gz";
 export const WSL_RUNTIME_ARCHIVE_HASH_NAME = `${WSL_RUNTIME_ARCHIVE_NAME}.sha256`;
+export const WSL_RUNTIME_CONTENT_ID_NAME = `${WSL_RUNTIME_ARCHIVE_NAME}.content-id`;
 export const WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE = {
   from: `apps/desktop/prod-resources/${WSL_RUNTIME_ARCHIVE_NAME}`,
   to: WSL_RUNTIME_ARCHIVE_NAME,
@@ -860,6 +861,38 @@ export const WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE = {
   from: `apps/desktop/prod-resources/${WSL_RUNTIME_ARCHIVE_HASH_NAME}`,
   to: WSL_RUNTIME_ARCHIVE_HASH_NAME,
 } as const;
+export const WSL_RUNTIME_CONTENT_ID_EXTRA_RESOURCE = {
+  from: `apps/desktop/prod-resources/${WSL_RUNTIME_CONTENT_ID_NAME}`,
+  to: WSL_RUNTIME_CONTENT_ID_NAME,
+} as const;
+
+// The archive ships exactly these roots, so the content id has to cover the
+// same set and nothing else: hashing the whole stage would tie the runtime's
+// identity to install scratch (package.json, pnpm-lock.yaml, patches/) that
+// never reaches the distro.
+export const WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS = ["apps/server/dist", "node_modules"] as const;
+
+// Claude Code brings its own agent SDK copy, so the sidecar drops ours. tar
+// matches these as `<prefix>*` globs against member names, which is the same
+// test as prefix-matching a posix relative path. Deriving both the tar flags
+// and the hash walk from one list is what keeps the id from ever describing a
+// file the archive omits.
+export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
+  "node_modules/@anthropic-ai/claude-agent-sdk-",
+  "node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-",
+] as const;
+
+// Rides along inside the archive so the install can prove, after extracting,
+// that the tree it is about to cache under `sha256-<id>` really is that
+// content. Reading one small file is far cheaper than re-hashing a few hundred
+// megabytes inside the distro, and it catches the one failure the archive's own
+// SHA-256 cannot: a build that labelled an archive with the wrong id.
+export const WSL_RUNTIME_CONTENT_ID_MANIFEST = ".t3code-wsl-runtime-content-id";
+
+// Hashing the staged tree is bound by per-file I/O, not by SHA-256, so the
+// walk and the reads run in parallel. Past ~32 the Windows builder stops
+// getting faster.
+const WSL_RUNTIME_CONTENT_ID_CONCURRENCY = 32;
 // WSL runs the same CPU arch as the Windows host; universal is mac-only.
 export const resolveWslPrebuildArch = (arch: typeof BuildArch.Type): "x64" | "arm64" | undefined =>
   arch === "x64" ? "x64" : arch === "arm64" ? "arm64" : undefined;
@@ -877,6 +910,7 @@ export const bundlesWslRuntime = (input: {
 export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
+  WSL_RUNTIME_CONTENT_ID_EXTRA_RESOURCE,
 ] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
   {
@@ -2316,20 +2350,107 @@ export const buildWslRuntimeArchiveArgs = (
 ): ReadonlyArray<string> => [
   "-czf",
   archivePath,
-  "--exclude=node_modules/@anthropic-ai/claude-agent-sdk-*",
-  "--exclude=node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-*",
-  "apps/server/dist",
-  "node_modules",
+  ...WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.map((prefix) => `--exclude=${prefix}*`),
+  WSL_RUNTIME_CONTENT_ID_MANIFEST,
+  ...WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS,
 ];
+
+// The runtime's canonical identity: sha256 over every shipped file's posix
+// path and bytes, walked in sorted order. It is computed from the staged tree
+// rather than the archive, and deliberately ignores mtimes, ownership, and
+// mode, so two builds of the same server payload agree even though their
+// tar/gzip bytes do not — gzip stores a timestamp, and tar records whatever
+// the staging filesystem happened to report. That stability is what lets a new
+// desktop release reuse a distro-local runtime an older release installed.
+export const computeWslRuntimeContentId = Effect.fn("computeWslRuntimeContentId")(function* (
+  sourceDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const toRelativePosixPath = (absolutePath: string) =>
+    path.relative(sourceDir, absolutePath).replaceAll("\\", "/");
+
+  const files: Array<string> = [];
+  const directories: Array<string> = [];
+  // The sidecar installs with pnpm's hoisted linker, so this tree is physical
+  // (see createStageWorkspaceConfig) and a plain walk cannot meet a symlink
+  // loop. The manifest lives at the stage root, outside both content roots, so
+  // a re-run over a dirty stage never folds a previous run's id into this one.
+  const pending: Array<string> = WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS.map((root) =>
+    path.join(sourceDir, root),
+  );
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) break;
+    const children = yield* Effect.forEach(
+      yield* fs.readDirectory(current),
+      (name) => {
+        const childPath = path.join(current, name);
+        return Effect.map(fs.stat(childPath), (info) => ({ childPath, info }));
+      },
+      { concurrency: WSL_RUNTIME_CONTENT_ID_CONCURRENCY },
+    );
+    for (const { childPath, info } of children) {
+      const relativePath = toRelativePosixPath(childPath);
+      if (WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => relativePath.startsWith(prefix))) {
+        continue;
+      }
+      if (info.type === "Directory") {
+        directories.push(relativePath);
+        pending.push(childPath);
+      } else {
+        files.push(relativePath);
+      }
+    }
+  }
+
+  files.sort();
+  directories.sort();
+  // Hash the files concurrently but fold them in sorted order: Effect.forEach
+  // returns results in input order, so completion order cannot reach the digest.
+  // Reading this tree one file at a time is roughly thirty times slower on a
+  // Windows builder, where every read goes through the virus scanner.
+  const fileLines = yield* Effect.forEach(
+    files,
+    (relativePath) =>
+      Effect.map(
+        fs.readFile(path.join(sourceDir, relativePath)),
+        (contents) =>
+          `f\0${relativePath}\0${NodeCrypto.createHash("sha256").update(contents).digest("hex")}\n`,
+      ),
+    { concurrency: WSL_RUNTIME_CONTENT_ID_CONCURRENCY },
+  );
+
+  const hash = NodeCrypto.createHash("sha256");
+  // Directories hold no bytes but are still part of the tree's shape: an empty
+  // directory is the one difference the file list alone cannot see.
+  for (const relativePath of directories) {
+    hash.update(`d\0${relativePath}\0\n`);
+  }
+  for (const line of fileLines) {
+    hash.update(line);
+  }
+  return hash.digest("hex");
+});
 
 export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (input: {
   readonly sourceDir: string;
   readonly archivePath: string;
   readonly hashPath: string;
+  readonly contentIdPath: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(input.archivePath), { recursive: true });
+  // Hash the tree before the manifest exists, then archive both together, so
+  // the id the desktop reads from the sidecar and the id inside the archive
+  // are the same value by construction.
+  const contentId = yield* computeWslRuntimeContentId(input.sourceDir);
+  yield* fs.writeFileString(
+    path.join(input.sourceDir, WSL_RUNTIME_CONTENT_ID_MANIFEST),
+    `${contentId}\n`,
+  );
   const tarTarget = wslRuntimeArchiveTarTarget(path.relative(input.sourceDir, input.archivePath));
   yield* runCommand(
     ChildProcess.make("tar", buildWslRuntimeArchiveArgs(tarTarget), {
@@ -2343,8 +2464,9 @@ export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(functi
     .pipe(Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))));
   const digest = hash.digest("hex");
   yield* fs.writeFileString(input.hashPath, `${digest}\n`);
+  yield* fs.writeFileString(input.contentIdPath, `${contentId}\n`);
   yield* Effect.log(
-    `[desktop-artifact] Staged compressed WSL runtime at ${input.archivePath} (${digest}).`,
+    `[desktop-artifact] Staged compressed WSL runtime at ${input.archivePath} (archive ${digest}, content ${contentId}).`,
   );
 });
 
@@ -2393,6 +2515,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   readonly asarPath: string;
   readonly wslRuntimeArchivePath: string;
   readonly wslRuntimeArchiveHashPath: string;
+  readonly wslRuntimeContentIdPath: string;
   readonly verbose: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
@@ -2466,6 +2589,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
       sourceDir: serverStageDir,
       archivePath: input.wslRuntimeArchivePath,
       hashPath: input.wslRuntimeArchiveHashPath,
+      contentIdPath: input.wslRuntimeContentIdPath,
     });
   }
 
@@ -3098,6 +3222,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         stageAppDir,
         WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE.from,
       ),
+      wslRuntimeContentIdPath: path.join(stageAppDir, WSL_RUNTIME_CONTENT_ID_EXTRA_RESOURCE.from),
       verbose: options.verbose,
     });
   }

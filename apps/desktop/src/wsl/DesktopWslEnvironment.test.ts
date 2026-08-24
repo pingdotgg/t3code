@@ -140,6 +140,7 @@ describe("WSL runtime cache", () => {
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "1.2.3-x64",
       "b".repeat(64),
+      "c".repeat(64),
     );
 
     expect(script).toContain('  [ -f "$ready_marker" ] &&');
@@ -177,6 +178,7 @@ describe("WSL runtime cache", () => {
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "1.2.3-x64",
       "b".repeat(64),
+      "c".repeat(64),
     );
 
     const expected = "b".repeat(64);
@@ -196,11 +198,41 @@ describe("WSL runtime cache", () => {
     expect(extracted).toBeGreaterThan(digestChecked);
   });
 
+  // The cache directory is named for the content it holds, so the install has
+  // to confirm the archive actually carries that content before promoting a
+  // tree under that name. Reading the manifest the build put in the archive is
+  // what catches a build that labelled an archive with the wrong id.
+  it("rejects an archive whose content id does not match the cache it would fill", () => {
+    const script = buildWslRuntimeInstallScript(
+      "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
+      "sha256-" + "c".repeat(64),
+      "b".repeat(64),
+      "c".repeat(64),
+    );
+
+    expect(script).toContain(
+      `extracted_content_id=$(cat "$runtime_tmp/.t3code-wsl-runtime-content-id" 2>/dev/null | tr -d '[:space:]')`,
+    );
+    expect(script).toContain(`if [ "$extracted_content_id" != '${"c".repeat(64)}' ]; then`);
+
+    // Checked after extraction but before the ready marker and the promotion,
+    // so a mismatched archive drops out to the mounted tree instead of poisoning
+    // a cache directory every later launch would reuse.
+    const extracted = script.indexOf("tar -xzf");
+    const contentIdChecked = script.indexOf("extracted_content_id=$(cat");
+    const markerWritten = script.indexOf(': > "$runtime_tmp/.t3code-wsl-runtime-ready"');
+    const promoted = script.indexOf('mv -T "$runtime_tmp" "$runtime_root"');
+    expect(contentIdChecked).toBeGreaterThan(extracted);
+    expect(markerWritten).toBeGreaterThan(contentIdChecked);
+    expect(promoted).toBeGreaterThan(contentIdChecked);
+  });
+
   it("treats a runtime whose native payload went missing as a cache miss", () => {
     const script = buildWslRuntimeInstallScript(
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "1.2.3-x64",
       "b".repeat(64),
+      "c".repeat(64),
     );
 
     // A glob, not a mapped `uname -m`: this is a presence check, and the later
@@ -227,6 +259,7 @@ describe("WSL runtime cache", () => {
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
       "1.2.3-x64",
       "b".repeat(64),
+      "c".repeat(64),
     );
 
     expect(script).toContain('if ! node_pty_payload_present "$runtime_tmp"; then');

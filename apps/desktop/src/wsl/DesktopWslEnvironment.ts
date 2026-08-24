@@ -35,13 +35,17 @@ export interface EnsureWslNodePtyOptions {
 }
 
 // The packaged WSL runtime archive plus the identity the build recorded for
-// it. `sha256` is the digest of the archive bytes; `runtimeId` is the cache
-// key derived from it, and is only trustworthy because the install verifies
-// the bytes against `sha256` before caching under that key.
+// it. `sha256` is the digest of the archive bytes and gates the install;
+// `contentId` is the canonical hash of the runtime tree the archive carries,
+// and `runtimeId` is the cache key derived from it. Keying on content rather
+// than app version lets an upgrade reuse a runtime it did not install, and is
+// only trustworthy because the install verifies the bytes against `sha256` and
+// the extracted tree's own manifest against `contentId` before promoting it.
 export interface WslRuntimeArchive {
   readonly windowsPath: string;
   readonly runtimeId: string;
   readonly sha256: string;
+  readonly contentId: string;
 }
 
 export type PrepareWslRuntimeResult =
@@ -257,18 +261,23 @@ const runWslShell = (
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
 const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
+// Written into the archive root by stageWslRuntimeArchive (see
+// scripts/build-desktop-artifact.ts, which owns the matching constant).
+const WSL_RUNTIME_CONTENT_ID_MANIFEST = ".t3code-wsl-runtime-content-id";
 
 export const sanitizeWslRuntimeId = (value: string): string =>
   value.replace(/[^A-Za-z0-9._-]/g, "_");
 
-// `archiveSha256` is the digest the build recorded alongside the archive. The
-// install verifies the archive bytes against it before extracting, so an
-// archive can never be promoted into the cache under an identity that does not
-// describe its contents.
+// `archiveSha256` is the digest the build recorded alongside the archive and
+// `contentId` is the canonical hash of the tree inside it. The install verifies
+// the bytes before extracting and the extracted tree's manifest before
+// promoting, so an archive can never be promoted into the cache under an
+// identity that does not describe its contents.
 export const buildWslRuntimeInstallScript = (
   linuxArchivePath: string,
   runtimeId: string,
   archiveSha256: string,
+  contentId: string,
 ): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
@@ -332,6 +341,16 @@ export const buildWslRuntimeInstallScript = (
     `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp"`,
     'test -f "$runtime_tmp/apps/server/dist/bin.mjs"',
     'test -f "$runtime_tmp/node_modules/node-pty/package.json"',
+    // The cache directory is named for the content it is supposed to hold, so
+    // check the archive agrees before promoting it under that name. Reading one
+    // small file costs nothing next to re-hashing the extracted tree, and it is
+    // the only check that can catch a build which labelled an archive with an
+    // id that does not describe it.
+    `extracted_content_id=$(cat "$runtime_tmp/${WSL_RUNTIME_CONTENT_ID_MANIFEST}" 2>/dev/null | tr -d '[:space:]')`,
+    `if [ "$extracted_content_id" != ${shellQuote(contentId)} ]; then`,
+    `  printf 'WSL runtime archive does not match its recorded content id (expected %s, got %s)\\n' ${shellQuote(contentId)} "$extracted_content_id" >&2`,
+    "  exit 1",
+    "fi",
     // Never write the ready marker over a tree that is missing the native
     // payload. Failing here drops out to the mounted-tree fallback, which is
     // recoverable; promoting it would mark the defect ready and cache it.
@@ -802,7 +821,12 @@ const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(functi
 
   const install = yield* runWslShell(
     distro,
-    buildWslRuntimeInstallScript(linuxArchivePath.value, archive.runtimeId, archive.sha256),
+    buildWslRuntimeInstallScript(
+      linuxArchivePath.value,
+      archive.runtimeId,
+      archive.sha256,
+      archive.contentId,
+    ),
     RUNTIME_INSTALL_TIMEOUT,
     { resolveNode: false },
   );

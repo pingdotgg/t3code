@@ -14,6 +14,7 @@ import {
   BundleNotSelfContainedError,
   BuildCommandFailedError,
   buildWslRuntimeArchiveArgs,
+  computeWslRuntimeContentId,
   DesktopDmgBackgroundSourceMissingError,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
@@ -68,11 +69,35 @@ import {
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_NAME,
   WSL_RUNTIME_ARCHIVE_NAME,
+  WSL_RUNTIME_CONTENT_ID_EXTRA_RESOURCE,
   WSL_RUNTIME_EXTRA_RESOURCES,
   wslRuntimeArchiveTarTarget,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
+// A minimal stand-in for the staged sidecar: just enough of the two roots the
+// archive ships for the content id to have something to walk.
+const stageWslRuntimeTreeFixture = Effect.fn("stageWslRuntimeTreeFixture")(function* (
+  root: string,
+  serverSource: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(root, "apps/server/dist"), { recursive: true });
+  yield* fs.writeFileString(path.join(root, "apps/server/dist/bin.mjs"), serverSource);
+  yield* fs.makeDirectory(path.join(root, "node_modules/node-pty/prebuilds/linux-x64"), {
+    recursive: true,
+  });
+  yield* fs.writeFileString(
+    path.join(root, "node_modules/node-pty/package.json"),
+    '{"name":"node-pty"}\n',
+  );
+  yield* fs.writeFileString(
+    path.join(root, "node_modules/node-pty/prebuilds/linux-x64/pty.node"),
+    "pty",
+  );
+});
 
 function mockProcess(exitCode: number) {
   return ChildProcessSpawner.makeHandle({
@@ -1232,6 +1257,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "apps/desktop/prod-resources/wsl-runtime.tar.gz",
       "--exclude=node_modules/@anthropic-ai/claude-agent-sdk-*",
       "--exclude=node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-*",
+      ".t3code-wsl-runtime-content-id",
       "apps/server/dist",
       "node_modules",
     ]);
@@ -1268,7 +1294,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const stageAppDir = path.join(stageRoot, "app");
         const archivePath = path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from);
         const hashPath = path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE.from);
-        yield* fs.makeDirectory(sourceDir, { recursive: true });
+        const contentIdPath = path.join(stageAppDir, WSL_RUNTIME_CONTENT_ID_EXTRA_RESOURCE.from);
+        yield* stageWslRuntimeTreeFixture(sourceDir, "export const serve = 1;\n");
 
         const spawnerLayer = Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
@@ -1282,7 +1309,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           }),
         );
 
-        yield* stageWslRuntimeArchive({ sourceDir, archivePath, hashPath }).pipe(
+        yield* stageWslRuntimeArchive({ sourceDir, archivePath, hashPath, contentIdPath }).pipe(
           Effect.provide(spawnerLayer),
         );
 
@@ -1297,13 +1324,106 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.equal(path.resolve(sourceDir, target), archivePath);
         assert.isTrue(yield* fs.exists(archivePath));
 
-        // The sidecar carries the archive's SHA-256, which becomes the WSL
-        // runtime cache identity.
+        // One sidecar gates the install (archive bytes), the other names the
+        // cache directory (runtime content). The manifest rides inside the
+        // archive so the install can prove the tree matches the name.
         const hash = yield* fs.readFileString(hashPath);
         assert.match(hash.trim(), /^[0-9a-f]{64}$/);
+        const contentId = yield* fs.readFileString(contentIdPath);
+        assert.match(contentId.trim(), /^[0-9a-f]{64}$/);
+        assert.equal(
+          (yield* fs.readFileString(path.join(sourceDir, ".t3code-wsl-runtime-content-id"))).trim(),
+          contentId.trim(),
+        );
+        assert.equal(
+          contentId.trim(),
+          yield* computeWslRuntimeContentId(sourceDir),
+          "the shipped id must describe the tree that was archived",
+        );
       }),
     );
   });
+
+  // Cross-release reuse only pays off if the identity ignores whatever the
+  // staging filesystem happened to record. Two stages holding the same payload
+  // have to agree even when their timestamps do not — plain `tar -czf` output
+  // would not, because gzip stores a timestamp and tar stores each file's mtime.
+  it.effect("derives one content id from equivalent trees with different file metadata", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-content-id-" });
+        const first = path.join(root, "first");
+        const second = path.join(root, "second");
+        yield* stageWslRuntimeTreeFixture(first, "export const serve = 1;\n");
+        yield* stageWslRuntimeTreeFixture(second, "export const serve = 1;\n");
+        // Incidental metadata only: same bytes and same layout, different times.
+        // utimes takes seconds.
+        const earlier = 1_000_000_000;
+        const later = 1_700_000_000;
+        yield* fs.utimes(path.join(first, "apps/server/dist/bin.mjs"), earlier, earlier);
+        yield* fs.utimes(path.join(second, "apps/server/dist/bin.mjs"), later, later);
+        yield* fs.utimes(path.join(first, "node_modules/node-pty/package.json"), earlier, earlier);
+        yield* fs.utimes(path.join(second, "node_modules/node-pty/package.json"), later, later);
+
+        // Without this the test could pass on a platform that quietly ignored
+        // utimes, proving nothing about metadata insensitivity.
+        assert.notDeepEqual(
+          (yield* fs.stat(path.join(first, "apps/server/dist/bin.mjs"))).mtime,
+          (yield* fs.stat(path.join(second, "apps/server/dist/bin.mjs"))).mtime,
+        );
+
+        assert.equal(
+          yield* computeWslRuntimeContentId(first),
+          yield* computeWslRuntimeContentId(second),
+        );
+      }),
+    ),
+  );
+
+  it.effect("changes the content id when shipped server content changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-content-id-" });
+        const before = path.join(root, "before");
+        const after = path.join(root, "after");
+        yield* stageWslRuntimeTreeFixture(before, "export const serve = 1;\n");
+        yield* stageWslRuntimeTreeFixture(after, "export const serve = 2;\n");
+
+        assert.notEqual(
+          yield* computeWslRuntimeContentId(before),
+          yield* computeWslRuntimeContentId(after),
+        );
+
+        // The agent SDK is installed and then excluded from the archive, so
+        // bumping it changes the stage but not the shipped runtime, and must
+        // not invalidate every cache already installed. One list drives both the
+        // tar flags and this walk, which is what keeps the two in step.
+        const stageExcluded = (root: string, version: string, body: string) =>
+          Effect.gen(function* () {
+            yield* stageWslRuntimeTreeFixture(root, "export const serve = 1;\n");
+            const sdkDir = path.join(
+              root,
+              `node_modules/@anthropic-ai/claude-agent-sdk-${version}`,
+            );
+            yield* fs.makeDirectory(sdkDir, { recursive: true });
+            yield* fs.writeFileString(path.join(sdkDir, "index.js"), body);
+          });
+        const oldSdk = path.join(root, "old-sdk");
+        const newSdk = path.join(root, "new-sdk");
+        yield* stageExcluded(oldSdk, "1.2.3", "module.exports = {};\n");
+        yield* stageExcluded(newSdk, "4.5.6", "module.exports = { next: true };\n");
+
+        assert.equal(
+          yield* computeWslRuntimeContentId(oldSdk),
+          yield* computeWslRuntimeContentId(newSdk),
+        );
+      }),
+    ),
+  );
 
   it("promotes target fff binaries to direct staged dependencies", () => {
     assert.deepStrictEqual(resolveFffNativeDependencies("mac", "arm64", "0.9.4"), {
