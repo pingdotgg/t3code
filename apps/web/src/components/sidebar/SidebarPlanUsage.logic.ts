@@ -1,6 +1,9 @@
 import type { ServerProvider } from "@t3tools/contracts";
 
+import { resolveTimestampLocale } from "../../timestampFormat";
+
 export interface SidebarPlanUsageEnvironment {
+  readonly environmentId: string;
   readonly label: string;
   readonly serverConfig: {
     readonly providers: ReadonlyArray<ServerProvider>;
@@ -27,7 +30,7 @@ export function collectSidebarPlanUsage(
       const planUsage = provider.planUsage;
       if (!planUsage) return [];
       return planUsage.windows.map((window) => ({
-        key: `${environment.label}:${provider.instanceId}:${window.id}`,
+        key: `${environment.environmentId}:${provider.instanceId}:${window.id}`,
         environmentLabel: environment.label,
         providerLabel: provider.displayName ?? provider.driver,
         windowLabel: window.label,
@@ -37,6 +40,20 @@ export function collectSidebarPlanUsage(
       }));
     }),
   );
+}
+
+export function formatPlanUsageReset(
+  resetsAt: string | null,
+  systemLocale: string | null | undefined,
+): string | null {
+  if (!resetsAt) return null;
+  const reset = new Date(resetsAt);
+  if (Number.isNaN(reset.getTime())) return null;
+  return new Intl.DateTimeFormat(resolveTimestampLocale(systemLocale), {
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(reset);
 }
 
 export function highestPlanUsagePercent(

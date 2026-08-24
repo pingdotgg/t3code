@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   collectSidebarPlanUsage,
+  formatPlanUsageReset,
   highestPlanUsagePercent,
   sidebarPlanUsageTone,
 } from "./SidebarPlanUsage.logic.ts";
@@ -29,6 +30,7 @@ describe("sidebar plan usage", () => {
   it("collects every provider window with environment context", () => {
     const entries = collectSidebarPlanUsage([
       {
+        environmentId: "environment-local",
         label: "Local",
         serverConfig: {
           providers: [
@@ -59,6 +61,40 @@ describe("sidebar plan usage", () => {
     expect(highestPlanUsagePercent(entries)).toBe(18);
   });
 
+  it("uses stable environment ids in keys when labels collide", () => {
+    const usageProvider = provider({
+      planUsage: {
+        checkedAt: "2026-08-24T18:01:00.000Z",
+        windows: [{ id: "seven_day", label: "All models", usedPercent: 10, resetsAt: null }],
+      },
+    });
+    const entries = collectSidebarPlanUsage([
+      {
+        environmentId: "environment-a",
+        label: "Local",
+        serverConfig: { providers: [usageProvider] },
+      },
+      {
+        environmentId: "environment-b",
+        label: "Local",
+        serverConfig: { providers: [usageProvider] },
+      },
+    ]);
+
+    expect(new Set(entries.map((entry) => entry.key)).size).toBe(2);
+  });
+
+  it("formats reset times with the host locale", () => {
+    const resetsAt = "2026-08-24T22:00:00.000Z";
+    expect(formatPlanUsageReset(resetsAt, "en-GB")).toBe(
+      new Intl.DateTimeFormat("en-GB", {
+        weekday: "short",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(new Date(resetsAt)),
+    );
+  });
+
   it("uses the requested warning thresholds", () => {
     expect(sidebarPlanUsageTone(69.9)).toBe("muted");
     expect(sidebarPlanUsageTone(70)).toBe("warning");
@@ -67,7 +103,11 @@ describe("sidebar plan usage", () => {
   });
 
   it("reports no percentage before a provider has returned plan usage", () => {
-    expect(collectSidebarPlanUsage([{ label: "Local", serverConfig: null }])).toEqual([]);
+    expect(
+      collectSidebarPlanUsage([
+        { environmentId: "environment-local", label: "Local", serverConfig: null },
+      ]),
+    ).toEqual([]);
     expect(highestPlanUsagePercent([])).toBeNull();
   });
 });

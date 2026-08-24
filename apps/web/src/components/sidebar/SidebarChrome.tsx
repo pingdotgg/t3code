@@ -33,6 +33,7 @@ import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import {
   collectSidebarPlanUsage,
+  formatPlanUsageReset,
   highestPlanUsagePercent,
   sidebarPlanUsageTone,
 } from "./SidebarPlanUsage.logic";
@@ -148,17 +149,6 @@ function SidebarUtilityItem({
   );
 }
 
-function formatPlanUsageReset(resetsAt: string | null): string | null {
-  if (!resetsAt) return null;
-  const reset = new Date(resetsAt);
-  if (Number.isNaN(reset.getTime())) return null;
-  return new Intl.DateTimeFormat(undefined, {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(reset);
-}
-
 function SidebarPlanUsageItem({ onClick }: { onClick: () => void }) {
   const showPlanUsage = useClientSettings((settings) => settings.showPlanUsageInSidebar);
   const { environments } = useEnvironments();
@@ -167,6 +157,8 @@ function SidebarPlanUsageItem({ onClick }: { onClick: () => void }) {
   const roundedPercent = highestPercent === null ? null : Math.round(highestPercent);
   const tone = highestPercent === null ? "muted" : sidebarPlanUsageTone(highestPercent);
   const showEnvironment = environments.length > 1;
+  const systemLocale =
+    typeof window === "undefined" ? null : (window.desktopBridge?.getSystemLocale?.() ?? null);
   const label =
     roundedPercent === null ? "Usage" : `Usage, highest plan utilization ${roundedPercent}%`;
 
@@ -178,9 +170,10 @@ function SidebarPlanUsageItem({ onClick }: { onClick: () => void }) {
             <SidebarMenuButton
               aria-label={label}
               className={cn(
-                "w-auto [&>svg]:text-current!",
-                tone === "warning" && "text-warning hover:text-warning",
-                tone === "danger" && "text-destructive hover:text-destructive",
+                "w-auto",
+                tone === "warning" && "text-warning hover:text-warning [&>svg]:text-current!",
+                tone === "danger" &&
+                  "text-destructive hover:text-destructive [&>svg]:text-current!",
               )}
               onClick={onClick}
               size={roundedPercent === null ? "icon" : "default"}
@@ -197,7 +190,7 @@ function SidebarPlanUsageItem({ onClick }: { onClick: () => void }) {
             <div className="grid min-w-52 gap-1.5 py-1">
               <div className="font-medium text-foreground">Plan usage</div>
               {entries.map((entry) => {
-                const reset = formatPlanUsageReset(entry.resetsAt);
+                const reset = formatPlanUsageReset(entry.resetsAt, systemLocale);
                 return (
                   <div className="grid grid-cols-[1fr_auto] gap-x-4" key={entry.key}>
                     <div className="min-w-0">

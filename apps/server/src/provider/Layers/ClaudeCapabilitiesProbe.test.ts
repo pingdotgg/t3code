@@ -91,6 +91,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "  const message = JSON.parse(line);",
           '  if (message.type !== "control_request") return;',
           '  if (message.request?.subtype === "get_usage") {',
+          '    if (process.env.T3_PROBE_HANG_USAGE === "true") return;',
           "    process.stdout.write(JSON.stringify({",
           '      type: "control_response",',
           "      response: {",
@@ -159,6 +160,32 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           seven_day: { utilization: 12, resets_at: "2026-08-28T01:00:00.000Z" },
           seven_day_fable: { utilization: 18, resets_at: "2026-08-28T01:00:00.000Z" },
         },
+        slashCommands: [
+          {
+            name: "review",
+            description: "Review changes",
+            input: { hint: "[path]" },
+          },
+        ],
+      });
+
+      const capabilitiesWithHungUsage = yield* probeClaudeCapabilities(
+        decodeClaudeSettings({ binaryPath: executablePath }),
+        {
+          ...process.env,
+          T3_PROBE_INVOCATION_PATH: invocationPath,
+          T3_PROBE_HANG_USAGE: "true",
+        },
+        workspaceCwd,
+        25,
+      );
+
+      assert.deepEqual(capabilitiesWithHungUsage, {
+        email: "dev@example.com",
+        subscriptionType: "pro",
+        tokenSource: "oauth",
+        apiProvider: undefined,
+        rateLimits: undefined,
         slashCommands: [
           {
             name: "review",

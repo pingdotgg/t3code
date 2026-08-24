@@ -1,3 +1,5 @@
+import * as NodeTimersPromises from "node:timers/promises";
+
 import {
   type ClaudeSettings,
   type ModelCapabilities,
@@ -584,6 +586,27 @@ function apiProviderAuthMetadata(
 // account info. The previous 8s budget expired mid-init, so the probe returned
 // `undefined` and left the provider unverified and unselectable in the picker.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+const USAGE_PROBE_TIMEOUT_MS = 2_000;
+const CAPABILITIES_PROBE_RETURN_BUFFER_MS = 100;
+
+async function optionalPromiseWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  if (timeoutMs <= 0) {
+    void promise.catch(() => undefined);
+    return null;
+  }
+
+  const timeoutAbort = new AbortController();
+  try {
+    return await Promise.race([
+      promise.catch(() => null),
+      NodeTimersPromises.setTimeout(timeoutMs, null, { signal: timeoutAbort.signal }).catch(
+        () => null,
+      ),
+    ]);
+  } finally {
+    timeoutAbort.abort();
+  }
+}
 
 /**
  * Keep workspace-scoped command discovery intact while isolating the periodic
@@ -736,6 +759,7 @@ const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
+  usageTimeoutMs = USAGE_PROBE_TIMEOUT_MS,
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
@@ -745,6 +769,7 @@ const probeClaudeCapabilities = (
       claudeEnvironment,
     );
     return yield* Effect.tryPromise(async () => {
+      const startedAt = performance.now();
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
         // This prevents any prompt from reaching the Anthropic API.
@@ -768,9 +793,18 @@ const probeClaudeCapabilities = (
             readonly apiProvider?: string;
           }
         | undefined;
-      const usage = await q
-        .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
-        .catch(() => null);
+      const remainingProbeMs =
+        CAPABILITIES_PROBE_TIMEOUT_MS -
+        (performance.now() - startedAt) -
+        CAPABILITIES_PROBE_RETURN_BUFFER_MS;
+      const boundedUsageTimeoutMs = Math.min(usageTimeoutMs, remainingProbeMs);
+      const usage =
+        boundedUsageTimeoutMs > 0
+          ? await optionalPromiseWithin(
+              q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
+              boundedUsageTimeoutMs,
+            )
+          : null;
       return {
         email: account?.email,
         subscriptionType: account?.subscriptionType,
