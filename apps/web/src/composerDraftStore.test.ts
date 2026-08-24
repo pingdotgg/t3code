@@ -12,6 +12,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  ThreadLinkedPullRequest,
   type ModelSelection,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
@@ -1895,5 +1896,164 @@ describe("createDebouncedStorage", () => {
     vi.advanceTimersByTime(300);
     expect(base.setItem).toHaveBeenCalledTimes(1);
     expect(base.setItem).toHaveBeenCalledWith("key", "v2");
+  });
+});
+
+const decodeThreadLinkedPullRequest = Schema.decodeUnknownSync(ThreadLinkedPullRequest);
+
+describe("composerDraftStore pending pull-request link", () => {
+  const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-link"));
+  const otherProjectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-other"));
+  const draftId = DraftId.make("draft-link-1");
+  const link = decodeThreadLinkedPullRequest({
+    projectId: ProjectId.make("project-link"),
+    repository: "acme/repo",
+    number: 25390,
+    url: "https://github.com/acme/repo/pull/25390",
+  });
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("stores the pending link on an existing draft session", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId);
+    store.setDraftThreadLinkedPullRequest(draftId, link);
+    expect(
+      useComposerDraftStore.getState().getDraftSession(draftId)?.linkedPullRequest?.number,
+    ).toBe(25390);
+  });
+
+  it("ignores a link for a draft session that does not exist", () => {
+    const before = useComposerDraftStore.getState().draftThreadsByThreadKey;
+    useComposerDraftStore.getState().setDraftThreadLinkedPullRequest(draftId, link);
+    expect(useComposerDraftStore.getState().draftThreadsByThreadKey).toBe(before);
+  });
+
+  it("clears the pending link when the draft moves to another project", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId);
+    store.setDraftThreadLinkedPullRequest(draftId, link);
+    store.setLogicalProjectDraftThreadId(
+      scopedProjectKey(otherProjectRef),
+      otherProjectRef,
+      draftId,
+    );
+    expect(
+      useComposerDraftStore.getState().getDraftSession(draftId)?.linkedPullRequest ?? null,
+    ).toBeNull();
+  });
+
+  it("keeps the pending link across a same-project remap", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId);
+    store.setDraftThreadLinkedPullRequest(draftId, link);
+    store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), projectRef, draftId);
+    expect(
+      useComposerDraftStore.getState().getDraftSession(draftId)?.linkedPullRequest?.number,
+    ).toBe(25390);
+  });
+
+  it("keeps the pending link when only the draft's branch changes", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId);
+    store.setDraftThreadLinkedPullRequest(draftId, link);
+    const session = useComposerDraftStore.getState().getDraftSession(draftId);
+    if (!session) throw new Error("expected a draft session");
+    useComposerDraftStore
+      .getState()
+      .setDraftThreadContext(scopeThreadRef(session.environmentId, session.threadId), {
+        branch: "feat/tour-codes",
+      });
+    expect(
+      useComposerDraftStore.getState().getDraftSession(draftId)?.linkedPullRequest?.number,
+    ).toBe(25390);
+  });
+
+  it("survives a reload before the first send", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId);
+    store.setDraftThreadLinkedPullRequest(draftId, link);
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (
+          state: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => Record<string, unknown>;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState());
+    const merged = persistApi
+      .getOptions()
+      .merge(JSON.parse(JSON.stringify(persisted)), useComposerDraftStore.getInitialState());
+    expect(merged.draftThreadsByThreadKey[draftId]?.linkedPullRequest?.number).toBe(25390);
+  });
+
+  it("drops a half-written persisted link instead of promoting onto it", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId);
+    store.setDraftThreadLinkedPullRequest(draftId, link);
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (
+          state: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => Record<string, unknown>;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persisted = JSON.parse(
+      JSON.stringify(persistApi.getOptions().partialize(useComposerDraftStore.getState())),
+    ) as { draftThreadsByThreadKey: Record<string, Record<string, unknown>> };
+    const stored = persisted.draftThreadsByThreadKey[draftId];
+    if (!stored) throw new Error("expected a persisted draft thread");
+    stored.linkedPullRequest = { number: 25390 };
+    const merged = persistApi
+      .getOptions()
+      .merge(persisted, useComposerDraftStore.getInitialState());
+    expect(merged.draftThreadsByThreadKey[draftId]?.linkedPullRequest ?? null).toBeNull();
+  });
+
+  it("drops a persisted link that belongs to another project", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId);
+    store.setDraftThreadLinkedPullRequest(draftId, link);
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (
+          state: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => Record<string, unknown>;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persisted = JSON.parse(
+      JSON.stringify(persistApi.getOptions().partialize(useComposerDraftStore.getState())),
+    ) as { draftThreadsByThreadKey: Record<string, Record<string, unknown>> };
+    const stored = persisted.draftThreadsByThreadKey[draftId];
+    if (!stored) throw new Error("expected a persisted draft thread");
+    stored.linkedPullRequest = { ...link, projectId: "project-other" };
+    const merged = persistApi
+      .getOptions()
+      .merge(persisted, useComposerDraftStore.getInitialState());
+    expect(merged.draftThreadsByThreadKey[draftId]?.linkedPullRequest ?? null).toBeNull();
+  });
+
+  it("clearing sets the link back to null", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId);
+    store.setDraftThreadLinkedPullRequest(draftId, link);
+    store.setDraftThreadLinkedPullRequest(draftId, null);
+    expect(
+      useComposerDraftStore.getState().getDraftSession(draftId)?.linkedPullRequest ?? null,
+    ).toBeNull();
   });
 });

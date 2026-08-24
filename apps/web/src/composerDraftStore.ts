@@ -16,6 +16,7 @@ import {
   type ScopedProjectRef,
   type ScopedThreadRef,
   ThreadId,
+  ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import {
   parseScopedProjectKey,
@@ -217,6 +218,7 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  linkedPullRequest: Schema.optionalKey(Schema.NullOr(ThreadLinkedPullRequest)),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -321,6 +323,9 @@ export interface DraftSessionState {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
+  /** Pull request to link once the draft promotes to a real thread. Set by
+      "open a thread on this PR" surfaces (e.g. a stack's ghost row). */
+  linkedPullRequest?: ThreadLinkedPullRequest | null;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -417,6 +422,8 @@ interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
     },
   ) => void;
+  /** Sets or clears the pull request a draft will link on promotion. */
+  setDraftThreadLinkedPullRequest: (draftId: DraftId, link: ThreadLinkedPullRequest | null) => void;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
   clearProjectDraftThreadById: (
     projectRef: ScopedProjectRef,
@@ -1414,6 +1421,9 @@ function createDraftThreadState(
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
+    // A project change invalidates the pending link the same way it does the
+    // branch: the PR belongs to the repository the draft is leaving.
+    linkedPullRequest: projectChanged ? null : (existingThread?.linkedPullRequest ?? null),
     promotedTo: null,
   };
 }
@@ -1446,6 +1456,8 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
+    (left.linkedPullRequest?.url ?? null) === (right.linkedPullRequest?.url ?? null) &&
+    (left.linkedPullRequest?.number ?? null) === (right.linkedPullRequest?.number ?? null) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1542,6 +1554,34 @@ function normalizePersistedDraftThreads(
       const worktreePath = candidateDraftThread.worktreePath;
       const startFromOrigin = candidateDraftThread.startFromOrigin === true;
       const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
+      // Same hand-validation as promotedTo: persisted state is untrusted, and a
+      // half-written link would promote a thread onto the wrong pull request.
+      const linkedPullRequestCandidate = candidateDraftThread.linkedPullRequest;
+      const linkedPullRequestRecord =
+        linkedPullRequestCandidate && typeof linkedPullRequestCandidate === "object"
+          ? (linkedPullRequestCandidate as Record<string, unknown>)
+          : null;
+      const linkedPullRequest =
+        linkedPullRequestRecord &&
+        // A link whose project is not the draft's is stale storage, not intent:
+        // attaching it on promotion would pin the thread to another repository.
+        linkedPullRequestRecord.projectId === projectId &&
+        typeof linkedPullRequestRecord.projectId === "string" &&
+        linkedPullRequestRecord.projectId.length > 0 &&
+        typeof linkedPullRequestRecord.repository === "string" &&
+        linkedPullRequestRecord.repository.length > 0 &&
+        typeof linkedPullRequestRecord.number === "number" &&
+        Number.isInteger(linkedPullRequestRecord.number) &&
+        linkedPullRequestRecord.number > 0 &&
+        typeof linkedPullRequestRecord.url === "string" &&
+        linkedPullRequestRecord.url.length > 0
+          ? ({
+              projectId: linkedPullRequestRecord.projectId as ProjectId,
+              repository: linkedPullRequestRecord.repository,
+              number: linkedPullRequestRecord.number,
+              url: linkedPullRequestRecord.url,
+            } as ThreadLinkedPullRequest)
+          : null;
       const promotedToCandidate = candidateDraftThread.promotedTo;
       const promotedToRecord =
         promotedToCandidate && typeof promotedToCandidate === "object"
@@ -1589,6 +1629,7 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
+        linkedPullRequest,
         promotedTo,
       };
     }
@@ -2238,6 +2279,7 @@ function toHydratedDraftThreadState(
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
+    linkedPullRequest: persistedDraftThread.linkedPullRequest ?? null,
     promotedTo: persistedDraftThread.promotedTo
       ? scopeThreadRef(
           persistedDraftThread.promotedTo.environmentId as EnvironmentId,
@@ -2415,6 +2457,26 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             options,
           );
         },
+        setDraftThreadLinkedPullRequest: (draftId, link) => {
+          set((state) => {
+            const existing = state.draftThreadsByThreadKey[draftId];
+            if (!existing) {
+              return state;
+            }
+            if (
+              (existing.linkedPullRequest?.url ?? null) === (link?.url ?? null) &&
+              (existing.linkedPullRequest?.number ?? null) === (link?.number ?? null)
+            ) {
+              return state;
+            }
+            return {
+              draftThreadsByThreadKey: {
+                ...state.draftThreadsByThreadKey,
+                [draftId]: { ...existing, linkedPullRequest: link },
+              },
+            };
+          });
+        },
         setDraftThreadContext: (threadRef, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
@@ -2473,6 +2535,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
+              // Same rule as createDraftThreadState: the pending link belongs to
+              // the repository the draft is leaving, so only a project change
+              // drops it. A branch or mode change must not.
+              linkedPullRequest: projectChanged ? null : (existing.linkedPullRequest ?? null),
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2486,6 +2552,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
+              (nextDraftThread.linkedPullRequest?.url ?? null) ===
+                (existing.linkedPullRequest?.url ?? null) &&
+              (nextDraftThread.linkedPullRequest?.number ?? null) ===
+                (existing.linkedPullRequest?.number ?? null) &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;

@@ -179,6 +179,44 @@ export interface ThreadChangeRequestSnapshot {
   readonly linkedPullRequest?: ThreadLinkedPullRequest;
 }
 
+/**
+ * Each visible row publishes its resolved linked pull request here, so the
+ * sidebar's stack rail can read every row's PR without resolving them a
+ * second time above the list.
+ */
+export const threadLinkedPullRequestsAtom = Atom.make<ReadonlyMap<string, NonNullable<ThreadPr>>>(
+  new Map(),
+).pipe(Atom.keepAlive, Atom.withLabel("sidebar:thread-linked-pull-requests"));
+
+export function setThreadLinkedPullRequest(
+  threadKey: string,
+  pr: NonNullable<ThreadPr> | null,
+): void {
+  appAtomRegistry.modify(threadLinkedPullRequestsAtom, (current) => {
+    const existing = current.get(threadKey);
+    if (pr === null) {
+      if (existing === undefined) return [false, current];
+      const next = new Map(current);
+      next.delete(threadKey);
+      return [true, next];
+    }
+    if (
+      existing !== undefined &&
+      existing.number === pr.number &&
+      existing.state === pr.state &&
+      existing.title === pr.title &&
+      existing.url === pr.url &&
+      existing.baseRef === pr.baseRef &&
+      existing.headRef === pr.headRef
+    ) {
+      return [false, current];
+    }
+    const next = new Map(current);
+    next.set(threadKey, pr);
+    return [true, next];
+  });
+}
+
 export const threadChangeRequestSnapshotsAtom = Atom.make<
   ReadonlyMap<string, ThreadChangeRequestSnapshot>
 >(new Map()).pipe(Atom.keepAlive, Atom.withLabel("sidebar:thread-change-request-snapshots"));

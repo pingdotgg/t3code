@@ -30,7 +30,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type { ScopedThreadRef, ThreadId, ThreadLinkedPullRequest } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
@@ -44,6 +44,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  LayersIcon,
   MessageSquareIcon,
   PinIcon,
   PlusIcon,
@@ -152,13 +153,24 @@ import {
   resolveDisplayedThreadPr,
   resolveDisplayedThreadPrProvider,
   setThreadChangeRequestSnapshot,
+  setThreadLinkedPullRequest,
   settledPrHoverColorClass,
   terminalStatusFromRunningIds,
   threadChangeRequestSnapshotsAtom,
+  threadLinkedPullRequestsAtom,
   type ThreadChangeRequestSnapshot,
+  type ThreadPr,
   type TerminalStatusIndicator,
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
+import {
+  planActiveThreadsWithStacks,
+  sidebarStackProjectKey,
+  stackOpenPrListProjectRefs,
+  type SidebarStackGroupModel,
+  type SidebarStackPullRequest,
+} from "./Sidebar.stacks";
+import { usePullRequestList } from "../state/pullRequests";
 import {
   resolveSnoozePresets,
   snoozeWakeDescription,
@@ -810,6 +822,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     linkedPullRequest: thread.linkedPullRequest,
     linkedPullRequestStatus,
   });
+  // The stack rail lives above the rows, so the resolved link is reported up
+  // rather than resolved a second time there.
+  useEffect(() => {
+    setThreadLinkedPullRequest(
+      threadKey,
+      thread.linkedPullRequest == null ? null : (linkedPullRequestStatus?.pr ?? null),
+    );
+  }, [linkedPullRequestStatus, thread.linkedPullRequest, threadKey]);
 
   // Same semantics as the legacy sidebar (never-visited counts as read):
   // switching sidebars must not light up every historical thread as unread.
@@ -1614,6 +1634,91 @@ function latestTurnDiff(
   return null;
 }
 
+const sidebarThreadKeyOf = (thread: EnvironmentThreadShell): string =>
+  scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+
+// Stack-group row heights, used to place rail ticks. The row <li>s
+// paint-contain themselves ([content-visibility:auto]), so a tick inside a
+// row could never reach out to the rail — the group draws all ticks from the
+// rail container instead, mirroring the fixed row heights.
+// Rem, because the rows are rem-sized and the interface font-size preference
+// rewrites the root font size at runtime — pixel offsets would drift off the
+// rail at 12px and bunch at 20px.
+const STACK_CARD_ROW_REM = 5.125; // h-[4.875rem] content + li py-0.5
+const STACK_CARD_TICK_REM = 2.5; // aligns with the card's title line
+const STACK_GHOST_ROW_REM = 2; // h-8 ghost row
+const STACK_ROW_GAP_PX = 1; // gap-px
+
+/**
+ * One pull-request stack in the active section: header, vertical rail at the
+ * row content inset, member thread cards top-of-stack first, and slim ghost
+ * rows for stack PRs no visible thread drives. Clicking a ghost opens a new
+ * draft thread that links the PR on promotion.
+ */
+function SidebarStackGroupItem(props: {
+  group: SidebarStackGroupModel<EnvironmentThreadShell>;
+  renderThreadRow: (thread: EnvironmentThreadShell) => ReactNode;
+  onGhostClick: (anchor: EnvironmentThreadShell, link: ThreadLinkedPullRequest) => void;
+}) {
+  const { group } = props;
+  const tickTops: string[] = [];
+  let rowTopRem = 0;
+  let rowTopPx = 0;
+  for (const entry of group.entries) {
+    const rowRem = entry.thread ? STACK_CARD_ROW_REM : STACK_GHOST_ROW_REM;
+    const tickRem = entry.thread ? STACK_CARD_TICK_REM : rowRem / 2;
+    tickTops.push(`calc(${rowTopRem + tickRem}rem + ${rowTopPx}px)`);
+    rowTopRem += rowRem;
+    rowTopPx += STACK_ROW_GAP_PX;
+  }
+  return (
+    <li className="list-none py-0.5" data-testid="sidebar-stack-group">
+      <div className="flex items-center gap-1.5 px-[var(--sidebar-row-content-inset)] pt-1 pb-0.5 font-medium text-[11px] text-secondary-label">
+        <LayersIcon aria-hidden className="size-3" />
+        <span>
+          Stack · {group.entries.length} {group.entries.length === 1 ? "PR" : "PRs"}
+        </span>
+      </div>
+      <div className="relative ml-[var(--sidebar-row-content-inset)]">
+        <div aria-hidden className="absolute top-2 bottom-2 left-0 w-px bg-sidebar-border/60" />
+        {group.entries.map((entry, index) => (
+          <div
+            key={`tick-${entry.pr.number}`}
+            aria-hidden
+            className="absolute left-0 h-px w-2 bg-sidebar-border/60"
+            style={{ top: tickTops[index] }}
+          />
+        ))}
+        <ul role="list" className="flex flex-col gap-px pl-2">
+          {group.entries.map((entry) =>
+            entry.thread ? (
+              props.renderThreadRow(entry.thread)
+            ) : (
+              <li key={`ghost-${entry.pr.number}`} className="list-none">
+                <button
+                  type="button"
+                  data-testid="sidebar-stack-ghost"
+                  aria-label={`Open a new thread on pull request #${entry.pr.number}`}
+                  onClick={() => {
+                    if (entry.pr.link) props.onGhostClick(group.anchor, entry.pr.link);
+                  }}
+                  className="flex h-8 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-[var(--sidebar-row-content-inset)] text-left text-xs text-secondary-label/70 hover:bg-sidebar-row-hover"
+                >
+                  <span className="shrink-0 text-emerald-600/70 tabular-nums dark:text-emerald-300/70">
+                    #{entry.pr.number}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{entry.pr.title}</span>
+                  <span className="shrink-0 text-[10px] text-secondary-label/50">no thread</span>
+                </button>
+              </li>
+            ),
+          )}
+        </ul>
+      </div>
+    </li>
+  );
+}
+
 const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   thread: SidebarThreadSummary;
   projectCwd: string | null;
@@ -1937,6 +2042,7 @@ export default function Sidebar() {
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
 
   const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
+  const linkedPullRequestByKey = useAtomValue(threadLinkedPullRequestsAtom);
 
   // Project scope: one menu above the list. Scoping filters the list without
   // making the header width depend on the number or length of project names.
@@ -2240,9 +2346,146 @@ export default function Sidebar() {
     return routeThread === undefined ? [] : [routeThread];
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
+  // ——— Pull-request stacks ———
+  // Each visible thread's displayed PR, resolved with the same priority the
+  // settle partition uses: a link outranks the branch snapshot, and an
+  // unresolved link yields nothing rather than falling back to HEAD-match.
+  const displayedPrByThreadKey = useMemo(() => {
+    const map = new Map<string, NonNullable<ThreadPr>>();
+    for (const thread of threads) {
+      const threadKey = sidebarThreadKeyOf(thread);
+      if (thread.linkedPullRequest != null) {
+        const linked = linkedPullRequestByKey.get(threadKey);
+        if (linked !== undefined) map.set(threadKey, linked);
+        continue;
+      }
+      const snapshot = changeRequestSnapshotByKey.get(threadKey);
+      if (snapshot != null && (thread.worktreePath === null || snapshot.branch === thread.branch)) {
+        map.set(threadKey, snapshot.pr);
+      }
+    }
+    return map;
+  }, [changeRequestSnapshotByKey, linkedPullRequestByKey, threads]);
+  const displayedOpenPrByThreadKey = useMemo(() => {
+    const map = new Map<string, SidebarStackPullRequest>();
+    for (const [threadKey, pr] of displayedPrByThreadKey) {
+      if (pr.state !== "open") continue;
+      map.set(threadKey, {
+        number: pr.number,
+        title: pr.title,
+        url: pr.url,
+        headRef: pr.headRef,
+        baseRef: pr.baseRef,
+      });
+    }
+    return map;
+  }, [displayedPrByThreadKey]);
+  // Ghost discovery costs one open-PR list read per project that can
+  // actually hold a stack, byte-identical to LinkPullRequestDialog's input so
+  // the sidebar, the dialog, and the pull requests page share one cache entry.
+  const stackListTargets = useMemo(
+    () =>
+      stackOpenPrListProjectRefs({
+        activeThreads,
+        threadKeyOf: sidebarThreadKeyOf,
+        displayedOpenPrByThreadKey,
+      })
+        // A ghost's only affordance is "open a thread on this PR", which needs
+        // the server to persist the link. Without that capability the row
+        // would promise a linked thread and hand back an ordinary one.
+        .filter(
+          (ref) =>
+            serverConfigs.get(ref.environmentId)?.environment.capabilities
+              .threadPullRequestLinking === true,
+        )
+        .map((ref) => ({
+          environmentId: ref.environmentId,
+          input: { state: "open" as const, projectId: ref.projectId, limit: 30 },
+        })),
+    [activeThreads, displayedOpenPrByThreadKey, serverConfigs],
+  );
+  const stackOpenPrList = usePullRequestList(stackListTargets);
+  const stackOpenPrsByProjectKey = useMemo(() => {
+    const map = new Map<string, SidebarStackPullRequest[]>();
+    for (const entry of stackOpenPrList.data?.entries ?? []) {
+      const projectKey = sidebarStackProjectKey({
+        environmentId: entry.environmentId,
+        projectId: entry.projectId,
+      });
+      const list = map.get(projectKey) ?? [];
+      list.push({
+        number: entry.number,
+        title: entry.title,
+        url: entry.url,
+        headRef: entry.headBranch,
+        baseRef: entry.baseBranch,
+        link: {
+          projectId: entry.projectId,
+          repository: entry.repository,
+          number: entry.number,
+          url: entry.url,
+        },
+      });
+      map.set(projectKey, list);
+    }
+    return map;
+  }, [stackOpenPrList.data?.entries]);
+  const threadBackedPrNumbersByProjectKey = useMemo(() => {
+    const map = new Map<string, Set<number>>();
+    for (const thread of threads) {
+      // Archived threads are gone from every section, so counting them would
+      // suppress a ghost the reader has no other way to reach. A link whose
+      // detail has not arrived yet still counts: the number is on the thread
+      // itself, and treating the row as threadless would offer a ghost that
+      // opens a duplicate thread for a PR that already has one.
+      if (thread.archivedAt !== null) continue;
+      const number =
+        thread.linkedPullRequest?.number ??
+        displayedPrByThreadKey.get(sidebarThreadKeyOf(thread))?.number;
+      if (number === undefined) continue;
+      const projectKey = sidebarStackProjectKey(thread);
+      const numbers = map.get(projectKey) ?? new Set<number>();
+      numbers.add(number);
+      map.set(projectKey, numbers);
+    }
+    return map;
+  }, [displayedPrByThreadKey, threads]);
+  const activeListItems = useMemo(
+    () =>
+      planActiveThreadsWithStacks({
+        activeThreads,
+        threadKeyOf: sidebarThreadKeyOf,
+        displayedOpenPrByThreadKey,
+        openPrsByProjectKey: stackOpenPrsByProjectKey,
+        threadBackedPrNumbersByProjectKey,
+      }),
+    [
+      activeThreads,
+      displayedOpenPrByThreadKey,
+      stackOpenPrsByProjectKey,
+      threadBackedPrNumbersByProjectKey,
+    ],
+  );
+  // Stack grouping hoists member threads to the group's anchor position, so the
+  // flat order behind shift-range-select, prev/next traversal and the ⌘1..9
+  // jump hints has to be read off the rendered plan, not off activeThreads.
+  const orderedActiveThreads = useMemo(
+    () =>
+      activeListItems.flatMap((item) =>
+        item.kind === "thread"
+          ? [item.thread]
+          : item.group.entries.flatMap((entry) => (entry.thread ? [entry.thread] : [])),
+      ),
+    [activeListItems],
+  );
   const orderedThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () => [
+      ...pinnedThreads,
+      ...orderedActiveThreads,
+      ...visibleSnoozedThreads,
+      ...renderedSettledThreads,
+    ],
+    [pinnedThreads, orderedActiveThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2276,6 +2519,22 @@ export default function Sidebar() {
   // a ref keeps it out of attemptSettle's dependency array.
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
   handleNewThreadRef.current = newThreadContext.handleNewThread;
+
+  const handleStackGhostClick = useCallback(
+    (anchor: EnvironmentThreadShell, link: ThreadLinkedPullRequest) => {
+      void (async () => {
+        const opened = await handleNewThreadRef.current(
+          scopeProjectRef(anchor.environmentId, anchor.projectId),
+        );
+        if (!opened) return;
+        useComposerDraftStore.getState().setDraftThreadLinkedPullRequest(opened.draftId, link);
+        // Same as every other row: on mobile the sheet would otherwise stay
+        // open over the composer the tap just created.
+        if (isMobile) setOpenMobile(false);
+      })();
+    },
+    [isMobile, setOpenMobile],
+  );
   const settledThreadKeys = useMemo(
     () =>
       new Set(
@@ -3832,8 +4091,22 @@ export default function Sidebar() {
                       />,
                     );
                   }
-                  for (const thread of activeThreads) {
-                    items.push(renderThreadRow(thread, "active"));
+                  // Active threads whose open PRs chain render as one stack
+                  // group at the position of their most recent member; every
+                  // other thread renders as today.
+                  for (const item of activeListItems) {
+                    if (item.kind === "thread") {
+                      items.push(renderThreadRow(item.thread, "active"));
+                      continue;
+                    }
+                    items.push(
+                      <SidebarStackGroupItem
+                        key={item.group.key}
+                        group={item.group}
+                        renderThreadRow={(thread) => renderThreadRow(thread, "active")}
+                        onGhostClick={handleStackGhostClick}
+                      />,
+                    );
                   }
                   // Snoozed shelf: between the inbox and Settled — out of the
                   // way, never gone. The header always renders while anything
