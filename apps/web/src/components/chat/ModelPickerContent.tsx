@@ -77,7 +77,7 @@ function ModelPickerSectionRow(props: {
       index={props.index}
       value={props.value}
       aria-expanded={props.isExpanded}
-      className="group w-full cursor-pointer rounded-md px-2 py-2"
+      className="group w-full cursor-pointer rounded-md px-2 py-2 hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] data-highlighted:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))]"
       contentClassName="flex w-full items-center gap-3"
     >
       <div className="min-w-0 flex-1 text-left">
@@ -493,8 +493,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     const sections = [...groups.values()].toSorted((a, b) => a.label.localeCompare(b.label));
     // Until the user makes an explicit choice for this instance, keep at
     // least one section open: the active model's vendor when it lives here,
-    // otherwise the first section.
-    const hasStoredChoice = storedExpandedSections[selectedInstanceId] !== undefined;
+    // otherwise the first section. A non-empty stored choice whose labels
+    // match none of the current sections came from a different environment's
+    // catalog (client settings are shared across environments), so treat it
+    // as absent rather than opening with everything collapsed.
+    const storedChoice = storedExpandedSections[selectedInstanceId];
+    const hasStoredChoice =
+      storedChoice !== undefined &&
+      (storedChoice.length === 0 ||
+        storedChoice.some((label) => sections.some((section) => section.label === label)));
     if (!hasStoredChoice && !sections.some((section) => section.isExpanded)) {
       const fallback =
         sections.find((section) =>

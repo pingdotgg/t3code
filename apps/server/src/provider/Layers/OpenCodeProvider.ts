@@ -248,11 +248,11 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
     }
   }
 
-  return models.toSorted(
-    (left, right) =>
-      (left.subProvider ?? "").localeCompare(right.subProvider ?? "") ||
-      left.name.localeCompare(right.name),
-  );
+  // Keep the catalog globally name-sorted: none of these models carry
+  // isDefault, so clients use models[0] as the implicit default for a fresh
+  // setup. Ordering is behavior here, not presentation; clients group by
+  // subProvider themselves.
+  return models.toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
 function trimOptional(value: string | null | undefined): string | undefined {

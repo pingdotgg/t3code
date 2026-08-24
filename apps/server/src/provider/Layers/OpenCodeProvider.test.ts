@@ -213,7 +213,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
-  it.effect("orders the catalog by upstream provider, then model name", () =>
+  it.effect("keeps the catalog name-sorted so the implicit default model stays stable", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventory = {
         providerList: {
@@ -246,15 +246,15 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.deepEqual(
         snapshot.models.map((model) => model.slug),
         [
-          "anthropic/claude-haiku-4-5",
-          "anthropic/claude-sonnet-4-5",
           "openai/gpt-5.4",
+          "anthropic/claude-haiku-4-5",
           "openai/o3",
+          "anthropic/claude-sonnet-4-5",
         ],
       );
       NodeAssert.deepEqual(
         snapshot.models.map((model) => model.subProvider),
-        ["Anthropic", "Anthropic", "OpenAI", "OpenAI"],
+        ["OpenAI", "Anthropic", "OpenAI", "Anthropic"],
       );
     }),
   );

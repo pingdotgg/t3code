@@ -21,22 +21,26 @@ export function modelMatchesCatalogQuery(input: {
 }
 
 /**
- * Chunk one provider's catalog into consecutive vendor runs. The server sorts
- * aggregator catalogs by (subProvider, name), so each vendor arrives as one
- * run; models without a vendor form their own runs and render flat. Returns
- * null when fewer than two vendors are present — a single header is noise.
+ * Group one provider's catalog by vendor, in first-seen order, keeping each
+ * vendor's models in catalog order. The catalog itself stays name-sorted (its
+ * order feeds the implicit default model), so grouping happens here; models
+ * without a vendor form one flat group. Returns null when fewer than two
+ * vendors are present — a single header is noise.
  */
 export function catalogVendorRuns(models: ReadonlyArray<ModelOption>): ReadonlyArray<{
   readonly subProvider: string | undefined;
   readonly models: ReadonlyArray<ModelOption>;
 }> | null {
   const runs: Array<{ subProvider: string | undefined; models: ModelOption[] }> = [];
+  const runByVendor = new Map<string | undefined, { models: ModelOption[] }>();
   for (const model of models) {
-    const current = runs[runs.length - 1];
-    if (current && current.subProvider === model.subProvider) {
-      current.models.push(model);
+    const existing = runByVendor.get(model.subProvider);
+    if (existing) {
+      existing.models.push(model);
     } else {
-      runs.push({ subProvider: model.subProvider, models: [model] });
+      const run = { subProvider: model.subProvider, models: [model] };
+      runByVendor.set(model.subProvider, run);
+      runs.push(run);
     }
   }
   const vendors = new Set(runs.flatMap((run) => (run.subProvider ? [run.subProvider] : [])));

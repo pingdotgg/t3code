@@ -22,3 +22,15 @@ On desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux from
 start it in the background. T3 Code opens another new thread and shows an **Open** action for the
 thread that started. The new thread keeps the selected workspace mode and base branch. If **New
 worktree** is selected, each background thread creates its own worktree.
+
+## Model picker
+
+When a provider aggregates models from several connected providers, as OpenCode does, the model
+picker groups its catalog into one collapsible section per connected provider, each showing a model
+count. The section holding your current model starts open. Open and close sections freely; the
+picker remembers those choices per provider, including on the mobile app's thread settings sheet
+within a session.
+
+Favorited models and custom models stay above the sections, and search always matches across the
+full catalog, ignoring the folds. A provider whose models all come from a single source keeps a
+plain list.

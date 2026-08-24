@@ -96,7 +96,7 @@ describe("thread settings sheet state", () => {
     );
   });
 
-  it("chunks a multi-vendor catalog into runs, keeping vendorless models flat", () => {
+  it("groups a multi-vendor catalog by vendor, keeping vendorless models flat", () => {
     const models = [
       modelOption("claude-haiku", [], "Anthropic"),
       modelOption("claude-sonnet", [], "Anthropic"),
@@ -110,6 +110,22 @@ describe("thread settings sheet state", () => {
       { subProvider: "Anthropic", models: [models[0], models[1]] },
       { subProvider: "OpenAI", models: [models[2]] },
       { subProvider: undefined, models: [models[3]] },
+    ]);
+  });
+
+  it("merges a vendor's models into one group when the name-sorted catalog interleaves them", () => {
+    const models = [
+      modelOption("gpt-5.4", [], "OpenAI"),
+      modelOption("haiku", [], "Anthropic"),
+      modelOption("o3", [], "OpenAI"),
+      modelOption("sonnet", [], "Anthropic"),
+    ];
+
+    const runs = catalogVendorRuns(models);
+
+    expect(runs).toEqual([
+      { subProvider: "OpenAI", models: [models[0], models[2]] },
+      { subProvider: "Anthropic", models: [models[1], models[3]] },
     ]);
   });
 
