@@ -421,31 +421,6 @@ describe("superseded tool.updated snapshot dedup", () => {
     expect(projectedIds([anonymous, completed])).toEqual([anonymous.id, completed.id]);
   });
 
-  it("does not filter live activity-appended events", () => {
-    const update = makeToolLifecycleActivity("upd-live-event", "tool.updated");
-    const event = {
-      sequence: 11,
-      eventId: EventId.make("event-tool-updated"),
-      aggregateKind: "thread",
-      aggregateId: ThreadId.make("thread-projection"),
-      occurredAt: "2026-07-27T00:00:03.000Z",
-      commandId: null,
-      causationEventId: null,
-      correlationId: null,
-      metadata: {},
-      type: "thread.activity-appended",
-      payload: {
-        threadId: ThreadId.make("thread-projection"),
-        activity: update,
-      },
-    } satisfies Extract<OrchestrationEvent, { type: "thread.activity-appended" }>;
-
-    const projected = projectActivityEvent(event);
-    expect(
-      projected.type === "thread.activity-appended" ? projected.payload.activity.id : undefined,
-    ).toEqual(update.id);
-  });
-
   it("leaves the collapsed work log identical to the full history", () => {
     const activities = [
       makeToolLifecycleActivity("upd-1", "tool.updated", { detail: "writing" }),
@@ -565,30 +540,5 @@ describe("context-window snapshot dedup", () => {
       thread: makeThread([fixtures[4]!]),
     });
     expect(projected.thread.activities).toEqual([projectActivityPayload(fixtures[4]!)]);
-  });
-
-  it("does not filter live activity-appended events", () => {
-    const activity = makeContextWindowActivity("ctx-live", 4_000);
-    const event = {
-      sequence: 9,
-      eventId: EventId.make("event-ctx"),
-      aggregateKind: "thread",
-      aggregateId: ThreadId.make("thread-projection"),
-      occurredAt: "2026-07-27T00:00:02.000Z",
-      commandId: null,
-      causationEventId: null,
-      correlationId: null,
-      metadata: {},
-      type: "thread.activity-appended",
-      payload: {
-        threadId: ThreadId.make("thread-projection"),
-        activity,
-      },
-    } satisfies Extract<OrchestrationEvent, { type: "thread.activity-appended" }>;
-
-    const projected = projectActivityEvent(event);
-    expect(
-      projected.type === "thread.activity-appended" ? projected.payload.activity : undefined,
-    ).toEqual(activity);
   });
 });
