@@ -377,7 +377,8 @@ export function describeMcpElicitation(
     options: [
       { decision: "cancel", label: "Cancel" },
       { decision: "decline", label: "Decline" },
-      ...(persistenceOptions.has("acceptForSession")
+      ...(persistenceOptions.has("acceptForSession") &&
+      toMcpElicitationResponse(payload, "acceptForSession").action === "accept"
         ? [
             {
               decision: "acceptForSession" as const,
@@ -385,7 +386,8 @@ export function describeMcpElicitation(
             },
           ]
         : []),
-      ...(persistenceOptions.has("acceptAlways")
+      ...(persistenceOptions.has("acceptAlways") &&
+      toMcpElicitationResponse(payload, "acceptAlways").action === "accept"
         ? [
             {
               decision: "acceptAlways" as const,
@@ -405,6 +407,10 @@ export function toMcpElicitationResponse(
 ): EffectCodexSchema.McpServerElicitationRequestResponse {
   if (decision === "decline" || decision === "cancel") {
     return { action: decision };
+  }
+
+  if (payload.mode === "url") {
+    return { action: "decline" };
   }
 
   const persist =
@@ -1823,8 +1829,9 @@ export const makeCodexSessionRuntime = (
     yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
       Effect.gen(function* () {
         if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
-          yield* Effect.logWarning("Declined an MCP elicitation that requires unsupported input.", {
+          yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
             serverName: payload.serverName,
+            mode: payload.mode,
           });
           return {
             action: "decline",
