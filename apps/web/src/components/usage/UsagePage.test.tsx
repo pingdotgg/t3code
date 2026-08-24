@@ -53,13 +53,16 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
-vi.mock("./usageProviders", () => ({
-  PROVIDER_ORDER: ["codex", "claude"],
-  PROVIDER_PRESENTATION: {
-    codex: { color: "white", label: "Codex", mark: "span" },
-    claude: { color: "orange", label: "Claude Code", mark: "span" },
-  },
-}));
+vi.mock("./usageProviders", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./usageProviders")>();
+  return {
+    ...actual,
+    PROVIDER_PRESENTATION: {
+      codex: { color: "white", label: "Codex", mark: "span" },
+      claude: { color: "orange", label: "Claude Code", mark: "span" },
+    },
+  };
+});
 
 import { UsagePage } from "./UsagePage";
 

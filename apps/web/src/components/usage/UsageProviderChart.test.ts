@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildDayColumns, niceScale } from "./UsageProviderChart";
+import { providersWithUsage } from "./usageProviders";
 
 describe("niceScale", () => {
   it("never puts the peak above the top of the scale", () => {
@@ -93,6 +94,17 @@ describe("buildDayColumns", () => {
       const sum = column.bands.reduce((running, band) => running + band.value, 0);
       expect(column.total).toBeCloseTo(sum, 9);
     }
+  });
+});
+
+describe("providersWithUsage", () => {
+  it("omits providers with no cost or tokens", () => {
+    expect(
+      providersWithUsage([
+        { provider: "codex", costUsd: 0, totalTokens: 0 },
+        { provider: "claude", costUsd: 0, totalTokens: 200 },
+      ]),
+    ).toEqual(["claude"]);
   });
 });
 
