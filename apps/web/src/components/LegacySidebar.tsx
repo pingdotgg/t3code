@@ -790,7 +790,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               isRemoteThread ? "max-sm:min-w-24" : "max-sm:min-w-20"
             }`}
           >
-            {isRemoteThread && !isDesktopLocalThread && (
+            {isRemoteThread && !isDesktopLocalThread && !isConfirmingArchive && (
               <Tooltip>
                 <TooltipTrigger
                   render={
