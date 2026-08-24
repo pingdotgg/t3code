@@ -1,5 +1,5 @@
 import { isElectron } from "~/env";
-import type { MessageKey } from "~/i18n/messages";
+import type { MessageKey, Translate } from "~/i18n/messages";
 
 export type SettingsPath =
   | "/settings/general"
@@ -271,6 +271,49 @@ export const SETTINGS_SEARCH_ITEMS = [
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
 
+export const SETTINGS_SEARCH_TITLE_KEYS: Readonly<Record<SettingsSearchItemId, MessageKey>> = {
+  "color-scheme": "settings.search.colorScheme",
+  theme: "settings.search.themes",
+  "setting-appearance-contrast": "settings.search.contrast",
+  "setting-glass-opacity": "settings.search.glassOpacity",
+  "environment-identification": "settings.search.environmentIdentification",
+  "interface-font": "settings.search.interfaceFont",
+  "prompt-font": "settings.search.promptFont",
+  "code-font": "settings.search.codeFont",
+  "terminal-font": "settings.search.terminalFont",
+  "font-smoothing": "settings.search.fontSmoothing",
+  "word-wrap": "settings.search.wordWrap",
+  "interface-language": "settings.search.interfaceLanguage",
+  "project-grouping": "settings.search.projectGrouping",
+  "auto-settle-inactive-threads": "settings.search.autoSettleInactive",
+  "auto-settle-merged-threads": "settings.search.autoSettleMerged",
+  "time-format": "settings.search.timeFormat",
+  "hide-whitespace-changes": "settings.search.hideWhitespaceChanges",
+  "skills-in-slash-menu": "settings.search.skillsInSlashMenu",
+  "provider-update-checks": "settings.search.providerUpdateChecks",
+  "new-threads": "settings.search.newThreads",
+  "start-from-origin": "settings.search.startFromOrigin",
+  "add-project-starts-in": "settings.search.addProjectStartsIn",
+  "archive-confirmation": "settings.search.archiveConfirmation",
+  "delete-confirmation": "settings.search.deleteConfirmation",
+  "quit-confirmation": "settings.search.holdToQuit",
+  "text-generation-model": "settings.search.textGenerationModel",
+  diagnostics: "settings.search.diagnostics",
+  "legacy-plan-mode": "settings.search.legacyPlanMode",
+  "legacy-token-streaming": "settings.search.legacyTokenStreaming",
+  "legacy-sidebar": "settings.search.legacySidebar",
+  keybindings: "settings.search.keybindings",
+  providers: "settings.search.providers",
+  "agent-browser-access": "settings.search.agentBrowserAccess",
+  "browser-default-viewport": "settings.search.browserDefaultViewport",
+  "browser-default-zoom": "settings.search.browserDefaultZoom",
+  "browser-default-appearance": "settings.search.browserDefaultAppearance",
+  "browser-auto-show-floating-preview": "settings.search.browserAutoShowFloatingPreview",
+  "source-control": "settings.search.sourceControl",
+  "remote-environments": "settings.search.remoteEnvironments",
+  archive: "settings.search.archivedThreads",
+};
+
 const SEARCH_ITEMS_BY_ID = Object.fromEntries(
   SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item]),
 ) as Readonly<Record<SettingsSearchItemId, SettingsSearchItem>>;
@@ -280,12 +323,22 @@ const SEARCH_ITEMS_BY_ID = Object.fromEntries(
  * spread (or pick from) this instead of restating the strings, so the catalog
  * and the rendered settings cannot drift apart.
  */
-export function searchableSetting(id: SettingsSearchItemId): {
+export function searchableSetting(
+  id: SettingsSearchItemId,
+  t?: Translate,
+): {
   readonly id: string;
   readonly title: string;
 } {
   const { id: anchorId, title } = SEARCH_ITEMS_BY_ID[id];
-  return { id: anchorId, title };
+  return { id: anchorId, title: t?.(SETTINGS_SEARCH_TITLE_KEYS[id]) ?? title };
+}
+
+export function localizeSettingsSearchItems(t: Translate): ReadonlyArray<SettingsSearchItem> {
+  return SETTINGS_SEARCH_ITEMS.map((item) => ({
+    ...item,
+    title: t(SETTINGS_SEARCH_TITLE_KEYS[item.id]),
+  }));
 }
 
 function normalizeSearchText(value: string): string {

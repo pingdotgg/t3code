@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  formatChatTimestampTooltip,
   formatDayAwareTimestamp,
   formatElapsedDurationLabel,
   formatExpiresInLabel,
@@ -14,6 +15,9 @@ import {
   getTimestampFormatOptions,
   resolveTimestampLocale,
 } from "./timestampFormat";
+import { createTranslator } from "./i18n";
+
+const zh = createTranslator("zh-CN");
 
 describe("getTimestampFormatOptions", () => {
   it("omits hour12 when locale formatting is requested", () => {
@@ -101,6 +105,11 @@ describe("formatRelativeTimeUntilLabel", () => {
   it("formats hours remaining", () => {
     expect(formatRelativeTimeUntilLabel("2026-04-07T18:00:00.000Z")).toBe("6h left");
   });
+
+  it("localizes expiry labels and preserves translated word order", () => {
+    expect(formatRelativeTimeUntilLabel("2026-04-07T11:59:00.000Z", zh)).toBe("已过期");
+    expect(formatRelativeTimeUntilLabel("2026-04-07T12:15:00.000Z", zh)).toBe("剩余 15m");
+  });
 });
 
 describe("formatExpiresInLabel", () => {
@@ -151,6 +160,21 @@ describe("formatDayAwareTimestamp", () => {
     expect(formatDayAwareTimestamp(messageAt, "12-hour", justPastMidnight)).toBe(
       `yesterday at ${time(messageAt)}`,
     );
+  });
+
+  it("localizes the previous-calendar-day label", () => {
+    const messageAt = iso(2026, 7, 13, 23, 30);
+    const justPastMidnight = new Date(2026, 7, 14, 0, 30).getTime();
+    expect(formatDayAwareTimestamp(messageAt, "12-hour", justPastMidnight, zh)).toBe(
+      `昨天 ${time(messageAt)}`,
+    );
+  });
+
+  it("uses a numeric date in translated chat tooltips", () => {
+    const messageAt = iso(2026, 7, 13, 23, 30);
+    const label = formatChatTimestampTooltip(messageAt, "24-hour", zh);
+    expect(label).toContain("2026");
+    expect(label).not.toMatch(/[A-Za-z]/);
   });
 
   it("prefixes older same-year messages with the numeric date", () => {
@@ -245,6 +269,15 @@ describe("getRelativeTimeState", () => {
       suffix: "ago",
     });
   });
+
+  it("returns a complete localized label when a translator is supplied", () => {
+    expect(getRelativeTimeState("2026-04-07T11:45:00.000Z", zh)).toEqual({
+      status: "relative",
+      value: "15m前",
+      suffix: null,
+    });
+    expect(formatRelativeTimeLabel("2026-04-07T11:45:00.000Z", zh)).toBe("15m前");
+  });
 });
 
 describe("formatElapsedDurationLabel", () => {
@@ -260,6 +293,10 @@ describe("formatElapsedDurationLabel", () => {
   it("returns just now when the instant is current or in the future", () => {
     expect(formatElapsedDurationLabel("2026-04-07T12:00:00.000Z")).toBe("just now");
     expect(formatElapsedDurationLabel("2026-04-07T12:01:00.000Z")).toBe("just now");
+  });
+
+  it("localizes the just-now label", () => {
+    expect(formatElapsedDurationLabel("2026-04-07T12:00:00.000Z", Date.now(), zh)).toBe("刚刚");
   });
 
   it("formats seconds, minutes, hours, and days", () => {

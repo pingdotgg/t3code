@@ -23,6 +23,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useI18n } from "../i18n";
 import { gitEnvironment } from "./git";
 import { useEnvironmentQuery } from "./query";
 import { sourceControlEnvironment } from "./sourceControl";
@@ -139,6 +140,7 @@ export function useSourceControlActionRunning(
 }
 
 export function useVcsInitAction(scope: SourceControlActionScope) {
+  const { t } = useI18n();
   const init = useAtomCommand(vcsEnvironment.init, { reportFailure: false });
   const action = useCallback(async () => {
     const target = resolveScope(scope);
@@ -158,10 +160,16 @@ export function useVcsInitAction(scope: SourceControlActionScope) {
       input: { cwd: target.cwd },
     });
   }, [init, scope]);
-  return useAction({ kind: "init", label: "Initializing repository", scope, action });
+  return useAction({
+    kind: "init",
+    label: t("sourceControl.action.initializingRepository"),
+    scope,
+    action,
+  });
 }
 
 export function useVcsPullAction(scope: SourceControlActionScope) {
+  const { t } = useI18n();
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
   const status = useEnvironmentQuery(
     scope.environmentId !== null && scope.cwd !== null
@@ -191,7 +199,7 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
   }, [pull, scope]);
   return useAction({
     kind: "pull",
-    label: "Pulling latest changes",
+    label: t("sourceControl.action.pullingLatestChanges"),
     scope,
     action,
     onSuccess: status.refresh,
@@ -199,6 +207,7 @@ export function useVcsPullAction(scope: SourceControlActionScope) {
 }
 
 export function useGitStackedAction(scope: SourceControlActionScope) {
+  const { t } = useI18n();
   const runStackedAction = useAtomCommand(vcsActionManager.runStackedAction(scope), {
     reportFailure: false,
   });
@@ -245,7 +254,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
 
   return useAction({
     kind: "runStackedAction",
-    label: "Running source control action",
+    label: t("sourceControl.action.running"),
     scope,
     action,
     onSuccess: status.refresh,
@@ -254,6 +263,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
 }
 
 export function useSourceControlPublishRepositoryAction(scope: SourceControlActionScope) {
+  const { t } = useI18n();
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
   });
@@ -297,7 +307,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
   );
   return useAction({
     kind: "publishRepository",
-    label: "Publishing repository",
+    label: t("sourceControl.action.publishingRepository"),
     scope,
     action,
     onSuccess: status.refresh,
@@ -305,6 +315,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
 }
 
 export function usePreparePullRequestThreadAction(scope: SourceControlActionScope) {
+  const { t } = useI18n();
   const preparePullRequestThread = useAtomCommand(gitEnvironment.preparePullRequestThread, {
     reportFailure: false,
   });
@@ -336,7 +347,7 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
   );
   return useAction({
     kind: "preparePullRequestThread",
-    label: "Preparing pull request thread",
+    label: t("sourceControl.action.preparingPullRequestThread"),
     scope,
     action,
   });

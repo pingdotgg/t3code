@@ -1241,6 +1241,7 @@ export const makeCodexSessionRuntime = (
               method: "collabAgent/item",
               payload: {
                 ...childIdentity,
+                lifecycle: notification.method === "item/started" ? "started" : "completed",
                 item: notification.params.item,
               },
             });

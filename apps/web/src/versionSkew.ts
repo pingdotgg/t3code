@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { APP_VERSION } from "./branding";
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
+import type { Translate } from "./i18n";
 
 export interface VersionMismatch {
   readonly clientVersion: string;
@@ -67,15 +68,25 @@ export function manualServerUpdateCommand(targetVersion: string): string {
 export function serverUpdateGuidance(
   capability: ServerSelfUpdateCapability | null,
   serverLabel: string,
+  t?: Translate,
 ): string {
   switch (capability) {
     case "boot-service":
     case "respawn":
-      return `Update the ${serverLabel} so they stay in sync.`;
+      return (
+        t?.("versionSkew.updateServer", { server: serverLabel }) ??
+        `Update the ${serverLabel} so they stay in sync.`
+      );
     case "desktop-managed":
-      return `Update the desktop app that runs the ${serverLabel}.`;
+      return (
+        t?.("versionSkew.updateDesktop", { server: serverLabel }) ??
+        `Update the desktop app that runs the ${serverLabel}.`
+      );
     default:
-      return `Relaunch the ${serverLabel} with the copied command to sync them.`;
+      return (
+        t?.("versionSkew.relaunchServer", { server: serverLabel }) ??
+        `Relaunch the ${serverLabel} with the copied command to sync them.`
+      );
   }
 }
 

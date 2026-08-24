@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
 import { cn } from "~/lib/utils";
+import { useI18n, type MessageKey } from "~/i18n";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -16,8 +17,14 @@ interface ComposerPreviewAnnotationCardsProps {
   className?: string;
 }
 
-function TargetStat(props: { icon: ReactNode; count: number; label: string }) {
-  const tooltipText = `${props.count} ${props.label}${props.count === 1 ? "" : "s"}`;
+function TargetStat(props: {
+  icon: ReactNode;
+  count: number;
+  singularKey: MessageKey;
+  pluralKey: MessageKey;
+}) {
+  const { t } = useI18n();
+  const tooltipText = `${props.count} ${t(props.count === 1 ? props.singularKey : props.pluralKey)}`;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -40,6 +47,7 @@ export function ComposerPreviewAnnotationCards({
   onExpandImage,
   className,
 }: ComposerPreviewAnnotationCardsProps) {
+  const { t } = useI18n();
   if (annotations.length === 0) return null;
   const imagesById = new Map(images.map((image) => [image.id, image]));
 
@@ -59,13 +67,13 @@ export function ComposerPreviewAnnotationCards({
             {image?.previewUrl ? (
               <button
                 type="button"
-                aria-label={`Preview ${image.name}`}
+                aria-label={t("chat.image.previewNamed", { name: image.name })}
                 className="size-14 shrink-0 cursor-zoom-in overflow-hidden border-r border-border/70 bg-muted"
                 onClick={() => onExpandImage(image.id)}
               >
                 <img
                   src={image.previewUrl}
-                  alt="Annotated preview crop"
+                  alt={t("chat.image.annotatedCrop")}
                   className="size-full object-cover transition duration-200 group-hover/preview-annotation:scale-[1.03]"
                 />
               </button>
@@ -108,28 +116,32 @@ export function ComposerPreviewAnnotationCards({
                     <TargetStat
                       icon={<MousePointerClick className="size-3" />}
                       count={annotation.elements.length}
-                      label="element"
+                      singularKey="chat.preview.element"
+                      pluralKey="chat.preview.elements"
                     />
                   ) : null}
                   {annotation.regions.length > 0 ? (
                     <TargetStat
                       icon={<Frame className="size-3" />}
                       count={annotation.regions.length}
-                      label="region"
+                      singularKey="chat.preview.region"
+                      pluralKey="chat.preview.regions"
                     />
                   ) : null}
                   {annotation.strokes.length > 0 ? (
                     <TargetStat
                       icon={<PenLine className="size-3" />}
                       count={annotation.strokes.length}
-                      label="drawing"
+                      singularKey="chat.preview.drawing"
+                      pluralKey="chat.preview.drawings"
                     />
                   ) : null}
                   {annotation.styleChanges.length > 0 ? (
                     <TargetStat
                       icon={<Paintbrush className="size-3" />}
                       count={annotation.styleChanges.length}
-                      label="style change"
+                      singularKey="chat.preview.styleChange"
+                      pluralKey="chat.preview.styleChanges"
                     />
                   ) : null}
                 </div>
@@ -138,7 +150,7 @@ export function ComposerPreviewAnnotationCards({
             <Button
               size="icon-micro"
               variant="ghost-muted"
-              aria-label="Remove preview annotation"
+              aria-label={t("chat.preview.removeAnnotation")}
               className="absolute right-1.5 top-1.5 [--control-icon-color:currentColor] rounded text-icon-muted hover:bg-muted"
               onClick={() => onRemove(annotation.id)}
             >

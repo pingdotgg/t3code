@@ -1,5 +1,7 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
+import type { Translate } from "../i18n";
+
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
 const DESKTOP_RELEASE_TAG_URL = "https://github.com/pingdotgg/t3code/releases/tag";
@@ -60,52 +62,93 @@ export function isDesktopUpdateButtonDisabled(state: DesktopUpdateState | null):
   return state?.status === "downloading";
 }
 
-export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState): string {
+export function getArm64IntelBuildWarningDescription(
+  state: DesktopUpdateState,
+  t?: Translate,
+): string {
   if (!shouldShowArm64IntelBuildWarning(state)) {
-    return "This install is using the correct architecture.";
+    return t?.("update.architectureCorrect") ?? "This install is using the correct architecture.";
   }
 
   const action = resolveDesktopUpdateButtonAction(state);
   if (action === "download") {
-    return "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.";
+    return (
+      t?.("update.intelDownloadDescription") ??
+      "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build."
+    );
   }
   if (action === "install") {
-    return "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.";
+    return (
+      t?.("update.intelInstallDescription") ??
+      "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build."
+    );
   }
-  return "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.";
+  return (
+    t?.("update.intelNextDescription") ??
+    "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build."
+  );
 }
 
-export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
+export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState, t?: Translate): string {
   if (state.status === "available") {
+    if (t) {
+      return state.availableVersion
+        ? t("update.versionReadyToDownload", { version: state.availableVersion })
+        : t("update.readyToDownload");
+    }
     return `Update ${state.availableVersion ?? "available"} ready to download`;
   }
   if (state.status === "downloading") {
+    if (t) {
+      return typeof state.downloadPercent === "number"
+        ? t("update.downloadingProgress", { percent: Math.floor(state.downloadPercent) })
+        : t("update.downloadingUpdate");
+    }
     const progress =
       typeof state.downloadPercent === "number" ? ` (${Math.floor(state.downloadPercent)}%)` : "";
     return `Downloading update${progress}`;
   }
   if (state.status === "downloaded") {
+    if (t) {
+      const version = state.downloadedVersion ?? state.availableVersion;
+      return version
+        ? t("update.versionDownloadedRestart", { version })
+        : t("update.downloadedRestart");
+    }
     return `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} downloaded. Click to restart and install.`;
   }
   if (state.status === "error") {
     if (state.errorContext === "download" && state.availableVersion) {
-      return `Download failed for ${state.availableVersion}. Click to retry.`;
+      return (
+        t?.("update.downloadRetry", { version: state.availableVersion }) ??
+        `Download failed for ${state.availableVersion}. Click to retry.`
+      );
     }
     if (state.errorContext === "install" && state.downloadedVersion) {
-      return `Install failed for ${state.downloadedVersion}. Click to retry.`;
+      return (
+        t?.("update.installRetry", { version: state.downloadedVersion }) ??
+        `Install failed for ${state.downloadedVersion}. Click to retry.`
+      );
     }
     if (state.downloadedVersion) {
-      return `Update ${state.downloadedVersion} downloaded. Click to restart and install.`;
+      return (
+        t?.("update.versionDownloadedRestart", { version: state.downloadedVersion }) ??
+        `Update ${state.downloadedVersion} downloaded. Click to restart and install.`
+      );
     }
-    return state.message ?? "Update failed";
+    return state.message ?? t?.("update.failed") ?? "Update failed";
   }
-  return "Up to date";
+  return t?.("update.upToDate") ?? "Up to date";
 }
 
 export function getDesktopUpdateInstallConfirmationMessage(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
+  t?: Translate,
 ): string {
   const version = state.downloadedVersion ?? state.availableVersion;
+  if (t) {
+    return `${version ? t("update.installConfirmVersion", { version }) : t("update.installConfirm")}\n\n${t("update.installInterruptWarning")}`;
+  }
   return `Install update${version ? ` ${version}` : ""} and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
 }
 

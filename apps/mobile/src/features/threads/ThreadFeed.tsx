@@ -88,6 +88,7 @@ import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCo
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import { resolveMarkdownLinkPresentation } from "@t3tools/mobile-markdown-text/links";
 import {
+  deriveThreadFeedTerminalAssistantMessageIds,
   deriveThreadFeedPresentation,
   type ThreadFeedEntry,
   type ThreadFeedLatestTurn,
@@ -1037,6 +1038,7 @@ function renderFeedEntry(
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
+    const reasoningText = message.reasoningText ?? "";
     const hasReviewCommentContext = message.text.includes("<review_comment");
     // A bubble that sizes itself from its content cannot lay out a block whose
     // intrinsic width overflows `maxWidth`: Android positions the bubble's
@@ -1115,7 +1117,11 @@ function renderFeedEntry(
 
     // Skip empty assistant messages (no text, no attachments) — they would
     // render as an orphaned timestamp and break adjacent activity-group merging.
-    if (message.text.trim().length === 0 && attachments.length === 0) {
+    if (
+      message.text.trim().length === 0 &&
+      (entry.hideAssistantReasoning || reasoningText.trim().length === 0) &&
+      attachments.length === 0
+    ) {
       return null;
     }
 
@@ -1125,6 +1131,28 @@ function renderFeedEntry(
         className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-2 px-1")}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
+        {!entry.hideAssistantReasoning && reasoningText.trim().length > 0 ? (
+          <View className="mb-2 border-l-2 border-neutral-300 pl-3 opacity-70 dark:border-neutral-700">
+            {hasNativeSelectableMarkdownText() ? (
+              <SelectableMarkdownText
+                markdown={reasoningText}
+                skills={props.skills}
+                textStyle={styles.nativeTextStyle}
+                onLinkPress={props.onMarkdownLinkPress}
+                renderImage={props.renderMarkdownImage}
+              />
+            ) : (
+              <Markdown
+                options={{ gfm: true }}
+                renderers={styles.renderers}
+                styles={styles.styles}
+                theme={styles.theme}
+              >
+                {reasoningText}
+              </Markdown>
+            )}
+          </View>
+        ) : null}
         {message.text.trim().length > 0 ? (
           hasNativeSelectableMarkdownText() ? (
             <SelectableMarkdownText
@@ -1816,15 +1844,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
     [presentedFeed, props.anchorMessageId, anchorTopInset],
   );
-  const terminalAssistantMessageIds = useMemo(() => {
-    const terminalIdsByTurn = new Map<TurnId, string>();
-    for (const entry of props.feed) {
-      if (entry.type === "message" && entry.message.role === "assistant" && entry.message.turnId) {
-        terminalIdsByTurn.set(entry.message.turnId, entry.message.id);
-      }
-    }
-    return new Set(terminalIdsByTurn.values());
-  }, [props.feed]);
+  const terminalAssistantMessageIds = useMemo(
+    () => deriveThreadFeedTerminalAssistantMessageIds(props.feed),
+    [props.feed],
+  );
   const unsettledTurnId =
     props.latestTurn &&
     (props.latestTurn.completedAt === null || props.latestTurn.state === "running")

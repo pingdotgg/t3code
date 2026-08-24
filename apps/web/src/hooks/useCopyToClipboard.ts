@@ -1,6 +1,8 @@
 import * as React from "react";
 import * as Schema from "effect/Schema";
 
+import type { Translate } from "../i18n/messages";
+
 export class ClipboardApiUnavailableError extends Schema.TaggedErrorClass<ClipboardApiUnavailableError>()(
   "ClipboardApiUnavailableError",
   {
@@ -44,6 +46,31 @@ export class ClipboardReadError extends Schema.TaggedErrorClass<ClipboardReadErr
 ) {
   override get message(): string {
     return `Failed to read ${this.target} from the clipboard.`;
+  }
+}
+
+const ClipboardError = Schema.Union([
+  ClipboardApiUnavailableError,
+  ClipboardWriteError,
+  ClipboardReadUnavailableError,
+  ClipboardReadError,
+]);
+const isClipboardError = Schema.is(ClipboardError);
+
+export function localizedClipboardErrorMessage(error: unknown, t: Translate): string {
+  if (!isClipboardError(error)) {
+    return error instanceof Error ? error.message : t("common.errorGeneric");
+  }
+
+  switch (error._tag) {
+    case "ClipboardApiUnavailableError":
+      return t("clipboard.error.apiUnavailable", { target: error.target });
+    case "ClipboardWriteError":
+      return t("clipboard.error.writeFailed", { target: error.target });
+    case "ClipboardReadUnavailableError":
+      return t("clipboard.error.readUnavailable", { target: error.target });
+    case "ClipboardReadError":
+      return t("clipboard.error.readFailed", { target: error.target });
   }
 }
 

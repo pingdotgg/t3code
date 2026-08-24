@@ -258,6 +258,182 @@ describe("foldSubagentActivities", () => {
     expect(new Set(summaries).size).toBe(summaries.length);
   });
 
+  it("upserts transcript entries by id without changing first-seen order or createdAt", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "task-transcript", title: "Research" }),
+      activity(
+        "task.progress",
+        {
+          taskId: "task-transcript",
+          transcriptEntry: {
+            id: "message-1",
+            kind: "assistant",
+            text: "Initial commentary",
+            label: "Inspecting files",
+            phase: "commentary",
+            status: "inProgress",
+          },
+        },
+        "2026-08-01T11:00:00.000Z",
+      ),
+      activity(
+        "task.progress",
+        {
+          taskId: "task-transcript",
+          transcriptEntry: {
+            id: "tool-1",
+            kind: "tool",
+            label: "Read files",
+            itemType: "command_execution",
+            status: "completed",
+          },
+        },
+        "2026-08-01T11:00:01.000Z",
+      ),
+      activity(
+        "task.progress",
+        {
+          taskId: "task-transcript",
+          transcriptEntry: {
+            id: "message-1",
+            kind: "assistant",
+            text: "Final answer",
+            phase: "final_answer",
+            status: "completed",
+          },
+        },
+        // Activity order, not timestamp sorting, owns transcript position.
+        "2026-08-01T10:59:59.000Z",
+      ),
+    ]);
+
+    expect(agents[0]!.transcript.map((entry) => entry.id)).toEqual(["message-1", "tool-1"]);
+    expect(agents[0]!.transcript[0]).toEqual({
+      id: "message-1",
+      kind: "assistant",
+      text: "Final answer",
+      label: "Inspecting files",
+      phase: "final_answer",
+      itemType: null,
+      status: "completed",
+      createdAt: "2026-08-01T11:00:00.000Z",
+      updatedAt: "2026-08-01T10:59:59.000Z",
+    });
+  });
+
+  it("keeps a terminal transcript status when same-time persisted rows sort completion first", () => {
+    const at = "2026-08-01T11:00:00.000Z";
+    const agents = fold([
+      activity("task.started", { taskId: "task-transcript-order", title: "Research" }),
+      // Snapshot reload orders equal timestamps by activity id, so the
+      // :completed row is folded before the :started row.
+      activity(
+        "task.progress",
+        {
+          taskId: "task-transcript-order",
+          transcriptEntry: {
+            id: "tool-1",
+            kind: "tool",
+            itemType: "command_execution",
+            status: "completed",
+          },
+        },
+        at,
+      ),
+      activity(
+        "task.progress",
+        {
+          taskId: "task-transcript-order",
+          transcriptEntry: {
+            id: "tool-1",
+            kind: "tool",
+            label: "Read files",
+            itemType: "command_execution",
+            status: "inProgress",
+          },
+        },
+        at,
+      ),
+    ]);
+
+    expect(agents[0]!.transcript).toEqual([
+      expect.objectContaining({
+        id: "tool-1",
+        label: "Read files",
+        status: "completed",
+        createdAt: at,
+        updatedAt: at,
+      }),
+    ]);
+  });
+
+  it("bounds transcript count and body size", () => {
+    const longText = "x".repeat(20_000);
+    const rows = [
+      activity("task.started", { taskId: "task-transcript-bounds", title: "Research" }),
+      ...Array.from({ length: 80 }, (_, index) =>
+        activity("task.progress", {
+          taskId: "task-transcript-bounds",
+          transcriptEntry: {
+            id: `entry-${index}`,
+            kind: "assistant",
+            text: longText,
+          },
+        }),
+      ),
+    ];
+
+    const transcript = fold(rows)[0]!.transcript;
+    expect(transcript.length).toBeLessThan(80);
+    expect(transcript.at(-1)?.id).toBe("entry-79");
+    expect(transcript.some((entry) => entry.id === "entry-0")).toBe(false);
+    expect(transcript.every((entry) => (entry.text?.length ?? 0) < longText.length)).toBe(true);
+  });
+
+  it("ignores malformed transcript payloads without affecting legacy progress", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "task-transcript-legacy", title: "Research" }),
+      activity("task.progress", {
+        taskId: "task-transcript-legacy",
+        summary: "Still working",
+        transcriptEntry: "not-an-object",
+      }),
+      activity("task.progress", {
+        taskId: "task-transcript-legacy",
+        transcriptEntry: { id: "missing-kind" },
+      }),
+      activity("task.progress", {
+        taskId: "task-transcript-legacy",
+        transcriptEntry: { id: "wrong-kind", kind: "message", text: "ignored" },
+      }),
+      activity("task.progress", {
+        taskId: "task-transcript-legacy",
+        transcriptEntry: {
+          id: "valid",
+          kind: "reasoning",
+          text: "Thinking",
+          phase: "not-a-phase",
+          label: 42,
+        },
+      }),
+    ]);
+
+    expect(agents[0]!.progress).toBe("Still working");
+    expect(agents[0]!.transcript).toEqual([
+      {
+        id: "valid",
+        kind: "reasoning",
+        text: "Thinking",
+        label: null,
+        phase: null,
+        itemType: null,
+        status: null,
+        createdAt: expect.any(String),
+        updatedAt: expect.any(String),
+      },
+    ]);
+  });
+
   it("plan tasks are not agents", () => {
     const agents = fold([activity("task.started", { taskId: "plan-1", taskType: "plan" })]);
     expect(agents).toHaveLength(0);

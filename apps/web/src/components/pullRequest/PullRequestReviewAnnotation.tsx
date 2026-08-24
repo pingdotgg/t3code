@@ -20,6 +20,7 @@ import {
 import { useRef, useState } from "react";
 
 import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { useI18n } from "~/i18n";
 import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
@@ -65,6 +66,7 @@ export function PendingReviewCommentCard({
   comment: PendingReviewComment;
   onRemove: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div
       className={cn(CARD_CLASS, "border-dashed")}
@@ -73,12 +75,12 @@ export function PendingReviewCommentCard({
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <MessageSquareIcon className="size-3.5" />
-        <span>Pending — sent when you submit the review</span>
+        <span>{t("pullRequest.review.pendingSentOnSubmit")}</span>
         <Button
           size="icon-xs"
           variant="ghost"
           className="ml-auto"
-          aria-label="Discard this comment"
+          aria-label={t("pullRequest.review.discardComment")}
           onClick={onRemove}
         >
           <Trash2Icon className="size-3.5" />
@@ -100,7 +102,7 @@ export function ReviewThreadCard({
   reference,
   pending,
   fixPending,
-  fixLabel = "Fix in a thread",
+  fixLabel,
   onFix,
   onReply,
   onLoadMore,
@@ -133,6 +135,7 @@ export function ReviewThreadCard({
   onToggleResolved: () => void;
   onReacted: () => void;
 }) {
+  const { t } = useI18n();
   // A resolved thread is finished work, so it opens collapsed and stays one line until asked for.
   const [expanded, setExpanded] = useState(!thread.isResolved);
   const [replying, setReplying] = useState(false);
@@ -230,10 +233,21 @@ export function ReviewThreadCard({
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
-          {commentCount === 1 ? "comment" : "comments"}
+          {commentCount === 1
+            ? t("pullRequest.review.threadSummaryComment", {
+                state: thread.isResolved
+                  ? t("pullRequest.review.resolved")
+                  : t("pullRequest.state.open"),
+                count: commentCount,
+              })
+            : t("pullRequest.review.threadSummaryComments", {
+                state: thread.isResolved
+                  ? t("pullRequest.review.resolved")
+                  : t("pullRequest.state.open"),
+                count: commentCount,
+              })}
         </button>
-        {thread.isOutdated ? <span>outdated</span> : null}
+        {thread.isOutdated ? <span>{t("pullRequest.review.outdated")}</span> : null}
         {onFix ? (
           <Button
             size="xs"
@@ -243,7 +257,7 @@ export function ReviewThreadCard({
             onClick={onFix}
           >
             <HammerIcon className="size-3" />
-            {fixPending ? "Preparing..." : fixLabel}
+            {fixPending ? t("pullRequest.preparing") : (fixLabel ?? t("pullRequest.fixInThread"))}
           </Button>
         ) : null}
         {canResolve ? (
@@ -254,7 +268,9 @@ export function ReviewThreadCard({
             disabled={pending}
             onClick={onToggleResolved}
           >
-            {thread.isResolved ? "Unresolve" : "Resolve"}
+            {thread.isResolved
+              ? t("pullRequest.review.unresolve")
+              : t("pullRequest.review.resolve")}
           </Button>
         ) : null}
       </div>
@@ -266,14 +282,14 @@ export function ReviewThreadCard({
               <article key={comment.id} className="group min-w-0">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <PullRequestActorLabel actor={comment.author} className="text-foreground" />
-                  <span>{formatRelativeTimeLabel(comment.createdAt)}</span>
+                  <span>{formatRelativeTimeLabel(comment.createdAt, t)}</span>
                 </div>
                 {editingId === comment.id ? (
                   <PullRequestMarkdownEditor
                     className="mt-1"
                     value={comment.body}
                     cwd={workspaceRoot}
-                    label="Edit comment"
+                    label={t("pullRequest.comment.edit")}
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
                     onCancel={() => setEditingId(null)}
@@ -290,7 +306,7 @@ export function ReviewThreadCard({
                         size="icon-xs"
                         variant="ghost"
                         className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
-                        aria-label="Edit comment"
+                        aria-label={t("pullRequest.comment.edit")}
                         onClick={() => setEditingId(comment.id)}
                       >
                         <PencilIcon className="size-3" />
@@ -319,7 +335,7 @@ export function ReviewThreadCard({
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
-                {loadingMore ? "Loading..." : "Load more comments"}
+                {loadingMore ? t("common.loading") : t("pullRequest.comments.loadMore")}
               </Button>
             </div>
           ) : null}
@@ -331,8 +347,8 @@ export function ReviewThreadCard({
                   autoFocus
                   size="sm"
                   value={reply}
-                  placeholder="Reply"
-                  aria-label="Reply to this conversation"
+                  placeholder={t("pullRequest.comment.reply")}
+                  aria-label={t("pullRequest.comment.replyConversation")}
                   onChange={(event) => setReply(event.target.value)}
                   onKeyDown={submitKeys({
                     value: reply,
@@ -343,14 +359,14 @@ export function ReviewThreadCard({
                 />
                 <div className="mt-2 flex justify-end gap-2">
                   <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
-                    Cancel
+                    {t("common.cancel")}
                   </Button>
                   <Button
                     size="xs"
                     disabled={pending || reply.trim().length === 0}
                     onClick={() => void send()}
                   >
-                    Reply
+                    {t("pullRequest.comment.reply")}
                   </Button>
                 </div>
               </div>
@@ -361,7 +377,7 @@ export function ReviewThreadCard({
                 className="mt-2 px-1"
                 onClick={() => setReplying(true)}
               >
-                Reply
+                {t("pullRequest.comment.reply")}
               </Button>
             )
           ) : null}

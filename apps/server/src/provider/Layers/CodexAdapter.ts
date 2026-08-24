@@ -8,6 +8,7 @@
  * @module CodexAdapterLive
  */
 import {
+  AssistantMessagePhase,
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
@@ -21,6 +22,8 @@ import {
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeTaskId,
+  isToolLifecycleItemType,
+  type TaskTranscriptEntry,
   type RuntimeTaskUsage,
   ProviderApprovalDecision,
   ThreadId,
@@ -316,6 +319,99 @@ function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): stri
   return undefined;
 }
 
+function trimUnknownText(value: unknown): string | undefined {
+  return typeof value === "string" ? trimText(value) : undefined;
+}
+
+const isAssistantMessagePhase = Schema.is(AssistantMessagePhase);
+
+function joinTranscriptParts(value: unknown): string | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return trimText(
+    value
+      .flatMap((part) => (typeof part === "string" && trimText(part) ? [part.trim()] : []))
+      .join("\n"),
+  );
+}
+
+function collabTranscriptStatus(
+  value: unknown,
+  lifecycle: "started" | "completed",
+): NonNullable<TaskTranscriptEntry["status"]> {
+  switch (value) {
+    case "inProgress":
+    case "completed":
+    case "failed":
+    case "declined":
+      return value;
+    default:
+      return lifecycle === "started" ? "inProgress" : "completed";
+  }
+}
+
+function collabTranscriptEntry(
+  item: Record<string, unknown>,
+  lifecycle: "started" | "completed",
+): TaskTranscriptEntry | undefined {
+  const id = trimUnknownText(item.id);
+  const rawType = trimUnknownText(item.type);
+  if (!id || !rawType) {
+    return undefined;
+  }
+
+  const itemType = toCanonicalItemType(rawType);
+  const status = collabTranscriptStatus(item.status, lifecycle);
+  if (itemType === "assistant_message") {
+    const text = trimUnknownText(item.text);
+    const phase = isAssistantMessagePhase(item.phase) ? item.phase : undefined;
+    return {
+      id,
+      kind: "assistant",
+      ...(text ? { text } : {}),
+      ...(phase ? { phase } : {}),
+      status,
+    };
+  }
+
+  if (itemType === "reasoning") {
+    const summary = joinTranscriptParts(item.summary);
+    const content = joinTranscriptParts(item.content);
+    const text =
+      summary && content && summary !== content ? `${summary}\n\n${content}` : (summary ?? content);
+    return {
+      id,
+      kind: "reasoning",
+      ...(text ? { text } : {}),
+      status,
+    };
+  }
+
+  if (!isToolLifecycleItemType(itemType)) {
+    return undefined;
+  }
+
+  const server = trimUnknownText(item.server);
+  const tool = trimUnknownText(item.tool);
+  const label =
+    (itemType === "mcp_tool_call" && server && tool ? `${server} · ${tool}` : undefined) ??
+    trimUnknownText(item.command) ??
+    trimUnknownText(item.title) ??
+    trimUnknownText(item.query) ??
+    trimUnknownText(item.path) ??
+    tool ??
+    itemTitle(itemType) ??
+    itemType.replaceAll("_", " ");
+  return {
+    id,
+    kind: "tool",
+    label,
+    itemType,
+    status,
+  };
+}
+
 function toRequestTypeFromMethod(method: string): CanonicalRequestType {
   switch (method) {
     case "item/commandExecution/requestApproval":
@@ -498,6 +594,7 @@ function mapItemLifecycle(
   }
 
   const detail = itemDetail(itemType, item);
+  const messagePhase = item.type === "agentMessage" && item.phase !== null ? item.phase : undefined;
   const status =
     lifecycle === "item.started"
       ? "inProgress"
@@ -515,6 +612,7 @@ function mapItemLifecycle(
       ...(status ? { status } : {}),
       ...(itemTitle(itemType, item) ? { title: itemTitle(itemType, item) } : {}),
       ...(detail ? { detail } : {}),
+      ...(messagePhase !== undefined ? { messagePhase } : {}),
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
   };
@@ -739,9 +837,14 @@ function mapCollabAgentEvent(
           ? (payload.item as Record<string, unknown>)
           : undefined;
       const itemTypeRaw = typeof item?.type === "string" ? item.type : undefined;
-      if (!itemTypeRaw) {
+      if (!item || !itemTypeRaw) {
         return [];
       }
+      const lifecycle =
+        payload.lifecycle === "started" || payload.lifecycle === "completed"
+          ? payload.lifecycle
+          : undefined;
+      const transcriptEntry = lifecycle ? collabTranscriptEntry(item, lifecycle) : undefined;
       // A loose summary from the raw item: the child stream is untyped at
       // this boundary (synthetic event payload), so read best-effort fields
       // rather than force a schema decode.
@@ -760,6 +863,7 @@ function mapCollabAgentEvent(
             description: title,
             ...(knownName ? { title: knownName } : {}),
             summary,
+            ...(transcriptEntry ? { transcriptEntry } : {}),
             timelineBypass: true,
           },
         },

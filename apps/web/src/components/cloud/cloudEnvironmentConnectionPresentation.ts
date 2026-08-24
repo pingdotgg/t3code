@@ -2,6 +2,7 @@ import {
   connectionStatusText,
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
+import { localizedConnectionStatusText, type Translate } from "~/i18n";
 
 export interface SavedCloudEnvironmentConnectionPresentation {
   readonly buttonLabel: string;
@@ -16,42 +17,46 @@ export interface SavedCloudEnvironmentConnectionPresentation {
  */
 export function presentSavedCloudEnvironmentConnection(
   connection: EnvironmentConnectionPresentation,
+  t?: Translate,
 ): SavedCloudEnvironmentConnectionPresentation {
+  const statusText = t
+    ? localizedConnectionStatusText(connection, t)
+    : connectionStatusText(connection);
   switch (connection.phase) {
     case "connected":
       return {
-        buttonLabel: "Connected",
-        statusText: connectionStatusText(connection),
+        buttonLabel: t?.("connections.status.connected") ?? "Connected",
+        statusText,
         tone: "connected",
       };
     case "connecting":
       return {
-        buttonLabel: "Connecting…",
-        statusText: connectionStatusText(connection),
+        buttonLabel: t?.("connections.status.connecting") ?? "Connecting…",
+        statusText,
         tone: "connecting",
       };
     case "reconnecting":
       return {
-        buttonLabel: "Reconnecting…",
-        statusText: connectionStatusText(connection),
+        buttonLabel: t?.("connections.status.reconnecting") ?? "Reconnecting…",
+        statusText,
         tone: "connecting",
       };
     case "error":
       return {
-        buttonLabel: "Connection failed",
-        statusText: connectionStatusText(connection),
+        buttonLabel: t?.("connections.status.failed") ?? "Connection failed",
+        statusText,
         tone: "error",
       };
     case "offline":
       return {
-        buttonLabel: "Offline",
-        statusText: connectionStatusText(connection),
+        buttonLabel: t?.("connections.status.offline") ?? "Offline",
+        statusText,
         tone: "idle",
       };
     case "available":
       return {
-        buttonLabel: "Not connected",
-        statusText: connectionStatusText(connection),
+        buttonLabel: t?.("cloud.notConnected") ?? "Not connected",
+        statusText,
         tone: "idle",
       };
   }

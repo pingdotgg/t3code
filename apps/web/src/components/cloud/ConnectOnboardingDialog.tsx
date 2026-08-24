@@ -405,6 +405,7 @@ function OnboardingToggleRow({
 }
 
 function DevicesStep() {
+  const { t } = useI18n();
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const savedEnvironments = environments.filter(
@@ -419,8 +420,7 @@ function DevicesStep() {
         showSavedEnvironments
         empty={
           <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-            No other environments are published to your account yet. Publish one from another device
-            and it will show up here.
+            {t("cloud.onboarding.noOtherEnvironments")}
           </p>
         }
       />

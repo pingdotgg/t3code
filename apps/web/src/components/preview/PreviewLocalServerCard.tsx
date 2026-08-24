@@ -1,5 +1,7 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
+import { useI18n } from "~/i18n";
+
 import { PreviewFaviconIcon } from "./PreviewFaviconIcon";
 import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
@@ -10,7 +12,8 @@ interface Props {
 }
 
 export function PreviewLocalServerCard({ threadRef, server, onOpen }: Props) {
-  const subtitle = describeServer(server);
+  const { t } = useI18n();
+  const subtitle = server.processName ?? t("preview.server.listening");
   return (
     <button
       type="button"
@@ -26,9 +29,4 @@ export function PreviewLocalServerCard({ threadRef, server, onOpen }: Props) {
       </div>
     </button>
   );
-}
-
-function describeServer(server: PreviewableServer): string {
-  if (server.processName) return server.processName;
-  return "Listening";
 }

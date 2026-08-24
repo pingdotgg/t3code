@@ -50,6 +50,20 @@ function buildScript() {
         },
       },
     },
+    {
+      method: "item/completed",
+      params: {
+        threadId: CHILD_A,
+        turnId: `${CHILD_A}-turn-1`,
+        completedAtMs: 1785898350000,
+        item: {
+          type: "agentMessage",
+          id: "child-a-final-message",
+          text: "Child result",
+          phase: "final_answer",
+        },
+      },
+    },
     // Child terminal lifecycle AFTER the receiver map knows the children —
     // pre-fix, the legacy suppressor dropped these before interception saw
     // them, so no synthetic agent events were emitted.
@@ -107,6 +121,7 @@ describe("CodexSessionRuntime collab integration", () => {
       // lifecycle — including terminal rows that arrive AFTER the receiver
       // map knows them (the ordering this test exists to pin).
       assert.include(methods, "collabAgent/activity");
+      assert.include(methods, "collabAgent/item");
       assert.include(methods, "collabAgent/turnCompleted");
       assert.include(methods, "collabAgent/closed");
 
@@ -116,6 +131,19 @@ describe("CodexSessionRuntime collab integration", () => {
           (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
       );
       assert.isDefined(childTurnCompleted, "child A's turn completion becomes an agent event");
+
+      const childMessage = events.find(
+        (event) =>
+          event.method === "collabAgent/item" &&
+          (event.payload as { agentThreadId?: string; item?: { id?: string } }).agentThreadId ===
+            CHILD_A &&
+          (event.payload as { item?: { id?: string } }).item?.id === "child-a-final-message",
+      );
+      assert.equal(
+        (childMessage?.payload as { lifecycle?: string } | undefined)?.lifecycle,
+        "completed",
+        "child item completion carries transcript lifecycle",
+      );
 
       const childClosed = events.find(
         (event) =>

@@ -63,14 +63,15 @@ export type RightPanelSurface =
       repository: string;
       number: number;
     }
-  | { id: "agents"; kind: "agents" }
+  | { id: `agent:${string}`; kind: "agents"; agentId: string }
   | { id: "context"; kind: "context" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
-const RIGHT_PANEL_STORAGE_VERSION = 11;
+// v12 replaces the singleton agents surface with one surface per agent.
+const RIGHT_PANEL_STORAGE_VERSION = 12;
 
 /**
  * The pull-request list's shared panel (see PULL_REQUESTS_PANEL_ID in the route) is session
@@ -88,8 +89,9 @@ interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "agents" | "file" | "terminal" | "pull-request">,
   ) => void;
+  openAgent: (ref: ScopedThreadRef, agentId: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openPullRequest: (
@@ -117,7 +119,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "agents" | "file" | "terminal" | "pull-request">,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -129,19 +131,27 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "agents" | "file" | "preview" | "terminal" | "pull-request">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
       return { id: "diff", kind };
     case "files":
       return { id: "files", kind };
-    case "agents":
-      return { id: "agents", kind };
     case "context":
       return { id: "context", kind };
   }
 };
+
+export type AgentSurface = Extract<RightPanelSurface, { kind: "agents" }>;
+
+export function agentSurfaceId(agentId: string): AgentSurface["id"] {
+  return `agent:${encodeURIComponent(agentId)}`;
+}
+
+export function agentSurface(agentId: string): AgentSurface {
+  return { id: agentSurfaceId(agentId), kind: "agents", agentId };
+}
 
 const browserSurface = (tabId: string | null): RightPanelSurface =>
   tabId
@@ -270,6 +280,16 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     // Dropped surface kind: plans now render inline in the
                     // transcript (v9).
                     if ((surface as { kind?: string }).kind === "plan") return [];
+                    if (surface.kind === "agents") {
+                      if (
+                        !("agentId" in surface) ||
+                        typeof surface.agentId !== "string" ||
+                        surface.id !== agentSurfaceId(surface.agentId)
+                      ) {
+                        return [];
+                      }
+                      return [agentSurface(surface.agentId)];
+                    }
                     if (surface.kind === "file") {
                       const revealLine =
                         typeof surface.revealLine === "number" &&
@@ -377,6 +397,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             }
             return upsertSurface(current, singletonSurface(kind));
           }),
+        })),
+      openAgent: (ref, agentId) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, agentSurface(agentId)),
+          ),
         })),
       openBrowser: (ref, tabId) =>
         set((state) => ({

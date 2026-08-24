@@ -661,6 +661,103 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps child item lifecycle into structured transcript progress", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(
+        Effect.forkChild,
+      );
+      const childItem = (
+        id: string,
+        lifecycle: "started" | "completed",
+        item: Record<string, unknown>,
+      ): ProviderEvent => ({
+        id: asEventId(id),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collabAgent/item",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          agentThreadId: "child-1",
+          agentPath: "/root/audit",
+          lifecycle,
+          item,
+        },
+      });
+
+      yield* runtime.emit(
+        childItem("evt-child-message", "completed", {
+          id: "message-1",
+          type: "agentMessage",
+          text: "  Located the implementation.\n\nVerified its tests.  ",
+          phase: "final_answer",
+        }),
+      );
+      yield* runtime.emit(
+        childItem("evt-child-reasoning", "completed", {
+          id: "reasoning-1",
+          type: "reasoning",
+          summary: ["Inspecting the toolbar"],
+          content: ["Checking its tests"],
+        }),
+      );
+      yield* runtime.emit(
+        childItem("evt-child-command-start", "started", {
+          id: "command-1",
+          type: "commandExecution",
+          command: "rg git-toolbar apps/web",
+          status: "inProgress",
+        }),
+      );
+      yield* runtime.emit(
+        childItem("evt-child-command-complete", "completed", {
+          id: "command-1",
+          type: "commandExecution",
+          command: "rg git-toolbar apps/web",
+          status: "completed",
+        }),
+      );
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.deepStrictEqual(
+        events.map((event) =>
+          event.type === "task.progress" ? event.payload.transcriptEntry : undefined,
+        ),
+        [
+          {
+            id: "message-1",
+            kind: "assistant",
+            text: "Located the implementation.\n\nVerified its tests.",
+            phase: "final_answer",
+            status: "completed",
+          },
+          {
+            id: "reasoning-1",
+            kind: "reasoning",
+            text: "Inspecting the toolbar\n\nChecking its tests",
+            status: "completed",
+          },
+          {
+            id: "command-1",
+            kind: "tool",
+            label: "rg git-toolbar apps/web",
+            itemType: "command_execution",
+            status: "inProgress",
+          },
+          {
+            id: "command-1",
+            kind: "tool",
+            label: "rg git-toolbar apps/web",
+            itemType: "command_execution",
+            status: "completed",
+          },
+        ],
+      );
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
@@ -683,6 +780,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
             type: "agentMessage",
             id: "msg_1",
             text: "done",
+            phase: "final_answer",
           },
         },
       };
@@ -701,6 +799,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       NodeAssert.equal(firstEvent.value.itemId, "msg_1");
       NodeAssert.equal(firstEvent.value.turnId, "turn-1");
       NodeAssert.equal(firstEvent.value.payload.itemType, "assistant_message");
+      NodeAssert.equal(firstEvent.value.payload.messagePhase, "final_answer");
     }),
   );
 

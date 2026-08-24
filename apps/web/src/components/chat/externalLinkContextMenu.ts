@@ -1,4 +1,5 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import type { Translate } from "../../i18n";
 
 export type ExternalLinkContextMenuAction = "open-in-preview" | "open-external" | "copy-link";
 
@@ -14,12 +15,6 @@ const FAILURE_OPERATION_BY_ACTION = {
   "copy-link": "copy-link",
 } as const satisfies Record<ExternalLinkContextMenuAction, ExternalLinkContextMenuFailureOperation>;
 
-const EXTERNAL_LINK_CONTEXT_MENU_ITEMS = [
-  { id: "open-in-preview", label: "Open in integrated browser" },
-  { id: "open-external", label: "Open in system browser" },
-  { id: "copy-link", label: "Copy Link" },
-] as const satisfies readonly ContextMenuItem<ExternalLinkContextMenuAction>[];
-
 /**
  * The integrated browser is not always there to offer — it needs a thread to open beside and a
  * runtime that can show it — but the other two answers hold wherever a link does. Dropping the
@@ -28,10 +23,20 @@ const EXTERNAL_LINK_CONTEXT_MENU_ITEMS = [
  */
 export function externalLinkContextMenuItems(options: {
   readonly canOpenInPreview: boolean;
+  readonly t?: Translate;
 }): readonly ContextMenuItem<ExternalLinkContextMenuAction>[] {
-  return options.canOpenInPreview
-    ? EXTERNAL_LINK_CONTEXT_MENU_ITEMS
-    : EXTERNAL_LINK_CONTEXT_MENU_ITEMS.filter((item) => item.id !== "open-in-preview");
+  const items = [
+    {
+      id: "open-in-preview",
+      label: options.t?.("chat.openIntegratedBrowser") ?? "Open in integrated browser",
+    },
+    {
+      id: "open-external",
+      label: options.t?.("chat.openSystemBrowser") ?? "Open in system browser",
+    },
+    { id: "copy-link", label: options.t?.("chat.copyLink") ?? "Copy Link" },
+  ] as const satisfies readonly ContextMenuItem<ExternalLinkContextMenuAction>[];
+  return options.canOpenInPreview ? items : items.filter((item) => item.id !== "open-in-preview");
 }
 
 interface ShowExternalLinkContextMenuOptions {
@@ -39,6 +44,7 @@ interface ShowExternalLinkContextMenuOptions {
   readonly position: { readonly x: number; readonly y: number };
   /** Absent means yes, which is what every caller before the browser could be missing meant. */
   readonly canOpenInPreview?: boolean;
+  readonly t?: Translate;
   readonly showContextMenu: (
     items: readonly ContextMenuItem<ExternalLinkContextMenuAction>[],
     position: { readonly x: number; readonly y: number },
@@ -67,6 +73,7 @@ export async function showExternalLinkContextMenu({
   href,
   position,
   canOpenInPreview = true,
+  t,
   showContextMenu,
   openInPreview,
   openExternal,
@@ -75,7 +82,10 @@ export async function showExternalLinkContextMenu({
 }: ShowExternalLinkContextMenuOptions): Promise<void> {
   let action: ExternalLinkContextMenuAction | null;
   try {
-    action = await showContextMenu(externalLinkContextMenuItems({ canOpenInPreview }), position);
+    action = await showContextMenu(
+      externalLinkContextMenuItems({ canOpenInPreview, ...(t ? { t } : {}) }),
+      position,
+    );
   } catch (cause) {
     reportFailure("show-link-context-menu", cause);
     return;

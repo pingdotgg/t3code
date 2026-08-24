@@ -1,6 +1,7 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../keybindings";
+import { useI18n } from "../i18n";
 import {
   type CommandPaletteActionItem,
   type CommandPaletteGroup,
@@ -68,11 +69,12 @@ function HighlightedSearchText(props: { text: string; query: string }) {
 function ThreadContentMatch(props: {
   match: NonNullable<CommandPaletteActionItem["threadContentMatch"]>;
 }) {
+  const { t } = useI18n();
   const isUser = props.match.source === "user";
   return (
     <span className="truncate text-xs text-muted-foreground/85">
       <span className={isUser ? "text-blue-400" : "text-emerald-400"}>
-        {isUser ? "You:" : "Agent:"}
+        {isUser ? t("commandPalette.you") : t("commandPalette.agent")}
       </span>{" "}
       <HighlightedSearchText text={props.match.snippet} query={props.match.query} />
     </span>
@@ -89,13 +91,14 @@ interface CommandPaletteResultsProps {
 }
 
 export function CommandPaletteResults(props: CommandPaletteResultsProps) {
+  const { t } = useI18n();
   if (props.groups.length === 0) {
     return (
       <div className="py-10 text-center text-sm text-muted-foreground">
         {props.emptyStateMessage ??
           (props.isActionsOnly
-            ? "No matching actions."
-            : "No matching commands, projects, or threads.")}
+            ? t("commandPalette.noMatchingActions")
+            : t("commandPalette.noMatchingResults"))}
       </div>
     );
   }

@@ -40,7 +40,7 @@ import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
-  SETTINGS_SEARCH_ITEMS,
+  localizeSettingsSearchItems,
   SETTINGS_SECTION_LABEL_KEYS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
@@ -87,19 +87,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
-  const searchItems = useMemo(
-    () =>
-      SETTINGS_SEARCH_ITEMS.map((item) => {
-        if (item.id === "interface-language") {
-          return { ...item, title: t("settings.language.title") };
-        }
-        if (item.id === "skills-in-slash-menu") {
-          return { ...item, title: t("settings.skillsMenu.title") };
-        }
-        return item;
-      }),
-    [t],
-  );
+  const searchItems = useMemo(() => localizeSettingsSearchItems(t), [t]);
   const results = useMemo(() => searchSettings(query, searchItems), [query, searchItems]);
   const navigationItems = useMemo(() => getSettingsNavItems(t), [t]);
   const isSearching = query.trim().length > 0;

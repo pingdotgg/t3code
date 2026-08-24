@@ -13,7 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
-const NOOP_OPEN_AGENTS = () => {};
+const NOOP_OPEN_AGENT = (_agentId: string) => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
@@ -65,7 +65,8 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import { AssistantReasoningBlock } from "./AssistantReasoningBlock";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
@@ -75,7 +76,6 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
-  normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
@@ -107,7 +107,7 @@ import {
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
-import { useI18n } from "~/i18n";
+import { useI18n, type Translate } from "~/i18n";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
@@ -118,6 +118,7 @@ import {
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
 import { SkillInlineText } from "./SkillInlineText";
+import { toolActivityHeading } from "./toolActivityPresentation";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
   buildReviewCommentRenderablePatch,
@@ -148,7 +149,7 @@ interface TimelineRowSharedState {
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   agentPanelModel: AgentPanelModel;
-  onOpenAgents: () => void;
+  onOpenAgent: (agentId: string) => void;
 }
 
 interface TimelineRowActivityState {
@@ -175,6 +176,7 @@ function TimelineLoadEarlierHeader({
   onLoadEarlier: () => void;
   fade: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className={fade ? "pt-10 sm:pt-12" : "pt-3 sm:pt-4"}>
       <div className="mx-auto w-full max-w-3xl pb-2">
@@ -184,7 +186,7 @@ function TimelineLoadEarlierHeader({
           disabled={loading}
           className="w-full py-1.5 text-xs text-muted-foreground/60 hover:text-foreground disabled:cursor-default"
         >
-          {loading ? "Loading earlier turns…" : "Load earlier turns"}
+          {loading ? t("chat.timeline.loadingEarlier") : t("chat.timeline.loadEarlier")}
         </button>
       </div>
     </div>
@@ -207,7 +209,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
 
 interface MessagesTimelineProps {
   agentPanelModel?: AgentPanelModel;
-  onOpenAgents?: () => void;
+  onOpenAgent?: (agentId: string) => void;
   isWorking: boolean;
   workingStepLabel?: string | null;
   activeTurnStartedAt: string | null;
@@ -255,7 +257,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   workingStepLabel = null,
   activeTurnStartedAt,
   agentPanelModel = EMPTY_AGENT_PANEL_MODEL,
-  onOpenAgents = NOOP_OPEN_AGENTS,
+  onOpenAgent = NOOP_OPEN_AGENT,
   listRef,
   timelineEntries,
   latestTurn,
@@ -283,6 +285,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   topFadeEnabled = false,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const { t } = useI18n();
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
@@ -418,6 +421,71 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
+        formatTurnFoldLabel: ({ interrupted, duration }) =>
+          interrupted
+            ? duration
+              ? t("chat.timeline.stoppedAfter", { duration })
+              : t("chat.timeline.stopped")
+            : duration
+              ? t("chat.timeline.workedFor", { duration })
+              : t("chat.timeline.worked"),
+        formatToolGroupActionLabel: ({ action, count }) => {
+          switch (action) {
+            case "read":
+              return t(
+                count === 1 ? "chat.timeline.summary.readFile" : "chat.timeline.summary.readFiles",
+                { count },
+              );
+            case "edit":
+              return t(
+                count === 1
+                  ? "chat.timeline.summary.changedFile"
+                  : "chat.timeline.summary.changedFiles",
+                { count },
+              );
+            case "command":
+              return t(
+                count === 1
+                  ? "chat.timeline.summary.ranCommand"
+                  : "chat.timeline.summary.ranCommands",
+                { count },
+              );
+            case "search":
+              return t(
+                count === 1
+                  ? "chat.timeline.summary.searchedWebOnce"
+                  : "chat.timeline.summary.searchedWebTimes",
+                { count },
+              );
+            case "code-search":
+              return t(
+                count === 1
+                  ? "chat.timeline.summary.searchedCodeOnce"
+                  : "chat.timeline.summary.searchedCodeTimes",
+                { count },
+              );
+            case "other":
+              return t(
+                count === 1 ? "chat.timeline.summary.usedTool" : "chat.timeline.summary.usedTools",
+                { count },
+              );
+          }
+        },
+        joinToolGroupLabels: (labels) => {
+          const first = labels[0] ?? "";
+          const sentenceFirst = first ? `${first.charAt(0).toUpperCase()}${first.slice(1)}` : first;
+          if (labels.length < 2) return sentenceFirst;
+          const last = labels.at(-1) ?? "";
+          if (labels.length === 2) {
+            return t("chat.timeline.summary.joinTwo", { first: sentenceFirst, last });
+          }
+          return t("chat.timeline.summary.joinMany", {
+            leading: [sentenceFirst, ...labels.slice(1, -1)].join(
+              t("chat.timeline.summary.separator"),
+            ),
+            last,
+          });
+        },
       }),
     [
       timelineEntries,
@@ -429,6 +497,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
+      t,
     ],
   );
   const rows = useStableRows(rawRows);
@@ -529,7 +598,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleTurnFold,
       onToggleWorkGroup,
       agentPanelModel,
-      onOpenAgents,
+      onOpenAgent,
     }),
     [
       timestampFormat,
@@ -545,7 +614,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleTurnFold,
       onToggleWorkGroup,
       agentPanelModel,
-      onOpenAgents,
+      onOpenAgent,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -575,7 +644,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
+        <p className="text-placeholder text-sm">{t("chat.timeline.emptyPrompt")}</p>
       </div>
     );
   }
@@ -735,6 +804,7 @@ function TimelineMinimap({
   stripMap: Map<string, HTMLSpanElement>;
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
+  const { t } = useI18n();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   const resolvedActiveIndex =
@@ -801,7 +871,9 @@ function TimelineMinimap({
     >
       <div className="relative h-full w-full select-none">
         <button
-          aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
+          aria-label={t("chat.timeline.jumpToMessage", {
+            message: activeItem?.userText ?? t("chat.timeline.userMessage"),
+          })}
           className={cn(
             "absolute top-1/2 left-3 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
             // The strip is width-capped to the side gutter so it never overlays
@@ -899,7 +971,7 @@ function TimelineMinimap({
             >
               <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
                 <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
-                  {activeItem.userText ?? "User message"}
+                  {activeItem.userText ?? t("chat.timeline.userMessage")}
                 </span>
                 {activeItem.assistantText ? (
                   <span
@@ -989,6 +1061,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
+  const { t } = useI18n();
   const userImages = row.message.attachments ?? [];
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
@@ -1023,7 +1096,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   <button
                     type="button"
                     className="h-full w-full cursor-zoom-in"
-                    aria-label={`Preview ${image.name}`}
+                    aria-label={t("chat.image.previewNamed", { name: image.name })}
                     onClick={() => {
                       const preview = buildExpandedImagePreview(regularImages, image.id);
                       if (!preview) return;
@@ -1073,10 +1146,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-              {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+              {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat, undefined, t)}
             </TooltipTrigger>
             <TooltipPopup>
-              {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+              {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat, t)}
             </TooltipPopup>
           </Tooltip>
           <div className="flex items-center gap-0.5">
@@ -1094,6 +1167,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
   const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
+  const { t } = useI18n();
 
   return (
     <Tooltip>
@@ -1105,13 +1179,13 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
             variant="ghost"
             disabled={activity.isRevertingCheckpoint || activity.isWorking}
             onClick={() => ctx.onRevertUserMessage(messageId)}
-            aria-label="Revert to this message"
+            aria-label={t("chat.revertMessage")}
           />
         }
       >
         <Undo2Icon className="size-3" />
       </TooltipTrigger>
-      <TooltipPopup side="top">Revert to this message</TooltipPopup>
+      <TooltipPopup side="top">{t("chat.revertMessage")}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -1138,13 +1212,14 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const { t } = useI18n();
+  const messageText = row.message.text || (row.message.streaming ? "" : t("chat.emptyResponse"));
   const reasoningText = row.message.reasoningText ?? "";
 
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
-        {reasoningText.trim().length > 0 ? (
+        {!row.hideAssistantReasoning && reasoningText.trim().length > 0 ? (
           <AssistantReasoningBlock
             text={reasoningText}
             streaming={Boolean(row.message.streaming)}
@@ -1175,10 +1250,15 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 <TooltipTrigger
                   render={<p className="text-muted-foreground text-xs tabular-nums" />}
                 >
-                  {formatDayAwareTimestamp(row.message.updatedAt, ctx.timestampFormat)}
+                  {formatDayAwareTimestamp(
+                    row.message.updatedAt,
+                    ctx.timestampFormat,
+                    undefined,
+                    t,
+                  )}
                 </TooltipTrigger>
                 <TooltipPopup>
-                  {formatChatTimestampTooltip(row.message.updatedAt, ctx.timestampFormat)}
+                  {formatChatTimestampTooltip(row.message.updatedAt, ctx.timestampFormat, t)}
                 </TooltipPopup>
               </Tooltip>
             )}
@@ -1186,61 +1266,6 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         ) : null}
       </div>
     </>
-  );
-}
-
-function AssistantReasoningBlock({
-  text,
-  streaming,
-  markdownCwd,
-  threadRef,
-  skills,
-}: {
-  text: string;
-  streaming: boolean;
-  markdownCwd: string | undefined;
-  threadRef: ScopedThreadRef | undefined;
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
-}) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(streaming);
-
-  useEffect(() => {
-    setOpen(streaming);
-  }, [streaming]);
-
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className="assistant-reasoning-block mb-2 rounded-md border border-border/50 bg-muted/30"
-      data-reasoning-streaming={streaming ? "true" : "false"}
-      data-reasoning-open={open ? "true" : "false"}
-    >
-      <CollapsibleTrigger
-        className="flex w-full items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-xs font-medium text-muted-foreground hover:bg-muted/50 data-panel-open:[&_svg:first-child]:rotate-90"
-        data-scroll-anchor-ignore
-      >
-        <ChevronRightIcon className="size-3.5 shrink-0 transition-transform" aria-hidden />
-        <BotIcon className="size-3.5 shrink-0" aria-hidden />
-        <span>{t("chat.reasoning.thinking")}</span>
-        {streaming ? <span className="animate-pulse text-muted-foreground/70">...</span> : null}
-      </CollapsibleTrigger>
-      <CollapsiblePanel>
-        <div
-          className="ms-2.5 border-s-2 border-border/50 pb-2.5 pe-2.5 ps-2.5 text-sm text-muted-foreground/90"
-          data-reasoning-content=""
-        >
-          <ChatMarkdown
-            text={text}
-            cwd={markdownCwd}
-            threadRef={threadRef}
-            isStreaming={streaming}
-            skills={skills}
-          />
-        </div>
-      </CollapsiblePanel>
-    </Collapsible>
   );
 }
 
@@ -1288,6 +1313,7 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "turn-plan" }>;
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const { steps } = row.turnPlan.plan;
   const completedCount = steps.filter((step) => step.status === "completed").length;
@@ -1298,7 +1324,7 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
     steps.find((step) => step.status === "inProgress")?.step ??
     steps.find((step) => step.status === "pending")?.step ??
     steps.at(-1)?.step ??
-    "Plan";
+    t("chat.plan.badge");
   const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
 
   return (
@@ -1380,17 +1406,12 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { workingStepLabel } = use(TimelineRowActivityCtx);
+  const { t } = useI18n();
   return (
     <div>
       <div className="border-b border-border/60 pb-2 pt-1">
         <div className="px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
-          {row.createdAt ? (
-            <>
-              Working for <WorkingTimer createdAt={row.createdAt} />
-            </>
-          ) : (
-            "Working..."
-          )}
+          {row.createdAt ? <WorkingTimer createdAt={row.createdAt} /> : t("chat.timeline.working")}
           {workingStepLabel ? (
             <span className="ml-2 text-muted-foreground/55">· {workingStepLabel}</span>
           ) : null}
@@ -1412,19 +1433,24 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
 
 /** Live "Working for Xs" label. */
 function WorkingTimer({ createdAt }: { createdAt: string }) {
+  const { t } = useI18n();
   const textRef = useRef<HTMLSpanElement>(null);
-  const initialText = formatWorkingTimerNow(createdAt);
+  const formatText = useCallback(
+    () => t("chat.timeline.workingFor", { duration: formatWorkingTimerNow(createdAt) }),
+    [createdAt, t],
+  );
+  const initialText = formatText();
 
   useEffect(() => {
     const updateText = () => {
       if (textRef.current) {
-        textRef.current.textContent = formatWorkingTimerNow(createdAt);
+        textRef.current.textContent = formatText();
       }
     };
     updateText();
     const id = setInterval(updateText, 1000);
     return () => clearInterval(id);
-  }, [createdAt]);
+  }, [formatText]);
 
   return (
     <span ref={textRef} className="tabular-nums">
@@ -1447,6 +1473,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
   isExpandedToolGroupEntry: boolean;
 }) {
   const { workspaceRoot } = use(TimelineRowCtx);
+  const { t } = useI18n();
   const nonEmptyEntries = useMemo(
     () =>
       groupedEntries.filter((entry) => workEntryIsVisibleInGroup(entry, isExpandedToolGroupEntry)),
@@ -1455,9 +1482,9 @@ const WorkGroupSection = memo(function WorkGroupSection({
   const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
   const groupLabel = onlyToolEntries
     ? nonEmptyEntries.length === 1
-      ? "1 tool call"
-      : `${nonEmptyEntries.length} tool calls`
-    : "Work Log";
+      ? t("chat.timeline.toolCallOne")
+      : t("chat.timeline.toolCalls", { count: nonEmptyEntries.length })
+    : t("chat.timeline.workLog");
   const GroupContainer = isExpandedToolGroupEntry ? "div" : "section";
 
   if (nonEmptyEntries.length === 0) return null;
@@ -1516,7 +1543,8 @@ function LiveActivityRow({
 }
 
 function ThinkingActivityRow() {
-  return <LiveActivityRow label="Thinking" />;
+  const { t } = useI18n();
+  return <LiveActivityRow label={t("chat.reasoning.thinking")} />;
 }
 
 function LiveActivityContent({
@@ -1532,6 +1560,7 @@ function LiveActivityContent({
   announceFailure?: boolean;
   highlighted?: boolean;
 }) {
+  const { t } = useI18n();
   const resolvedIconName = failed ? "x" : iconName;
 
   return (
@@ -1549,7 +1578,7 @@ function LiveActivityContent({
             failed ? "text-destructive" : highlighted ? "text-foreground" : "text-icon-muted",
           )}
           role={announceFailure ? "img" : undefined}
-          aria-label={announceFailure ? "Tool call failed" : undefined}
+          aria-label={announceFailure ? t("chat.toolFailed") : undefined}
         >
           <WorkEntryIconSvg
             name={resolvedIconName}
@@ -1564,14 +1593,15 @@ function LiveActivityContent({
 
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const ctx = use(TimelineRowCtx);
-  const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot);
+  const { t } = useI18n();
+  const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, t);
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
 
   return (
     <button
       type="button"
       className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-label={failed ? `${label}, tool call failed` : undefined}
+      aria-label={failed ? t("chat.toolFailedWithLabel", { label }) : undefined}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
@@ -1614,12 +1644,15 @@ function WorkGroupToggleTimelineRow({
   row: Extract<TimelineRow, { kind: "work-toggle" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const { t } = useI18n();
   if (row.onlyToolEntries && row.summary) {
     return (
       <button
         type="button"
         className="group/tool-group flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-        aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
+        aria-label={
+          row.hasFailure ? t("chat.toolFailedWithLabel", { label: row.summary }) : undefined
+        }
         aria-expanded={row.expanded}
         onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
       >
@@ -1629,7 +1662,7 @@ function WorkGroupToggleTimelineRow({
             row.hasFailure ? "text-destructive" : "text-icon-muted",
           )}
           role={row.hasFailure ? "img" : undefined}
-          aria-label={row.hasFailure ? "Tool call failed" : undefined}
+          aria-label={row.hasFailure ? t("chat.toolFailed") : undefined}
         >
           <WorkEntryIconSvg
             name={row.hasFailure ? "x" : toolGroupSummaryIconName(row.summaryKind)}
@@ -1640,13 +1673,6 @@ function WorkGroupToggleTimelineRow({
       </button>
     );
   }
-  const labelNoun = row.onlyToolEntries
-    ? row.hiddenCount === 1
-      ? "tool call"
-      : "tool calls"
-    : row.hiddenCount === 1
-      ? "log entry"
-      : "log entries";
   const showHiddenFailure = row.hasFailure && !row.expanded;
 
   return (
@@ -1662,7 +1688,7 @@ function WorkGroupToggleTimelineRow({
           showHiddenFailure ? "text-destructive" : "text-icon-muted",
         )}
         role={showHiddenFailure ? "img" : undefined}
-        aria-label={showHiddenFailure ? "Hidden work includes a failure" : undefined}
+        aria-label={showHiddenFailure ? t("chat.timeline.hiddenFailure") : undefined}
       >
         {showHiddenFailure ? (
           <WorkEntryIconSvg name="x" className="size-4 shrink-0 stroke-[1.8] opacity-70" />
@@ -1677,11 +1703,19 @@ function WorkGroupToggleTimelineRow({
       </span>
       {row.expanded ? (
         <span className="font-medium text-foreground">
-          Show fewer {row.onlyToolEntries ? "tool calls" : "log entries"}
+          {row.onlyToolEntries
+            ? t("chat.timeline.showFewerToolCalls")
+            : t("chat.timeline.showFewerLogEntries")}
         </span>
       ) : (
         <span className="font-medium text-foreground">
-          +{row.hiddenCount} previous {labelNoun}
+          {row.onlyToolEntries
+            ? row.hiddenCount === 1
+              ? t("chat.timeline.previousToolCallOne")
+              : t("chat.timeline.previousToolCalls", { count: row.hiddenCount })
+            : row.hiddenCount === 1
+              ? t("chat.timeline.previousLogEntryOne")
+              : t("chat.timeline.previousLogEntries", { count: row.hiddenCount })}
         </span>
       )}
     </button>
@@ -1802,6 +1836,7 @@ function UserMessagePreviewAnnotationCard(props: {
   annotation: ParsedPreviewAnnotation;
   image: NonNullable<TimelineMessage["attachments"]>[number] | null;
 }) {
+  const { t } = useI18n();
   const ctx = use(TimelineRowCtx);
   return (
     <div className="mb-2 flex max-w-full items-center overflow-hidden rounded-lg border border-border/70 bg-background/70">
@@ -1809,7 +1844,7 @@ function UserMessagePreviewAnnotationCard(props: {
         <button
           type="button"
           className="size-14 shrink-0 cursor-zoom-in overflow-hidden border-r border-border/70 bg-muted"
-          aria-label={`Preview ${props.image.name}`}
+          aria-label={t("chat.image.previewNamed", { name: props.image.name })}
           onClick={() => {
             if (!props.image) return;
             const preview = buildExpandedImagePreview([props.image], props.image.id);
@@ -1818,7 +1853,7 @@ function UserMessagePreviewAnnotationCard(props: {
         >
           <img
             src={props.image.previewUrl}
-            alt="Annotated preview crop"
+            alt={t("chat.image.annotatedCrop")}
             className="size-full object-cover"
           />
         </button>
@@ -1873,6 +1908,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   markdownCwd: string | undefined;
   footer?: ReactNode;
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const hasVisibleBody = props.text.trim().length > 0 || props.terminalContexts.length > 0;
   const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
@@ -1922,7 +1958,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
               onClick={() => setExpanded((value) => !value)}
               className="-ml-1 h-6 rounded-md px-1.5 text-secondary-label text-xs hover:bg-muted/55 hover:text-message-foreground"
             >
-              {expanded ? "Show less" : "Show full message"}
+              {expanded ? t("chat.message.showLess") : t("chat.message.showFull")}
             </Button>
           ) : null}
           {props.footer ? (
@@ -2285,16 +2321,39 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
 function workEntryPreview(
   workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
   workspaceRoot: string | undefined,
+  t: Translate,
 ) {
   if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
+  if (workEntry.detail) return localizedWorkEntryDetail(workEntry.detail, t);
   if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
   const [firstPath] = workEntry.changedFiles ?? [];
   if (!firstPath) return null;
   const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
   return workEntry.changedFiles!.length === 1
     ? displayPath
-    : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
+    : t("chat.timeline.moreFiles", {
+        path: displayPath,
+        count: workEntry.changedFiles!.length - 1,
+      });
+}
+
+function localizedWorkEntryDetail(detail: string, t: Translate): string {
+  const lineCount = detail.match(/^([\d,.]+) lines$/);
+  if (lineCount?.[1]) return t("chat.timeline.lineCount", { count: lineCount[1] });
+
+  const fileCount = detail.match(/^([\d,.]+) files?(\+)?$/);
+  if (fileCount?.[1]) {
+    const key = fileCount[2]
+      ? "chat.timeline.fileCountMore"
+      : fileCount[1] === "1"
+        ? "chat.timeline.fileCountOne"
+        : "chat.timeline.fileCount";
+    return t(key, {
+      count: fileCount[1],
+    });
+  }
+
+  return detail;
 }
 
 function workEntryRawCommand(
@@ -2480,26 +2539,30 @@ function commandProgramName(command: string, depth = 0): string | null {
 function liveWorkEntryLabel(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
+  t: Translate,
 ): string {
   const command = workEntry.command?.trim();
   if (command) {
     // This row describes the active parent turn, not the command lifecycle.
     // Keep its live "Running" copy until the turn or contiguous tool run settles.
     const program = commandProgramName(command);
-    if (program) return `Running ${program}`;
-    return "Running command";
+    if (program) return t("chat.timeline.runningProgram", { program });
+    return t("chat.timeline.runningCommand");
   }
 
-  return workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
+  return workEntryPreview(workEntry, workspaceRoot, t) ?? toolActivityHeading(workEntry, t);
 }
 
 function buildToolCallExpandedBody(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
+  t: Translate,
 ): string | null {
   const blocks: string[] = [];
   if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
-    blocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
+    blocks.push(
+      `${t("chat.toolActivity.mcpCall")}\n${JSON.stringify(workEntry.toolData, null, 2)}`,
+    );
   }
   const raw = workEntryRawCommand(workEntry);
   if (raw?.trim()) {
@@ -2551,33 +2614,18 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   return workToneIcon(workEntry.tone).iconName;
 }
 
-function capitalizePhrase(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return value;
-  }
-  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
-}
-
-function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
-  if (!workEntry.toolTitle) {
-    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
-  }
-  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
-}
-
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
 /**
  * A1 spawn CTA: one anchored row per workflow run (or per-turn direct-spawn
- * batch). Live status is derived from the shared agent panel model at render
- * time — the row itself never re-renders a roster; the Agents panel is the
- * only roster. Freezes to past tense when every member settles. Static dot,
- * no animation.
+ * batch). Every named chip opens that subagent's own right-panel tab. Live
+ * status is derived from the shared model and freezes to past tense when the
+ * batch settles. Static dot, no animation.
  */
 const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: TimelineWorkEntry }) {
   const { workEntry } = props;
-  const { agentPanelModel, onOpenAgents } = use(TimelineRowCtx);
+  const { agentPanelModel, onOpenAgent } = use(TimelineRowCtx);
+  const { t } = useI18n();
   const spawn = workEntry.agentSpawn;
   if (!spawn) {
     return null;
@@ -2594,12 +2642,18 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
     agents.length,
     Math.max(memberIds.size - (spawn.workflowId ? 1 : 0), 0),
   );
+  const visibleAgents = agents.slice(0, 4);
+  const hiddenAgents = agents.slice(visibleAgents.length);
+  const fallbackAgent = workflowGroup?.workflow ?? null;
 
   const running = agents.filter(
     (agent) => agent.status === "running" || agent.status === "pending",
   ).length;
   const waiting = agents.filter((agent) => agent.status === "waiting").length;
   const failed = agents.filter((agent) => agent.status === "failed").length;
+  const stopped = agents.filter(
+    (agent) => agent.status === "cancelled" || agent.status === "interrupted",
+  ).length;
   // The coordinator's own status is authoritative for workflows: dynamic
   // spawns mean the member list can be momentarily all-settled while the
   // run is still mid-flight (the "completed" lie from live testing). A
@@ -2610,6 +2664,9 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
     coordinatorStatus === "failed" ||
     coordinatorStatus === "cancelled" ||
     coordinatorStatus === "interrupted";
+  const coordinatorFailed = coordinatorStatus === "failed";
+  const coordinatorStopped =
+    coordinatorStatus === "cancelled" || coordinatorStatus === "interrupted";
   const live = workflowGroup !== undefined ? !coordinatorSettled : running + waiting > 0;
   // Same rule as the panel footer: providers may aggregate member usage into
   // the coordinator, so count the coordinator only when no members exist.
@@ -2625,40 +2682,101 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
   // One steady in-flight presentation (monitoring-pill rule): waiting and
   // stalled agents read as working; only settled states differentiate.
   const working = running + waiting;
-  const dotClass = live ? "bg-info" : failed > 0 ? "bg-destructive" : "bg-success";
-  const lead = live
-    ? `Kicked off ${agentCount} subagent${agentCount === 1 ? "" : "s"}`
-    : `Ran ${agentCount} subagent${agentCount === 1 ? "" : "s"}`;
+  const hasStopped = coordinatorStopped || stopped > 0;
+  const dotClass = live
+    ? "bg-info"
+    : coordinatorFailed || failed > 0
+      ? "bg-destructive"
+      : hasStopped
+        ? "bg-muted-foreground/60"
+        : "bg-success";
   const status = live
     ? livePhase
-      ? `${livePhase.title} · ${livePhase.activeCount} working`
+      ? `${livePhase.title} · ${t("agents.summary.working", { count: livePhase.activeCount })}`
       : working > 0
-        ? `${working} working`
-        : "working"
-    : failed > 0
-      ? `${failed} failed`
-      : "✓ completed";
+        ? t("agents.summary.working", { count: working })
+        : t("agents.status.working")
+    : coordinatorFailed
+      ? t("agents.status.failed")
+      : failed > 0
+        ? t("agents.workflow.failed", { count: failed })
+        : hasStopped
+          ? t("agents.status.stopped")
+          : t("agents.status.completed");
+
+  const fallbackLabel = live
+    ? t("agents.spawn.started", { count: agentCount })
+    : t("agents.spawn.finished", { count: agentCount });
 
   return (
-    <button
-      type="button"
-      onClick={onOpenAgents}
-      className="flex w-full items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-[13px] transition hover:bg-accent/50"
-    >
-      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dotClass)} />
-      <WorkEntryIconSvg name="bot" className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 truncate">
-        <span className="font-medium">{lead}</span>
-        {workflowName ? <span className="text-muted-foreground"> · {workflowName}</span> : null}
-      </span>
-      <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[.7rem] text-muted-foreground">
+    <div className="-mx-1 flex min-w-0 w-[calc(100%+0.5rem)] flex-wrap items-center gap-2 px-1 py-1 text-[13px]">
+      {agents.length > 0 ? (
+        visibleAgents.map((agent) => (
+          <button
+            type="button"
+            key={agent.id}
+            onClick={() => onOpenAgent(agent.id)}
+            aria-label={t("agents.openNamed", { title: agent.title })}
+            data-agent-id={agent.id}
+            className="inline-flex h-8 max-w-full cursor-pointer items-center gap-2 rounded-full border border-border/70 bg-background px-3 text-muted-foreground transition-colors hover:bg-accent/35 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          >
+            <BotIcon aria-hidden className="size-3.5 shrink-0" />
+            <span className="max-w-56 truncate text-sm text-foreground/85">{agent.title}</span>
+          </button>
+        ))
+      ) : fallbackAgent ? (
+        <button
+          type="button"
+          onClick={() => onOpenAgent(fallbackAgent.id)}
+          aria-label={t("agents.openNamed", { title: fallbackAgent.title })}
+          data-agent-id={fallbackAgent.id}
+          className="inline-flex h-8 max-w-full cursor-pointer items-center gap-2 rounded-full border border-border/70 bg-background px-3 text-muted-foreground transition-colors hover:bg-accent/35 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
+          <BotIcon aria-hidden className="size-3.5 shrink-0" />
+          <span className="max-w-56 truncate text-sm text-foreground/85">
+            {fallbackAgent.title}
+          </span>
+        </button>
+      ) : (
+        <span className="inline-flex h-8 max-w-full items-center gap-2 rounded-full border border-border/70 bg-background px-3 text-muted-foreground">
+          <BotIcon aria-hidden className="size-3.5 shrink-0" />
+          <span className="truncate text-sm text-foreground/85">{fallbackLabel}</span>
+        </span>
+      )}
+      {hiddenAgents.length > 0 ? (
+        <Menu>
+          <MenuTrigger
+            render={
+              <button
+                type="button"
+                aria-label={t("agents.more", { count: hiddenAgents.length })}
+                className="inline-flex h-8 cursor-pointer items-center rounded-md px-2 text-sm tabular-nums text-muted-foreground hover:bg-accent/35 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              />
+            }
+          >
+            +{hiddenAgents.length}
+          </MenuTrigger>
+          <MenuPopup align="start" side="bottom" className="min-w-48 max-w-72">
+            {hiddenAgents.map((agent) => (
+              <MenuItem key={agent.id} onClick={() => onOpenAgent(agent.id)}>
+                <BotIcon aria-hidden />
+                <span className="truncate">{agent.title}</span>
+              </MenuItem>
+            ))}
+          </MenuPopup>
+        </Menu>
+      ) : null}
+      <span className="inline-flex min-h-8 items-center gap-1.5 text-sm text-muted-foreground">
+        <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dotClass)} />
         <span>{status}</span>
+        {workflowName ? <span className="max-w-48 truncate">· {workflowName}</span> : null}
         {totalTokens > 0 ? (
-          <span className="tabular-nums">Σ {formatSubagentTokenCount(totalTokens)}</span>
+          <span className="font-mono text-[.7rem] tabular-nums">
+            · Σ {formatSubagentTokenCount(totalTokens)}
+          </span>
         ) : null}
-        <span className="text-info-foreground">{live ? "Open Agents ▸" : "View ▸"}</span>
       </span>
-    </button>
+    </div>
   );
 });
 
@@ -2687,14 +2805,16 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   isExpandedToolGroupEntry: boolean;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry } = props;
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const showFailedIndicator = workEntryDisplayIndicatesToolFailure(workEntry);
   const entryIconName =
     showWarningIndicator || showFailedIndicator ? "x" : workEntryIconName(workEntry);
-  const displayText = workEntryPreview(workEntry, workspaceRoot) ?? toolWorkEntryHeading(workEntry);
-  const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
+  const displayText =
+    workEntryPreview(workEntry, workspaceRoot, t) ?? toolActivityHeading(workEntry, t);
+  const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot, t);
   const canExpand = expandedBody !== null;
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -2718,7 +2838,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         : "text-foreground/80";
   const showEntryIcon = !isExpandedToolGroupEntry || showWarningIndicator || showFailedIndicator;
   const accessibleDisplayText = showFailedIndicator
-    ? `${displayText}, tool call failed`
+    ? t("chat.toolFailedWithLabel", { label: displayText })
     : displayText;
   const rowToggleProps = canExpand
     ? {
@@ -2750,7 +2870,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         <span
           className={cn(iconWrapperClass, !showEntryIcon && "invisible")}
           role={showFailedIndicator ? "img" : undefined}
-          aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+          aria-label={showFailedIndicator ? t("chat.toolFailed") : undefined}
           aria-hidden={!showEntryIcon}
         >
           <WorkEntryIconSvg

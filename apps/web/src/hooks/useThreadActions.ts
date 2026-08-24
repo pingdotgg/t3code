@@ -36,6 +36,7 @@ import { useUiStateStore } from "../uiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { useI18n, type Translate } from "../i18n";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 
@@ -135,7 +136,31 @@ export class ThreadPinReorderUnsupportedError extends Schema.TaggedErrorClass<Th
   }
 }
 
+const isThreadArchiveBlockedError = Schema.is(ThreadArchiveBlockedError);
+const isThreadSettlementUnsupportedError = Schema.is(ThreadSettlementUnsupportedError);
+const isThreadSettleBlockedError = Schema.is(ThreadSettleBlockedError);
+const isThreadSnoozeUnsupportedError = Schema.is(ThreadSnoozeUnsupportedError);
+const isThreadSnoozeBlockedError = Schema.is(ThreadSnoozeBlockedError);
+const isThreadPinningUnsupportedError = Schema.is(ThreadPinningUnsupportedError);
+const isThreadPinReorderUnsupportedError = Schema.is(ThreadPinReorderUnsupportedError);
+
+export function localizedThreadActionError(error: unknown, t: Translate): string {
+  if (isThreadArchiveBlockedError(error)) return t("threadActions.archiveBlocked");
+  if (isThreadSettlementUnsupportedError(error)) {
+    return t("threadActions.settlementUnsupported");
+  }
+  if (isThreadSettleBlockedError(error)) return t("threadActions.settleBlocked");
+  if (isThreadSnoozeUnsupportedError(error)) return t("threadActions.snoozeUnsupported");
+  if (isThreadSnoozeBlockedError(error)) return t("threadActions.snoozeBlocked");
+  if (isThreadPinningUnsupportedError(error)) return t("threadActions.pinningUnsupported");
+  if (isThreadPinReorderUnsupportedError(error)) {
+    return t("threadActions.pinReorderUnsupported");
+  }
+  return error instanceof Error ? error.message : t("common.errorGeneric");
+}
+
 export function useThreadActions() {
+  const { t } = useI18n();
   const closeTerminal = useAtomCommand(terminalEnvironment.close);
   const archiveThreadMutation = useAtomCommand(threadEnvironment.archive, {
     reportFailure: false,
@@ -319,10 +344,10 @@ export function useThreadActions() {
         const confirmationResult = await settlePromise(() =>
           localApi.dialogs.confirm(
             [
-              "This thread is the only one linked to this worktree:",
+              t("threadActions.onlyThreadLinkedToWorktree"),
               displayWorktreePath ?? orphanedWorktreePath,
               "",
-              "Delete the worktree too?",
+              t("threadActions.deleteWorktreeToo"),
             ].join("\n"),
             { variant: "destructive" },
           ),
@@ -434,7 +459,8 @@ export function useThreadActions() {
             : null;
       if (cleanupFailure) {
         const error = squashAtomCommandFailure(cleanupFailure);
-        const message = error instanceof Error ? error.message : "Unknown error removing worktree.";
+        const message =
+          error instanceof Error ? error.message : t("threadActions.worktreeRemovalUnknown");
         console.error("Failed to remove orphaned worktree after thread deletion", {
           threadId: threadRef.threadId,
           projectCwd: threadProject.workspaceRoot,
@@ -444,8 +470,11 @@ export function useThreadActions() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Thread deleted, but worktree removal failed",
-            description: `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`,
+            title: t("threadActions.worktreeRemovalFailed"),
+            description: t("threadActions.worktreeRemovalFailedDescription", {
+              path: displayWorktreePath ?? orphanedWorktreePath,
+              message,
+            }),
           }),
         );
         return cleanupFailure;
@@ -465,6 +494,7 @@ export function useThreadActions() {
       resolveThreadTarget,
       sidebarThreadSortOrder,
       stopThreadSession,
+      t,
     ],
   );
 
@@ -672,12 +702,12 @@ export function useThreadActions() {
       const resolved = resolveThreadTarget(target);
 
       if (confirmThreadDelete && localApi) {
-        const title = resolved?.thread.title ?? "this thread";
+        const title = resolved?.thread.title ?? t("threadActions.thisThread");
         const confirmationResult = await settlePromise(() =>
           localApi.dialogs.confirm(
             [
-              `Delete thread "${title}"?`,
-              "This permanently clears conversation history for this thread.",
+              t("threadActions.deleteThreadConfirm", { title }),
+              t("threadActions.deleteThreadDescription"),
             ].join("\n"),
             { variant: "destructive" },
           ),
@@ -692,7 +722,7 @@ export function useThreadActions() {
 
       return deleteThread(target);
     },
-    [confirmThreadDelete, deleteThread, resolveThreadTarget],
+    [confirmThreadDelete, deleteThread, resolveThreadTarget, t],
   );
 
   return useMemo(

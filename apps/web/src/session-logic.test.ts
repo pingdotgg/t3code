@@ -1913,6 +1913,47 @@ describe("deriveTimelineEntries", () => {
       },
     });
   });
+
+  it("orders a completed final answer by completion time instead of its early creation time", () => {
+    const entries = deriveTimelineEntries(
+      [
+        {
+          id: MessageId.make("final-answer"),
+          role: "assistant",
+          text: "Done.",
+          reasoningText: "Checking the implementation.",
+          phase: "final_answer",
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-02-23T00:00:01.000Z",
+          updatedAt: "2026-02-23T00:00:03.000Z",
+          streaming: false,
+        },
+      ],
+      [],
+      [
+        {
+          id: "work-1",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          turnId: TurnId.make("turn-1"),
+          label: "Ran tests",
+          tone: "tool",
+        },
+        {
+          id: "work-at-completion",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          turnId: TurnId.make("turn-1"),
+          label: "Read output",
+          tone: "tool",
+        },
+      ],
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "work-1",
+      "work-at-completion",
+      "final-answer",
+    ]);
+  });
 });
 
 describe("deriveWorkLogEntries context window handling", () => {

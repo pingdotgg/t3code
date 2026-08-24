@@ -13,6 +13,7 @@ import type {
   PullRequestUpdateMethod,
   VcsRef,
 } from "@t3tools/contracts";
+import type { Translate } from "~/i18n";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -326,13 +327,14 @@ export function buildPullRequestTimeline(
     PullRequestDetailView,
     "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
   >,
+  t?: Translate,
 ): ReadonlyArray<PullRequestTimelineEvent> {
   return [
     {
       id: "created",
       at: detail.createdAt,
       kind: "opened" as const,
-      title: "opened this pull request",
+      title: t?.("pullRequest.timeline.opened") ?? "opened this pull request",
       body: null,
       markdown: false,
       url: null,
@@ -348,7 +350,9 @@ export function buildPullRequestTimeline(
       id: commit.oid,
       at: commit.committedDate,
       kind: "commit" as const,
-      title: `Commit ${commit.oid.slice(0, 7)}`,
+      title:
+        t?.("pullRequest.timeline.commit", { commit: commit.oid.slice(0, 7) }) ??
+        `Commit ${commit.oid.slice(0, 7)}`,
       body: commit.messageHeadline || null,
       markdown: false,
       url: null,
@@ -364,7 +368,10 @@ export function buildPullRequestTimeline(
       id: comment.id,
       at: comment.createdAt,
       kind: comment.kind === "review" ? ("review" as const) : ("comment" as const),
-      title: comment.kind === "review" ? "reviewed" : "commented",
+      title:
+        comment.kind === "review"
+          ? (t?.("pullRequest.timeline.reviewed") ?? "reviewed")
+          : (t?.("pullRequest.timeline.commented") ?? "commented"),
       body: visibleBody(comment.body),
       markdown: true,
       url: comment.url,
@@ -382,7 +389,7 @@ export function buildPullRequestTimeline(
             id: "merged",
             at: detail.mergedAt,
             kind: "merged" as const,
-            title: "Pull request merged",
+            title: t?.("pullRequest.timeline.merged") ?? "Pull request merged",
             body: null,
             markdown: false,
             url: null,
@@ -402,7 +409,7 @@ export function buildPullRequestTimeline(
             id: "closed",
             at: detail.closedAt,
             kind: "closed" as const,
-            title: "Pull request closed",
+            title: t?.("pullRequest.timeline.closed") ?? "Pull request closed",
             body: null,
             markdown: false,
             url: null,

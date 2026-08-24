@@ -13,6 +13,7 @@ import type {
 import { CheckIcon, UserPlusIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { useI18n } from "~/i18n";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -52,6 +53,7 @@ export function PullRequestReviewerPicker({
   /** The detail carries who is requested, so it is re-read once the host has taken the change. */
   onRequested: () => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
@@ -85,11 +87,11 @@ export function PullRequestReviewerPicker({
       toastManager.add({
         type: "error",
         title: candidate.isRequested
-          ? `Could not take back the review request to ${candidate.login}`
-          : `Could not ask ${candidate.login} for a review`,
+          ? t("pullRequest.review.takeBackFailed", { reviewer: candidate.login })
+          : t("pullRequest.review.requestFailed", { reviewer: candidate.login }),
         description: readableFailure(
           squashAtomCommandFailure(result),
-          "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
+          t("pullRequest.review.requestRefused"),
         ),
       });
       return;
@@ -97,8 +99,8 @@ export function PullRequestReviewerPicker({
     toastManager.add({
       type: "success",
       title: candidate.isRequested
-        ? `Review request to ${candidate.login} taken back`
-        : `Review requested from ${candidate.login}`,
+        ? t("pullRequest.review.takenBack", { reviewer: candidate.login })
+        : t("pullRequest.review.requested", { reviewer: candidate.login }),
     });
     onRequested();
     candidatesQuery.refresh();
@@ -109,14 +111,17 @@ export function PullRequestReviewerPicker({
       <Tooltip>
         <TooltipTrigger
           render={
-            <Button size="icon-xs" variant="ghost" disabled aria-label="Request a review">
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              disabled
+              aria-label={t("pullRequest.review.request")}
+            >
               <UserPlusIcon className="size-3.5" />
             </Button>
           }
         />
-        <TooltipPopup side="bottom">
-          Asking someone to review needs write access on this repository
-        </TooltipPopup>
+        <TooltipPopup side="bottom">{t("pullRequest.review.writeAccessRequired")}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -125,7 +130,7 @@ export function PullRequestReviewerPicker({
     <Menu open={open} onOpenChange={setOpen}>
       <MenuTrigger
         render={
-          <Button size="icon-xs" variant="ghost" aria-label="Request a review">
+          <Button size="icon-xs" variant="ghost" aria-label={t("pullRequest.review.request")}>
             <UserPlusIcon className="size-3.5" />
           </Button>
         }
@@ -136,8 +141,8 @@ export function PullRequestReviewerPicker({
             autoFocus
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Search people with access"
-            aria-label="Search people with access"
+            placeholder={t("pullRequest.review.searchPeople")}
+            aria-label={t("pullRequest.review.searchPeople")}
             size="compact"
           />
         </div>
@@ -146,13 +151,13 @@ export function PullRequestReviewerPicker({
             <PullRequestPeopleGhost rows={4} />
           ) : candidatesQuery.error !== null ? (
             <p className="p-2 text-xs text-muted-foreground">
-              The people with access could not be read. {candidatesQuery.error}
+              {t("pullRequest.review.peopleLoadFailed", { error: candidatesQuery.error })}
             </p>
           ) : candidates.length === 0 ? (
             <p className="p-2 text-xs text-muted-foreground">
               {query.length > 0
-                ? "Nobody with access matches that."
-                : "Nobody else has access to this repository."}
+                ? t("pullRequest.review.noPeopleMatch")
+                : t("pullRequest.review.noOthers")}
             </p>
           ) : (
             candidates.map((candidate) => (
@@ -165,10 +170,15 @@ export function PullRequestReviewerPicker({
               >
                 <PullRequestActorLabel actor={candidate} className="min-w-0 flex-1 truncate" />
                 {candidate.kind === "team" ? (
-                  <span className="shrink-0 text-muted-foreground">team</span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {t("pullRequest.review.team")}
+                  </span>
                 ) : null}
                 {candidate.isRequested ? (
-                  <CheckIcon aria-label="Already asked" className="size-3.5 shrink-0" />
+                  <CheckIcon
+                    aria-label={t("pullRequest.review.alreadyAsked")}
+                    className="size-3.5 shrink-0"
+                  />
                 ) : null}
               </button>
             ))
@@ -177,8 +187,7 @@ export function PullRequestReviewerPicker({
             // Typing filters what arrived; it does not ask the host again, so this says what the
             // list is rather than offering a search that would find nothing further.
             <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              This repository has more people with access than are listed here. Ask for the rest on
-              the host.
+              {t("pullRequest.review.peopleTruncated")}
             </p>
           ) : null}
         </div>

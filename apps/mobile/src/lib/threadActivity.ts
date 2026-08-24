@@ -99,8 +99,12 @@ type RawThreadFeedEntry =
       readonly activity: ThreadFeedActivity;
     };
 
+type ThreadFeedMessageEntry = Extract<RawThreadFeedEntry, { type: "message" }> & {
+  readonly hideAssistantReasoning?: boolean;
+};
+
 export type ThreadFeedEntry =
-  | Extract<RawThreadFeedEntry, { type: "message" }>
+  | ThreadFeedMessageEntry
   | {
       readonly type: "working";
       readonly id: string;
@@ -1052,7 +1056,9 @@ function compareActivityLifecycleRank(kind: string): number {
 }
 
 const activityOrder = Order.combineAll<OrchestrationThreadActivity>([
-  Order.mapInput(Order.Number, (activity) => activity.sequence ?? Number.MAX_SAFE_INTEGER),
+  // Legacy snapshots predate activity.sequence. Keep those rows before live
+  // sequenced events, matching the server and shared client-runtime reducers.
+  Order.mapInput(Order.Number, (activity) => activity.sequence ?? -1),
   Order.mapInput(Order.String, (activity) => activity.createdAt),
   Order.mapInput(Order.Number, (activity) => compareActivityLifecycleRank(activity.kind)),
   Order.mapInput(Order.String, (activity) => activity.id),
@@ -1063,8 +1069,9 @@ function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
     return false;
   }
   const hasText = entry.message.text.trim().length > 0;
+  const hasReasoning = (entry.message.reasoningText?.trim().length ?? 0) > 0;
   const hasAttachments = (entry.message.attachments ?? []).length > 0;
-  return !hasText && !hasAttachments;
+  return !hasText && !hasReasoning && !hasAttachments;
 }
 
 function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): ThreadFeedEntry[] {
@@ -1137,23 +1144,67 @@ interface ThreadFeedTurnFold {
   readonly turnId: TurnId;
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
+  readonly terminalEntry: Extract<ThreadFeedEntry, { readonly type: "message" }> | null;
+  readonly deferTerminalEntry: boolean;
+  readonly lastEntryId: string;
+  readonly hidesTerminalReasoning: boolean;
   readonly label: string;
+}
+
+interface ThreadFeedAssistantResponseState {
+  readonly firstMessageId: string;
+  readonly lastMessageId: string;
+  readonly finalAnswerMessageId: string | null;
+  readonly hasExplicitPhase: boolean;
+}
+
+function deriveThreadFeedAssistantResponseStates(
+  feed: ReadonlyArray<ThreadFeedEntry>,
+): ReadonlyMap<TurnId, ThreadFeedAssistantResponseState> {
+  const states = new Map<TurnId, ThreadFeedAssistantResponseState>();
+  for (const entry of feed) {
+    if (
+      entry.type !== "message" ||
+      entry.message.role !== "assistant" ||
+      entry.message.turnId === null
+    ) {
+      continue;
+    }
+    const previous = states.get(entry.message.turnId);
+    states.set(entry.message.turnId, {
+      firstMessageId: previous?.firstMessageId ?? entry.id,
+      lastMessageId: entry.id,
+      finalAnswerMessageId:
+        entry.message.phase === "final_answer"
+          ? entry.id
+          : (previous?.finalAnswerMessageId ?? null),
+      hasExplicitPhase: previous?.hasExplicitPhase === true || entry.message.phase !== undefined,
+    });
+  }
+  return states;
+}
+
+export function deriveThreadFeedTerminalAssistantMessageIds(
+  feed: ReadonlyArray<ThreadFeedEntry>,
+): ReadonlySet<string> {
+  const terminalIds = new Set<string>();
+  for (const state of deriveThreadFeedAssistantResponseStates(feed).values()) {
+    if (state.hasExplicitPhase) {
+      if (state.finalAnswerMessageId !== null) {
+        terminalIds.add(state.finalAnswerMessageId);
+      }
+      continue;
+    }
+    terminalIds.add(state.lastMessageId);
+  }
+  return terminalIds;
 }
 
 function deriveThreadFeedTurnFolds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestTurn: ThreadFeedLatestTurn | null,
 ): ReadonlyMap<string, ThreadFeedTurnFold> {
-  const firstAssistantMessageIdByTurn = new Map<TurnId, string>();
-  const terminalAssistantMessageIdByTurn = new Map<TurnId, string>();
-  for (const entry of feed) {
-    if (entry.type === "message" && entry.message.role === "assistant" && entry.message.turnId) {
-      if (!firstAssistantMessageIdByTurn.has(entry.message.turnId)) {
-        firstAssistantMessageIdByTurn.set(entry.message.turnId, entry.id);
-      }
-      terminalAssistantMessageIdByTurn.set(entry.message.turnId, entry.id);
-    }
-  }
+  const responseStatesByTurnId = deriveThreadFeedAssistantResponseStates(feed);
 
   interface TurnGroup {
     readonly entries: ThreadFeedEntry[];
@@ -1198,29 +1249,47 @@ function deriveThreadFeedTurnFolds(
       continue;
     }
 
-    const firstAssistantMessageId = firstAssistantMessageIdByTurn.get(turnId);
-    const terminalAssistantMessageId = terminalAssistantMessageIdByTurn.get(turnId);
-    const hiddenEntryIds = new Set(
-      entries
-        .filter(
-          (entry) =>
-            entry.id !== firstAssistantMessageId && entry.id !== terminalAssistantMessageId,
-        )
-        .map((entry) => entry.id),
-    );
-    if (hiddenEntryIds.size === 0) {
+    const responseState = responseStatesByTurnId.get(turnId);
+    const hasExplicitPhase = responseState?.hasExplicitPhase === true;
+    const firstAssistantMessageId = responseState?.firstMessageId;
+    const terminalAssistantMessageId = hasExplicitPhase
+      ? (responseState?.finalAnswerMessageId ?? null)
+      : responseState?.lastMessageId;
+    // Once Codex emits explicitly phased assistant segments, a settled turn is
+    // not foldable until its user-facing final answer has arrived.
+    if (hasExplicitPhase && terminalAssistantMessageId === null) {
       continue;
     }
+    const hiddenEntryIds = new Set(
+      entries
+        .filter((entry) => {
+          const preserveLegacyOpeningMessage =
+            !hasExplicitPhase && entry.id === firstAssistantMessageId;
+          return !preserveLegacyOpeningMessage && entry.id !== terminalAssistantMessageId;
+        })
+        .map((entry) => entry.id),
+    );
 
     const firstEntry = entries[0];
     const firstHiddenEntry = entries.find((entry) => hiddenEntryIds.has(entry.id));
     const lastEntry = entries.at(-1);
-    if (!firstEntry || !firstHiddenEntry || !lastEntry) {
+    const terminalEntry = terminalAssistantMessageId
+      ? (entries.find(
+          (entry): entry is Extract<ThreadFeedEntry, { readonly type: "message" }> =>
+            entry.type === "message" && entry.id === terminalAssistantMessageId,
+        ) ?? null)
+      : null;
+    const hidesTerminalReasoning =
+      hasExplicitPhase &&
+      terminalEntry?.message.phase === "final_answer" &&
+      (terminalEntry.message.reasoningText?.trim().length ?? 0) > 0;
+    if (hiddenEntryIds.size === 0 && !hidesTerminalReasoning) {
       continue;
     }
-    const terminalEntry = terminalAssistantMessageId
-      ? entries.find((entry) => entry.id === terminalAssistantMessageId)
-      : null;
+    const anchorEntry = firstHiddenEntry ?? terminalEntry;
+    if (!firstEntry || !lastEntry || !anchorEntry) {
+      continue;
+    }
     const latestTurnMatches = latestTurn?.turnId === turnId;
     const lastEntryEnd =
       lastEntry.type === "message" ? lastEntry.message.updatedAt : lastEntry.createdAt;
@@ -1244,10 +1313,15 @@ function deriveThreadFeedTurnFolds(
         ? `Worked for ${duration}`
         : "Worked";
 
-    foldsByAnchorId.set(firstHiddenEntry.id, {
+    foldsByAnchorId.set(anchorEntry.id, {
       turnId,
-      createdAt: firstHiddenEntry.createdAt,
+      createdAt: anchorEntry.createdAt,
       hiddenEntryIds,
+      terminalEntry,
+      deferTerminalEntry:
+        hasExplicitPhase && terminalEntry !== null && terminalEntry.id !== lastEntry.id,
+      lastEntryId: lastEntry.id,
+      hidesTerminalReasoning,
       label,
     });
   }
@@ -1262,21 +1336,46 @@ export function deriveThreadFeedPresentation(
   activeWorkStartedAt: string | null = null,
 ): ThreadFeedEntry[] {
   const sourceFeed = feed.filter(
-    (entry) =>
-      entry.type !== "turn-fold" && entry.type !== "work-toggle" && entry.type !== "working",
+    (
+      entry,
+    ): entry is Exclude<
+      ThreadFeedEntry,
+      { readonly type: "turn-fold" | "work-toggle" | "working" }
+    > => entry.type !== "turn-fold" && entry.type !== "work-toggle" && entry.type !== "working",
   );
   const foldsByAnchorId = deriveThreadFeedTurnFolds(sourceFeed, latestTurn);
   const collapsedEntryIds = new Set<string>();
+  const collapsedTerminalReasoningEntryIds = new Set<string>();
+  const deferredTerminalEntryIds = new Set<string>();
+  const deferredTerminalEntriesByLastEntryId = new Map<string, (typeof sourceFeed)[number]>();
   for (const fold of foldsByAnchorId.values()) {
     if (!expandedTurnIds.has(fold.turnId)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
       }
+      if (fold.hidesTerminalReasoning && fold.terminalEntry !== null) {
+        collapsedTerminalReasoningEntryIds.add(fold.terminalEntry.id);
+      }
+    }
+    if (fold.deferTerminalEntry && fold.terminalEntry !== null) {
+      deferredTerminalEntryIds.add(fold.terminalEntry.id);
+      deferredTerminalEntriesByLastEntryId.set(fold.lastEntryId, fold.terminalEntry);
+    }
+  }
+
+  const displayFeed: Array<(typeof sourceFeed)[number]> = [];
+  for (const entry of sourceFeed) {
+    if (!deferredTerminalEntryIds.has(entry.id)) {
+      displayFeed.push(entry);
+    }
+    const deferredTerminalEntry = deferredTerminalEntriesByLastEntryId.get(entry.id);
+    if (deferredTerminalEntry) {
+      displayFeed.push(deferredTerminalEntry);
     }
   }
 
   const result: ThreadFeedEntry[] = [];
-  for (const entry of sourceFeed) {
+  for (const entry of displayFeed) {
     const fold = foldsByAnchorId.get(entry.id);
     if (fold) {
       result.push({
@@ -1289,7 +1388,15 @@ export function deriveThreadFeedPresentation(
       });
     }
     if (!collapsedEntryIds.has(entry.id)) {
-      appendPresentedFeedEntry(result, entry, expandedWorkGroupIds);
+      if (entry.type === "message" && collapsedTerminalReasoningEntryIds.has(entry.id)) {
+        appendPresentedFeedEntry(
+          result,
+          { ...entry, hideAssistantReasoning: true },
+          expandedWorkGroupIds,
+        );
+      } else {
+        appendPresentedFeedEntry(result, entry, expandedWorkGroupIds);
+      }
     }
   }
   if (activeWorkStartedAt !== null) {
@@ -1536,58 +1643,73 @@ export function buildThreadFeed(
   const oldestLoadedMessageCreatedAt =
     options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
   const workLogEntries = deriveWorkLogEntries(thread.activities);
-  const entries = Arr.sortWith(
-    [
-      ...messages.map<RawThreadFeedEntry>((message) => ({
-        type: "message",
-        id: message.id,
-        createdAt: message.createdAt,
-        message,
-      })),
-      ...workLogEntries
-        .filter((entry) => {
-          if (options?.loadedMessages === undefined) {
-            return true;
-          }
-          return (
-            oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt
-          );
-        })
-        .map<RawThreadFeedEntry>((entry) => {
-          const summary = workEntryHeading(entry);
-          const detail = workEntryPreview(entry);
-          const getFullDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
-          const getCopyText = memoizeValue(() =>
-            [summary, detail, getFullDetail()]
-              .filter((value, index, values): value is string => {
-                return Boolean(value) && values.indexOf(value) === index;
-              })
-              .join("\n"),
-          );
-          return {
-            type: "activity",
+  const entries: RawThreadFeedEntry[] = [
+    ...messages.map<RawThreadFeedEntry>((message) => ({
+      type: "message",
+      id: message.id,
+      createdAt: message.createdAt,
+      message,
+    })),
+    ...workLogEntries
+      .filter((entry) => {
+        if (options?.loadedMessages === undefined) {
+          return true;
+        }
+        return (
+          oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt
+        );
+      })
+      .map<RawThreadFeedEntry>((entry) => {
+        const summary = workEntryHeading(entry);
+        const detail = workEntryPreview(entry);
+        const getFullDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
+        const getCopyText = memoizeValue(() =>
+          [summary, detail, getFullDetail()]
+            .filter((value, index, values): value is string => {
+              return Boolean(value) && values.indexOf(value) === index;
+            })
+            .join("\n"),
+        );
+        return {
+          type: "activity",
+          id: entry.id,
+          createdAt: entry.createdAt,
+          turnId: entry.turnId,
+          activity: {
             id: entry.id,
             createdAt: entry.createdAt,
             turnId: entry.turnId,
-            activity: {
-              id: entry.id,
-              createdAt: entry.createdAt,
-              turnId: entry.turnId,
-              summary,
-              detail,
-              canExpand: workEntryHasExpandedBody(entry),
-              getFullDetail,
-              getCopyText,
-              icon: workEntryIcon(entry),
-              toolLike: workLogEntryIsToolLike(entry),
-              status: workEntryStatus(entry),
-            },
-          };
-        }),
-    ],
-    (s) => new Date(s.createdAt),
-    Order.Date,
-  );
+            summary,
+            detail,
+            canExpand: workEntryHasExpandedBody(entry),
+            getFullDetail,
+            getCopyText,
+            icon: workEntryIcon(entry),
+            toolLike: workLogEntryIsToolLike(entry),
+            status: workEntryStatus(entry),
+          },
+        };
+      }),
+  ];
+  entries.sort((left, right) => {
+    const orderAt = (entry: RawThreadFeedEntry): string =>
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      entry.message.phase === "final_answer" &&
+      !entry.message.streaming
+        ? entry.message.updatedAt
+        : entry.createdAt;
+    const orderComparison = orderAt(left).localeCompare(orderAt(right));
+    if (orderComparison !== 0) {
+      return orderComparison;
+    }
+    const isCompletedFinalAnswer = (entry: RawThreadFeedEntry): boolean =>
+      entry.type === "message" &&
+      entry.message.role === "assistant" &&
+      entry.message.phase === "final_answer" &&
+      !entry.message.streaming;
+    return Number(isCompletedFinalAnswer(left)) - Number(isCompletedFinalAnswer(right));
+  });
 
   return groupAdjacentActivities(entries);
 }

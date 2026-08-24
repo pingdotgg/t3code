@@ -2,6 +2,7 @@ import { RefreshCwIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
+import { useI18n } from "../../i18n";
 import { Button } from "../ui/button";
 
 export function ClerkUserProfilePage({
@@ -47,6 +48,7 @@ export function ClerkUserProfileRefreshButton({
   readonly isPending: boolean;
   readonly onClick: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <Button
       size="sm"
@@ -56,7 +58,7 @@ export function ClerkUserProfileRefreshButton({
       onClick={onClick}
     >
       <RefreshCwIcon aria-hidden="true" className={cn("size-3.5", isPending && "animate-spin")} />
-      Refresh
+      {t("common.refresh")}
     </Button>
   );
 }

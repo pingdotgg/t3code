@@ -2,9 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   ClipboardApiUnavailableError,
+  ClipboardReadError,
+  ClipboardReadUnavailableError,
   ClipboardWriteError,
+  localizedClipboardErrorMessage,
   writeTextToClipboard,
 } from "./useCopyToClipboard";
+import type { Translate } from "../i18n";
+
+const mappedTranslate = ((key, values) => `${key}:${values?.target ?? ""}`) as Translate;
 
 describe("writeTextToClipboard", () => {
   afterEach(() => {
@@ -54,5 +60,34 @@ describe("writeTextToClipboard", () => {
 
     await expect(writeTextToClipboard("", "plan")).resolves.toBe(false);
     expect(writeText).not.toHaveBeenCalled();
+  });
+});
+
+describe("localizedClipboardErrorMessage", () => {
+  it.each([
+    [
+      new ClipboardApiUnavailableError({ target: "branch name" }),
+      "clipboard.error.apiUnavailable:branch name",
+    ],
+    [
+      new ClipboardWriteError({ target: "trace ID", cause: new Error("write failed") }),
+      "clipboard.error.writeFailed:trace ID",
+    ],
+    [
+      new ClipboardReadUnavailableError({ target: "terminal input" }),
+      "clipboard.error.readUnavailable:terminal input",
+    ],
+    [
+      new ClipboardReadError({ target: "terminal input", cause: new Error("read failed") }),
+      "clipboard.error.readFailed:terminal input",
+    ],
+  ])("maps %s by tag while preserving its target", (error, expected) => {
+    expect(localizedClipboardErrorMessage(error, mappedTranslate)).toBe(expected);
+  });
+
+  it("keeps the low-level English message available for diagnostics", () => {
+    const error = new ClipboardWriteError({ target: "link", cause: new Error("write failed") });
+
+    expect(error.message).toBe("Failed to copy link to the clipboard.");
   });
 });

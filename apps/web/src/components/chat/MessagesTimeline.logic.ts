@@ -221,6 +221,7 @@ export type MessagesTimelineRow =
       createdAt: string;
       message: ChatMessage;
       durationStart: string;
+      hideAssistantReasoning: boolean;
       showAssistantMeta: boolean;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
@@ -274,7 +275,7 @@ export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
-type ToolGroupAction = "read" | "edit" | "command" | "code-search" | "search" | "other";
+export type ToolGroupAction = "read" | "edit" | "command" | "code-search" | "search" | "other";
 type ToolGroupSummaryKind = ToolGroupAction | "dynamic-tool" | "agent-tool" | "tone-tool" | "mixed";
 
 export function workLogEntryIsLocalCodeSearch(entry: WorkLogEntry): boolean {
@@ -343,7 +344,13 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
 }
 
 /** Immediate, provider-neutral fallback while generated tool summaries are disabled or unavailable. */
-export function summarizeToolGroup(entries: ReadonlyArray<WorkLogEntry>): string {
+export function summarizeToolGroup(
+  entries: ReadonlyArray<WorkLogEntry>,
+  options?: {
+    readonly formatActionLabel?: (input: { action: ToolGroupAction; count: number }) => string;
+    readonly joinLabels?: (labels: ReadonlyArray<string>) => string;
+  },
+): string {
   const summaryEntries = omitSupersededLifecycleMarkers(entries, (entry) => entry);
   const groupedEntries = new Map<ToolGroupAction, WorkLogEntry[]>();
   for (const entry of summaryEntries) {
@@ -352,9 +359,11 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogEntry>): string
     if (group) group.push(entry);
     else groupedEntries.set(action, [entry]);
   }
-  const labels = [...groupedEntries].map(([action, actionEntries]) =>
-    toolGroupActionLabel(action, toolGroupActionCount(action, actionEntries)),
-  );
+  const labels = [...groupedEntries].map(([action, actionEntries]) => {
+    const count = toolGroupActionCount(action, actionEntries);
+    return options?.formatActionLabel?.({ action, count }) ?? toolGroupActionLabel(action, count);
+  });
+  if (options?.joinLabels) return options.joinLabels(labels);
   const sentenceLabels = labels.map((label, index) =>
     index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1),
   );
@@ -446,7 +455,12 @@ export function resolveAssistantMessageCopyState({
 }
 
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
-  const lastAssistantMessageIdByResponseKey = new Map<string, string>();
+  interface AssistantResponseState {
+    lastMessageId: string;
+    finalAnswerMessageId: string | null;
+    hasExplicitPhase: boolean;
+  }
+  const responseStateByKey = new Map<string, AssistantResponseState>();
   let nullTurnResponseIndex = 0;
 
   for (const timelineEntry of timelineEntries) {
@@ -465,10 +479,26 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
     const responseKey = message.turnId
       ? `turn:${message.turnId}`
       : `unkeyed:${nullTurnResponseIndex}`;
-    lastAssistantMessageIdByResponseKey.set(responseKey, message.id);
+    const previous = responseStateByKey.get(responseKey);
+    responseStateByKey.set(responseKey, {
+      lastMessageId: message.id,
+      finalAnswerMessageId:
+        message.phase === "final_answer" ? message.id : (previous?.finalAnswerMessageId ?? null),
+      hasExplicitPhase: previous?.hasExplicitPhase === true || message.phase !== undefined,
+    });
   }
 
-  return new Set(lastAssistantMessageIdByResponseKey.values());
+  const terminalMessageIds = new Set<string>();
+  for (const state of responseStateByKey.values()) {
+    if (state.hasExplicitPhase) {
+      if (state.finalAnswerMessageId !== null) {
+        terminalMessageIds.add(state.finalAnswerMessageId);
+      }
+      continue;
+    }
+    terminalMessageIds.add(state.lastMessageId);
+  }
+  return terminalMessageIds;
 }
 
 interface TurnFold {
@@ -476,6 +506,10 @@ interface TurnFold {
   anchorEntryId: string;
   createdAt: string;
   hiddenEntryIds: ReadonlySet<string>;
+  terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
+  deferTerminalEntry: boolean;
+  lastEntryId: string;
+  hidesTerminalReasoning: boolean;
   label: string;
 }
 
@@ -531,11 +565,13 @@ function deriveTurnFolds(input: {
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestTurn: TimelineLatestTurn | null;
   unsettledTurnId: TurnId | null;
+  formatLabel?: (input: { interrupted: boolean; duration: string | null }) => string;
 }): ReadonlyMap<string, TurnFold> {
   interface TurnGroup {
     entries: Array<TimelineEntry>;
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
     hasStreamingMessage: boolean;
+    hasExplicitMessagePhase: boolean;
     /**
      * The user message that kicked the turn off. Entry timestamps alone
      * undercount the duration (the first entry appears only once the
@@ -567,6 +603,7 @@ function deriveTurnFolds(input: {
         entries: [],
         terminalEntry: null,
         hasStreamingMessage: false,
+        hasExplicitMessagePhase: false,
         // Each user boundary starts at most one turn; a second turn after the
         // same user message (e.g. a steer-superseded continuation) falls back
         // to its own first entry.
@@ -583,6 +620,9 @@ function deriveTurnFolds(input: {
       if (entry.message.streaming) {
         group.hasStreamingMessage = true;
       }
+      if (entry.message.phase !== undefined) {
+        group.hasExplicitMessagePhase = true;
+      }
     }
   }
 
@@ -594,12 +634,20 @@ function deriveTurnFolds(input: {
     if (group.hasStreamingMessage) {
       continue;
     }
+    // Codex labels assistant segments as commentary or final_answer. Once a
+    // turn uses that explicit protocol, a settled lifecycle alone is not proof
+    // that a user-facing summary arrived (for example after an interruption).
+    if (group.hasExplicitMessagePhase && group.terminalEntry === null) {
+      continue;
+    }
     const firstAssistantEntry = group.entries.find(
       (entry): entry is Extract<TimelineEntry, { kind: "message" }> => entry.kind === "message",
     );
     const hiddenEntryIds = new Set<string>();
     for (const entry of group.entries) {
-      if (entry.id === firstAssistantEntry?.id || entry.id === group.terminalEntry?.id) {
+      const preserveLegacyOpeningMessage =
+        !group.hasExplicitMessagePhase && entry.id === firstAssistantEntry?.id;
+      if (preserveLegacyOpeningMessage || entry.id === group.terminalEntry?.id) {
         continue;
       }
       // Agent-spawn CTA rows never fold: workflows outlive their launching
@@ -610,14 +658,20 @@ function deriveTurnFolds(input: {
       }
       hiddenEntryIds.add(entry.id);
     }
-    if (hiddenEntryIds.size === 0) {
+    const hidesTerminalReasoning =
+      group.hasExplicitMessagePhase &&
+      group.terminalEntry?.message.phase === "final_answer" &&
+      (group.terminalEntry.message.reasoningText?.trim().length ?? 0) > 0;
+    if (hiddenEntryIds.size === 0 && !hidesTerminalReasoning) {
       continue;
     }
 
     const firstEntry = group.entries[0];
     const firstHiddenEntry = group.entries.find((entry) => hiddenEntryIds.has(entry.id));
     const lastEntry = group.entries.at(-1);
-    if (!firstEntry || !firstHiddenEntry || !lastEntry) {
+    const terminalEntry = group.terminalEntry;
+    const anchorEntry = firstHiddenEntry ?? terminalEntry;
+    if (!firstEntry || !lastEntry || !anchorEntry) {
       continue;
     }
 
@@ -638,19 +692,28 @@ function deriveTurnFolds(input: {
               lastEntryEnd,
           );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
-    const label = isLatestInterruptedTurn
-      ? duration
-        ? `You stopped after ${duration}`
-        : "You stopped this response"
-      : duration
-        ? `Worked for ${duration}`
-        : "Worked";
+    const label = input.formatLabel
+      ? input.formatLabel({ interrupted: isLatestInterruptedTurn, duration })
+      : isLatestInterruptedTurn
+        ? duration
+          ? `You stopped after ${duration}`
+          : "You stopped this response"
+        : duration
+          ? `Worked for ${duration}`
+          : "Worked";
 
-    foldsByAnchorEntryId.set(firstHiddenEntry.id, {
+    foldsByAnchorEntryId.set(anchorEntry.id, {
       turnId,
-      anchorEntryId: firstHiddenEntry.id,
-      createdAt: firstHiddenEntry.createdAt,
+      anchorEntryId: anchorEntry.id,
+      createdAt: anchorEntry.createdAt,
       hiddenEntryIds,
+      terminalEntry,
+      deferTerminalEntry:
+        group.hasExplicitMessagePhase &&
+        terminalEntry !== null &&
+        terminalEntry.id !== lastEntry.id,
+      lastEntryId: lastEntry.id,
+      hidesTerminalReasoning,
       label,
     });
   }
@@ -667,6 +730,9 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
+  formatTurnFoldLabel?: (input: { interrupted: boolean; duration: string | null }) => string;
+  formatToolGroupActionLabel?: (input: { action: ToolGroupAction; count: number }) => string;
+  joinToolGroupLabels?: (labels: ReadonlyArray<string>) => string;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
   const durationStartByMessageId = computeMessageDurationStart(
@@ -682,13 +748,36 @@ export function deriveMessagesTimelineRows(input: {
     terminalAssistantMessageIds,
     latestTurn: input.latestTurn ?? null,
     unsettledTurnId,
+    ...(input.formatTurnFoldLabel ? { formatLabel: input.formatTurnFoldLabel } : {}),
   });
   const collapsedEntryIds = new Set<string>();
+  const collapsedTerminalReasoningEntryIds = new Set<string>();
+  const deferredTerminalEntryIds = new Set<string>();
+  const deferredTerminalEntriesByLastEntryId = new Map<string, TimelineEntry>();
   for (const fold of foldsByAnchorEntryId.values()) {
     if (!input.expandedTurnIds?.has(fold.turnId)) {
       for (const entryId of fold.hiddenEntryIds) {
         collapsedEntryIds.add(entryId);
       }
+      if (fold.hidesTerminalReasoning) {
+        if (fold.terminalEntry) {
+          collapsedTerminalReasoningEntryIds.add(fold.terminalEntry.id);
+        }
+      }
+    }
+    if (fold.deferTerminalEntry && fold.terminalEntry) {
+      deferredTerminalEntryIds.add(fold.terminalEntry.id);
+      deferredTerminalEntriesByLastEntryId.set(fold.lastEntryId, fold.terminalEntry);
+    }
+  }
+  const displayTimelineEntries: TimelineEntry[] = [];
+  for (const entry of input.timelineEntries) {
+    if (!deferredTerminalEntryIds.has(entry.id)) {
+      displayTimelineEntries.push(entry);
+    }
+    const deferredTerminalEntry = deferredTerminalEntriesByLastEntryId.get(entry.id);
+    if (deferredTerminalEntry) {
+      displayTimelineEntries.push(deferredTerminalEntry);
     }
   }
 
@@ -795,8 +884,8 @@ export function deriveMessagesTimelineRows(input: {
     }
   };
 
-  for (let index = 0; index < input.timelineEntries.length; index += 1) {
-    const timelineEntry = input.timelineEntries[index];
+  for (let index = 0; index < displayTimelineEntries.length; index += 1) {
+    const timelineEntry = displayTimelineEntries[index];
     if (!timelineEntry) {
       continue;
     }
@@ -832,8 +921,8 @@ export function deriveMessagesTimelineRows(input: {
     if (timelineEntry.kind === "work") {
       const groupedEntries = [timelineEntry.entry];
       let cursor = index + 1;
-      while (cursor < input.timelineEntries.length) {
-        const nextEntry = input.timelineEntries[cursor];
+      while (cursor < displayTimelineEntries.length) {
+        const nextEntry = displayTimelineEntries[cursor];
         if (
           !nextEntry ||
           nextEntry.kind !== "work" ||
@@ -897,7 +986,12 @@ export function deriveMessagesTimelineRows(input: {
             hiddenCount: visibleGroupedEntries.length,
             expanded,
             onlyToolEntries: true,
-            summary: summarizeToolGroup(visibleGroupedEntries),
+            summary: summarizeToolGroup(visibleGroupedEntries, {
+              ...(input.formatToolGroupActionLabel
+                ? { formatActionLabel: input.formatToolGroupActionLabel }
+                : {}),
+              ...(input.joinToolGroupLabels ? { joinLabels: input.joinToolGroupLabels } : {}),
+            }),
             summaryKind,
             hasFailure: workEntryDisplayIndicatesToolFailure(visibleGroupedEntries.at(-1)!),
           });
@@ -1019,6 +1113,7 @@ export function deriveMessagesTimelineRows(input: {
       createdAt: timelineEntry.createdAt,
       message: timelineEntry.message,
       durationStart,
+      hideAssistantReasoning: collapsedTerminalReasoningEntryIds.has(timelineEntry.id),
       showAssistantMeta,
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantTurnStillInProgress,
@@ -1124,6 +1219,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return (
         a.message === bm.message &&
         a.durationStart === bm.durationStart &&
+        a.hideAssistantReasoning === bm.hideAssistantReasoning &&
         a.showAssistantMeta === bm.showAssistantMeta &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&

@@ -6,6 +6,7 @@ import { cn } from "~/lib/utils";
 import { type PromptStashEntry } from "../../promptStashStore";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { Button } from "../ui/button";
+import { useI18n, type Translate } from "~/i18n";
 
 const SNIPPET_MAX_CHARS = 90;
 
@@ -14,13 +15,17 @@ function missingImageCount(entry: PromptStashEntry): number {
   return entry.droppedImageNames.length + (entry.unreadableImageNames?.length ?? 0);
 }
 
-function stashEntrySnippet(entry: PromptStashEntry): string {
+function stashEntrySnippet(entry: PromptStashEntry, t: Translate): string {
   const trimmed = entry.prompt.trim().replace(/\s+/g, " ");
   if (trimmed.length > 0) {
     return trimmed.length > SNIPPET_MAX_CHARS ? `${trimmed.slice(0, SNIPPET_MAX_CHARS)}…` : trimmed;
   }
   const imageCount = entry.attachments.length + entry.droppedImageNames.length;
-  return imageCount > 0 ? `(${imageCount} image${imageCount === 1 ? "" : "s"})` : "(empty)";
+  return imageCount > 0
+    ? t(imageCount === 1 ? "chat.stash.imageCountOne" : "chat.stash.imageCountMany", {
+        count: imageCount,
+      })
+    : t("chat.stash.emptyEntry");
 }
 
 /**
@@ -35,6 +40,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   onDelete: (entry: PromptStashEntry) => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const { entries, onRestore, onDelete, onClose } = props;
   const drawerRef = useRef<HTMLDivElement>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
@@ -117,7 +123,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
           <Button
             variant="ghost-muted"
             size="icon-micro"
-            aria-label="Close stash"
+            aria-label={t("chat.stash.close")}
             onPointerDown={(event) => event.preventDefault()}
             onClick={onClose}
           >
@@ -128,7 +134,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
           <CommandGroup>
             {entries.length === 0 ? (
               <p className="px-3 py-1.5 text-secondary-label text-xs">
-                Nothing stashed yet. Press ⌘S with a prompt in the composer to stash it.
+                {t("chat.stash.emptyDescription")}
               </p>
             ) : (
               entries.map((entry) => (
@@ -150,17 +156,25 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                   }}
                 >
                   <span className="min-w-0 flex-1 truncate text-xs">
-                    {stashEntrySnippet(entry)}
+                    {stashEntrySnippet(entry, t)}
                   </span>
                   {entry.pendingImageCount ? (
                     <span className="shrink-0 text-[10px] text-secondary-label">
-                      saving {entry.pendingImageCount} image
-                      {entry.pendingImageCount === 1 ? "" : "s"}…
+                      {t(
+                        entry.pendingImageCount === 1
+                          ? "chat.stash.savingImage"
+                          : "chat.stash.savingImages",
+                        { count: entry.pendingImageCount },
+                      )}
                     </span>
                   ) : missingImageCount(entry) > 0 ? (
                     <span className="shrink-0 text-[10px] text-warning-foreground">
-                      {missingImageCount(entry)} image
-                      {missingImageCount(entry) === 1 ? "" : "s"} dropped
+                      {t(
+                        missingImageCount(entry) === 1
+                          ? "chat.stash.droppedImage"
+                          : "chat.stash.droppedImages",
+                        { count: missingImageCount(entry) },
+                      )}
                     </span>
                   ) : null}
                   {entry.attachments.length > 0 ? (
@@ -177,13 +191,13 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                     </span>
                   ) : null}
                   <span className="shrink-0 text-secondary-label text-xs max-sm:hidden">
-                    {formatRelativeTimeLabel(entry.createdAt)}
+                    {formatRelativeTimeLabel(entry.createdAt, t)}
                   </span>
                   <Button
                     variant="ghost"
                     size="icon-xs"
                     className="pointer-events-none shrink-0 [--control-icon-color:currentColor] opacity-0 shadow-none! transition-opacity pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 group-hover/stash:pointer-events-auto group-hover/stash:opacity-100 group-focus-within/stash:pointer-events-auto group-focus-within/stash:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100"
-                    aria-label="Delete stashed prompt"
+                    aria-label={t("chat.stash.delete")}
                     onClick={(event) => {
                       event.stopPropagation();
                       onDelete(entry);

@@ -46,6 +46,7 @@ import {
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useI18n } from "~/i18n";
 
 type OpenInOption = {
   label: string;
@@ -54,7 +55,11 @@ type OpenInOption = {
   kind: "brand" | "generic";
 };
 
-const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
+const resolveOptions = (
+  platform: string,
+  availableEditors: ReadonlyArray<EditorId>,
+  fileManagerLabels: { readonly mac: string; readonly windows: string; readonly other: string },
+) => {
   const baseOptions: ReadonlyArray<OpenInOption> = [
     {
       label: "Cursor",
@@ -178,10 +183,10 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
     },
     {
       label: isMacPlatform(platform)
-        ? "Finder"
+        ? fileManagerLabels.mac
         : isWindowsPlatform(platform)
-          ? "Explorer"
-          : "Files",
+          ? fileManagerLabels.windows
+          : fileManagerLabels.other,
       Icon: FolderClosedIcon,
       value: "file-manager",
       kind: "generic",
@@ -210,18 +215,24 @@ export const OpenInPicker = memo(function OpenInPicker({
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
+  const { t } = useI18n();
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
   const remoteCapableEditors = useRemoteCapableEditors();
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
-  const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
+  const environmentLabel = useEnvironment(environmentId)?.label ?? t("connections.thisEnvironment");
   // Remote mode ignores the server's PATH probe: what matters is what runs on
   // the viewing machine, which only the desktop app can probe.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
   const options = useMemo(
-    () => resolveOptions(navigator.platform, effectiveEditors),
-    [effectiveEditors],
+    () =>
+      resolveOptions(navigator.platform, effectiveEditors, {
+        mac: t("chat.fileManager.mac"),
+        windows: t("chat.fileManager.windows"),
+        other: t("chat.fileManager.other"),
+      }),
+    [effectiveEditors, t],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
@@ -288,9 +299,9 @@ export const OpenInPicker = memo(function OpenInPicker({
   }, [enableShortcut, keybindings, openInCwd, openInEditor, preferredEditor]);
 
   return (
-    <Group aria-label="Open in editor">
+    <Group aria-label={t("chat.openEditor")}>
       <Button
-        aria-label={compact ? "Open file in preferred editor" : undefined}
+        aria-label={compact ? t("chat.openPreferredEditor") : undefined}
         className="ps-[8.5px]"
         size="xs"
         variant="outline"
@@ -310,7 +321,7 @@ export const OpenInPicker = memo(function OpenInPicker({
               : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
           }
         >
-          Open
+          {t("chat.open")}
         </span>
       </Button>
       <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
@@ -318,7 +329,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         <MenuTrigger
           render={
             <Button
-              aria-label={compact ? "Choose editor" : "Copy options"}
+              aria-label={compact ? t("chat.chooseEditor") : t("common.options")}
               size="icon-xs"
               variant="outline"
             />
@@ -328,10 +339,12 @@ export const OpenInPicker = memo(function OpenInPicker({
         </MenuTrigger>
         <MenuPopup align="end">
           {remote.mode === "remote-unavailable" ? (
-            <MenuItem disabled>No SSH route to {environmentLabel}</MenuItem>
+            <MenuItem disabled>
+              {t("chat.remoteOpen.noSshRoute", { environment: environmentLabel })}
+            </MenuItem>
           ) : (
             <>
-              {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
+              {options.length === 0 && <MenuItem disabled>{t("chat.noEditors")}</MenuItem>}
               {options.map(({ label, Icon, value, kind }) => (
                 <MenuItem key={value} onClick={() => openInEditor(value)}>
                   <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
@@ -342,7 +355,9 @@ export const OpenInPicker = memo(function OpenInPicker({
                 </MenuItem>
               ))}
               {remote.mode === "remote-links" && !remoteHintSeen && (
-                <MenuItem disabled>Opens over SSH. Needs your key on {environmentLabel}</MenuItem>
+                <MenuItem disabled>
+                  {t("chat.remoteOpen.sshHint", { environment: environmentLabel })}
+                </MenuItem>
               )}
             </>
           )}

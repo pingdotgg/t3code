@@ -125,7 +125,7 @@ T3CODE_CLERK_PASSKEY_RP_DOMAINS=example.clerk.accounts.dev,clerk.example.com
 ```sh
 VITE_DEV_SERVER_URL=http://127.0.0.1:5733 \
 T3CODE_PORT=13773 \
-  "/Applications/T3 Code (Alpha).app/Contents/MacOS/T3 Code (Alpha)"
+  "/Applications/T3 Code (Browser).app/Contents/MacOS/T3 Code (Browser)"
 ```
 
 更改 Associated Domains 后，请在重新构建前增加构建版本；否则 macOS 可能为相同应用/版本组合复用过期的 Shared Web Credentials 元数据。
@@ -133,8 +133,8 @@ T3CODE_PORT=13773 \
 测试前验证已安装的应用包：
 
 ```sh
-codesign --verify --deep --strict "/Applications/T3 Code (Alpha).app"
-codesign -d --entitlements :- "/Applications/T3 Code (Alpha).app"
+codesign --verify --deep --strict "/Applications/T3 Code (Browser).app"
+codesign -d --entitlements :- "/Applications/T3 Code (Browser).app"
 ```
 
 当前移动端 UI 使用 Clerk 原生认证视图。如果未来的移动端浏览器 OAuth 流程使用自定义重定向 URI，请将该 URI 原样添加到同一允许列表。

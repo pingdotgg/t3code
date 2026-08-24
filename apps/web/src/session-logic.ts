@@ -1850,9 +1850,26 @@ export function deriveTimelineEntries(
     createdAt: entry.createdAt,
     entry,
   }));
-  return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted((a, b) =>
-    a.createdAt.localeCompare(b.createdAt),
-  );
+  const timelineOrderAt = (entry: TimelineEntry): string =>
+    entry.kind === "message" &&
+    entry.message.role === "assistant" &&
+    entry.message.phase === "final_answer" &&
+    !entry.message.streaming
+      ? entry.message.updatedAt
+      : entry.createdAt;
+  const isCompletedFinalAnswer = (entry: TimelineEntry): boolean =>
+    entry.kind === "message" &&
+    entry.message.role === "assistant" &&
+    entry.message.phase === "final_answer" &&
+    !entry.message.streaming;
+
+  return [...messageRows, ...proposedPlanRows, ...turnPlanRows, ...workRows].toSorted((a, b) => {
+    const orderComparison = timelineOrderAt(a).localeCompare(timelineOrderAt(b));
+    if (orderComparison !== 0) return orderComparison;
+    // A final completion and its last tool observation can share one
+    // millisecond. Keep the summary after every non-final row at that instant.
+    return Number(isCompletedFinalAnswer(a)) - Number(isCompletedFinalAnswer(b));
+  });
 }
 
 export function inferCheckpointTurnCountByTurnId(

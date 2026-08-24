@@ -1,43 +1,51 @@
 /**
- * Agents right-panel surface: the fleet view over the native subagent fold,
- * and the ONLY place the roster renders (the chat carries one CTA row per
- * spawn batch).
- *
- * Visualization rules (from live-test feedback):
- * - Spawn order is stable. Activity and completion update rows in place.
- * - Agent rows reserve three fixed lines for identity, activity, and metrics;
- *   changing data must never change their height.
- * - Workflow expansion is presentation state. A live run stays expanded when
- *   it settles; older collapsed runs can still be opened at run granularity.
- * - Static status dots, DOM-write elapsed timers, plain token counters.
+ * Read-only conversation surface for one native subagent. The right-panel
+ * workspace owns tab selection; this component only resolves and renders the
+ * selected agent so inactive tabs stay as lightweight descriptors.
  */
 import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentPanelModel,
   AgentPanelWorkflowGroup,
   RuntimeSubagent,
+  SubagentTranscriptEntry,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   formatSubagentModelLabel,
   formatSubagentTokenCount,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import type {
+  EnvironmentId,
+  ScopedThreadRef,
+  ServerProviderSkill,
+  ThreadId,
+} from "@t3tools/contracts";
+import {
+  Bot,
+  Braces,
+  Check,
+  ChevronDown,
+  FilePenLine,
+  Search,
+  Terminal,
+  Wrench,
+  X,
+} from "lucide-react";
+import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
-import { cn } from "~/lib/utils";
-import { orchestrationEnvironment } from "~/state/orchestration";
-import { ScrollArea } from "~/components/ui/scroll-area";
+import ChatMarkdown from "~/components/ChatMarkdown";
+import { AssistantReasoningBlock } from "~/components/chat/AssistantReasoningBlock";
+import { shouldPreserveAssistantLineBreaks } from "~/components/chat/MessagesTimeline.logic";
 import { Button } from "~/components/ui/button";
+import { ScrollArea } from "~/components/ui/scroll-area";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useI18n } from "~/i18n";
 import type { MessageKey } from "~/i18n/messages";
+import { cn } from "~/lib/utils";
+import { orchestrationEnvironment } from "~/state/orchestration";
 
-/**
- * In-flight states all present as Working (one steady state, per the
- * monitoring-pill design: detail belongs in the activity sub-line, and a
- * stalled/waiting/queued subagent is still the fleet doing its job, not a
- * user problem). Only settled states differentiate.
- */
+const EMPTY_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+
 const STATUS_VISUALS: Record<
   RuntimeSubagent["status"],
   { dotClass: string; labelKey: MessageKey }
@@ -45,14 +53,68 @@ const STATUS_VISUALS: Record<
   pending: { dotClass: "bg-info", labelKey: "agents.status.working" },
   running: { dotClass: "bg-info", labelKey: "agents.status.working" },
   waiting: { dotClass: "bg-info", labelKey: "agents.status.working" },
-  // Idle reads as settled (muted, not sky): a resting Codex child looks done
-  // unless resumed — live-test: sky idle dots read as stuck in-progress.
   idle: { dotClass: "bg-muted-foreground/50", labelKey: "agents.status.idleResumable" },
   completed: { dotClass: "bg-success", labelKey: "agents.status.completed" },
   failed: { dotClass: "bg-destructive", labelKey: "agents.status.failed" },
   cancelled: { dotClass: "bg-muted-foreground/60", labelKey: "agents.status.stopped" },
   interrupted: { dotClass: "bg-muted-foreground/60", labelKey: "agents.status.stopped" },
 };
+
+export interface AgentPanelEntry {
+  readonly agent: RuntimeSubagent;
+  readonly workflow: AgentPanelWorkflowGroup | null;
+}
+
+export interface AgentPanelViewState {
+  scrollTop: number | null;
+  followsLiveEdge: boolean;
+  scriptOpen: boolean;
+  readonly expandedToolEntryIds: Set<string>;
+  readonly reasoningOpenByEntryId: Map<string, boolean>;
+  readonly reasoningStreamingByEntryId: Map<string, boolean>;
+}
+
+export function createAgentPanelViewState(): AgentPanelViewState {
+  return {
+    scrollTop: null,
+    followsLiveEdge: true,
+    scriptOpen: false,
+    expandedToolEntryIds: new Set(),
+    reasoningOpenByEntryId: new Map(),
+    reasoningStreamingByEntryId: new Map(),
+  };
+}
+
+/** Stable tab order: workflow members by phase, then unphased and direct agents. */
+export function listAgentPanelEntries(model: AgentPanelModel): ReadonlyArray<AgentPanelEntry> {
+  const entries: AgentPanelEntry[] = [];
+  const seen = new Set<string>();
+  const append = (agent: RuntimeSubagent, workflow: AgentPanelWorkflowGroup | null) => {
+    if (seen.has(agent.id)) return;
+    seen.add(agent.id);
+    entries.push({ agent, workflow });
+  };
+
+  for (const workflow of model.workflows) {
+    for (const phase of workflow.phases) {
+      for (const member of phase.members) append(member, workflow);
+    }
+    for (const member of workflow.unphasedMembers) append(member, workflow);
+  }
+  for (const agent of model.directAgents) append(agent, null);
+  return entries;
+}
+
+/** Coordinators are diagnostic-only surfaces; they never replace member tabs. */
+export function findAgentPanelEntry(
+  model: AgentPanelModel,
+  agentId: string,
+): AgentPanelEntry | null {
+  const worker = listAgentPanelEntries(model).find((entry) => entry.agent.id === agentId);
+  if (worker) return worker;
+  const workflow = model.workflows.find((entry) => entry.workflow.id === agentId);
+  return workflow ? { agent: workflow.workflow, workflow } : null;
+}
 
 function StatusDot({ status }: { status: RuntimeSubagent["status"] }) {
   return (
@@ -66,51 +128,36 @@ function StatusDot({ status }: { status: RuntimeSubagent["status"] }) {
 function formatElapsedSeconds(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const minutes = Math.floor(seconds / 60);
-  if (minutes === 0) {
-    return `${seconds}s`;
-  }
+  if (minutes === 0) return `${seconds}s`;
   const hours = Math.floor(minutes / 60);
-  if (hours === 0) {
-    return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
-  }
+  if (hours === 0) return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
   return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
 function elapsedBetween(startedAt: string, endIso: string | null): string {
   const start = Date.parse(startedAt);
   const end = endIso ? Date.parse(endIso) : Date.now();
-  if (Number.isNaN(start) || Number.isNaN(end)) {
-    return "";
-  }
+  if (Number.isNaN(start) || Number.isNaN(end)) return "";
   return formatElapsedSeconds((end - start) / 1000);
 }
 
-/**
- * Elapsed time for the current activation. Live agents self-tick via DOM
- * writes (zero React commits per tick); settled agents freeze at completedAt.
- */
+/** Live elapsed time updates the text node without committing the transcript. */
 function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const live = agent.status === "running" || agent.status === "waiting";
   const startedAt = agent.startedAt;
 
   useEffect(() => {
-    if (!live || !startedAt) {
-      return;
-    }
+    if (!live || !startedAt) return;
     const update = () => {
-      if (textRef.current) {
-        textRef.current.textContent = elapsedBetween(startedAt, null);
-      }
+      if (textRef.current) textRef.current.textContent = elapsedBetween(startedAt, null);
     };
     update();
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
   }, [live, startedAt]);
 
-  if (!startedAt) {
-    return null;
-  }
+  if (!startedAt) return null;
   return (
     <span ref={textRef} className="tabular-nums">
       {elapsedBetween(startedAt, live ? null : agent.completedAt)}
@@ -118,160 +165,238 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   );
 }
 
-/**
- * Status-dependent activity line. Live rows lead with what is happening now;
- * settled rows lead with the outcome. Errors are the only inline previews on
- * failed rows because they explain a red row at a glance.
- */
 function agentActivityText(agent: RuntimeSubagent): string | null {
   const live =
     agent.status === "running" || agent.status === "pending" || agent.status === "waiting";
-  if (live) {
-    return (
-      agent.progress ??
-      (agent.lastToolName ? `▸ ${agent.lastToolName}` : null) ??
-      agent.result ??
-      agent.error
-    );
-  }
-  return (
-    agent.error ??
-    agent.result ??
-    agent.progress ??
-    (agent.lastToolName ? `▸ ${agent.lastToolName}` : null)
-  );
+  if (live) return agent.progress ?? agent.lastToolName ?? agent.result ?? agent.error;
+  return agent.error ?? agent.result ?? agent.progress ?? agent.lastToolName;
 }
 
-/** Flat, non-interactive agent status line. No unfold. */
-function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+function transcriptToolIcon(itemType: string | null) {
+  if (itemType === "command_execution") return Terminal;
+  if (itemType === "file_change") return FilePenLine;
+  if (itemType === "web_search") return Search;
+  return Wrench;
+}
+
+function AgentToolActivityRow({
+  entry,
+  viewState,
+}: {
+  entry: SubagentTranscriptEntry;
+  viewState: AgentPanelViewState;
+}) {
   const { t } = useI18n();
-  const visuals = STATUS_VISUALS[agent.status];
-  const activity = agentActivityText(agent);
-  const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
-  const role =
-    agent.role?.trim().toLocaleLowerCase() === agent.title.trim().toLocaleLowerCase()
-      ? null
-      : agent.role;
-  const metadata = [
-    modelLabel,
-    t("agents.tokens.short", {
-      count: agent.usage ? formatSubagentTokenCount(agent.usage.totalTokens) : "—",
-    }),
-    agent.usage?.toolUses !== undefined
-      ? t("agents.tools.count", { count: agent.usage.toolUses })
-      : null,
-    agent.activationCount > 1 ? t("agents.run.count", { count: agent.activationCount }) : null,
-  ].filter((value): value is string => value !== null);
+  const [expanded, setExpanded] = useState(() => viewState.expandedToolEntryIds.has(entry.id));
+  const failed = entry.status === "failed" || entry.status === "declined";
+  const working = entry.status === "inProgress";
+  const canExpand = Boolean(entry.text?.trim());
+  const Icon = failed ? X : transcriptToolIcon(entry.itemType);
+  const label = entry.label ?? entry.itemType ?? t("agents.transcript.tool");
+  const statusLabel = failed
+    ? t("agents.status.failed")
+    : working
+      ? t("agents.status.working")
+      : entry.status === "completed"
+        ? t("agents.status.completed")
+        : null;
+  const toggle = () => {
+    if (!canExpand) return;
+    setExpanded((value) => {
+      const next = !value;
+      if (next) viewState.expandedToolEntryIds.add(entry.id);
+      else viewState.expandedToolEntryIds.delete(entry.id);
+      return next;
+    });
+  };
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!canExpand || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    toggle();
+  };
+  const rowToggleProps = canExpand
+    ? {
+        role: "button" as const,
+        tabIndex: 0,
+        "aria-label": failed ? `${label}: ${t("chat.toolFailed")}` : label,
+        "aria-expanded": expanded,
+        onClick: toggle,
+        onKeyDown: handleKeyDown,
+      }
+    : {};
 
   return (
-    <div className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1">
-      <span className="col-start-1 row-start-1 flex items-center">
-        <StatusDot status={agent.status} />
-      </span>
-      <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
-        <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
-        {role ? (
-          <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
-            {role}
-          </span>
-        ) : null}
-      </span>
-      <span className="col-start-3 row-start-1 min-w-14 text-right font-mono text-[.7rem] text-muted-foreground/80">
-        <span className="inline-flex items-center gap-1">
-          <AgentElapsed agent={agent} />
-          {agent.status === "completed" ? (
-            <Check aria-hidden className="size-3 text-success" />
-          ) : null}
-        </span>
-      </span>
-      <span
+    <div className="pb-2" data-agent-transcript-kind="tool">
+      <div
         className={cn(
-          "col-start-2 col-end-4 row-start-2 block truncate text-xs",
-          agent.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
+          "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
+          canExpand &&
+            "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
         )}
+        {...rowToggleProps}
       >
-        {activity ?? t(visuals.labelKey)}
-      </span>
-      <span className="col-start-2 col-end-4 row-start-3 truncate font-mono text-[.7rem] tabular-nums text-muted-foreground/70">
-        {metadata.join(" · ")}
-      </span>
-      <span className="sr-only">{t(visuals.labelKey)}</span>
-    </div>
-  );
-}
-
-function workflowIsLive(group: AgentPanelWorkflowGroup): boolean {
-  const status = group.workflow.status;
-  return (
-    status !== "completed" &&
-    status !== "failed" &&
-    status !== "cancelled" &&
-    status !== "interrupted"
-  );
-}
-
-function workflowMembers(group: AgentPanelWorkflowGroup): ReadonlyArray<RuntimeSubagent> {
-  return [...group.phases.flatMap((phase) => phase.members), ...group.unphasedMembers];
-}
-
-/**
- * Phase rail: the run's shape at a glance. One segment per phase in order,
- * separated by chevrons; each segment shows title + one dot per member.
- * The whole arc (done → live → pending) is visible without scrolling the
- * member list.
- */
-function PhaseRail({ group }: { group: AgentPanelWorkflowGroup }) {
-  if (group.phases.length === 0) {
-    return null;
-  }
-  return (
-    <div className="flex flex-wrap items-center gap-x-1 gap-y-1 px-1.5 pb-1 pt-1.5">
-      {group.phases.map((phase, index) => (
-        <div key={phase.index} className="flex items-center gap-1">
-          {index > 0 ? (
-            <ChevronRight aria-hidden className="size-3 text-muted-foreground/40" />
-          ) : null}
-          <div
+        <div className="flex select-none items-center gap-1.5">
+          <span
             className={cn(
-              "flex items-center gap-1 rounded-sm border px-1.5 py-0.5",
-              phase.state === "running"
-                ? "border-info/40"
-                : phase.state === "done"
-                  ? "border-success/30"
-                  : "border-border/50",
+              "flex size-6 shrink-0 items-center justify-center",
+              failed ? "text-destructive" : "text-icon-muted",
             )}
+            role={failed ? "img" : undefined}
+            aria-label={failed ? t("chat.toolFailed") : undefined}
           >
+            <Icon aria-hidden className="block size-4 shrink-0 stroke-[1.8] opacity-70" />
+          </span>
+          <p className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm leading-relaxed">
             <span
               className={cn(
-                "font-mono text-[.65rem]",
-                phase.state === "running"
-                  ? "text-info-foreground"
-                  : phase.state === "done"
-                    ? "text-success-foreground"
-                    : "text-muted-foreground/70",
+                "min-w-0 flex-1 truncate",
+                failed ? "font-medium text-destructive" : "text-secondary-label",
               )}
             >
-              {phase.state === "done" ? "✓ " : ""}
-              {phase.title}
+              {label}
             </span>
-            <span className="flex items-center gap-0.5">
-              {phase.members.length === 0 ? (
-                <span className="font-mono text-[.6rem] text-muted-foreground/50">–</span>
-              ) : (
-                phase.members.map((member) => <StatusDot key={member.id} status={member.status} />)
+            {working ? (
+              <span className="shrink-0 text-xs text-muted-foreground">{statusLabel}</span>
+            ) : null}
+            {statusLabel && !working ? <span className="sr-only">{statusLabel}</span> : null}
+          </p>
+          {canExpand ? (
+            <ChevronDown
+              aria-hidden
+              className={cn(
+                "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+                expanded && "rotate-180",
               )}
-            </span>
-          </div>
+            />
+          ) : null}
         </div>
-      ))}
+        {expanded && entry.text ? (
+          <div
+            className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-[length:var(--font-size-code,0.6875rem)] leading-relaxed select-text">
+              {entry.text}
+            </pre>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
 
-/**
- * Read-only workflow script viewer, fetched through the contained
- * getWorkflowScript RPC (never a raw filesystem read from the client).
- */
+const AgentTranscriptEntry = memo(function AgentTranscriptEntry({
+  entry,
+  cwd,
+  threadRef,
+  skills,
+  viewState,
+}: {
+  entry: SubagentTranscriptEntry;
+  cwd: string | undefined;
+  threadRef: ScopedThreadRef | undefined;
+  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  viewState: AgentPanelViewState;
+}) {
+  if (entry.kind === "tool") return <AgentToolActivityRow entry={entry} viewState={viewState} />;
+
+  if (entry.kind === "reasoning") {
+    if (!entry.text) return null;
+    const streaming = entry.status === "inProgress";
+    const previousStreaming = viewState.reasoningStreamingByEntryId.get(entry.id);
+    if (previousStreaming !== undefined && previousStreaming !== streaming) {
+      viewState.reasoningOpenByEntryId.set(entry.id, streaming);
+    }
+    viewState.reasoningStreamingByEntryId.set(entry.id, streaming);
+    return (
+      <div className="pb-2" data-agent-transcript-kind="reasoning">
+        <AssistantReasoningBlock
+          text={entry.text}
+          streaming={streaming}
+          markdownCwd={cwd}
+          threadRef={threadRef}
+          skills={skills}
+          initialOpen={viewState.reasoningOpenByEntryId.get(entry.id) ?? streaming}
+          onOpenChange={(open) => viewState.reasoningOpenByEntryId.set(entry.id, open)}
+        />
+      </div>
+    );
+  }
+
+  if (!entry.text) return null;
+  return (
+    <div
+      className={cn("group/assistant", entry.phase === "commentary" ? "pb-2" : "pb-4")}
+      data-agent-transcript-kind="assistant"
+      data-agent-message-phase={entry.phase ?? undefined}
+    >
+      <div className="relative min-w-0 px-1 py-0.5">
+        <ChatMarkdown
+          text={entry.text}
+          cwd={cwd}
+          threadRef={threadRef}
+          lineBreaks={shouldPreserveAssistantLineBreaks(entry.text)}
+          isStreaming={entry.status === "inProgress"}
+          skills={skills}
+        />
+      </div>
+    </div>
+  );
+});
+
+function useTranscriptAutoScroll(agent: RuntimeSubagent | null, viewState: AgentPanelViewState) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const followsLiveEdgeRef = useRef(true);
+  const transcriptVersion = agent
+    ? `${agent.id}:${agent.transcript.length}:${agent.transcript.at(-1)?.updatedAt ?? ""}`
+    : "missing";
+
+  useEffect(() => {
+    followsLiveEdgeRef.current = viewState.followsLiveEdge;
+    const viewport = rootRef.current?.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    if (!viewport) return;
+    let restored = false;
+    const updateFollowState = () => {
+      if (!restored) return;
+      followsLiveEdgeRef.current =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 48;
+      viewState.followsLiveEdge = followsLiveEdgeRef.current;
+      viewState.scrollTop = viewport.scrollTop;
+    };
+    const frame = requestAnimationFrame(() => {
+      if (viewState.followsLiveEdge) viewport.scrollTop = viewport.scrollHeight;
+      else if (viewState.scrollTop !== null) viewport.scrollTop = viewState.scrollTop;
+      restored = true;
+      updateFollowState();
+    });
+    viewport.addEventListener("scroll", updateFollowState, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      if (restored) updateFollowState();
+      viewport.removeEventListener("scroll", updateFollowState);
+    };
+  }, [agent?.id, viewState]);
+
+  useEffect(() => {
+    if (!followsLiveEdgeRef.current) return;
+    const frame = requestAnimationFrame(() => {
+      const viewport = rootRef.current?.querySelector<HTMLElement>(
+        '[data-slot="scroll-area-viewport"]',
+      );
+      if (viewport) {
+        viewport.scrollTop = viewport.scrollHeight;
+        viewState.scrollTop = viewport.scrollTop;
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [transcriptVersion, viewState]);
+
+  return rootRef;
+}
+
 function WorkflowScriptView({
   environmentId,
   threadId,
@@ -288,7 +413,7 @@ function WorkflowScriptView({
     orchestrationEnvironment.workflowScript({ environmentId, input: { threadId, scriptPath } }),
   );
   return (
-    <div className="mx-1.5 mb-1 rounded-md border border-border/60 bg-background/60">
+    <div className="mx-3 mt-3 rounded-md border border-border/60 bg-background/60">
       <div className="flex items-center gap-2 border-b border-border/50 px-2 py-1">
         <Braces aria-hidden className="size-3 text-muted-foreground" />
         <span className="truncate font-mono text-[.65rem] text-muted-foreground">
@@ -320,291 +445,176 @@ function WorkflowScriptView({
   );
 }
 
-/**
- * Collapsible phase section. A phase opens when it becomes active, then keeps
- * that shape as it settles so completion never yanks rows out from under the
- * user. Manual toggles stick until a later activation begins.
- */
-function PhaseSection({
-  phase,
-  defaultOpen = false,
+function AgentHeader({
+  entry,
+  canShowScript,
+  scriptOpen,
+  onToggleScript,
 }: {
-  phase: AgentPanelWorkflowGroup["phases"][number];
-  defaultOpen?: boolean;
+  entry: AgentPanelEntry;
+  canShowScript: boolean;
+  scriptOpen: boolean;
+  onToggleScript: () => void;
 }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(defaultOpen || phase.state === "running");
-  const previousState = useRef(phase.state);
-
-  useEffect(() => {
-    if (previousState.current !== "running" && phase.state === "running") {
-      setOpen(true);
-    }
-    previousState.current = phase.state;
-  }, [phase.state]);
+  const { agent, workflow } = entry;
+  const visuals = STATUS_VISUALS[agent.status];
+  const activity = agentActivityText(agent);
+  const role =
+    agent.role?.trim().toLocaleLowerCase() === agent.title.trim().toLocaleLowerCase()
+      ? null
+      : agent.role;
+  const workflowName = workflow?.workflow.workflowName ?? workflow?.workflow.title ?? null;
+  const metadata = [
+    role,
+    workflowName,
+    agent.phaseTitle,
+    formatSubagentModelLabel(agent.model, agent.effort),
+    t("agents.tokens.short", {
+      count: agent.usage ? formatSubagentTokenCount(agent.usage.totalTokens) : "—",
+    }),
+    agent.usage?.toolUses !== undefined
+      ? t("agents.tools.count", { count: agent.usage.toolUses })
+      : null,
+    agent.activationCount > 1 ? t("agents.run.count", { count: agent.activationCount }) : null,
+  ].filter((value): value is string => Boolean(value));
 
   return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        className={cn(
-          "mt-2 flex w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-[.65rem] font-medium uppercase tracking-wider hover:bg-accent/40",
-          phase.state === "done"
-            ? "text-success-foreground"
-            : phase.state === "running"
-              ? "text-info-foreground"
-              : "text-muted-foreground/70",
-        )}
-      >
-        {open ? (
-          <ChevronDown aria-hidden className="size-3 shrink-0" />
-        ) : (
-          <ChevronRight aria-hidden className="size-3 shrink-0" />
-        )}
-        {phase.state === "done" ? <Check aria-hidden className="size-3" /> : null}
-        <span>{phase.title}</span>
-        <span className="font-normal normal-case text-muted-foreground/70">
-          {phase.state === "pending" && phase.members.length === 0
-            ? t("agents.phase.pending")
-            : phase.state === "done"
-              ? t("agents.phase.done", { count: phase.settledCount })
-              : t("agents.phase.activeDone", {
-                  active: phase.activeCount,
-                  done: phase.settledCount,
-                })}
-        </span>
-        {!open && phase.members.length > 0 ? (
-          <span className="ml-auto flex items-center gap-0.5">
-            {phase.members.map((member) => (
-              <StatusDot key={member.id} status={member.status} />
-            ))}
-          </span>
-        ) : null}
-      </button>
-      {open ? phase.members.map((member) => <AgentRow key={member.id} agent={member} />) : null}
-    </div>
-  );
-}
-
-/** Expanded workflow: phase rail + full phase tree. */
-function ExpandedWorkflowSection({
-  group,
-  environmentId,
-  threadId,
-  onCollapse,
-}: {
-  group: AgentPanelWorkflowGroup;
-  environmentId: EnvironmentId | null;
-  threadId: ThreadId | null;
-  onCollapse: () => void;
-}) {
-  const { t } = useI18n();
-  const [scriptOpen, setScriptOpen] = useState(false);
-  const members = workflowMembers(group);
-  const settled = members.filter(
-    (member) =>
-      member.status === "completed" ||
-      member.status === "failed" ||
-      member.status === "cancelled" ||
-      member.status === "interrupted",
-  ).length;
-  const scriptPath = group.workflow.runHandles?.scriptPath;
-  const canShowScript = scriptPath !== undefined && environmentId !== null && threadId !== null;
-  return (
-    <section className="rounded-lg border border-border/50 bg-card/30 p-1.5">
-      <div className="flex items-center gap-2 px-1.5 pt-0.5 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
-        <StatusDot status={group.workflow.status} />
-        <span className="min-w-0 truncate">
-          {group.workflow.workflowName ?? group.workflow.title}
+    <header className="shrink-0 border-b border-border/60 px-4 py-3">
+      <div className="flex min-w-0 items-center gap-2">
+        <StatusDot status={agent.status} />
+        <h2 className="min-w-0 truncate text-sm font-medium">{agent.title}</h2>
+        <span className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+          <AgentElapsed agent={agent} />
+          <span>{t(visuals.labelKey)}</span>
+          {agent.status === "completed" ? (
+            <Check aria-hidden className="size-3 text-success" />
+          ) : null}
         </span>
         {canShowScript ? (
-          <button
-            type="button"
-            onClick={() => setScriptOpen((value) => !value)}
-            className={cn(
-              "rounded-sm border border-border/60 px-1 font-mono normal-case hover:text-foreground",
-              scriptOpen && "text-foreground",
-            )}
-            aria-expanded={scriptOpen}
-          >
-            {"{}"} {t("agents.script.label")}
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-micro"
+                  variant={scriptOpen ? "secondary" : "ghost-muted"}
+                  onClick={onToggleScript}
+                  aria-label={t("agents.script.open")}
+                  aria-expanded={scriptOpen}
+                />
+              }
+            >
+              <Braces aria-hidden className="size-3" />
+            </TooltipTrigger>
+            <TooltipPopup>{t("agents.script.open")}</TooltipPopup>
+          </Tooltip>
         ) : null}
-        <span className="ml-auto font-mono normal-case text-muted-foreground/80">
-          {t("agents.workflow.settledProgress", { settled, total: members.length })}
-        </span>
-        <Button
-          size="icon-micro"
-          variant="ghost-muted"
-          onClick={onCollapse}
-          aria-label={t("agents.workflow.collapse")}
-        >
-          <ChevronDown aria-hidden className="size-3" />
-        </Button>
       </div>
-      <PhaseRail group={group} />
-      {scriptOpen && canShowScript ? (
-        <WorkflowScriptView
-          environmentId={environmentId}
-          threadId={threadId}
-          scriptPath={scriptPath}
-          onClose={() => setScriptOpen(false)}
-        />
+      {activity ? (
+        <p
+          className={cn(
+            "mt-1 truncate text-xs",
+            agent.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
+          )}
+        >
+          {activity}
+        </p>
       ) : null}
-      {group.phases.map((phase) => (
-        <PhaseSection key={phase.index} phase={phase} defaultOpen={!workflowIsLive(group)} />
-      ))}
-      {group.unphasedMembers.map((member) => (
-        <AgentRow key={member.id} agent={member} />
-      ))}
-      {group.phases.length === 0 && group.unphasedMembers.length === 0 ? (
-        <AgentRow agent={group.workflow} />
-      ) : null}
-    </section>
-  );
-}
-
-/**
- * Collapsed workflow: one summary line. The parent owns expansion so a live
- * workflow keeps its shape when it settles.
- */
-function CollapsedWorkflowSection({
-  group,
-  onExpand,
-}: {
-  group: AgentPanelWorkflowGroup;
-  onExpand: () => void;
-}) {
-  const { t } = useI18n();
-  const members = workflowMembers(group);
-  const failed = members.filter((member) => member.status === "failed").length;
-  // Coordinator usage may already aggregate members (panel-footer rule):
-  // count it only when there are no member rows to sum.
-  const totalTokens = members.reduce(
-    (sum, member) => sum + (member.usage?.totalTokens ?? 0),
-    members.length === 0 ? (group.workflow.usage?.totalTokens ?? 0) : 0,
-  );
-  const elapsed =
-    group.workflow.startedAt && group.workflow.completedAt
-      ? elapsedBetween(group.workflow.startedAt, group.workflow.completedAt)
-      : null;
-  return (
-    <section>
-      <button
-        type="button"
-        onClick={onExpand}
-        className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-accent/40"
-        aria-expanded={false}
-      >
-        <StatusDot status={failed > 0 ? "failed" : group.workflow.status} />
-        <span className="truncate text-sm">
-          {group.workflow.workflowName ?? group.workflow.title}
-        </span>
-        <span className="ml-auto flex items-center gap-1.5 font-mono text-[.7rem] text-muted-foreground/80">
-          {failed > 0 ? (
-            <span className="text-destructive-foreground">
-              {t("agents.workflow.failed", { count: failed })}
-            </span>
-          ) : null}
-          <span>{t("agents.workflow.agents", { count: members.length })}</span>
-          <span className="tabular-nums">
-            · {t("agents.tokens.short", { count: formatSubagentTokenCount(totalTokens) })}
-          </span>
-          {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
-          <ChevronRight aria-hidden className="size-3" />
-        </span>
-      </button>
-    </section>
-  );
-}
-
-/** A workflow's open state is presentation state, not a status derivative. */
-function WorkflowSection({
-  group,
-  environmentId,
-  threadId,
-}: {
-  group: AgentPanelWorkflowGroup;
-  environmentId: EnvironmentId | null;
-  threadId: ThreadId | null;
-}) {
-  const [open, setOpen] = useState(() => workflowIsLive(group));
-  return open ? (
-    <ExpandedWorkflowSection
-      group={group}
-      environmentId={environmentId}
-      threadId={threadId}
-      onCollapse={() => setOpen(false)}
-    />
-  ) : (
-    <CollapsedWorkflowSection group={group} onExpand={() => setOpen(true)} />
+      <p className="mt-1 truncate font-mono text-[.7rem] tabular-nums text-muted-foreground/70">
+        {metadata.join(" · ")}
+      </p>
+    </header>
   );
 }
 
 export function AgentsPanel({
   model,
+  agentId,
   environmentId = null,
   threadId = null,
+  cwd,
+  skills = EMPTY_SKILLS,
+  viewState: providedViewState,
 }: {
   model: AgentPanelModel;
+  agentId: string;
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
+  cwd?: string | undefined;
+  skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  viewState?: AgentPanelViewState;
 }) {
   const { t } = useI18n();
-  if (!model.hasAgents) {
+  const internalViewState = useRef<AgentPanelViewState>(createAgentPanelViewState());
+  const viewState = providedViewState ?? internalViewState.current;
+  const entry = useMemo(() => findAgentPanelEntry(model, agentId), [agentId, model]);
+  const agent = entry?.agent ?? null;
+  const threadRef = useMemo<ScopedThreadRef | undefined>(
+    () => (environmentId !== null && threadId !== null ? { environmentId, threadId } : undefined),
+    [environmentId, threadId],
+  );
+  const [scriptOpen, setScriptOpen] = useState(viewState.scriptOpen);
+  useEffect(() => setScriptOpen(viewState.scriptOpen), [agentId, viewState]);
+  const setPersistedScriptOpen = (open: boolean) => {
+    viewState.scriptOpen = open;
+    setScriptOpen(open);
+  };
+  const transcriptScrollRef = useTranscriptAutoScroll(agent, viewState);
+  const scriptPath =
+    entry?.workflow?.workflow.runHandles?.scriptPath ?? agent?.runHandles?.scriptPath;
+  const canShowScript = scriptPath !== undefined && environmentId !== null && threadId !== null;
+
+  if (!entry) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <Bot aria-hidden className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">{t("agents.empty.title")}</p>
-        <p className="max-w-56 text-xs text-muted-foreground">{t("agents.empty.description")}</p>
+        <p className="text-sm font-medium">{t("agents.transcript.unavailable")}</p>
       </div>
     );
   }
+  const selectedAgent = entry.agent;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-2 p-2">
-          {model.workflows.map((group) => (
-            <WorkflowSection
-              key={group.workflow.id}
-              group={group}
-              environmentId={environmentId}
-              threadId={threadId}
-            />
-          ))}
-          {model.directAgents.length > 0 ? (
-            <section>
-              <div className="px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
-                {t("agents.directSpawns")}
-              </div>
-              {model.directAgents.map((agent) => (
-                <AgentRow key={agent.id} agent={agent} />
-              ))}
-            </section>
-          ) : null}
-        </div>
+    <section className="flex h-full min-h-0 flex-col" aria-label={entry.agent.title}>
+      <AgentHeader
+        entry={entry}
+        canShowScript={canShowScript}
+        scriptOpen={scriptOpen}
+        onToggleScript={() => setPersistedScriptOpen(!scriptOpen)}
+      />
+      {scriptOpen && canShowScript ? (
+        <WorkflowScriptView
+          environmentId={environmentId}
+          threadId={threadId}
+          scriptPath={scriptPath}
+          onClose={() => setPersistedScriptOpen(false)}
+        />
+      ) : null}
+      <ScrollArea ref={transcriptScrollRef} className="min-h-0 flex-1" scrollFade>
+        {selectedAgent.transcript.length > 0 ? (
+          <div
+            role="region"
+            aria-label={t("agents.transcript.label", { title: selectedAgent.title })}
+            className="mx-auto flex w-full max-w-3xl flex-col px-3 py-4 sm:px-5"
+          >
+            {selectedAgent.transcript.map((transcriptEntry) => (
+              <AgentTranscriptEntry
+                key={transcriptEntry.id}
+                entry={transcriptEntry}
+                cwd={cwd}
+                threadRef={threadRef}
+                skills={skills}
+                viewState={viewState}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="flex min-h-40 items-center justify-center px-6 text-center text-sm text-muted-foreground">
+            {agentActivityText(selectedAgent) ?? t(STATUS_VISUALS[selectedAgent.status].labelKey)}
+          </div>
+        )}
       </ScrollArea>
-      <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 font-mono text-[.7rem] text-muted-foreground">
-        <span className="flex items-center gap-2">
-          {model.runningCount + model.waitingCount > 0 ? (
-            <span className="text-info-foreground">
-              ● {t("agents.summary.working", { count: model.runningCount + model.waitingCount })}
-            </span>
-          ) : null}
-          {model.idleCount > 0 ? (
-            <span>{t("agents.summary.idle", { count: model.idleCount })}</span>
-          ) : null}
-          {model.settledCount > 0 ? (
-            <span>{t("agents.summary.settled", { count: model.settledCount })}</span>
-          ) : null}
-        </span>
-        <span className="tabular-nums">
-          Σ {t("agents.tokens.short", { count: formatSubagentTokenCount(model.totalTokens) })}
-        </span>
-      </footer>
-    </div>
+    </section>
   );
 }

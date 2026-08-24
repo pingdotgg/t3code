@@ -6,6 +6,7 @@ import {
   SearchIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useI18n, type MessageKey } from "../../i18n";
 import {
   importOpenVsxThemeExtension,
   searchOpenVsxThemes,
@@ -39,11 +40,11 @@ const DOWNLOAD_FORMAT = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 1,
 });
 const SUGGESTED_SEARCHES = ["Dracula", "Catppuccin", "Nord", "Tokyo Night"];
-const SORT_OPTIONS: ReadonlyArray<{ value: OpenVsxThemeSort; label: string }> = [
-  { value: "downloadCount", label: "Most downloaded" },
-  { value: "rating", label: "Best rated" },
-  { value: "timestamp", label: "Newest" },
-  { value: "relevance", label: "Most relevant" },
+const SORT_OPTIONS: ReadonlyArray<{ value: OpenVsxThemeSort; labelKey: MessageKey }> = [
+  { value: "downloadCount", labelKey: "theme.search.sort.downloads" },
+  { value: "rating", labelKey: "theme.search.sort.rating" },
+  { value: "timestamp", labelKey: "theme.search.sort.newest" },
+  { value: "relevance", labelKey: "theme.search.sort.relevance" },
 ];
 const SEARCH_DEBOUNCE_MS = 350;
 
@@ -88,6 +89,7 @@ export function ThemeSearchSection({
   open: boolean;
   onInstalled: (themes: ReadonlyArray<ThemeDefinition>, context: { updated: boolean }) => void;
 }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<OpenVsxThemeSort>("downloadCount");
   const [results, setResults] = useState<ReadonlyArray<OpenVsxThemeExtension> | null>(null);
@@ -145,9 +147,10 @@ export function ThemeSearchSection({
         }
       } catch (cause) {
         if (!controller.signal.aborted) {
+          console.error("Open VSX theme search failed", cause);
           setResults(null);
           lastSearchKeyRef.current = null;
-          setError(cause instanceof Error ? cause.message : "Open VSX search failed.");
+          setError(t("theme.search.failed"));
         }
       }
       if (requestRef.current === controller) {
@@ -155,7 +158,7 @@ export function ThemeSearchSection({
         setIsSearching(false);
       }
     },
-    [sortBy],
+    [sortBy, t],
   );
 
   const debouncedQuery = useDebouncedValue(query.trim(), SEARCH_DEBOUNCE_MS);
@@ -226,7 +229,8 @@ export function ThemeSearchSection({
       try {
         installedCollection = getStoredCustomThemeCollection(extension.collectionId);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Installed themes could not be read.");
+        console.error("Could not read installed themes", cause);
+        setError(t("theme.search.installedReadFailed"));
         return;
       }
       const updated = installedCollection.length > 0;
@@ -250,7 +254,8 @@ export function ThemeSearchSection({
         }
       } catch (cause) {
         if (!controller.signal.aborted) {
-          setError(cause instanceof Error ? cause.message : "That theme could not be added.");
+          console.error("Could not add Open VSX theme", cause);
+          setError(t("theme.search.addFailed"));
         }
       }
       if (requestRef.current === controller) {
@@ -258,25 +263,23 @@ export function ThemeSearchSection({
         setInstallingId(null);
       }
     },
-    [onInstalled],
+    [onInstalled, t],
   );
 
   return (
     <section className="space-y-3" aria-labelledby="theme-search-heading">
       <div>
         <h3 className="text-sm font-medium" id="theme-search-heading">
-          Search community themes
+          {t("theme.search.title")}
         </h3>
-        <p className="mt-0.5 text-muted-foreground text-xs">
-          Find open-source themes from Open VSX.
-        </p>
+        <p className="mt-0.5 text-muted-foreground text-xs">{t("theme.search.description")}</p>
       </div>
       <InputGroup>
         <InputGroupAddon>
           {isSearching ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
         </InputGroupAddon>
         <InputGroupInput
-          aria-label="Search Open VSX themes"
+          aria-label={t("theme.search.aria")}
           autoFocus
           onChange={(event) => setQuery(event.currentTarget.value)}
           onKeyDown={(event) => {
@@ -284,7 +287,7 @@ export function ThemeSearchSection({
             if (event.key === "Enter" && !isSearching && installingId === null)
               void runSearch(query.trim());
           }}
-          placeholder="Search themes..."
+          placeholder={t("theme.search.placeholder")}
           size="lg"
           type="search"
           value={query}
@@ -294,7 +297,7 @@ export function ThemeSearchSection({
       {!isSearching || results !== null ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <p className="text-muted-foreground text-xs">Popular</p>
+            <p className="text-muted-foreground text-xs">{t("theme.search.popular")}</p>
             {SUGGESTED_SEARCHES.map((suggestion) => (
               <Button
                 key={suggestion}
@@ -315,21 +318,21 @@ export function ThemeSearchSection({
           </div>
           {results && results.length > 0 ? (
             <div className="flex shrink-0 items-center justify-end gap-2">
-              <p className="text-muted-foreground text-xs">Sort</p>
+              <p className="text-muted-foreground text-xs">{t("theme.search.sort")}</p>
               <Select
                 disabled={installingId !== null}
                 value={sortBy}
                 onValueChange={handleSortChange}
               >
-                <SelectTrigger size="sm" className="w-40" aria-label="Sort themes">
+                <SelectTrigger size="sm" className="w-40" aria-label={t("theme.search.sortAria")}>
                   <SelectValue>
-                    {SORT_OPTIONS.find((option) => option.value === sortBy)?.label}
+                    {t(SORT_OPTIONS.find((option) => option.value === sortBy)!.labelKey)}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   {SORT_OPTIONS.map((option) => (
                     <SelectItem key={option.value} hideIndicator value={option.value}>
-                      {option.label}
+                      {t(option.labelKey)}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -341,9 +344,9 @@ export function ThemeSearchSection({
 
       <div className="sr-only" role="status">
         {isSearching
-          ? "Searching themes..."
+          ? t("theme.search.searching")
           : results
-            ? `${results.length} supported ${results.length === 1 ? "theme" : "themes"} found.`
+            ? t("theme.search.resultCount", { count: results.length })
             : ""}
       </div>
 
@@ -358,15 +361,15 @@ export function ThemeSearchSection({
 
       {isSearching && results === null ? (
         <div className="flex min-h-20 items-center justify-center gap-2 text-muted-foreground text-sm">
-          <Spinner /> Searching themes...
+          <Spinner /> {t("theme.search.searching")}
         </div>
       ) : null}
 
       {results ? (
         results.length === 0 ? (
           <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
-            <p className="text-sm font-medium">No supported open-source themes found</p>
-            <p className="mt-1 text-muted-foreground text-xs">Try a broader search.</p>
+            <p className="text-sm font-medium">{t("theme.search.empty")}</p>
+            <p className="mt-1 text-muted-foreground text-xs">{t("theme.search.emptyHint")}</p>
           </div>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
@@ -375,8 +378,10 @@ export function ThemeSearchSection({
               const isInstalled = getCustomThemes().some(
                 (theme) => theme.collection?.id === extension.collectionId,
               );
-              const action = isInstalled ? "Update" : "Install";
-              const progressAction = isInstalled ? "Updating" : "Installing";
+              const action = t(isInstalled ? "theme.search.update" : "theme.search.install");
+              const progressAction = t(
+                isInstalled ? "theme.search.updating" : "theme.search.installing",
+              );
               return (
                 <article
                   className="group flex min-w-0 flex-col gap-3 rounded-xl border border-border/70 bg-card/60 p-3 transition-colors hover:bg-accent/20"
@@ -388,18 +393,18 @@ export function ThemeSearchSection({
                       <h4 className="truncate text-sm font-medium">{extension.name}</h4>
                       <p className="truncate text-muted-foreground text-xs">
                         {extension.publisher} · {DOWNLOAD_FORMAT.format(extension.downloadCount)}{" "}
-                        downloads
+                        {t("theme.search.downloads")}
                       </p>
                     </div>
                   </div>
                   <p className="line-clamp-2 min-h-8 text-muted-foreground text-xs leading-4">
-                    {extension.description || "A community color theme for your editor."}
+                    {extension.description || t("theme.search.communityDescription")}
                   </p>
                   <div className="mt-auto flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       {extension.sourceUrl ? (
                         <Button
-                          aria-label={`View source for ${extension.name}`}
+                          aria-label={t("theme.search.viewSource", { name: extension.name })}
                           render={<a href={extension.sourceUrl} rel="noreferrer" target="_blank" />}
                           size="icon-micro"
                           variant="ghost-muted"
@@ -409,7 +414,10 @@ export function ThemeSearchSection({
                       ) : null}
                     </div>
                     <Button
-                      aria-label={`${isInstalling ? progressAction : action} ${extension.name}`}
+                      aria-label={t("theme.search.actionAria", {
+                        action: isInstalling ? progressAction : action,
+                        name: extension.name,
+                      })}
                       disabled={installingId !== null}
                       size="xs"
                       variant="outline"
@@ -422,7 +430,9 @@ export function ThemeSearchSection({
                       ) : (
                         <PackagePlusIcon />
                       )}
-                      {isInstalling ? `${progressAction}...` : action}
+                      {isInstalling
+                        ? t("theme.search.progress", { action: progressAction })
+                        : action}
                     </Button>
                   </div>
                 </article>
@@ -440,14 +450,15 @@ export function ThemeSearchSection({
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Update “{pendingUpdate?.name}”?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This replaces its installed variants, including any local edits. Variants no longer in
-              the extension will be removed.
-            </AlertDialogDescription>
+            <AlertDialogTitle>
+              {t("theme.search.updateTitle", { name: pendingUpdate?.name ?? "" })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("theme.search.updateDescription")}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {t("common.cancel")}
+            </AlertDialogClose>
             <Button
               onClick={() => {
                 const extension = pendingUpdate;
@@ -455,7 +466,7 @@ export function ThemeSearchSection({
                 if (extension) void handleInstall(extension, true);
               }}
             >
-              Update theme
+              {t("theme.search.updateTheme")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

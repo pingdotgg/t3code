@@ -8,6 +8,7 @@ import {
 import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
+import { useI18n } from "~/i18n";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -58,6 +59,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption: (questionId: string, optionLabel: string) => void;
   onAdvance: () => void;
 }) {
+  const { t } = useI18n();
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
   const autoAdvanceTimerRef = useRef<number | null>(null);
@@ -181,9 +183,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           taller hit area from pushing the panel down. */}
       <div className="flex items-center gap-1 px-1 sm:px-2">
         <CollapsibleTrigger
-          title={
-            isCollapsed ? "Show the question and its options" : "Hide the question and its options"
-          }
+          title={isCollapsed ? t("chat.userInput.showQuestion") : t("chat.userInput.hideQuestion")}
           data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
           className="group -my-1 flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none transition-colors duration-150 hover:bg-muted/35 focus-visible:ring-1 focus-visible:ring-primary/25"
         >
@@ -221,7 +221,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         <div className="pt-2 pb-0.5">
           <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
           {activeQuestion.multiSelect ? (
-            <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
+            <p className="mt-1 text-secondary-label text-xs">{t("chat.userInput.multiSelect")}</p>
           ) : null}
           <div className="mt-2 space-y-0.5">
             {activeQuestion.options.map((option, index) => {

@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  type AssistantMessagePhase,
   type AssistantDeliveryMode,
   CommandId,
   MessageId,
@@ -18,6 +19,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  type TaskTranscriptEntry,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -99,6 +101,9 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+const MAX_TRANSCRIPT_TEXT_CHARS = 16_000;
+const MAX_TRANSCRIPT_ID_CHARS = 512;
+const MAX_TRANSCRIPT_METADATA_CHARS = 180;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -209,6 +214,26 @@ function maxCheckpointTurnCount(
 
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+function normalizeTaskTranscriptEntry(entry: TaskTranscriptEntry): TaskTranscriptEntry | undefined {
+  const id = entry.id.trim();
+  if (id.length === 0 || id.length > MAX_TRANSCRIPT_ID_CHARS) {
+    return undefined;
+  }
+  return {
+    id,
+    kind: entry.kind,
+    ...(entry.text !== undefined
+      ? { text: truncateDetail(entry.text.trim(), MAX_TRANSCRIPT_TEXT_CHARS) }
+      : {}),
+    ...(entry.label !== undefined
+      ? { label: truncateDetail(entry.label.trim(), MAX_TRANSCRIPT_METADATA_CHARS) }
+      : {}),
+    ...(entry.phase !== undefined ? { phase: entry.phase } : {}),
+    ...(entry.itemType !== undefined ? { itemType: entry.itemType } : {}),
+    ...(entry.status !== undefined ? { status: entry.status } : {}),
+  };
 }
 
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
@@ -604,6 +629,10 @@ export function runtimeEventToActivities(
 
     case "task.progress": {
       const linkage = taskLinkageActivityFields(event.payload as Record<string, unknown>);
+      const transcriptEntry =
+        event.payload.transcriptEntry === undefined
+          ? undefined
+          : normalizeTaskTranscriptEntry(event.payload.transcriptEntry);
       // Usage and activity are independent latest-state streams. Keeping them
       // under separate stable ids prevents a command/reasoning update from
       // replacing the last known token count (and prevents a usage-only tick
@@ -621,15 +650,28 @@ export function runtimeEventToActivities(
         event.payload.summary !== undefined ||
         event.payload.lastToolName !== undefined ||
         event.payload.status !== undefined ||
-        event.payload.error !== undefined;
+        event.payload.error !== undefined ||
+        transcriptEntry !== undefined;
       return [
         ...(hasProgressState
           ? [
               {
-                // Stable per-task id: activity is "latest state", not
-                // history, so each meaningful tick replaces the last. This
-                // bounds a large fleet to one activity row per task.
-                id: EventId.make(`task-progress:${event.threadId}:${event.payload.taskId}`),
+                // Ordinary progress is latest-state per task. Transcript
+                // lifecycle observations instead keep one stable row for
+                // started and one for completed: retaining the start row
+                // preserves first-seen ordering while the client upserts both
+                // observations by transcriptEntry.id.
+                id: transcriptEntry
+                  ? EventId.make(
+                      `task-transcript:${event.threadId}:${event.payload.taskId}:${transcriptEntry.id}:${
+                        transcriptEntry.status === "inProgress"
+                          ? "started"
+                          : transcriptEntry.status !== undefined
+                            ? "completed"
+                            : event.eventId
+                      }`,
+                    )
+                  : EventId.make(`task-progress:${event.threadId}:${event.payload.taskId}`),
                 createdAt: event.createdAt,
                 tone: "info" as const,
                 kind: "task.progress" as const,
@@ -650,6 +692,7 @@ export function runtimeEventToActivities(
                   ...(event.payload.status ? { status: event.payload.status } : {}),
                   ...(event.payload.error ? { error: event.payload.error } : {}),
                   ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
+                  ...(transcriptEntry ? { transcriptEntry } : {}),
                   ...identityLinkage,
                 },
                 turnId: toTurnId(event.turnId) ?? null,
@@ -1243,6 +1286,7 @@ const make = Effect.gen(function* () {
     finalDeltaCommandTag: string;
     fallbackText?: string;
     hasProjectedMessage?: boolean;
+    messagePhase?: AssistantMessagePhase;
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* assistantTextBuffer.take(input.messageId);
@@ -1290,6 +1334,7 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           messageId: input.messageId,
           ...(input.turnId ? { turnId: input.turnId } : {}),
+          ...(input.messagePhase !== undefined ? { phase: input.messagePhase } : {}),
           createdAt: input.createdAt,
         });
       }
@@ -1864,6 +1909,7 @@ const make = Effect.gen(function* () {
                 `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
               ),
               fallbackText: event.payload.detail,
+              messagePhase: event.payload.messagePhase,
             }
           : undefined;
       const proposedPlanCompletion =
@@ -1914,6 +1960,9 @@ const make = Effect.gen(function* () {
             hasProjectedMessage: existingAssistantMessage !== undefined,
             ...(assistantCompletion.fallbackText !== undefined && shouldApplyFallbackCompletionText
               ? { fallbackText: assistantCompletion.fallbackText }
+              : {}),
+            ...(assistantCompletion.messagePhase !== undefined
+              ? { messagePhase: assistantCompletion.messagePhase }
               : {}),
           });
 

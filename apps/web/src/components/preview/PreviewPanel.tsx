@@ -3,6 +3,7 @@
 import type { PreviewAnnotationPayload, ScopedThreadRef } from "@t3tools/contracts";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
+import { useI18n } from "~/i18n";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
@@ -28,13 +29,12 @@ export function PreviewPanel({
   visible,
   onSendAnnotation,
 }: Props) {
+  const { t } = useI18n();
   if (!isPreviewSupportedInRuntime()) {
     return (
       <PreviewPanelShell mode={mode}>
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-          <p className="max-w-sm text-sm text-muted-foreground">
-            Preview is only available in the T3 Code desktop app.
-          </p>
+          <p className="max-w-sm text-sm text-muted-foreground">{t("preview.desktopOnly")}</p>
         </div>
       </PreviewPanelShell>
     );

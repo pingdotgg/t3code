@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { createTranslator } from "~/i18n";
 import {
+  localizeSettingsSearchItems,
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
@@ -77,6 +79,16 @@ describe("searchSettings", () => {
       title: "Interface language",
     });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });
+  });
+
+  it("localizes both rendered anchors and the searchable catalog", () => {
+    const t = createTranslator("zh-CN");
+    const localizedItems = localizeSettingsSearchItems(t);
+
+    expect(searchableSetting("word-wrap", t)).toEqual({ id: "word-wrap", title: "自动换行" });
+    expect(searchSettings("界面语言", localizedItems)).toEqual([
+      expect.objectContaining({ id: "interface-language", title: "界面语言" }),
+    ]);
   });
 
   it("routes appearance settings to their current section", () => {

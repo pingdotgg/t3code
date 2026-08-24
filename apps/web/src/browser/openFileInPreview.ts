@@ -15,6 +15,7 @@ import * as Data from "effect/Data";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { resolveAssetUrl } from "~/assets/assetUrls";
+import type { Translate } from "~/i18n";
 import {
   applyPreviewServerSnapshot,
   isPreviewSupportedInRuntime,
@@ -61,12 +62,15 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     readonly input: { readonly resource: AssetResource };
   }) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
   readonly openPreview: OpenPreviewMutation<PreviewError>;
+  readonly t?: Translate;
 }): Promise<AtomCommandResult<void, AssetError | PreviewError | BrowserPreviewUnavailableError>> {
   if (!isPreviewSupportedInRuntime()) {
     return AsyncResult.failure(
       Cause.fail(
         new BrowserPreviewUnavailableError({
-          message: "The integrated browser is unavailable in this runtime.",
+          message:
+            input.t?.("preview.error.runtimeUnavailable") ??
+            "The integrated browser is unavailable in this runtime.",
         }),
       ),
     );
@@ -87,7 +91,12 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
   const assetUrl = resolveAssetUrl(input.httpBaseUrl, assetResult.value.relativeUrl);
   if (assetUrl === null) {
     return AsyncResult.failure(
-      Cause.die(new Error("The environment returned an invalid asset URL.")),
+      Cause.die(
+        new Error(
+          input.t?.("preview.error.invalidAssetUrl") ??
+            "The environment returned an invalid asset URL.",
+        ),
+      ),
     );
   }
   return openUrlInPreview({

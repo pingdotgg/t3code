@@ -200,6 +200,92 @@ describe("ProviderRuntimeEvent", () => {
     expect(parsed.payload.usage.maxTokens).toBe(200000);
     expect(parsed.payload.usage.usedTokens).toBe(31251);
   });
+
+  it("decodes structured task transcript progress", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "task.progress",
+      eventId: "event-task-transcript-1",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:05.000Z",
+      threadId: "thread-1",
+      payload: {
+        taskId: "child-1",
+        description: "Inspect the toolbar",
+        transcriptEntry: {
+          id: "message-1",
+          kind: "assistant",
+          text: "Located the implementation.",
+          phase: "final_answer",
+          itemType: "assistant_message",
+          status: "completed",
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("task.progress");
+    if (parsed.type !== "task.progress") {
+      throw new Error("expected task.progress");
+    }
+    expect(parsed.payload.transcriptEntry).toEqual({
+      id: "message-1",
+      kind: "assistant",
+      text: "Located the implementation.",
+      phase: "final_answer",
+      itemType: "assistant_message",
+      status: "completed",
+    });
+  });
+
+  it("rejects malformed task transcript enum values", () => {
+    const base = {
+      type: "task.progress",
+      eventId: "event-task-transcript-invalid",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:05.000Z",
+      threadId: "thread-1",
+      payload: {
+        taskId: "child-1",
+        description: "Inspect the toolbar",
+      },
+    };
+
+    expect(() =>
+      decodeRuntimeEvent({
+        ...base,
+        payload: {
+          ...base.payload,
+          transcriptEntry: { id: "message-1", kind: "message" },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRuntimeEvent({
+        ...base,
+        payload: {
+          ...base.payload,
+          transcriptEntry: {
+            id: "message-1",
+            kind: "assistant",
+            phase: "final",
+          },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeRuntimeEvent({
+        ...base,
+        payload: {
+          ...base.payload,
+          transcriptEntry: {
+            id: "tool-1",
+            kind: "tool",
+            itemType: "shell",
+            status: "running",
+          },
+        },
+      }),
+    ).toThrow();
+  });
 });
 
 describe("classifyTaskAgentKind", () => {

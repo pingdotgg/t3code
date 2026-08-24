@@ -27,7 +27,7 @@ import {
 
 import { cn } from "../../lib/utils";
 import { useI18n } from "../../i18n";
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { localizedClipboardErrorMessage, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -140,6 +140,7 @@ function ProviderAuthEmail(props: {
   readonly prefix?: string;
   readonly separator?: boolean;
 }) {
+  const { t } = useI18n();
   const trimmed = props.email?.trim();
   if (!trimmed) return null;
 
@@ -149,9 +150,9 @@ function ProviderAuthEmail(props: {
       {props.prefix ? <span className="text-muted-foreground/80">{props.prefix}</span> : null}
       <RedactedSensitiveText
         value={trimmed}
-        ariaLabel="Toggle account email visibility"
-        revealTooltip="Click to reveal email"
-        hideTooltip="Click to hide email"
+        ariaLabel={t("providers.emailToggle")}
+        revealTooltip={t("providers.emailReveal")}
+        hideTooltip={t("providers.emailHide")}
       />
     </span>
   );
@@ -161,6 +162,7 @@ function ProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
 }) {
+  const { t } = useI18n();
   const [rows, setRows] = useState<ReadonlyArray<EnvironmentDraftRow>>(() =>
     props.environment.map(makeEnvironmentDraftRow),
   );
@@ -209,7 +211,7 @@ function ProviderEnvironmentSection(props: {
   return (
     <div className="grid gap-2">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs font-medium text-foreground">Environment variables</span>
+        <span className="text-xs font-medium text-foreground">{t("providers.environment")}</span>
         <Button
           type="button"
           size="sm"
@@ -228,23 +230,21 @@ function ProviderEnvironmentSection(props: {
           }
         >
           <PlusIcon className="size-3" />
-          Add
+          {t("common.add")}
         </Button>
       </div>
       {rows.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          Add variables to pass API keys, base URLs, or other per-instance CLI settings.
-        </p>
+        <p className="text-xs text-muted-foreground">{t("providers.environmentDescription")}</p>
       ) : (
         <div className="overflow-hidden rounded-md border border-border/70">
           <Table>
             <TableHeader className="bg-muted/25 text-[11px] text-muted-foreground">
               <TableRow className="hover:bg-transparent">
-                <TableHead>Variable</TableHead>
-                <TableHead>Value</TableHead>
-                <TableHead className="w-20">Sensitive</TableHead>
+                <TableHead>{t("providers.environmentVariable")}</TableHead>
+                <TableHead>{t("common.value")}</TableHead>
+                <TableHead className="w-20">{t("providers.environmentSensitive")}</TableHead>
                 <TableHead className="w-12 text-right">
-                  <span className="sr-only">Options</span>
+                  <span className="sr-only">{t("common.options")}</span>
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -260,7 +260,7 @@ function ProviderEnvironmentSection(props: {
                       onCommit={(name) => updateVariable(variable.id, { name: name.trim() })}
                       placeholder="VARIABLE_NAME"
                       spellCheck={false}
-                      aria-label={`Environment variable name ${index + 1}`}
+                      aria-label={t("providers.environmentNameAria", { index: index + 1 })}
                     />
                   </TableCell>
                   <TableCell>
@@ -271,11 +271,11 @@ function ProviderEnvironmentSection(props: {
                       autoComplete="off"
                       placeholder={
                         variable.valueRedacted
-                          ? "Stored secret - enter a new value to replace"
-                          : "Value"
+                          ? t("providers.environmentStoredSecret")
+                          : t("common.value")
                       }
                       spellCheck={false}
-                      aria-label={`Environment variable value ${index + 1}`}
+                      aria-label={t("providers.environmentValueAria", { index: index + 1 })}
                     />
                   </TableCell>
                   <TableCell className="w-20">
@@ -291,7 +291,9 @@ function ProviderEnvironmentSection(props: {
                               : { valueRedacted: sensitive ? variable.valueRedacted : false }),
                           });
                         }}
-                        aria-label={`Mark environment variable ${variable.name || index + 1} as sensitive`}
+                        aria-label={t("providers.environmentSensitiveAria", {
+                          name: variable.name || index + 1,
+                        })}
                       />
                     </div>
                   </TableCell>
@@ -303,7 +305,9 @@ function ProviderEnvironmentSection(props: {
                         variant="ghost"
                         className="size-8 text-muted-foreground hover:text-destructive"
                         onClick={() => removeVariable(variable.id)}
-                        aria-label={`Remove environment variable ${variable.name || index + 1}`}
+                        aria-label={t("providers.environmentRemoveAria", {
+                          name: variable.name || index + 1,
+                        })}
                       >
                         <XIcon className="size-3.5" />
                       </Button>
@@ -316,7 +320,7 @@ function ProviderEnvironmentSection(props: {
         </div>
       )}
       <span className="text-xs text-muted-foreground">
-        Sensitive values are stored separately and are not returned to the app after saving.
+        {t("providers.environmentSensitiveDescription")}
       </span>
     </div>
   );
@@ -435,16 +439,16 @@ export function ProviderInstanceCard({
     onCopy: ({ providerName }) => {
       toastManager.add({
         type: "success",
-        title: `${providerName} update command copied`,
-        description: "Run it in a terminal when you are ready to update.",
+        title: t("providers.updateCopied", { provider: providerName }),
+        description: t("providers.updateCopiedDescription"),
       });
     },
     onError: (error, { providerName }) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `Could not copy ${providerName} update command`,
-          description: error.message,
+          title: t("providers.updateCopyFailed", { provider: providerName }),
+          description: localizedClipboardErrorMessage(error, t),
         }),
       );
     },
@@ -579,13 +583,13 @@ export function ProviderInstanceCard({
                   variant="ghost"
                   className="text-muted-foreground hover:text-destructive"
                   onClick={onDelete}
-                  aria-label={`Delete provider instance ${instanceId}`}
+                  aria-label={t("providers.deleteInstanceAria", { id: instanceId })}
                 >
                   <Trash2Icon className="size-3" />
                 </Button>
               }
             />
-            <TooltipPopup side="top">Delete instance</TooltipPopup>
+            <TooltipPopup side="top">{t("providers.deleteInstance")}</TooltipPopup>
           </Tooltip>
         </span>
       ) : null}
@@ -662,7 +666,7 @@ export function ProviderInstanceCard({
                             ? "text-warning hover:text-warning"
                             : "text-update-foreground hover:text-update-foreground",
                         )}
-                        aria-label="Update available — view details"
+                        aria-label={t("providers.updateDetailsAria")}
                       >
                         <ArrowUpCircleIcon className="size-3.5 [animation:bounce_2.4s_ease-in-out_infinite] motion-reduce:animate-none" />
                       </Button>
@@ -676,7 +680,7 @@ export function ProviderInstanceCard({
                     <div className="grid min-w-0 gap-3">
                       <div className="grid gap-0.5">
                         <p className="text-[13px] font-semibold leading-tight text-foreground">
-                          Update available
+                          {t("providers.updateAvailable")}
                         </p>
                         <p
                           className={cn(
@@ -699,13 +703,13 @@ export function ProviderInstanceCard({
                           onClick={onRunUpdate}
                         >
                           {isUpdating ? <LoaderIcon className="animate-spin" /> : <DownloadIcon />}
-                          {isUpdating ? "Updating" : "Update now"}
+                          {isUpdating ? t("providers.updating") : t("providers.updateNow")}
                         </Button>
                       ) : null}
                       {onRunUpdate && updateCommand ? (
                         <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
                           <span aria-hidden className="h-px flex-1 bg-border" />
-                          or, update manually using
+                          {t("providers.updateManual")}
                           <span aria-hidden className="h-px flex-1 bg-border" />
                         </div>
                       ) : null}
@@ -729,13 +733,13 @@ export function ProviderInstanceCard({
                                       providerName: displayName,
                                     })
                                   }
-                                  aria-label="Copy update command"
+                                  aria-label={t("providers.copyUpdateCommand")}
                                 >
                                   <CopyIcon className="size-3" />
                                 </Button>
                               }
                             />
-                            <TooltipPopup side="top">Copy command</TooltipPopup>
+                            <TooltipPopup side="top">{t("providers.copyCommand")}</TooltipPopup>
                           </Tooltip>
                         </div>
                       ) : null}
@@ -752,7 +756,7 @@ export function ProviderInstanceCard({
               size="compact"
               variant="ghost-muted"
               onClick={() => onExpandedChange(!isExpanded)}
-              aria-label={`Toggle ${displayName} details`}
+              aria-label={t("providers.toggleDetails", { provider: displayName })}
             >
               <ChevronDownIcon
                 className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
@@ -761,7 +765,7 @@ export function ProviderInstanceCard({
             <Switch
               checked={enabled}
               onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
-              aria-label={`Enable ${displayName}`}
+              aria-label={t("providers.enable", { provider: displayName })}
             />
           </div>
         </div>
@@ -772,17 +776,19 @@ export function ProviderInstanceCard({
           <div className="space-y-5 px-3 pb-4 pt-2 sm:px-4">
             <div>
               <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
-                <span className="text-xs font-medium text-foreground">Display name</span>
+                <span className="text-xs font-medium text-foreground">
+                  {t("providers.displayName")}
+                </span>
                 <DraftInput
                   id={`provider-instance-${instanceId}-display-name`}
                   className="mt-1.5"
                   value={instance.displayName ?? ""}
                   onCommit={updateDisplayName}
-                  placeholder={driverOption?.label ?? "Instance label"}
+                  placeholder={driverOption?.label ?? t("providers.instanceLabel")}
                   spellCheck={false}
                 />
                 <span className="mt-1 block text-xs text-muted-foreground">
-                  Optional label shown in the provider list.
+                  {t("providers.displayNameDescription")}
                 </span>
               </label>
             </div>
@@ -793,7 +799,7 @@ export function ProviderInstanceCard({
                 value={accentColor}
                 onCommit={updateAccentColor}
                 commitDelayMs={120}
-                description="Used to distinguish this instance in picker rails and model lists."
+                description={t("providers.accentPickerDescription")}
               />
             </div>
 

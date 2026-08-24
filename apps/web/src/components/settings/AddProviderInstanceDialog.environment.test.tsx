@@ -28,6 +28,18 @@ vi.mock("../../hooks/useSettings", () => ({
   useUpdateEnvironmentSettings: settingsHooks.update,
 }));
 
+vi.mock("../../i18n", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../i18n")>();
+  return {
+    ...actual,
+    useI18n: () => ({
+      locale: "en" as const,
+      setLocale: () => undefined,
+      t: actual.createTranslator("en"),
+    }),
+  };
+});
+
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 
 const remoteEnvironmentId = EnvironmentId.make("remote-device");

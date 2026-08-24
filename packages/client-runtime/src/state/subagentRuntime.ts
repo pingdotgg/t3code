@@ -44,6 +44,22 @@ export interface SubagentActivityEntry {
   readonly summary: string;
 }
 
+export type SubagentTranscriptEntryKind = "assistant" | "reasoning" | "tool";
+export type SubagentTranscriptEntryPhase = "commentary" | "final_answer";
+
+export interface SubagentTranscriptEntry {
+  readonly id: string;
+  readonly kind: SubagentTranscriptEntryKind;
+  readonly text: string | null;
+  readonly label: string | null;
+  readonly phase: SubagentTranscriptEntryPhase | null;
+  readonly itemType: string | null;
+  readonly status: string | null;
+  /** Timestamp of the first retained observation; updates never reorder the entry. */
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface SubagentWorkflowPhase {
   readonly index: number;
   readonly title: string;
@@ -80,6 +96,7 @@ export interface RuntimeSubagent {
   readonly phases: ReadonlyArray<SubagentWorkflowPhase>;
   readonly runHandles: SubagentRunHandles | null;
   readonly recentActivity: ReadonlyArray<SubagentActivityEntry>;
+  readonly transcript: ReadonlyArray<SubagentTranscriptEntry>;
   /** First retained observation, used as the roster's stable display order. */
   readonly firstSeenAt: string;
   readonly startedAt: string | null;
@@ -106,6 +123,9 @@ export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
 
 const RECENT_ACTIVITY_LIMIT = 6;
 const SUMMARY_CHAR_LIMIT = 180;
+const TRANSCRIPT_ENTRY_LIMIT = 64;
+const TRANSCRIPT_TEXT_CHAR_LIMIT = 16_000;
+const TRANSCRIPT_ID_CHAR_LIMIT = 512;
 const ROSTER_LIMIT = 100;
 
 /**
@@ -120,8 +140,12 @@ export function isBackgroundTaskActivity(payload: Record<string, unknown>): bool
   return payload.agentKind !== "agent";
 }
 
+function truncate(value: string, limit: number): string {
+  return value.length <= limit ? value : `${value.slice(0, limit - 1)}…`;
+}
+
 function bounded(value: string): string {
-  return value.length <= SUMMARY_CHAR_LIMIT ? value : `${value.slice(0, SUMMARY_CHAR_LIMIT - 1)}…`;
+  return truncate(value, SUMMARY_CHAR_LIMIT);
 }
 
 /** Appends to the ring buffer, deduping consecutive identical summaries. */
@@ -140,6 +164,93 @@ function appendActivity(
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+const TRANSCRIPT_ENTRY_KINDS: ReadonlySet<string> = new Set(["assistant", "reasoning", "tool"]);
+const TRANSCRIPT_ENTRY_PHASES: ReadonlySet<string> = new Set(["commentary", "final_answer"]);
+const TERMINAL_TRANSCRIPT_ENTRY_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "declined",
+]);
+
+function asTranscriptEntryKind(value: unknown): SubagentTranscriptEntryKind | undefined {
+  return typeof value === "string" && TRANSCRIPT_ENTRY_KINDS.has(value)
+    ? (value as SubagentTranscriptEntryKind)
+    : undefined;
+}
+
+function asTranscriptEntryPhase(value: unknown): SubagentTranscriptEntryPhase | undefined {
+  return typeof value === "string" && TRANSCRIPT_ENTRY_PHASES.has(value)
+    ? (value as SubagentTranscriptEntryPhase)
+    : undefined;
+}
+
+function parseTranscriptEntry(value: unknown, at: string): SubagentTranscriptEntry | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const id = asString(record.id);
+  const kind = asTranscriptEntryKind(record.kind);
+  if (!id || id.length > TRANSCRIPT_ID_CHAR_LIMIT || !kind) {
+    return undefined;
+  }
+  const text = asString(record.text);
+  const label = asString(record.label);
+  const itemType = asString(record.itemType);
+  const status = asString(record.status);
+  return {
+    id,
+    kind,
+    text: text ? truncate(text, TRANSCRIPT_TEXT_CHAR_LIMIT) : null,
+    label: label ? bounded(label) : null,
+    phase: asTranscriptEntryPhase(record.phase) ?? null,
+    itemType: itemType ? bounded(itemType) : null,
+    status: status ? bounded(status) : null,
+    createdAt: at,
+    updatedAt: at,
+  };
+}
+
+function mergeTranscriptEntryStatus(
+  existing: string | null,
+  incoming: string | null,
+): string | null {
+  if (
+    existing !== null &&
+    TERMINAL_TRANSCRIPT_ENTRY_STATUSES.has(existing) &&
+    (incoming === null || !TERMINAL_TRANSCRIPT_ENTRY_STATUSES.has(incoming))
+  ) {
+    return existing;
+  }
+  return incoming ?? existing;
+}
+
+/** Later lifecycle observations patch an entry without changing first-seen order. */
+function upsertTranscriptEntry(
+  entries: ReadonlyArray<SubagentTranscriptEntry>,
+  incoming: SubagentTranscriptEntry,
+): ReadonlyArray<SubagentTranscriptEntry> {
+  const index = entries.findIndex((entry) => entry.id === incoming.id);
+  if (index === -1) {
+    const next = [...entries, incoming];
+    return next.length > TRANSCRIPT_ENTRY_LIMIT ? next.slice(-TRANSCRIPT_ENTRY_LIMIT) : next;
+  }
+
+  const existing = entries[index]!;
+  const next = entries.slice();
+  next[index] = {
+    ...existing,
+    kind: incoming.kind,
+    text: incoming.text ?? existing.text,
+    label: incoming.label ?? existing.label,
+    phase: incoming.phase ?? existing.phase,
+    itemType: incoming.itemType ?? existing.itemType,
+    status: mergeTranscriptEntryStatus(existing.status, incoming.status),
+    updatedAt: incoming.updatedAt,
+  };
+  return next;
 }
 
 function asCount(value: unknown): number | undefined {
@@ -249,6 +360,7 @@ interface MutableAgent {
   phases: ReadonlyArray<SubagentWorkflowPhase>;
   runHandles: SubagentRunHandles | null;
   recentActivity: ReadonlyArray<SubagentActivityEntry>;
+  transcript: ReadonlyArray<SubagentTranscriptEntry>;
   firstSeenAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -303,6 +415,7 @@ function getOrCreate(
     phases: [],
     runHandles: null,
     recentActivity: [],
+    transcript: [],
     firstSeenAt: at,
     startedAt: null,
     completedAt: null,
@@ -533,6 +646,10 @@ export function foldSubagentActivities(
         }
         const error = asString(payload.error);
         if (error) agent.error = bounded(error);
+        const transcriptEntry = parseTranscriptEntry(payload.transcriptEntry, at);
+        if (transcriptEntry) {
+          agent.transcript = upsertTranscriptEntry(agent.transcript, transcriptEntry);
+        }
         agent.usage = mergeUsageMax(agent.usage, asUsage(payload.typedUsage));
         agent.updatedAt = at;
         break;

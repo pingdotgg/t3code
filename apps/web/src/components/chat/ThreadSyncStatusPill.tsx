@@ -1,9 +1,12 @@
 import { LoaderCircleIcon } from "lucide-react";
 
-import { threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
+import { type ThreadSyncPhase } from "../../threadSync";
+import { useI18n } from "~/i18n";
 
 export function ThreadSyncStatusPill({ phase }: { readonly phase: ThreadSyncPhase }) {
-  const label = threadSyncLabel(phase);
+  const { t } = useI18n();
+  const label =
+    phase === "loading" ? t("chat.messages.loadingEllipsis") : t("chat.messages.syncing");
 
   return (
     <div

@@ -6,6 +6,7 @@ import { type MouseEvent, useCallback } from "react";
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { useI18n } from "../i18n";
 import { readLocalApi } from "../localApi";
 import { useRightPanelStore } from "../rightPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -36,6 +37,8 @@ export class PullRequestLinkOpenError extends Schema.TaggedErrorClass<PullReques
       : `Unable to open pull request link at ${this.targetOrigin}.`;
   }
 }
+
+const isPullRequestLinkOpenError = Schema.is(PullRequestLinkOpenError);
 
 export async function openPullRequestLink(
   shell: Pick<LocalApi["shell"], "openExternal">,
@@ -269,6 +272,7 @@ export function useOpenChangeRequestLink(
 }
 
 export function useOpenPrLink(threadRef?: ScopedThreadRef) {
+  const { t } = useI18n();
   const openChangeRequest = useOpenChangeRequestLink(threadRef);
   return useCallback(
     (event: MouseEvent<HTMLElement>, prUrl: string, targetThreadRef?: ScopedThreadRef) => {
@@ -288,23 +292,29 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       if (!api) {
         toastManager.add({
           type: "error",
-          title: "Link opening is unavailable.",
+          title: t("git.linkUnavailable"),
         });
         return false;
       }
 
-      void openPullRequestLink(api.shell, prUrl).catch((error) => {
+      void openPullRequestLink(api.shell, prUrl).catch((error: unknown) => {
         console.error(error);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open pull request link",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: t("git.openChangeRequestFailed"),
+            description: isPullRequestLinkOpenError(error)
+              ? error.targetOrigin
+                ? t("git.openChangeRequestAtFailed", { origin: error.targetOrigin })
+                : t("git.openChangeRequestFailedDescription")
+              : error instanceof Error
+                ? error.message
+                : t("common.errorGeneric"),
           }),
         );
       });
       return false;
     },
-    [openChangeRequest],
+    [openChangeRequest, t],
   );
 }

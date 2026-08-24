@@ -18,6 +18,7 @@ import {
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
+import type { Translate } from "../../i18n";
 
 export function isProjectGroupingEnabled(mode: SidebarProjectGroupingMode): boolean {
   return mode !== "separate";
@@ -88,23 +89,26 @@ type TypographySettings = Pick<
 >;
 
 /** Labels the font rows whose family or size differs from the defaults. */
-export function getChangedTypographySettingLabels(settings: TypographySettings): string[] {
+export function getChangedTypographySettingLabels(
+  settings: TypographySettings,
+  t?: Translate,
+): string[] {
   return [
     ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans ||
     settings.fontSizeInterface !== DEFAULT_UNIFIED_SETTINGS.fontSizeInterface
-      ? ["Interface font"]
+      ? [t?.("settings.typography.interfaceFont") ?? "Interface font"]
       : []),
     ...(settings.fontFamilyComposer !== DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer ||
     settings.fontSizePrompt !== DEFAULT_UNIFIED_SETTINGS.fontSizePrompt
-      ? ["Prompt font"]
+      ? [t?.("settings.typography.promptFont") ?? "Prompt font"]
       : []),
     ...(settings.fontFamilyCode !== DEFAULT_UNIFIED_SETTINGS.fontFamilyCode ||
     settings.fontSizeCode !== DEFAULT_UNIFIED_SETTINGS.fontSizeCode
-      ? ["Code font"]
+      ? [t?.("settings.typography.codeFont") ?? "Code font"]
       : []),
     ...(settings.fontFamilyTerminal !== DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal ||
     settings.fontSizeTerminal !== DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal
-      ? ["Terminal font"]
+      ? [t?.("settings.typography.terminalFont") ?? "Terminal font"]
       : []),
   ];
 }
@@ -137,23 +141,26 @@ export function isSamePreviewViewport(
 }
 
 /** Labels the browser-default rows that differ from the defaults. */
-export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings): string[] {
+export function getChangedBrowserSettingLabels(
+  settings: BrowserDefaultSettings,
+  t?: Translate,
+): string[] {
   return [
     ...(isSamePreviewViewport(
       settings.browserDefaultViewport,
       DEFAULT_UNIFIED_SETTINGS.browserDefaultViewport,
     )
       ? []
-      : ["Browser viewport"]),
+      : [t?.("settings.restore.browserViewport") ?? "Browser viewport"]),
     ...(settings.browserDefaultZoomFactor !== DEFAULT_UNIFIED_SETTINGS.browserDefaultZoomFactor
-      ? ["Browser zoom"]
+      ? [t?.("settings.restore.browserZoom") ?? "Browser zoom"]
       : []),
     ...(settings.browserDefaultAppearance !== DEFAULT_UNIFIED_SETTINGS.browserDefaultAppearance
-      ? ["Browser appearance"]
+      ? [t?.("settings.restore.browserAppearance") ?? "Browser appearance"]
       : []),
     ...(settings.browserAutoShowFloatingPreview !==
     DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
-      ? ["Floating preview"]
+      ? [t?.("settings.restore.floatingPreview") ?? "Floating preview"]
       : []),
   ];
 }
@@ -213,33 +220,49 @@ function collapseOtelSignalsUrl(input: {
   return `${tracesBase}/{traces,metrics}`;
 }
 
-export function formatDiagnosticsDescription(input: {
-  readonly localTracingEnabled: boolean;
-  readonly otlpTracesEnabled: boolean;
-  readonly otlpTracesUrl?: string | undefined;
-  readonly otlpMetricsEnabled: boolean;
-  readonly otlpMetricsUrl?: string | undefined;
-}): string {
-  const mode = input.localTracingEnabled ? "Local trace file" : "Terminal logs only";
+export function formatDiagnosticsDescription(
+  input: {
+    readonly localTracingEnabled: boolean;
+    readonly otlpTracesEnabled: boolean;
+    readonly otlpTracesUrl?: string | undefined;
+    readonly otlpMetricsEnabled: boolean;
+    readonly otlpMetricsUrl?: string | undefined;
+  },
+  t?: Translate,
+): string {
+  const mode = input.localTracingEnabled
+    ? (t?.("settings.diagnostics.localTrace") ?? "Local trace file")
+    : (t?.("settings.diagnostics.terminalLogs") ?? "Terminal logs only");
   const tracesUrl = input.otlpTracesEnabled ? input.otlpTracesUrl : undefined;
   const metricsUrl = input.otlpMetricsEnabled ? input.otlpMetricsUrl : undefined;
 
   if (tracesUrl && metricsUrl) {
     const collapsedUrl = collapseOtelSignalsUrl({ tracesUrl, metricsUrl });
     return collapsedUrl
-      ? `${mode}. Exporting OTEL to ${collapsedUrl}.`
-      : `${mode}. Exporting OTEL traces to ${tracesUrl} and metrics to ${metricsUrl}.`;
+      ? (t?.("settings.diagnostics.exportCombined", { mode, url: collapsedUrl }) ??
+          `${mode}. Exporting OTEL to ${collapsedUrl}.`)
+      : (t?.("settings.diagnostics.exportSeparate", {
+          mode,
+          tracesUrl,
+          metricsUrl,
+        }) ?? `${mode}. Exporting OTEL traces to ${tracesUrl} and metrics to ${metricsUrl}.`);
   }
 
   if (tracesUrl) {
-    return `${mode}. Exporting OTEL traces to ${tracesUrl}.`;
+    return (
+      t?.("settings.diagnostics.exportTraces", { mode, url: tracesUrl }) ??
+      `${mode}. Exporting OTEL traces to ${tracesUrl}.`
+    );
   }
 
   if (metricsUrl) {
-    return `${mode}. Exporting OTEL metrics to ${metricsUrl}.`;
+    return (
+      t?.("settings.diagnostics.exportMetrics", { mode, url: metricsUrl }) ??
+      `${mode}. Exporting OTEL metrics to ${metricsUrl}.`
+    );
   }
 
-  return `${mode}.`;
+  return t?.("settings.diagnostics.modeOnly", { mode }) ?? `${mode}.`;
 }
 
 export function buildProviderInstanceUpdatePatch(input: {

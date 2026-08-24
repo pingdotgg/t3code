@@ -1,4 +1,5 @@
 import {
+  AssistantMessagePhase,
   ChatAttachment,
   CheckpointRef,
   IsoDateTime,
@@ -83,6 +84,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     reasoningText: Schema.NullOr(Schema.String),
+    phase: Schema.NullOr(AssistantMessagePhase),
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
   }),
 );
@@ -533,6 +535,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           reasoning_text AS "reasoningText",
+          message_phase AS "phase",
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
@@ -977,6 +980,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           reasoning_text AS "reasoningText",
+          message_phase AS "phase",
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
@@ -1221,6 +1225,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           reasoning_text AS "reasoningText",
+          message_phase AS "phase",
           attachments_json AS "attachments",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
@@ -1564,6 +1569,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   role: row.role,
                   text: row.text,
                   ...(row.reasoningText !== null ? { reasoningText: row.reasoningText } : {}),
+                  ...(row.phase !== null ? { phase: row.phase } : {}),
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
@@ -2631,6 +2637,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           };
           if (row.reasoningText !== null) {
             Object.assign(message, { reasoningText: row.reasoningText });
+          }
+          if (row.phase !== null) {
+            Object.assign(message, { phase: row.phase });
           }
           if (row.attachments !== null) {
             return Object.assign(message, { attachments: row.attachments });

@@ -13,6 +13,7 @@ import {
   formatElementContextLabel,
   formatElementContextSourceLabel,
 } from "~/lib/elementContext";
+import { useI18n } from "~/i18n";
 
 interface ComposerPendingElementContextsProps {
   contexts: ReadonlyArray<ElementContextDraft>;
@@ -43,6 +44,7 @@ export function ComposerPendingElementContextChip({
   context,
   onRemove,
 }: ComposerPendingElementContextChipProps) {
+  const { t } = useI18n();
   const label = formatElementContextLabel(context);
   const sourceLabel = formatElementContextSourceLabel(context);
   return (
@@ -59,7 +61,7 @@ export function ComposerPendingElementContextChip({
             ) : null}
             <button
               type="button"
-              aria-label={`Remove ${label}`}
+              aria-label={t("chat.elementContext.remove", { label })}
               className={COMPOSER_INLINE_CHIP_DISMISS_BUTTON_CLASS_NAME}
               onClick={(event) => {
                 event.preventDefault();

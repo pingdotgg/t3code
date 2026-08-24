@@ -1015,6 +1015,7 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         itemType: "assistant_message",
         status: "completed",
+        messagePhase: "final_answer",
       },
     });
 
@@ -1029,6 +1030,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(message?.text).toBe("hello world");
     expect(message?.streaming).toBe(false);
+    expect(message?.phase).toBe("final_answer");
   });
 
   it("captures reasoning deltas alongside the assistant response", async () => {
@@ -3425,6 +3427,178 @@ describe("ProviderRuntimeIngestion", () => {
         (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-task-1",
       )?.planMarkdown,
     ).toBe("# Plan title");
+  });
+
+  it("round-trips same-time transcript lifecycle observations in orchestration order", async () => {
+    const harness = await createHarness();
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-transcript-1"),
+    } as const;
+    const emitToolObservation = (eventId: string, id: string, status: "inProgress" | "completed") =>
+      harness.emit({
+        ...base,
+        type: "task.progress",
+        eventId: asEventId(eventId),
+        createdAt,
+        payload: {
+          taskId: "child-1",
+          description: "Inspect the toolbar",
+          timelineBypass: true,
+          transcriptEntry: {
+            id,
+            kind: "tool",
+            label: `Read ${id}`,
+            itemType: "command_execution",
+            status,
+          },
+        },
+      });
+
+    // IDs intentionally sort opposite to arrival order. Every observation
+    // also shares one timestamp, so only the orchestration sequence can retain
+    // the provider's actual order across a SQLite snapshot reload.
+    emitToolObservation("evt-z-started", "z-tool", "inProgress");
+    emitToolObservation("evt-a-started", "a-tool", "inProgress");
+    emitToolObservation("evt-a-completed", "a-tool", "completed");
+    emitToolObservation("evt-z-completed", "z-tool", "completed");
+
+    const thread = await waitForThread(harness.readModel, (entry) => {
+      const transcriptRows = entry.activities.filter((activity) =>
+        activity.id.startsWith("task-transcript:thread-1:child-1:"),
+      );
+      return transcriptRows.length === 4;
+    });
+    const transcriptRows = thread.activities.filter((activity) =>
+      activity.id.startsWith("task-transcript:thread-1:child-1:"),
+    );
+    const transcriptPayloads = transcriptRows.map((activity) =>
+      typeof activity.payload === "object" && activity.payload !== null
+        ? (activity.payload as Record<string, unknown>)
+        : {},
+    );
+
+    expect(transcriptRows.map((activity) => activity.id)).toEqual([
+      "task-transcript:thread-1:child-1:z-tool:started",
+      "task-transcript:thread-1:child-1:a-tool:started",
+      "task-transcript:thread-1:child-1:a-tool:completed",
+      "task-transcript:thread-1:child-1:z-tool:completed",
+    ]);
+    expect(transcriptRows.map((activity) => activity.sequence)).toEqual(
+      [...transcriptRows]
+        .map((activity) => activity.sequence)
+        .toSorted((left, right) => (left ?? 0) - (right ?? 0)),
+    );
+    expect(
+      transcriptPayloads.map((payload) =>
+        typeof payload.transcriptEntry === "object" && payload.transcriptEntry !== null
+          ? (payload.transcriptEntry as Record<string, unknown>).id
+          : undefined,
+      ),
+    ).toEqual(["z-tool", "a-tool", "a-tool", "z-tool"]);
+    expect(transcriptPayloads.every((payload) => payload.timelineBypass === true)).toBe(true);
+  });
+
+  it("normalizes and bounds transcript entries before persistence", async () => {
+    const harness = await createHarness();
+    const rawId = "  tool-bounds  ";
+    const rawText = `  ${"x".repeat(20_000)}  `;
+    const rawLabel = `  ${"l".repeat(500)}  `;
+
+    harness.emit({
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-transcript-bounds"),
+      type: "task.progress",
+      eventId: asEventId("evt-transcript-bounds"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: {
+        taskId: "child-bounds",
+        description: "Inspect the toolbar",
+        timelineBypass: true,
+        transcriptEntry: {
+          id: rawId,
+          kind: "assistant",
+          text: rawText,
+          label: rawLabel,
+          phase: "final_answer",
+          itemType: "assistant_message",
+          status: "completed",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) =>
+        activity.id.startsWith("task-transcript:thread-1:child-bounds:"),
+      ),
+    );
+    const activity = thread.activities.find((entry) =>
+      entry.id.startsWith("task-transcript:thread-1:child-bounds:"),
+    );
+    const payload =
+      activity && typeof activity.payload === "object" && activity.payload !== null
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+    const transcriptEntry =
+      payload && typeof payload.transcriptEntry === "object" && payload.transcriptEntry !== null
+        ? (payload.transcriptEntry as Record<string, unknown>)
+        : undefined;
+
+    expect(activity).toBeDefined();
+    expect(transcriptEntry?.id).toBe(rawId.trim());
+    expect(transcriptEntry?.text).toBe(`${rawText.trim().slice(0, 15_997)}...`);
+    expect(transcriptEntry?.label).toBe(`${rawLabel.trim().slice(0, 177)}...`);
+    expect(String(transcriptEntry?.text)).toHaveLength(16_000);
+    expect(String(transcriptEntry?.label)).toHaveLength(180);
+    expect(activity?.id).toContain(String(transcriptEntry?.id));
+    expect(transcriptEntry).toMatchObject({
+      kind: "assistant",
+      phase: "final_answer",
+      itemType: "assistant_message",
+      status: "completed",
+    });
+  });
+
+  it("drops an oversized transcript identity without dropping ordinary progress", async () => {
+    const harness = await createHarness();
+    harness.emit({
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-transcript-id-bounds"),
+      type: "task.progress",
+      eventId: asEventId("evt-transcript-id-bounds"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      payload: {
+        taskId: "child-id-bounds",
+        description: "Progress remains visible",
+        summary: "Still working",
+        timelineBypass: true,
+        transcriptEntry: {
+          id: `tool-${"i".repeat(600)}`,
+          kind: "tool",
+          label: "Read files",
+          status: "completed",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some((activity) => activity.id === "task-progress:thread-1:child-id-bounds"),
+    );
+    const activity = thread.activities.find(
+      (entry) => entry.id === "task-progress:thread-1:child-id-bounds",
+    );
+    const payload =
+      activity && typeof activity.payload === "object" && activity.payload !== null
+        ? (activity.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(activity?.summary).toBe("Progress remains visible");
+    expect(payload?.summary).toBe("Still working");
+    expect(payload?.transcriptEntry).toBeUndefined();
   });
 
   it("titles task activities with the task description, including on completion", async () => {

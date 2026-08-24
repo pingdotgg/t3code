@@ -1,4 +1,5 @@
 import type { OrchestrationThreadActivity, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import type { Translate } from "~/i18n";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -26,8 +27,11 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
 };
 
 /** Map a provider driver kind to a user-facing display name. */
-export function formatProviderDisplayName(provider: string | null | undefined): string {
-  if (!provider) return "This agent";
+export function formatProviderDisplayName(
+  provider: string | null | undefined,
+  t?: Translate,
+): string {
+  if (!provider) return t?.("context.thisAgent") ?? "This agent";
   switch (provider) {
     case "claudeAgent":
     case "claude":

@@ -1,5 +1,16 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EnvironmentId,
+  EventId,
+  MessageId,
+  type OrchestrationThreadActivity,
+  TurnId,
+} from "@t3tools/contracts";
 import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
+import {
+  deriveAgentPanelModel,
+  foldSubagentActivities,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -237,6 +248,227 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders native subagents as inline Codex-style chips", () => {
+    const agents = foldSubagentActivities([
+      {
+        id: EventId.make("agent-start-1"),
+        createdAt: MESSAGE_CREATED_AT,
+        tone: "info",
+        kind: "task.started",
+        summary: "Task started",
+        payload: {
+          taskId: "child-1",
+          title: "Locate git toolbar",
+          agentKind: "agent",
+        },
+        turnId: null,
+      },
+      {
+        id: EventId.make("agent-start-2"),
+        createdAt: MESSAGE_CREATED_AT,
+        tone: "info",
+        kind: "task.started",
+        summary: "Task started",
+        payload: {
+          taskId: "child-2",
+          title: "Inspect test path",
+          agentKind: "agent",
+        },
+        turnId: null,
+      },
+    ]);
+    const agentPanelModel = deriveAgentPanelModel({ agents });
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        agentPanelModel={agentPanelModel}
+        timelineEntries={[
+          {
+            id: "agent-spawn-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "agent-spawn",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Spawned agents",
+              tone: "info",
+              agentSpawn: {
+                workflowId: null,
+                agentTaskIds: ["child-1", "child-2"],
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Locate git toolbar");
+    expect(markup).toContain("Inspect test path");
+    expect(markup).toContain('aria-label="Open agent Locate git toolbar"');
+    expect(markup).toContain('aria-label="Open agent Inspect test path"');
+    expect(markup).toContain('data-agent-id="child-1"');
+    expect(markup).toContain('data-agent-id="child-2"');
+    expect((markup.match(/rounded-full/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(markup).not.toContain("bg-card/50");
+  });
+
+  it("keeps a coordinator-only workflow available for diagnostics", () => {
+    const workflowId = "workflow-before-members";
+    const agents = foldSubagentActivities([
+      {
+        id: EventId.make("workflow-start"),
+        createdAt: MESSAGE_CREATED_AT,
+        tone: "info",
+        kind: "task.started",
+        summary: "Workflow started",
+        payload: {
+          taskId: workflowId,
+          taskType: "local_workflow",
+          agentKind: "agent",
+          title: "Audit agent tabs",
+          workflowName: "Audit agent tabs",
+        },
+        turnId: null,
+      },
+      {
+        id: EventId.make("workflow-failed"),
+        createdAt: MESSAGE_CREATED_AT,
+        tone: "error",
+        kind: "task.completed",
+        summary: "Workflow failed",
+        payload: {
+          taskId: workflowId,
+          taskType: "local_workflow",
+          agentKind: "agent",
+          status: "failed",
+          error: "Workflow failed before spawning a member",
+        },
+        turnId: null,
+      },
+    ]);
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        agentPanelModel={deriveAgentPanelModel({ agents })}
+        timelineEntries={[
+          {
+            id: "workflow-spawn-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "workflow-spawn",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Started workflow",
+              tone: "info",
+              agentSpawn: { workflowId, agentTaskIds: [workflowId] },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Audit agent tabs");
+    expect(markup).toContain('aria-label="Open agent Audit agent tabs"');
+    expect(markup).toContain(`data-agent-id="${workflowId}"`);
+    expect(markup).toContain("Failed");
+    expect(markup).toContain("bg-destructive");
+  });
+
+  it("shows a stopped direct subagent as stopped rather than completed", () => {
+    const taskId = "stopped-direct-agent";
+    const agents = foldSubagentActivities([
+      {
+        id: EventId.make("stopped-agent-start"),
+        createdAt: MESSAGE_CREATED_AT,
+        tone: "info",
+        kind: "task.started",
+        summary: "Agent started",
+        payload: { taskId, title: "Stopped agent", agentKind: "agent" },
+        turnId: null,
+      },
+      {
+        id: EventId.make("stopped-agent-complete"),
+        createdAt: MESSAGE_CREATED_AT,
+        tone: "info",
+        kind: "task.completed",
+        summary: "Agent stopped",
+        payload: { taskId, status: "stopped", agentKind: "agent" },
+        turnId: null,
+      },
+    ]);
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        agentPanelModel={deriveAgentPanelModel({ agents })}
+        timelineEntries={[
+          {
+            id: "stopped-agent-spawn-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "stopped-agent-spawn",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Started agent",
+              tone: "info",
+              agentSpawn: { workflowId: null, agentTaskIds: [taskId] },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Stopped");
+    expect(markup).toContain("bg-muted-foreground/60");
+    expect(markup).not.toContain("Completed");
+  });
+
+  it("caps ultra-mode spawn chips and summarizes the remaining agents", () => {
+    const taskIds = Array.from({ length: 6 }, (_, index) => `child-${index + 1}`);
+    const agents = foldSubagentActivities(
+      taskIds.map(
+        (taskId, index): OrchestrationThreadActivity => ({
+          id: EventId.make(`agent-start-${index + 1}`),
+          createdAt: MESSAGE_CREATED_AT,
+          tone: "info",
+          kind: "task.started",
+          summary: "Task started",
+          payload: {
+            taskId,
+            title: `Agent ${index + 1}`,
+            agentKind: "agent",
+          },
+          turnId: null,
+        }),
+      ),
+    );
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        agentPanelModel={deriveAgentPanelModel({ agents })}
+        timelineEntries={[
+          {
+            id: "agent-spawn-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "agent-spawn",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Spawned agents",
+              tone: "info",
+              agentSpawn: { workflowId: null, agentTaskIds: taskIds },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Agent 4");
+    expect(markup).not.toContain("Agent 5");
+    expect(markup).not.toContain("Agent 6");
+    expect(markup).toContain("+2");
+    expect(markup).toContain('aria-label="2 more agents"');
+  });
+
   it("renders a feedback command and its pending response as normal thread messages", () => {
     const submission = {
       id: MessageId.make("feedback-command"),
@@ -811,6 +1043,38 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-reasoning-open="true"');
     expect(markup).toContain("Thinking");
     expect(markup).toContain("Inspecting the current state");
+  });
+
+  it("keeps reasoning attached to a final answer inside the collapsed turn", () => {
+    const turnId = TurnId.make("turn-with-final-reasoning");
+    const assistantEntry = buildAssistantTimelineEntry("Final summary stays visible.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestTurn={{
+          turnId,
+          state: "completed",
+          startedAt: "2026-03-17T19:12:20.000Z",
+          completedAt: "2026-03-17T19:12:28.000Z",
+        }}
+        timelineEntries={[
+          {
+            ...assistantEntry,
+            message: {
+              ...assistantEntry.message,
+              reasoningText: "Intermediate reasoning belongs behind the fold.",
+              phase: "final_answer",
+              turnId,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Worked for 8.0s");
+    expect(markup).toContain("Final summary stays visible.");
+    expect(markup).not.toContain("assistant-reasoning-block");
+    expect(markup).not.toContain("Intermediate reasoning belongs behind the fold.");
   });
 
   it("sanitizes executable HTML while preserving supported assistant markup", async () => {

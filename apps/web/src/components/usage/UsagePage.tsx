@@ -33,15 +33,17 @@ import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import { useI18n, type MessageKey } from "../../i18n";
 
 const WINDOW_OPTIONS = [
-  { days: 1, label: "Past 24h" },
-  { days: 7, label: "7 days" },
-  { days: 30, label: "30 days" },
-  { days: 90, label: "90 days" },
-] as const;
+  { days: 1, labelKey: "usage.window.day" },
+  { days: 7, labelKey: "usage.window.week" },
+  { days: 30, labelKey: "usage.window.month" },
+  { days: 90, labelKey: "usage.window.quarter" },
+] as const satisfies ReadonlyArray<{ days: number; labelKey: MessageKey }>;
 
 export function UsagePage() {
+  const { t } = useI18n();
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
@@ -98,13 +100,19 @@ export function UsagePage() {
   };
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
-      ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
-      : `${formatDayShort(window.sinceDay)} to ${formatDayShort(window.untilDay)}`;
+      ? t("usage.range", {
+          start: formatDateTimeShort(window.sinceTime, window.timeZone),
+          end: formatDateTimeShort(window.untilTime, window.timeZone),
+        })
+      : t("usage.range", {
+          start: formatDayShort(window.sinceDay),
+          end: formatDayShort(window.untilDay),
+        });
   const topbarContent = (
     <div className="flex w-full min-w-0 items-center gap-3">
-      <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
+      <WorkspaceBreadcrumb ariaLabel={t("usage.breadcrumb")} className="min-w-0">
         <WorkspaceBreadcrumbItem current>
-          <h1>Usage</h1>
+          <h1>{t("usage.title")}</h1>
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator className="hidden md:flex" />
         <WorkspaceBreadcrumbItem className="hidden min-w-0 shrink md:flex">
@@ -113,7 +121,7 @@ export function UsagePage() {
       </WorkspaceBreadcrumb>
       <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 lg:flex">
         <ToggleGroup
-          aria-label="Usage metric"
+          aria-label={t("usage.metric")}
           variant="segmented"
           value={[metric]}
           onValueChange={(next) => {
@@ -123,12 +131,12 @@ export function UsagePage() {
         >
           {(["cost", "tokens"] as const).map((option) => (
             <Toggle key={option} value={option}>
-              {option === "cost" ? "Cost" : "Tokens"}
+              {t(option === "cost" ? "usage.cost" : "usage.tokens")}
             </Toggle>
           ))}
         </ToggleGroup>
         <ToggleGroup
-          aria-label="Usage period"
+          aria-label={t("usage.period")}
           variant="segmented"
           value={[String(windowDays)]}
           onValueChange={(next) => {
@@ -138,11 +146,16 @@ export function UsagePage() {
         >
           {WINDOW_OPTIONS.map((option) => (
             <Toggle key={option.days} value={String(option.days)}>
-              {option.label}
+              {t(option.labelKey)}
             </Toggle>
           ))}
         </ToggleGroup>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
+        <Button
+          onClick={refreshWindow}
+          aria-label={t("usage.refresh")}
+          size="icon-sm"
+          variant="ghost"
+        >
           <RefreshCwIcon className="size-3.5" />
         </Button>
       </div>
@@ -154,38 +167,46 @@ export function UsagePage() {
           }}
         >
           <SelectTrigger
-            aria-label="Usage metric"
+            aria-label={t("usage.metric")}
             size="compact"
             variant="ghost"
             className="w-auto min-w-0"
           >
-            <SelectValue>{metric === "cost" ? "Cost" : "Tokens"}</SelectValue>
+            <SelectValue>{t(metric === "cost" ? "usage.cost" : "usage.tokens")}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem value="cost">Cost</SelectItem>
-            <SelectItem value="tokens">Tokens</SelectItem>
+            <SelectItem value="cost">{t("usage.cost")}</SelectItem>
+            <SelectItem value="tokens">{t("usage.tokens")}</SelectItem>
           </SelectPopup>
         </Select>
         <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
           <SelectTrigger
-            aria-label="Usage period"
+            aria-label={t("usage.period")}
             size="compact"
             variant="ghost"
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              {t(
+                WINDOW_OPTIONS.find((option) => option.days === windowDays)?.labelKey ??
+                  "usage.window.month",
+              )}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {WINDOW_OPTIONS.map((option) => (
               <SelectItem key={option.days} value={String(option.days)}>
-                {option.label}
+                {t(option.labelKey)}
               </SelectItem>
             ))}
           </SelectPopup>
         </Select>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
+        <Button
+          onClick={refreshWindow}
+          aria-label={t("usage.refresh")}
+          size="icon-sm"
+          variant="ghost"
+        >
           <RefreshCwIcon className="size-3.5" />
         </Button>
       </div>
@@ -222,8 +243,8 @@ export function UsagePage() {
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {metric === "cost"
-                          ? `${formatCount(merged.sessions)} sessions · API estimate`
-                          : `${formatCount(merged.sessions)} sessions`}
+                          ? t("usage.sessionsEstimate", { count: formatCount(merged.sessions) })
+                          : t("usage.sessions", { count: formatCount(merged.sessions) })}
                       </span>
                     </div>
 
@@ -232,9 +253,9 @@ export function UsagePage() {
                       const share =
                         metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
                       const providerSessions = totals?.sessions ?? 0;
-                      const sessionLabel = `${formatCount(providerSessions)} ${
-                        providerSessions === 1 ? "session" : "sessions"
-                      }`;
+                      const sessionLabel = t("usage.sessions", {
+                        count: formatCount(providerSessions),
+                      });
                       return (
                         <div key={provider} className="flex flex-col gap-1">
                           <div className="flex items-baseline justify-between gap-4">
@@ -264,8 +285,14 @@ export function UsagePage() {
                           </div>
                           <span className="text-xs text-muted-foreground">
                             {metric === "cost"
-                              ? `${formatPercent(share)} of cost · ${formatTokens(totals?.totalTokens ?? 0)} tokens`
-                              : `${formatPercent(share)} of tokens · ${formatUsd(totals?.costUsd ?? 0)}`}
+                              ? t("usage.costShare", {
+                                  share: formatPercent(share),
+                                  tokens: formatTokens(totals?.totalTokens ?? 0),
+                                })
+                              : t("usage.tokenShare", {
+                                  share: formatPercent(share),
+                                  cost: formatUsd(totals?.costUsd ?? 0),
+                                })}
                           </span>
                         </div>
                       );
@@ -274,8 +301,15 @@ export function UsagePage() {
 
                   <div className="flex min-w-0 flex-col gap-3">
                     <h2 className="text-sm font-medium text-foreground">
-                      {isPast24Hours ? "Hourly" : "Daily"}{" "}
-                      {metric === "tokens" ? "processed tokens" : "cost"}
+                      {t(
+                        isPast24Hours
+                          ? metric === "tokens"
+                            ? "usage.chart.hourlyTokens"
+                            : "usage.chart.hourlyCost"
+                          : metric === "tokens"
+                            ? "usage.chart.dailyTokens"
+                            : "usage.chart.dailyCost",
+                      )}
                     </h2>
                     <UsageProviderChart
                       providers={activeProviders}
@@ -292,17 +326,23 @@ export function UsagePage() {
                 </section>
 
                 <section className="flex flex-col gap-2">
-                  <h2 className="text-sm font-medium text-foreground">Totals</h2>
+                  <h2 className="text-sm font-medium text-foreground">{t("usage.totals")}</h2>
                   <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
-                    <Metric label="Processed tokens" value={formatTokens(merged.totalTokens)} />
-                    <Metric label="Cached input" value={formatTokens(merged.cachedInputTokens)} />
                     <Metric
-                      label="Uncached input"
+                      label={t("usage.processedTokens")}
+                      value={formatTokens(merged.totalTokens)}
+                    />
+                    <Metric
+                      label={t("usage.cachedInput")}
+                      value={formatTokens(merged.cachedInputTokens)}
+                    />
+                    <Metric
+                      label={t("usage.uncachedInput")}
                       value={formatTokens(merged.uncachedInputTokens)}
                     />
-                    <Metric label="Output" value={formatTokens(merged.outputTokens)} />
+                    <Metric label={t("usage.output")} value={formatTokens(merged.outputTokens)} />
                     <Metric
-                      label="Cache savings"
+                      label={t("usage.cacheSavings")}
                       value={formatUsd(merged.costQuality.cacheSavingsUsd)}
                     />
                   </div>
@@ -310,9 +350,9 @@ export function UsagePage() {
 
                 <section className="flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
+                    <h2 className="text-sm font-medium text-foreground">{t("usage.breakdown")}</h2>
                     <ToggleGroup
-                      aria-label="Usage breakdown"
+                      aria-label={t("usage.breakdown")}
                       variant="segmented"
                       value={[breakdown]}
                       onValueChange={(next) => {
@@ -322,8 +362,8 @@ export function UsagePage() {
                     >
                       {(
                         [
-                          { value: "model", label: "Model" },
-                          { value: "time", label: isPast24Hours ? "Hour" : "Day" },
+                          { value: "model", label: t("usage.model") },
+                          { value: "time", label: t(isPast24Hours ? "usage.hour" : "usage.day") },
                         ] as const
                       ).map((option) => (
                         <Toggle key={option.value} value={option.value}>
@@ -343,17 +383,17 @@ export function UsagePage() {
                       </colgroup>
                       <thead>
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                          <th className="py-2 font-normal">Model</th>
-                          <th className="py-2 text-right font-normal">Cost</th>
-                          <th className="py-2 text-right font-normal">Share</th>
-                          <th className="py-2 text-right font-normal">Tokens</th>
+                          <th className="py-2 font-normal">{t("usage.model")}</th>
+                          <th className="py-2 text-right font-normal">{t("usage.cost")}</th>
+                          <th className="py-2 text-right font-normal">{t("usage.share")}</th>
+                          <th className="py-2 text-right font-normal">{t("usage.tokens")}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {merged.models.length === 0 ? (
                           <tr>
                             <td colSpan={4} className="py-6 text-center text-muted-foreground">
-                              No activity in this window.
+                              {t("usage.noActivity")}
                             </td>
                           </tr>
                         ) : (
@@ -394,14 +434,16 @@ export function UsagePage() {
                       </colgroup>
                       <thead>
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                          <th className="py-2 font-normal">{isPast24Hours ? "Hour" : "Day"}</th>
+                          <th className="py-2 font-normal">
+                            {t(isPast24Hours ? "usage.hour" : "usage.day")}
+                          </th>
                           {activeProviders.map((provider) => (
                             <th key={provider} className="py-2 text-right font-normal">
                               {PROVIDER_PRESENTATION[provider].label}
                             </th>
                           ))}
-                          <th className="py-2 text-right font-normal">Total</th>
-                          <th className="py-2 text-right font-normal">Tokens</th>
+                          <th className="py-2 text-right font-normal">{t("usage.total")}</th>
+                          <th className="py-2 text-right font-normal">{t("usage.tokens")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -411,7 +453,7 @@ export function UsagePage() {
                               colSpan={activeProviders.length + 3}
                               className="py-6 text-center text-muted-foreground"
                             >
-                              No activity in this window.
+                              {t("usage.noActivity")}
                             </td>
                           </tr>
                         ) : (
@@ -491,6 +533,7 @@ function UsageCoverageNotice({
   readonly duplicateSources: readonly string[];
   readonly staleEnvironments: readonly string[];
 }) {
+  const { t } = useI18n();
   const failed = environments.filter((environment) => environment.error !== null);
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
@@ -502,18 +545,17 @@ function UsageCoverageNotice({
   return (
     <div className="flex flex-col gap-1 border border-border px-3 py-2 text-xs text-muted-foreground">
       {failed.map((environment) => (
-        <span key={environment.label}>{environment.label} could not report usage.</span>
+        <span key={environment.label}>
+          {t("usage.environmentFailed", { environment: environment.label })}
+        </span>
       ))}
       {stale.map((environment) => (
         <span key={environment.label}>
-          {environment.label} runs an older server version and is excluded from totals.
+          {t("usage.environmentStale", { environment: environment.label })}
         </span>
       ))}
       {duplicateSources.length > 0 ? (
-        <span>
-          Counted once across environments sharing a transcript directory:{" "}
-          {duplicateSources.join(", ")}
-        </span>
+        <span>{t("usage.duplicateSources", { sources: duplicateSources.join(", ") })}</span>
       ) : null}
     </div>
   );
@@ -529,6 +571,7 @@ function UsageDeviceStrip({
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
 }) {
+  const { t } = useI18n();
   const scanning = environments.filter(
     (environment) => environment.summary === null && environment.error === null,
   );
@@ -567,9 +610,7 @@ function UsageDeviceStrip({
         );
       })}
       <span className="ms-auto text-muted-foreground">
-        {scanning.length === 1
-          ? "1 device still scanning"
-          : `${scanning.length} devices still scanning`}
+        {t("usage.devicesScanning", { count: scanning.length })}
       </span>
     </div>
   );
@@ -580,6 +621,14 @@ function UsageDeviceStrip({
  * exactly once when the last device answers.
  */
 function UsageSkeleton() {
+  const { t } = useI18n();
+  const metricLabels = [
+    t("usage.processedTokens"),
+    t("usage.cachedInput"),
+    t("usage.uncachedInput"),
+    t("usage.output"),
+    t("usage.cacheSavings"),
+  ];
   return (
     <>
       <section className="grid gap-6 lg:grid-cols-[minmax(0,16rem)_minmax(0,1fr)]">
@@ -617,16 +666,14 @@ function UsageSkeleton() {
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-foreground">Totals</h2>
+        <h2 className="text-sm font-medium text-foreground">{t("usage.totals")}</h2>
         <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
-          {["Processed tokens", "Cached input", "Uncached input", "Output", "Cache savings"].map(
-            (label) => (
-              <div key={label} className="flex flex-col gap-0.5">
-                <span className="text-xs text-muted-foreground">{label}</span>
-                <div className="my-0.5 h-4 w-16 rounded-sm bg-muted" />
-              </div>
-            ),
-          )}
+          {metricLabels.map((label) => (
+            <div key={label} className="flex flex-col gap-0.5">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <div className="my-0.5 h-4 w-16 rounded-sm bg-muted" />
+            </div>
+          ))}
         </div>
       </section>
     </>

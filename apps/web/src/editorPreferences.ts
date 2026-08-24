@@ -7,6 +7,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
+import type { Translate } from "./i18n/messages";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
 import { useCallback, useMemo } from "react";
 import { shellEnvironment } from "./state/shell";
@@ -35,6 +36,28 @@ export class PreferredEditorUnavailableError extends Schema.TaggedErrorClass<Pre
 ) {
   override get message(): string {
     return `No available editor can open ${this.targetPath} in environment ${this.environmentId}.`;
+  }
+}
+
+const PreferredEditorError = Schema.Union([
+  PreferredEditorEnvironmentRequiredError,
+  PreferredEditorUnavailableError,
+]);
+const isPreferredEditorError = Schema.is(PreferredEditorError);
+
+export function localizedPreferredEditorErrorMessage(error: unknown, t: Translate): string {
+  if (!isPreferredEditorError(error)) {
+    return error instanceof Error ? error.message : t("common.errorGeneric");
+  }
+
+  switch (error._tag) {
+    case "PreferredEditorEnvironmentRequiredError":
+      return t("editorPreferences.environmentRequired", { targetPath: error.targetPath });
+    case "PreferredEditorUnavailableError":
+      return t("editorPreferences.editorUnavailable", {
+        targetPath: error.targetPath,
+        environmentId: error.environmentId,
+      });
   }
 }
 

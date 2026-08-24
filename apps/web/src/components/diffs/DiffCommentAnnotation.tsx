@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
+import { useI18n } from "~/i18n";
 
 import { isCommentSubmitShortcut } from "./commentSubmitShortcut";
 
@@ -36,11 +37,12 @@ export function DiffCommentAnnotation({
   onCancel,
   onComment,
   onDelete,
-  placeholder = "Add a comment…",
-  submitLabel = "Comment",
+  placeholder,
+  submitLabel,
   pending = false,
   secondaryAction,
 }: DiffCommentAnnotationProps) {
+  const { t } = useI18n();
   const [localDraftText, setLocalDraftText] = useState("");
   const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
   const trimmedText = displayedText.trim();
@@ -60,7 +62,7 @@ export function DiffCommentAnnotation({
             className="-my-1 -mr-1 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/comment:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
             variant="ghost"
             size="icon-xs"
-            aria-label="Delete comment"
+            aria-label={t("diff.comment.delete")}
             onClick={onDelete}
           >
             <Trash2 className="size-3" />
@@ -83,8 +85,8 @@ export function DiffCommentAnnotation({
         className="relative inline-flex w-full rounded-md border border-border/50 bg-background/20 font-sans text-foreground transition-colors focus-within:border-border/70 [&_[data-slot=textarea]]:min-h-12 [&_[data-slot=textarea]]:cursor-text [&_[data-slot=textarea]]:px-2.5 [&_[data-slot=textarea]]:py-1.5 [&_[data-slot=textarea]]:font-sans [&_[data-slot=textarea]]:text-xs [&_[data-slot=textarea]]:leading-5 max-sm:[&_[data-slot=textarea]]:min-h-12"
         size="sm"
         value={displayedText}
-        placeholder={placeholder}
-        aria-label={`Comment on lines ${rangeLabel}`}
+        placeholder={placeholder ?? t("diff.comment.placeholder")}
+        aria-label={t("diff.comment.linesAria", { lines: rangeLabel })}
         onChange={(event) => (onTextChange ?? setLocalDraftText)(event.target.value)}
         onFocus={(event) => {
           const end = event.currentTarget.value.length;
@@ -102,14 +104,16 @@ export function DiffCommentAnnotation({
         }}
       />
       <div className="mt-1.5 flex items-center gap-1">
-        <span className="mr-auto text-[10px] text-muted-foreground/70">⌘/Ctrl Enter to send</span>
+        <span className="mr-auto text-[10px] text-muted-foreground/70">
+          {t("diff.comment.sendShortcut")}
+        </span>
         <Button
           className="text-muted-foreground hover:text-foreground"
           variant="ghost"
           size="xs"
           onClick={onCancel}
         >
-          Cancel
+          {t("common.cancel")}
         </Button>
         {secondaryAction ? (
           <Button
@@ -123,7 +127,7 @@ export function DiffCommentAnnotation({
           </Button>
         ) : null}
         <Button size="xs" disabled={pending || !trimmedText} onClick={() => onComment(trimmedText)}>
-          {submitLabel}
+          {submitLabel ?? t("diff.comment.submit")}
         </Button>
       </div>
     </div>

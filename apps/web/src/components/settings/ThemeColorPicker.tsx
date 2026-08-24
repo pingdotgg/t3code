@@ -2,29 +2,127 @@ import type { KeyboardEvent, PointerEvent } from "react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { isThemeColor, themeColorToHex, type ThemeColorRole } from "../../themePalette";
 import { cn } from "../../lib/utils";
+import { useI18n, type MessageKey, type Translate } from "../../i18n";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-export function getThemeRoleLabel(role: ThemeColorRole): string {
-  const labels: Partial<Record<ThemeColorRole, string>> = {
-    canvas: "Background",
-    toolbar: "Toolbar background",
-    toolbarForeground: "Toolbar text",
-    toolbarBorder: "Toolbar border",
-    toolbarControl: "Toolbar control",
-    toolbarControlForeground: "Toolbar control text",
-    toolbarControlHover: "Toolbar control hover",
-    accent: "Accent color",
-    errorForeground: "Error text",
-    errorSurface: "Error background",
-    warningForeground: "Warning text",
-    warningSurface: "Warning background",
-    updateForeground: "Update text",
-    updateSurface: "Update background",
-  };
-  const label = labels[role];
-  if (label) return label;
-  return role.replace(/([A-Z])/g, " $1").replace(/^./, (character) => character.toUpperCase());
+const THEME_ROLE_LABELS = {
+  canvas: { key: "theme.colorRole.canvas", fallback: "Background" },
+  chrome: { key: "theme.colorRole.chrome", fallback: "Chrome" },
+  toolbar: { key: "theme.colorRole.toolbar", fallback: "Toolbar background" },
+  toolbarForeground: { key: "theme.colorRole.toolbarForeground", fallback: "Toolbar text" },
+  toolbarBorder: { key: "theme.colorRole.toolbarBorder", fallback: "Toolbar border" },
+  toolbarControl: { key: "theme.colorRole.toolbarControl", fallback: "Toolbar control" },
+  toolbarControlForeground: {
+    key: "theme.colorRole.toolbarControlForeground",
+    fallback: "Toolbar control text",
+  },
+  toolbarControlHover: {
+    key: "theme.colorRole.toolbarControlHover",
+    fallback: "Toolbar control hover",
+  },
+  surface: { key: "theme.colorRole.surface", fallback: "Surface" },
+  surfaceRaised: { key: "theme.colorRole.surfaceRaised", fallback: "Surface Raised" },
+  surfaceOverlay: { key: "theme.colorRole.surfaceOverlay", fallback: "Surface Overlay" },
+  text: { key: "theme.colorRole.text", fallback: "Text" },
+  textMuted: { key: "theme.colorRole.textMuted", fallback: "Text Muted" },
+  border: { key: "theme.colorRole.border", fallback: "Border" },
+  input: { key: "theme.colorRole.input", fallback: "Input" },
+  focus: { key: "theme.colorRole.focus", fallback: "Focus" },
+  accent: { key: "theme.colorRole.accent", fallback: "Accent color" },
+  accentForeground: {
+    key: "theme.colorRole.accentForeground",
+    fallback: "Accent Foreground",
+  },
+  secondary: { key: "theme.colorRole.secondary", fallback: "Secondary" },
+  secondaryForeground: {
+    key: "theme.colorRole.secondaryForeground",
+    fallback: "Secondary Foreground",
+  },
+  muted: { key: "theme.colorRole.muted", fallback: "Muted" },
+  mutedForeground: { key: "theme.colorRole.mutedForeground", fallback: "Muted Foreground" },
+  placeholder: { key: "theme.colorRole.placeholder", fallback: "Placeholder" },
+  secondaryLabel: { key: "theme.colorRole.secondaryLabel", fallback: "Secondary Label" },
+  iconMuted: { key: "theme.colorRole.iconMuted", fallback: "Icon Muted" },
+  error: { key: "theme.colorRole.error", fallback: "Error" },
+  errorForeground: { key: "theme.colorRole.errorForeground", fallback: "Error text" },
+  errorSurface: { key: "theme.colorRole.errorSurface", fallback: "Error background" },
+  warning: { key: "theme.colorRole.warning", fallback: "Warning" },
+  warningForeground: { key: "theme.colorRole.warningForeground", fallback: "Warning text" },
+  warningSurface: { key: "theme.colorRole.warningSurface", fallback: "Warning background" },
+  update: { key: "theme.colorRole.update", fallback: "Update" },
+  updateForeground: { key: "theme.colorRole.updateForeground", fallback: "Update text" },
+  updateSurface: { key: "theme.colorRole.updateSurface", fallback: "Update background" },
+  accentSurface: { key: "theme.colorRole.accentSurface", fallback: "Accent Surface" },
+  accentSurfaceForeground: {
+    key: "theme.colorRole.accentSurfaceForeground",
+    fallback: "Accent Surface Foreground",
+  },
+  messageSurface: { key: "theme.colorRole.messageSurface", fallback: "Message Surface" },
+  messageForeground: {
+    key: "theme.colorRole.messageForeground",
+    fallback: "Message Foreground",
+  },
+  messageAction: { key: "theme.colorRole.messageAction", fallback: "Message Action" },
+  messageActionForeground: {
+    key: "theme.colorRole.messageActionForeground",
+    fallback: "Message Action Foreground",
+  },
+  messageActionHover: {
+    key: "theme.colorRole.messageActionHover",
+    fallback: "Message Action Hover",
+  },
+  codeBackground: { key: "theme.colorRole.codeBackground", fallback: "Code Background" },
+  codeForeground: { key: "theme.colorRole.codeForeground", fallback: "Code Foreground" },
+  sidebar: { key: "theme.colorRole.sidebar", fallback: "Sidebar" },
+  sidebarForeground: {
+    key: "theme.colorRole.sidebarForeground",
+    fallback: "Sidebar Foreground",
+  },
+  sidebarMutedForeground: {
+    key: "theme.colorRole.sidebarMutedForeground",
+    fallback: "Sidebar Muted Foreground",
+  },
+  sidebarControlSurface: {
+    key: "theme.colorRole.sidebarControlSurface",
+    fallback: "Sidebar Control Surface",
+  },
+  sidebarRowHover: { key: "theme.colorRole.sidebarRowHover", fallback: "Sidebar Row Hover" },
+  sidebarRowActive: {
+    key: "theme.colorRole.sidebarRowActive",
+    fallback: "Sidebar Row Active",
+  },
+  sidebarRowSelected: {
+    key: "theme.colorRole.sidebarRowSelected",
+    fallback: "Sidebar Row Selected",
+  },
+  sidebarBorder: { key: "theme.colorRole.sidebarBorder", fallback: "Sidebar Border" },
+  terminalBackground: {
+    key: "theme.colorRole.terminalBackground",
+    fallback: "Terminal Background",
+  },
+  terminalForeground: {
+    key: "theme.colorRole.terminalForeground",
+    fallback: "Terminal Foreground",
+  },
+  terminalCursor: { key: "theme.colorRole.terminalCursor", fallback: "Terminal Cursor" },
+  terminalSelection: {
+    key: "theme.colorRole.terminalSelection",
+    fallback: "Terminal Selection",
+  },
+  terminalScrollbar: {
+    key: "theme.colorRole.terminalScrollbar",
+    fallback: "Terminal Scrollbar",
+  },
+  terminalScrollbarHover: {
+    key: "theme.colorRole.terminalScrollbarHover",
+    fallback: "Terminal Scrollbar Hover",
+  },
+} satisfies Record<ThemeColorRole, Readonly<{ key: MessageKey; fallback: string }>>;
+
+export function getThemeRoleLabel(role: ThemeColorRole, t?: Translate): string {
+  const label = THEME_ROLE_LABELS[role];
+  return t ? t(label.key) : label.fallback;
 }
 
 type ThemeColorHsv = {
@@ -146,6 +244,7 @@ function ThemeColorPickerPanel({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const { t } = useI18n();
   const normalizedValue = normalizeThemePickerColor(value);
   const alphaSuffix = themePickerAlphaSuffix(value);
   const [hsv, setHsv] = useState(() => themeHexToHsv(normalizedValue));
@@ -297,7 +396,7 @@ function ThemeColorPickerPanel({
       <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
         <div className="min-w-0">
           <p className="truncate text-xs font-semibold text-foreground">{label}</p>
-          <p className="text-[11px] text-muted-foreground">Choose a color</p>
+          <p className="text-[11px] text-muted-foreground">{t("theme.color.choose")}</p>
         </div>
         <span
           className="size-7 shrink-0 rounded-full shadow-sm"
@@ -306,8 +405,11 @@ function ThemeColorPickerPanel({
       </div>
       <div className="grid gap-3 px-3 pb-3 pt-3">
         <div
-          aria-label={`${label} saturation and brightness`}
-          aria-valuetext={`saturation ${Math.round(hsv.s * 100)}%, brightness ${Math.round(hsv.v * 100)}%`}
+          aria-label={t("theme.color.saturationBrightness", { label })}
+          aria-valuetext={t("theme.color.saturationBrightnessValue", {
+            saturation: Math.round(hsv.s * 100),
+            brightness: Math.round(hsv.v * 100),
+          })}
           className="relative h-32 cursor-crosshair touch-none overflow-hidden rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover"
           role="slider"
           style={{
@@ -334,7 +436,7 @@ function ThemeColorPickerPanel({
           />
         </div>
         <div
-          aria-label={`${label} hue`}
+          aria-label={t("theme.color.hue", { label })}
           aria-valuemax={360}
           aria-valuemin={0}
           aria-valuenow={Math.round(hsv.h)}
@@ -378,7 +480,7 @@ function ThemeColorPickerPanel({
                 style={{ backgroundColor: currentColor }}
               />
               <input
-                aria-label={`${label} picker hex value`}
+                aria-label={t("theme.color.pickerHex", { label })}
                 className="h-8 min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none"
                 onBlur={() => {
                   isEditingTextRef.current = false;
@@ -400,7 +502,7 @@ function ThemeColorPickerPanel({
             </span>
             <span className="flex min-w-0 items-center rounded-lg border border-input bg-background px-2 focus-within:border-ring">
               <input
-                aria-label={`${label} picker RGB value`}
+                aria-label={t("theme.color.pickerRgb", { label })}
                 className="h-8 min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none"
                 onBlur={() => {
                   isEditingTextRef.current = false;
@@ -433,6 +535,8 @@ function ThemeColorPicker({
   onChange: (value: string) => void;
   onInteract?: () => void;
 }) {
+  const { t } = useI18n();
+  const chooseLabel = t("theme.color.chooseNamed", { label });
   return (
     <Popover>
       <Tooltip>
@@ -441,7 +545,7 @@ function ThemeColorPicker({
             <PopoverTrigger
               render={
                 <button
-                  aria-label={`Choose ${label} color`}
+                  aria-label={chooseLabel}
                   className="relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-foreground/30 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   onFocus={onInteract}
                   onPointerDown={onInteract}
@@ -456,7 +560,7 @@ function ThemeColorPicker({
             />
           }
         />
-        <TooltipPopup side="top">{`Choose ${label} color`}</TooltipPopup>
+        <TooltipPopup side="top">{chooseLabel}</TooltipPopup>
       </Tooltip>
       <PopoverPopup
         align="end"
@@ -488,7 +592,8 @@ export const ThemeColorField = memo(function ThemeColorField({
   selected?: boolean;
   label?: string;
 }) {
-  const label = customLabel ?? getThemeRoleLabel(role);
+  const { t } = useI18n();
+  const label = customLabel ?? getThemeRoleLabel(role, t);
   const isColorValue = isThemeColor(value);
   const swatchValue = isColorValue ? value : "#000000";
   const editorValue = value.trim().toLowerCase().startsWith("oklch(")
@@ -507,7 +612,9 @@ export const ThemeColorField = memo(function ThemeColorField({
         <TooltipTrigger
           render={
             <button
-              aria-label={`${selected ? "Hide" : "Show"} ${label} usage`}
+              aria-label={t(selected ? "theme.color.hideUsage" : "theme.color.showUsage", {
+                label,
+              })}
               aria-pressed={selected}
               className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => onToggleSelected?.(role)}
@@ -517,7 +624,9 @@ export const ThemeColorField = memo(function ThemeColorField({
             </button>
           }
         />
-        <TooltipPopup side="top">{`${selected ? "Hide" : "Show"} where ${label} is used`}</TooltipPopup>
+        <TooltipPopup side="top">
+          {t(selected ? "theme.color.hideWhereUsed" : "theme.color.showWhereUsed", { label })}
+        </TooltipPopup>
       </Tooltip>
       <div className="ml-auto flex shrink-0 items-center gap-2">
         <ThemeColorPicker
@@ -528,7 +637,7 @@ export const ThemeColorField = memo(function ThemeColorField({
         />
         <Input
           aria-invalid={!isColorValue}
-          aria-label={`${label} hex value`}
+          aria-label={t("theme.color.hexValue", { label })}
           className="w-28 shrink-0 rounded-md border-0 bg-black/10 font-mono text-xs text-foreground shadow-none focus-within:bg-black/15 focus-within:ring-0 dark:bg-black/20 dark:focus-within:bg-black/25 [&_[data-slot=input]]:text-right"
           id={`${role}-hex`}
           nativeInput

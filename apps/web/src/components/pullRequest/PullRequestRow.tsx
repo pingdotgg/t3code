@@ -1,6 +1,7 @@
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
+import { useI18n } from "~/i18n";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
@@ -38,6 +39,7 @@ function PullRequestRowImpl({
   matchedElsewhere?: boolean;
   onSelect: (entry: EnvironmentPullRequestEntry) => void;
 }) {
+  const { t } = useI18n();
   const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
   return (
     <button
@@ -79,8 +81,9 @@ function PullRequestRowImpl({
                 event.stopPropagation();
                 void showPullRequestLinkContextMenu({
                   url: entry.url,
-                  openLabel: openOnHostLabel(entry.provider),
+                  openLabel: openOnHostLabel(entry.provider, t),
                   position: { x: event.clientX, y: event.clientY },
+                  t,
                 });
               }}
             >
@@ -103,7 +106,9 @@ function PullRequestRowImpl({
                   : "text-amber-600/90 dark:text-amber-400/80",
               )}
             >
-              {entry.reviewDecision === "approved" ? "Approved" : "Changes requested"}
+              {entry.reviewDecision === "approved"
+                ? t("pullRequest.review.approved")
+                : t("pullRequest.review.changesRequested")}
             </span>
           ) : null}
           {entry.checksState === undefined ? null : (
@@ -119,13 +124,13 @@ function PullRequestRowImpl({
           )}
           {matchedElsewhere ? (
             <span className="shrink-0 rounded-full border border-border/60 px-1.5 text-[10px]">
-              matched in the description
+              {t("pullRequest.matchedDescription")}
             </span>
           ) : null}
         </PullRequestMetaLine>
       </span>
       <span className="flex shrink-0 flex-col items-end gap-0.5 text-xs text-muted-foreground/70 tabular-nums">
-        <span>{formatRelativeTimeLabel(entry.updatedAt)}</span>
+        <span>{formatRelativeTimeLabel(entry.updatedAt, t)}</span>
         <PullRequestDiffStat additions={entry.additions} deletions={entry.deletions} />
       </span>
     </button>

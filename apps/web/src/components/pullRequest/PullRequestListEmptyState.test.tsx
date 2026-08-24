@@ -4,9 +4,34 @@
  * invoked, so the button's own hooks never run outside a render.
  */
 import { isValidElement, type ReactElement, type ReactNode } from "react";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { PullRequestListEmptyState } from "./PullRequestListEmptyState";
+
+vi.mock("../../i18n", () => ({
+  useI18n: () => ({
+    t: (key: string) =>
+      ({
+        "common.loading": "Loading",
+        "pullRequest.empty.checkAgain": "Check again",
+        "pullRequest.empty.checking": "Checking...",
+        "pullRequest.empty.clearSearch": "Clear search",
+        "pullRequest.empty.filtered": "Nothing under these filters",
+        "pullRequest.empty.filteredDescription":
+          "Widen the state, involvement or project filter to see more.",
+        "pullRequest.empty.loadMore": "Load more pull requests",
+        "pullRequest.empty.noMatchDescription":
+          "The hosts were searched for it. Try fewer words, or search by number, author or branch.",
+        "pullRequest.empty.noProjects": "No projects in this workspace",
+        "pullRequest.empty.noProjectsDescription":
+          "Add a project, and the pull requests from its repository appear here.",
+        "pullRequest.empty.none": "No pull requests",
+        "pullRequest.empty.noneDescription":
+          "Pull requests from every project in this workspace appear here.",
+        "sidebar.addProject": "Add project",
+      })[key] ?? key,
+  }),
+}));
 
 function textOf(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);

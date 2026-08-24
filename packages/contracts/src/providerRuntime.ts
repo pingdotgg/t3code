@@ -79,6 +79,9 @@ export type RuntimePlanStepStatus = typeof RuntimePlanStepStatus.Type;
 const RuntimeItemStatus = Schema.Literals(["inProgress", "completed", "failed", "declined"]);
 export type RuntimeItemStatus = typeof RuntimeItemStatus.Type;
 
+export const AssistantMessagePhase = Schema.Literals(["commentary", "final_answer"]);
+export type AssistantMessagePhase = typeof AssistantMessagePhase.Type;
+
 const RuntimeContentStreamKind = Schema.Literals([
   "assistant_text",
   "reasoning_text",
@@ -409,6 +412,7 @@ export const ItemLifecyclePayload = Schema.Struct({
   status: Schema.optional(RuntimeItemStatus),
   title: Schema.optional(TrimmedNonEmptyStringSchema),
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
+  messagePhase: Schema.optional(AssistantMessagePhase),
   data: Schema.optional(Schema.Unknown),
   /**
    * Owning agent when this item ran inside a subagent (resolved from the
@@ -606,10 +610,22 @@ export const RuntimeTaskStatus = Schema.Literals([
 ]);
 export type RuntimeTaskStatus = typeof RuntimeTaskStatus.Type;
 
+export const TaskTranscriptEntry = Schema.Struct({
+  id: TrimmedNonEmptyStringSchema,
+  kind: Schema.Literals(["assistant", "reasoning", "tool"]),
+  text: Schema.optional(TrimmedNonEmptyStringSchema),
+  label: Schema.optional(TrimmedNonEmptyStringSchema),
+  phase: Schema.optional(AssistantMessagePhase),
+  itemType: Schema.optional(CanonicalItemType),
+  status: Schema.optional(RuntimeItemStatus),
+});
+export type TaskTranscriptEntry = typeof TaskTranscriptEntry.Type;
+
 const TaskProgressPayload = Schema.Struct({
   taskId: RuntimeTaskId,
   description: TrimmedNonEmptyStringSchema,
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
+  transcriptEntry: Schema.optional(TaskTranscriptEntry),
   usage: Schema.optional(Schema.Unknown),
   typedUsage: Schema.optional(RuntimeTaskUsage),
   lastToolName: Schema.optional(TrimmedNonEmptyStringSchema),

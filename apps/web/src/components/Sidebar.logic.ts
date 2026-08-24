@@ -13,6 +13,7 @@ import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import type { Translate } from "../i18n";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -106,21 +107,28 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   ];
 }
 
-export function buildBulkTitleRegenerationContextMenuItem(input: {
-  supportedCount: number;
-  actionableCount: number;
-}): ContextMenuItem<"regenerate-title"> | null {
+export function buildBulkTitleRegenerationContextMenuItem(
+  input: {
+    supportedCount: number;
+    actionableCount: number;
+  },
+  t?: Translate,
+): ContextMenuItem<"regenerate-title"> | null {
   if (input.supportedCount === 0) return null;
   if (input.actionableCount === 0) {
     return {
       id: "regenerate-title",
-      label: `Regenerating… (${input.supportedCount})`,
+      label:
+        t?.("sidebar.regeneratingTitleCount", { count: input.supportedCount }) ??
+        `Regenerating… (${input.supportedCount})`,
       disabled: true,
     };
   }
   return {
     id: "regenerate-title",
-    label: `Regenerate titles (${input.actionableCount})`,
+    label:
+      t?.("sidebar.regenerateTitlesCount", { count: input.actionableCount }) ??
+      `Regenerate titles (${input.actionableCount})`,
   };
 }
 
@@ -150,6 +158,25 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   Monitoring: 2,
   Completed: 1,
 };
+
+export function localizedThreadStatusLabel(label: ThreadStatusPill["label"], t: Translate): string {
+  switch (label) {
+    case "Pending Approval":
+      return t("threadStatus.pendingApproval");
+    case "Awaiting Input":
+      return t("threadStatus.awaitingInput");
+    case "Working":
+      return t("threadStatus.working");
+    case "Connecting":
+      return t("threadStatus.connecting");
+    case "Plan Ready":
+      return t("threadStatus.planReady");
+    case "Monitoring":
+      return t("threadStatus.monitoring");
+    case "Completed":
+      return t("threadStatus.completed");
+  }
+}
 
 type ThreadStatusInput = Pick<
   SidebarThreadSummary,

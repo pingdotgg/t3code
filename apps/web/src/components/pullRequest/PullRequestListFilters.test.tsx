@@ -5,6 +5,29 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { PullRequestFiltersMenu, pullRequestProjectKey } from "./PullRequestListFilters";
 
+vi.mock("~/i18n", () => ({
+  useI18n: () => ({
+    t: (key: string) =>
+      ({
+        "pullRequest.filter.all": "All",
+        "pullRequest.filter.checks": "Checks",
+        "pullRequest.filter.draft": "Draft",
+        "pullRequest.filter.draftsOnly": "Drafts only",
+        "pullRequest.filter.hideDrafts": "Hide drafts",
+        "pullRequest.filter.involvement": "Involvement",
+        "pullRequest.filter.noReviews": "No reviews",
+        "pullRequest.filter.passing": "Passing",
+        "pullRequest.filter.failing": "Failing",
+        "pullRequest.filter.project": "Project",
+        "pullRequest.filter.review": "Review",
+        "pullRequest.filter.reviewRequired": "Review required",
+        "pullRequest.filter.state": "State",
+        "pullRequest.review.approved": "Approved",
+        "pullRequest.review.changesRequested": "Changes requested",
+      })[key] ?? key,
+  }),
+}));
+
 function findValueChange(
   node: ReactNode,
 ):

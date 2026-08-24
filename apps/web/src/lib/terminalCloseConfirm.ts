@@ -1,4 +1,5 @@
 import { readLocalApi } from "~/localApi";
+import type { Translate } from "~/i18n";
 
 let pendingConfirmations = 0;
 
@@ -15,6 +16,7 @@ export function isTerminalCloseConfirmPending(): boolean {
  */
 export async function confirmTerminalClose(
   labels: readonly [string, ...string[]],
+  t?: Translate,
 ): Promise<boolean> {
   const localApi = readLocalApi();
   if (!localApi) return true;
@@ -23,14 +25,20 @@ export async function confirmTerminalClose(
     return await localApi.dialogs.confirm(
       labels.length === 1
         ? [
-            `Close terminal "${labels[0]}"?`,
-            "This stops the running process and clears its history.",
+            t?.("terminal.closeConfirm.oneTitle", { label: labels[0] }) ??
+              `Close terminal "${labels[0]}"?`,
+            t?.("terminal.closeConfirm.oneDescription") ??
+              "This stops the running process and clears its history.",
           ].join("\n")
         : [
-            `Close ${labels.length} terminals?`,
-            `This stops their running processes and clears their histories: ${labels
-              .map((label) => `"${label}"`)
-              .join(", ")}.`,
+            t?.("terminal.closeConfirm.manyTitle", { count: labels.length }) ??
+              `Close ${labels.length} terminals?`,
+            t?.("terminal.closeConfirm.manyDescription", {
+              labels: labels.map((label) => `"${label}"`).join(", "),
+            }) ??
+              `This stops their running processes and clears their histories: ${labels
+                .map((label) => `"${label}"`)
+                .join(", ")}.`,
           ].join("\n"),
       { variant: "destructive" },
     );

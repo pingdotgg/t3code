@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { type PendingApproval } from "../../session-logic";
 import { cn } from "~/lib/utils";
+import { useI18n } from "~/i18n";
 
 interface ComposerPendingApprovalPanelProps {
   approval: PendingApproval;
@@ -13,18 +14,19 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
   pendingCount,
   className,
 }: ComposerPendingApprovalPanelProps) {
+  const { t } = useI18n();
   const fallbackLabel =
     approval.requestKind === "command"
-      ? "Command approval"
+      ? t("chat.approval.command")
       : approval.requestKind === "file-read"
-        ? "File read approval"
-        : "File change approval";
+        ? t("chat.approval.fileRead")
+        : t("chat.approval.fileChange");
   const detailAriaLabel =
     approval.requestKind === "command"
-      ? "Command"
+      ? t("chat.toolActivity.runCommand")
       : approval.requestKind === "file-read"
-        ? "File to read"
-        : "File change";
+        ? t("chat.toolActivity.readFile")
+        : t("chat.toolActivity.editFile");
 
   return (
     <div

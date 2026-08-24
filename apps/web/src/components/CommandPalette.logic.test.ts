@@ -1,13 +1,16 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
+import { createTranslator } from "../i18n";
 import {
   browseInputEndPaddingClass,
   buildBrowseGroups,
+  buildRootGroups,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
+  getCommandPaletteInputPlaceholder,
   reduceCommandPaletteUiState,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
@@ -38,6 +41,30 @@ describe("browseInputEndPaddingClass", () => {
         hasHighlightedBrowseItem: false,
       }),
     ).toContain("pe-24");
+  });
+});
+
+describe("localized command palette copy", () => {
+  it("uses translated placeholders and group labels supplied by the caller", () => {
+    const t = createTranslator("zh-CN");
+    const item = {
+      kind: "action" as const,
+      value: "settings",
+      searchTerms: ["settings"],
+      title: "Settings",
+      icon: null,
+      run: async () => undefined,
+    };
+
+    expect(getCommandPaletteInputPlaceholder("root", t)).toBe("搜索命令、项目和任务...");
+    expect(
+      buildRootGroups({
+        actionItems: [item],
+        recentThreadItems: [item],
+        actionsLabel: t("commandPalette.actions"),
+        recentThreadsLabel: t("commandPalette.recentThreads"),
+      }).map((group) => group.label),
+    ).toEqual(["操作", "最近的任务"]);
   });
 });
 

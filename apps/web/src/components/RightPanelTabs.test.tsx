@@ -97,6 +97,7 @@ function renderTabs(
       }}
       {...(previewRuntimeTabId ? { previewRuntimeTabId } : {})}
       terminalLabelsById={new Map()}
+      agentTitlesById={new Map()}
       onActivate={() => undefined}
       onCloseSurface={() => undefined}
       onCloseOtherSurfaces={() => undefined}
@@ -123,6 +124,79 @@ function renderTabs(
     </RightPanelTabs>,
   );
 }
+
+describe("RightPanelTabs agent titles", () => {
+  it("renders one live title per agent surface and keeps a stable fallback", () => {
+    const firstAgent = {
+      id: "agent:child-1" as const,
+      kind: "agents" as const,
+      agentId: "child-1",
+    };
+    const secondAgent = {
+      id: "agent:child-2" as const,
+      kind: "agents" as const,
+      agentId: "child-2",
+    };
+    const missingAgent = {
+      id: "agent:missing" as const,
+      kind: "agents" as const,
+      agentId: "missing",
+    };
+
+    const html = renderToStaticMarkup(
+      <RightPanelTabs
+        mode="inline"
+        surfaces={[firstAgent, secondAgent, missingAgent]}
+        activeSurfaceId={firstAgent.id}
+        pendingSurfaceIds={new Set()}
+        previewSessions={{}}
+        desktopByTabId={{}}
+        terminalLabelsById={new Map()}
+        agentTitlesById={
+          new Map([
+            ["child-1", "Inspect timeline"],
+            ["child-2", "Audit mobile"],
+          ])
+        }
+        onActivate={() => undefined}
+        onCloseSurface={() => undefined}
+        onCloseOtherSurfaces={() => undefined}
+        onCloseSurfacesToRight={() => undefined}
+        onCloseAllSurfaces={() => undefined}
+        onCopyFilePath={() => undefined}
+        onAddBrowser={() => undefined}
+        onAddTerminal={() => undefined}
+        onAddPullRequest={() => undefined}
+        onAddDiff={() => undefined}
+        onAddFiles={() => undefined}
+        onAddAgents={() => undefined}
+        onAddContext={() => undefined}
+        liveAgentCount={0}
+        browserAvailable={false}
+        terminalAvailable={false}
+        diffAvailable={false}
+        filesAvailable={false}
+        pullRequestAvailable={false}
+        agentsAvailable
+        contextAvailable={false}
+      >
+        <div>content</div>
+      </RightPanelTabs>,
+    );
+
+    expect(html).toContain(">Inspect timeline<");
+    expect(html).toContain(">Audit mobile<");
+    expect(html).toContain(">Agents<");
+    expect(html).toContain('aria-label="Close Inspect timeline"');
+    expect(html).toContain('aria-label="Close Audit mobile"');
+    expect(html).toContain('aria-label="Close Agents"');
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain('aria-label="Panel tabs"');
+    expect(html).toContain('role="tab" aria-selected="true" tabindex="0"');
+    expect((html.match(/role="tab"/g) ?? []).length).toBe(3);
+    expect((html.match(/role="tab" aria-selected="false" tabindex="-1"/g) ?? []).length).toBe(2);
+  });
+});
 
 describe("RightPanelTabs preview favicon", () => {
   it("prefers a live capture and never asks Google about a private hostname", () => {

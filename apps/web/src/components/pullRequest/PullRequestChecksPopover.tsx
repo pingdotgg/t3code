@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { readLocalApi } from "~/localApi";
+import { useI18n } from "~/i18n";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -31,6 +32,7 @@ function LazyChecksBody({
   environmentId: EnvironmentId;
   reference: PullRequestRef;
 }) {
+  const { t } = useI18n();
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: reference }),
   );
@@ -40,7 +42,9 @@ function LazyChecksBody({
   if (detailQuery.data === null) {
     return (
       <p className="text-muted-foreground text-xs">
-        {detailQuery.isPending ? "Loading checks…" : "No checks reported"}
+        {detailQuery.isPending
+          ? t("pullRequest.checks.loading")
+          : t("pullRequest.checks.noneReported")}
       </p>
     );
   }
@@ -48,8 +52,9 @@ function LazyChecksBody({
 }
 
 function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
+  const { t } = useI18n();
   if (checks.length === 0) {
-    return <p className="text-muted-foreground text-xs">No checks reported</p>;
+    return <p className="text-muted-foreground text-xs">{t("pullRequest.checks.noneReported")}</p>;
   }
   return (
     <ul className="flex flex-col gap-1">
@@ -65,7 +70,7 @@ function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
             <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
           </Tooltip>
           <span className="shrink-0 text-muted-foreground">
-            {pullRequestCheckStatusLabel(check.status)}
+            {pullRequestCheckStatusLabel(check.status, t)}
           </span>
           {check.url === null ? null : (
             <button
@@ -73,7 +78,7 @@ function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
               className="shrink-0 text-primary hover:underline"
               onClick={() => void readLocalApi()?.shell.openExternal(check.url ?? "")}
             >
-              Details
+              {t("pullRequest.details")}
             </button>
           )}
         </li>
@@ -103,9 +108,10 @@ export function PullRequestChecksPopover({
   reference?: PullRequestRef;
   className?: string;
 }) {
-  const presentation = pullRequestChecksStatePresentation(checksState);
+  const { t } = useI18n();
+  const presentation = pullRequestChecksStatePresentation(checksState, t);
   // Counts beat the rollup's own wording where they are known, the way GitHub's own header reads.
-  const summary = checks === undefined ? null : summarizePullRequestChecks(checks);
+  const summary = checks === undefined ? null : summarizePullRequestChecks(checks, t);
   return (
     <Popover>
       {/* A listing row is itself a button, so the trigger renders as a span: a nested button is
@@ -116,7 +122,7 @@ export function PullRequestChecksPopover({
           <span
             role="button"
             tabIndex={0}
-            aria-label={`Checks: ${presentation.label}`}
+            aria-label={t("pullRequest.checks.label", { summary: presentation.label })}
             className={cn("inline-flex shrink-0 cursor-pointer items-center", className)}
           />
         }

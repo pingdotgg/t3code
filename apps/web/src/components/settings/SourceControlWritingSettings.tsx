@@ -16,31 +16,33 @@ import {
   resolveAppModelSelectionState,
 } from "../../modelSelection";
 import { primaryServerProvidersAtom } from "../../state/server";
+import { useI18n, type MessageKey } from "../../i18n";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 
-const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
-  {
-    repo_conventions: {
-      label: "Repository conventions",
-      description: "In each project, matches recent change descriptions and change request titles.",
-    },
-    conventional_commits: {
-      label: "Conventional Commits",
-      description:
-        "Uses Conventional Commit prefixes for change descriptions; change request titles and descriptions stay concise.",
-    },
-    custom: {
-      label: "Custom instructions",
-      description:
-        "Applies your instructions to change descriptions and change request titles and descriptions in every project.",
-    },
-  };
+const MODE_OPTIONS: Record<
+  SourceControlWritingStyleMode,
+  { labelKey: MessageKey; descriptionKey: MessageKey }
+> = {
+  repo_conventions: {
+    labelKey: "sourceControl.writing.repositoryConventions",
+    descriptionKey: "sourceControl.writing.repositoryConventionsDescription",
+  },
+  conventional_commits: {
+    labelKey: "sourceControl.writing.conventionalCommits",
+    descriptionKey: "sourceControl.writing.conventionalCommitsDescription",
+  },
+  custom: {
+    labelKey: "sourceControl.writing.customInstructions",
+    descriptionKey: "sourceControl.writing.customInstructionsDescription",
+  },
+};
 
 export function SourceControlWritingSettingsSection() {
+  const { t } = useI18n();
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
@@ -71,14 +73,14 @@ export function SourceControlWritingSettingsSection() {
   );
 
   return (
-    <SettingsSection title="Text generation">
+    <SettingsSection title={t("sourceControl.writing.title")}>
       <SettingsRow
-        title="Source control writing style"
-        description={MODE_OPTIONS[style.mode].description}
+        title={t("sourceControl.writing.style")}
+        description={t(MODE_OPTIONS[style.mode].descriptionKey)}
         resetAction={
           isSourceControlWritingStyleDirty ? (
             <SettingResetButton
-              label="source control writing style"
+              label={t("sourceControl.writing.styleResetLabel")}
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -103,13 +105,16 @@ export function SourceControlWritingSettingsSection() {
               });
             }}
           >
-            <SelectTrigger className="w-full sm:w-56" aria-label="Source control writing style">
-              <SelectValue>{MODE_OPTIONS[style.mode].label}</SelectValue>
+            <SelectTrigger
+              className="w-full sm:w-56"
+              aria-label={t("sourceControl.writing.styleAria")}
+            >
+              <SelectValue>{t(MODE_OPTIONS[style.mode].labelKey)}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {(Object.keys(MODE_OPTIONS) as SourceControlWritingStyleMode[]).map((mode) => (
                 <SelectItem key={mode} hideIndicator value={mode}>
-                  {MODE_OPTIONS[mode].label}
+                  {t(MODE_OPTIONS[mode].labelKey)}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -129,20 +134,20 @@ export function SourceControlWritingSettingsSection() {
                 }
               }}
               rows={4}
-              placeholder="Keep titles concise. Use short bullet points in descriptions."
-              aria-label="Custom source control writing instructions"
+              placeholder={t("sourceControl.writing.customPlaceholder")}
+              aria-label={t("sourceControl.writing.customAria")}
             />
           </div>
         ) : null}
       </SettingsRow>
 
       <SettingsRow
-        title="Follow change request templates"
-        description="Structures change request descriptions using the current repository's template when one is available."
+        title={t("sourceControl.writing.followTemplates")}
+        description={t("sourceControl.writing.followTemplatesDescription")}
         resetAction={
           style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
             <SettingResetButton
-              label="change request templates"
+              label={t("sourceControl.writing.followTemplatesResetLabel")}
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -163,14 +168,14 @@ export function SourceControlWritingSettingsSection() {
                 },
               })
             }
-            aria-label="Follow change request templates"
+            aria-label={t("sourceControl.writing.followTemplates")}
           />
         }
       />
 
       <SettingsRow
-        title="Source control writer model"
-        description="Optional model override for change descriptions, change request titles and descriptions, and branch or bookmark names. Off uses the global text generation model."
+        title={t("sourceControl.writing.model")}
+        description={t("sourceControl.writing.modelDescription")}
         control={
           <div className="flex flex-wrap items-center justify-end gap-2">
             {usesDedicatedModel ? (
@@ -182,7 +187,7 @@ export function SourceControlWritingSettingsSection() {
                 modelOptionsByInstance={modelOptionsByInstance}
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                triggerAriaLabel="Source control writer model"
+                triggerAriaLabel={t("sourceControl.writing.model")}
                 onInstanceModelChange={(instanceId, model) => {
                   updateSettings({
                     sourceControlWriterModelSelection: createModelSelection(instanceId, model),
@@ -203,7 +208,7 @@ export function SourceControlWritingSettingsSection() {
                     : null,
                 })
               }
-              aria-label="Use a separate source control writer model"
+              aria-label={t("sourceControl.writing.useSeparateModel")}
             />
           </div>
         }

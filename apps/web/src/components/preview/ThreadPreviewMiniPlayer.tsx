@@ -9,6 +9,7 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { useI18n } from "~/i18n";
 import { useThreadPreviewState } from "~/previewStateStore";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -46,6 +47,7 @@ interface Props {
 }
 
 export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props) {
+  const { t } = useI18n();
   const rootRef = useRef<HTMLElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const resizeRef = useRef<ResizeState | null>(null);
@@ -79,8 +81,8 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
     void operation(runtimeTabId).catch((error) => {
       toastManager.add({
         type: "error",
-        title: "Unable to update popped-out preview",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: t("preview.error.updatePoppedOut"),
+        description: error instanceof Error ? error.message : t("common.errorGeneric"),
       });
     });
   };
@@ -229,7 +231,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
   return (
     <section
       ref={rootRef}
-      aria-label="Floating browser preview"
+      aria-label={t("preview.floating")}
       data-preview-mini-player={tabId}
       className="pointer-events-none absolute select-none"
       style={
@@ -261,7 +263,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  aria-label="Open preview in right panel"
+                  aria-label={t("preview.openRightPanel")}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={openInPanel}
                 />
@@ -269,7 +271,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
             >
               <PanelRightIcon />
             </TooltipTrigger>
-            <TooltipPopup side="top">Open in right panel</TooltipPopup>
+            <TooltipPopup side="top">{t("preview.openRightPanel")}</TooltipPopup>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger
@@ -279,8 +281,8 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
                   size="icon-xs"
                   aria-label={
                     desktopOverlay?.pictureInPicture
-                      ? "Close popped-out preview"
-                      : "Pop preview into separate window"
+                      ? t("preview.closePoppedOut")
+                      : t("preview.popOut")
                   }
                   disabled={!desktopOverlay?.hasWebContents}
                   onPointerDown={(event) => event.stopPropagation()}
@@ -292,8 +294,8 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
             </TooltipTrigger>
             <TooltipPopup side="top">
               {desktopOverlay?.pictureInPicture
-                ? "Close separate window"
-                : "Pop into separate window"}
+                ? t("preview.closeSeparateWindowShort")
+                : t("preview.popOutShort")}
             </TooltipPopup>
           </Tooltip>
           <Tooltip>
@@ -302,7 +304,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  aria-label="Close floating preview"
+                  aria-label={t("preview.closeFloating")}
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={close}
                 />
@@ -310,7 +312,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
             >
               <XIcon />
             </TooltipTrigger>
-            <TooltipPopup side="top">Close floating preview</TooltipPopup>
+            <TooltipPopup side="top">{t("preview.closeFloating")}</TooltipPopup>
           </Tooltip>
         </div>
       </div>
@@ -332,12 +334,12 @@ export function ThreadPreviewMiniPlayer({ threadRef, tabId, bottomInset }: Props
         <div className="pointer-events-none absolute inset-0 z-[31] rounded-xl ring-1 ring-inset ring-border/80" />
         {!desktopOverlay?.hasWebContents ? (
           <div className="pointer-events-none absolute inset-0 z-[32] flex items-center justify-center rounded-xl bg-muted text-xs text-muted-foreground">
-            Reconnecting preview…
+            {t("preview.reconnecting")}
           </div>
         ) : null}
         <button
           type="button"
-          aria-label="Resize floating preview"
+          aria-label={t("preview.resizeFloating")}
           className="pointer-events-auto absolute bottom-0 right-0 z-[33] size-5 cursor-nwse-resize rounded-br-xl after:absolute after:bottom-1 after:right-1 after:size-2 after:border-b after:border-r after:border-foreground/45"
           onPointerDown={handleResizePointerDown}
           onPointerMove={handleResizePointerMove}

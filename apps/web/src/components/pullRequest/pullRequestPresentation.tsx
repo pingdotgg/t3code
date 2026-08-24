@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Children, isValidElement, type ReactNode } from "react";
 
+import { useI18n, type Translate } from "~/i18n";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
@@ -40,29 +41,32 @@ interface StatePresentation {
  * Draft outranks conflicts: a draft is not heading for a merge yet, so conflicts only surface
  * once it is real work.
  */
-export function resolvePullRequestState(input: {
-  readonly state: PullRequestState;
-  readonly isDraft: boolean;
-  readonly mergeability?: PullRequestMergeability;
-  readonly baseBranch?: string;
-}): StatePresentation {
+export function resolvePullRequestState(
+  input: {
+    readonly state: PullRequestState;
+    readonly isDraft: boolean;
+    readonly mergeability?: PullRequestMergeability;
+    readonly baseBranch?: string;
+  },
+  t?: Translate,
+): StatePresentation {
   if (input.state === "merged") {
     return {
-      label: "Merged",
+      label: t?.("pullRequest.state.merged") ?? "Merged",
       toneClassName: "text-violet-600 dark:text-violet-300/90",
       Icon: GitMergeIcon,
     };
   }
   if (input.state === "closed") {
     return {
-      label: "Closed",
+      label: t?.("pullRequest.state.closed") ?? "Closed",
       toneClassName: "text-red-600 dark:text-red-300/90",
       Icon: GitPullRequestClosedIcon,
     };
   }
   if (input.isDraft) {
     return {
-      label: "Draft",
+      label: t?.("pullRequest.state.draft") ?? "Draft",
       toneClassName: "text-zinc-500 dark:text-zinc-400/80",
       Icon: GitPullRequestDraftIcon,
     };
@@ -71,13 +75,16 @@ export function resolvePullRequestState(input: {
     return {
       // "Has conflicts" leaves out the one thing a reader wants when the warning triangle catches
       // their eye, so name the branch it collides with wherever the caller knows it.
-      label: input.baseBranch ? `Conflicts with ${input.baseBranch}` : "Has conflicts",
+      label: input.baseBranch
+        ? (t?.("pullRequest.state.conflictsWith", { branch: input.baseBranch }) ??
+          `Conflicts with ${input.baseBranch}`)
+        : (t?.("pullRequest.state.hasConflicts") ?? "Has conflicts"),
       toneClassName: "text-destructive",
       Icon: TriangleAlertIcon,
     };
   }
   return {
-    label: "Open",
+    label: t?.("pullRequest.state.open") ?? "Open",
     toneClassName: "text-emerald-600 dark:text-emerald-300/90",
     Icon: GitPullRequestIcon,
   };
@@ -96,12 +103,16 @@ export function PullRequestStateGlyph({
   baseBranch?: string;
   className?: string;
 }) {
-  const presentation = resolvePullRequestState({
-    state,
-    isDraft,
-    ...(mergeability ? { mergeability } : {}),
-    ...(baseBranch ? { baseBranch } : {}),
-  });
+  const { t } = useI18n();
+  const presentation = resolvePullRequestState(
+    {
+      state,
+      isDraft,
+      ...(mergeability ? { mergeability } : {}),
+      ...(baseBranch ? { baseBranch } : {}),
+    },
+    t,
+  );
   return (
     <Tooltip>
       {/* The list row is itself a button, so the trigger stays a span: an interactive one would
@@ -134,8 +145,22 @@ const CHECK_STATUS_PRESENTATION = {
   { label: string; Icon: typeof CircleCheckIcon; toneClassName: string }
 >;
 
-export function pullRequestCheckStatusLabel(status: PullRequestCheckStatus): string {
-  return CHECK_STATUS_PRESENTATION[status].label;
+export function pullRequestCheckStatusLabel(status: PullRequestCheckStatus, t?: Translate): string {
+  if (!t) return CHECK_STATUS_PRESENTATION[status].label;
+  switch (status) {
+    case "pending":
+      return t("pullRequest.checks.running");
+    case "success":
+      return t("pullRequest.checks.passed");
+    case "failure":
+      return t("pullRequest.checks.failed");
+    case "cancelled":
+      return t("pullRequest.checks.cancelled");
+    case "skipped":
+      return t("pullRequest.checks.skipped");
+    case "neutral":
+      return t("pullRequest.checks.neutral");
+  }
 }
 
 export function PullRequestCheckStatusIcon({ status }: { status: PullRequestCheckStatus }) {
@@ -173,8 +198,18 @@ const CHECKS_STATE_PRESENTATION = {
   { label: string; Icon: typeof CircleCheckIcon; toneClassName: string }
 >;
 
-export function pullRequestChecksStatePresentation(state: PullRequestChecksState) {
-  return CHECKS_STATE_PRESENTATION[state];
+export function pullRequestChecksStatePresentation(state: PullRequestChecksState, t?: Translate) {
+  const presentation = CHECKS_STATE_PRESENTATION[state];
+  if (!t) return presentation;
+  return {
+    ...presentation,
+    label:
+      state === "passing"
+        ? t("pullRequest.checks.allPassedLong")
+        : state === "failing"
+          ? t("pullRequest.checks.someUnsuccessful")
+          : t("pullRequest.checks.somePending"),
+  };
 }
 
 /**
@@ -263,8 +298,12 @@ export function pullRequestReviewOutcomeRingClassName(
  * What a superseded verdict says, which is the same word with when it applied added. Commits
  * landed after it, so it stands for code the branch no longer has.
  */
-export function pullRequestReviewOutcomeStaleLabel(outcome: PullRequestReviewOutcome): string {
-  return `${REVIEW_OUTCOME_PRESENTATION[outcome].label} earlier changes`;
+export function pullRequestReviewOutcomeStaleLabel(
+  outcome: PullRequestReviewOutcome,
+  t?: Translate,
+): string {
+  const label = pullRequestReviewOutcomeLabel(outcome, t);
+  return t?.("pullRequest.review.earlierChanges", { outcome: label }) ?? `${label} earlier changes`;
 }
 
 /** Decorative: every caller says which verdict this is in words beside it. */
@@ -284,8 +323,16 @@ export function PullRequestReviewOutcomeIcon({
   );
 }
 
-export function pullRequestReviewOutcomeLabel(outcome: PullRequestReviewOutcome): string {
-  return REVIEW_OUTCOME_PRESENTATION[outcome].label;
+export function pullRequestReviewOutcomeLabel(
+  outcome: PullRequestReviewOutcome,
+  t?: Translate,
+): string {
+  if (!t) return REVIEW_OUTCOME_PRESENTATION[outcome].label;
+  return outcome === "approved"
+    ? t("pullRequest.review.approved")
+    : outcome === "changes-requested"
+      ? t("pullRequest.review.changesRequested")
+      : t("pullRequest.review.dismissed");
 }
 
 export function PullRequestReviewOutcomeBadge({
@@ -295,11 +342,12 @@ export function PullRequestReviewOutcomeBadge({
   outcome: PullRequestReviewOutcome;
   className?: string;
 }) {
+  const { t } = useI18n();
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
     <Badge size="sm" variant={presentation.badgeVariant} className={cn("gap-1", className)}>
       <presentation.Icon aria-hidden className="size-3" />
-      {presentation.label}
+      {pullRequestReviewOutcomeLabel(outcome, t)}
     </Badge>
   );
 }
@@ -431,14 +479,30 @@ export function PullRequestMetaLine({
   );
 }
 
-export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
-  if (checks.length === 0) return "No checks reported";
+export function summarizePullRequestChecks(
+  checks: ReadonlyArray<PullRequestCheck>,
+  t?: Translate,
+): string {
+  if (checks.length === 0) return t?.("pullRequest.checks.noneReported") ?? "No checks reported";
   const failed = checks.filter(
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
   const pending = checks.filter((check) => check.status === "pending").length;
   const passed = checks.filter((check) => check.status === "success").length;
-  if (failed > 0) return `${failed} of ${checks.length} failing`;
-  if (pending > 0) return `${pending} of ${checks.length} running`;
-  return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+  if (failed > 0) {
+    return (
+      t?.("pullRequest.checks.failingCount", { count: failed, total: checks.length }) ??
+      `${failed} of ${checks.length} failing`
+    );
+  }
+  if (pending > 0) {
+    return (
+      t?.("pullRequest.checks.runningCount", { count: pending, total: checks.length }) ??
+      `${pending} of ${checks.length} running`
+    );
+  }
+  return passed === checks.length
+    ? (t?.("pullRequest.checks.allPassed") ?? "All checks passed")
+    : (t?.("pullRequest.checks.passingCount", { count: passed, total: checks.length }) ??
+        `${passed} of ${checks.length} passing`);
 }

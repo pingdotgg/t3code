@@ -5,6 +5,7 @@ import {
   isTerminalContextExpired,
 } from "~/lib/terminalContext";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
+import { useI18n } from "~/i18n";
 
 interface ComposerPendingTerminalContextsProps {
   contexts: ReadonlyArray<TerminalContextDraft>;
@@ -18,11 +19,10 @@ interface ComposerPendingTerminalContextChipProps {
 export function ComposerPendingTerminalContextChip({
   context,
 }: ComposerPendingTerminalContextChipProps) {
+  const { t } = useI18n();
   const label = formatTerminalContextLabel(context);
   const expired = isTerminalContextExpired(context);
-  const tooltipText = expired
-    ? `Terminal context expired. Remove and re-add ${label} to include it in your message.`
-    : context.text;
+  const tooltipText = expired ? t("chat.terminalContext.expired", { label }) : context.text;
 
   return <TerminalContextInlineChip label={label} tooltipText={tooltipText} expired={expired} />;
 }

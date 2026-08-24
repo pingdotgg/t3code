@@ -5,6 +5,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useI18n } from "~/i18n";
 
 export function getProviderStatusBannerKey(status: ServerProvider | null): string | null {
   return !status || status.status === "ready" || status.status === "disabled"
@@ -27,6 +28,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onDismiss: () => void;
   status: ServerProvider | null;
 }) {
+  const { t } = useI18n();
   if (!status || status.status === "ready" || status.status === "disabled") {
     return null;
   }
@@ -34,14 +36,14 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
   const title = isUnauthenticated
-    ? `${providerName} is unauthenticated`
-    : `${providerName} provider status`;
+    ? t("chat.provider.unauthenticated", { provider: providerName })
+    : t("chat.provider.status", { provider: providerName });
   const message = isUnauthenticated
-    ? "Sign in via the CLI to authenticate again."
+    ? t("chat.provider.signInCli")
     : (status.message ??
       (status.status === "error"
-        ? `${providerName} provider is unavailable.`
-        : `${providerName} provider has limited availability.`));
+        ? t("chat.provider.unavailable", { provider: providerName })
+        : t("chat.provider.limited", { provider: providerName })));
 
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
@@ -68,7 +70,11 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
           </Tooltip>
         </div>
         <Button
-          aria-label={`Dismiss ${providerName} provider ${status.status}`}
+          aria-label={t("chat.provider.dismissStatus", {
+            provider: providerName,
+            status:
+              status.status === "error" ? t("chat.provider.error") : t("chat.provider.warning"),
+          })}
           className="absolute top-2 right-2 size-6 text-muted-foreground hover:text-foreground"
           onClick={onDismiss}
           size="icon-xs"

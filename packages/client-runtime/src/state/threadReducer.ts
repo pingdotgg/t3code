@@ -30,7 +30,9 @@ const checkpointOrder = O.mapInput(
 );
 
 const activityOrder = O.combineAll<OrchestrationThreadActivity>([
-  O.mapInput(O.Number, (a) => a.sequence ?? Number.MAX_SAFE_INTEGER),
+  // Legacy snapshots predate activity.sequence. Keep those rows before live
+  // sequenced events, matching the server projector and snapshot query.
+  O.mapInput(O.Number, (a) => a.sequence ?? -1),
   O.mapInput(O.String, (a) => a.createdAt),
   O.mapInput(O.String, (a) => a.id),
 ]);
@@ -287,6 +289,7 @@ export function applyThreadDetailEvent(
         role: event.payload.role,
         text: event.payload.text,
         reasoningText: event.payload.reasoning,
+        ...(event.payload.phase !== undefined ? { phase: event.payload.phase } : {}),
         ...(event.payload.attachments !== undefined
           ? { attachments: event.payload.attachments }
           : {}),
@@ -313,6 +316,7 @@ export function applyThreadDetailEvent(
                     : (message.reasoningText ?? "").length > 0
                       ? (message.reasoningText ?? "")
                       : (entry.reasoningText ?? ""),
+                  ...(message.phase !== undefined ? { phase: message.phase } : {}),
                   streaming: message.streaming,
                   ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
                   ...(message.streaming ? {} : { updatedAt: message.updatedAt }),
@@ -567,7 +571,10 @@ export function applyThreadDetailEvent(
 
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
-      const activity = event.payload.activity;
+      const activity =
+        event.payload.activity.sequence === undefined
+          ? { ...event.payload.activity, sequence: event.sequence }
+          : event.payload.activity;
       // A resolvable context-window update supersedes earlier resolvable ones
       // for the same turn: consumers only read the latest value (walking the
       // array backwards), and providers stream these updates continuously, so

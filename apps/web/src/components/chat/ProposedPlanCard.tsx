@@ -30,7 +30,7 @@ import {
 } from "../ui/dialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { projectEnvironment } from "~/state/projects";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { localizedClipboardErrorMessage, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useI18n } from "../../i18n/I18nProvider";
 
@@ -62,8 +62,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         stackedThreadToast({
           type: "error",
           title: t("chat.plan.copyFailed"),
-          description:
-            error instanceof Error ? error.message : t("chat.plan.copyFailedDescription"),
+          description: localizedClipboardErrorMessage(error, t),
         }),
       );
     },

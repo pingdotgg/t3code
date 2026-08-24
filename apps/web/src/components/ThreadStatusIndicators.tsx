@@ -15,10 +15,15 @@ import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
-import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
+import {
+  localizedThreadStatusLabel,
+  resolveThreadStatusPill,
+  type ThreadStatusPill,
+} from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { useI18n, type Translate } from "../i18n";
 
 export interface PrStatusIndicator {
   label: string;
@@ -30,7 +35,7 @@ export interface PrStatusIndicator {
 }
 
 export interface TerminalStatusIndicator {
-  label: "Terminal process running";
+  label: string;
   colorClass: string;
   pulse: boolean;
 }
@@ -51,12 +56,21 @@ export function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"]):
 export function prStatusIndicator(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
+  t?: Translate,
 ): PrStatusIndicator | null {
   function formatPrState(state: NonNullable<ThreadPr>["state"]): string {
+    if (t) return t(`pullRequest.state.${state}`);
     return state.charAt(0).toUpperCase() + state.slice(1);
   }
 
   function formatPrStatusLead(pr: NonNullable<ThreadPr>, changeRequestShortName: string): string {
+    if (t) {
+      return t("threadStatus.changeRequestNumberState", {
+        name: changeRequestShortName,
+        number: pr.number,
+        state: formatPrState(pr.state),
+      });
+    }
     return `${changeRequestShortName} #${pr.number} - ${formatPrState(pr.state)}`;
   }
   if (!pr) return null;
@@ -67,7 +81,11 @@ export function prStatusIndicator(
 
   if (pr.state === "open") {
     return {
-      label: `${presentation.shortName} open`,
+      label:
+        t?.("threadStatus.changeRequestState", {
+          name: presentation.shortName,
+          state: formatPrState(pr.state),
+        }) ?? `${presentation.shortName} open`,
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
       tooltip,
       tooltipLead,
@@ -77,7 +95,11 @@ export function prStatusIndicator(
   }
   if (pr.state === "closed") {
     return {
-      label: `${presentation.shortName} closed`,
+      label:
+        t?.("threadStatus.changeRequestState", {
+          name: presentation.shortName,
+          state: formatPrState(pr.state),
+        }) ?? `${presentation.shortName} closed`,
       colorClass: "text-red-600 dark:text-red-300/90",
       tooltip,
       tooltipLead,
@@ -87,7 +109,11 @@ export function prStatusIndicator(
   }
   if (pr.state === "merged") {
     return {
-      label: `${presentation.shortName} merged`,
+      label:
+        t?.("threadStatus.changeRequestState", {
+          name: presentation.shortName,
+          state: formatPrState(pr.state),
+        }) ?? `${presentation.shortName} merged`,
       colorClass: "text-violet-600 dark:text-violet-300/90",
       tooltip,
       tooltipLead,
@@ -303,12 +329,13 @@ export function resolveDisplayedThreadPrProvider(input: {
 
 export function terminalStatusFromRunningIds(
   runningTerminalIds: ReadonlyArray<string>,
+  t?: Translate,
 ): TerminalStatusIndicator | null {
   if (runningTerminalIds.length === 0) {
     return null;
   }
   return {
-    label: "Terminal process running",
+    label: t?.("threadStatus.terminalRunning") ?? "Terminal process running",
     colorClass: "text-teal-600 dark:text-teal-300/90",
     pulse: true,
   };
@@ -319,6 +346,7 @@ export function ThreadWorktreeIndicator({
 }: {
   thread: Pick<SidebarThreadSummary, "id" | "branch" | "worktreePath">;
 }) {
+  const { t } = useI18n();
   const worktreePath = thread.worktreePath?.trim();
   if (!worktreePath) {
     return null;
@@ -326,8 +354,8 @@ export function ThreadWorktreeIndicator({
 
   const displayPath = formatWorktreePathForDisplay(worktreePath);
   const tooltip = thread.branch
-    ? `Worktree: ${displayPath} (${thread.branch})`
-    : `Worktree: ${displayPath}`;
+    ? t("threadStatus.worktreeWithBranch", { path: displayPath, branch: thread.branch })
+    : t("threadStatus.worktree", { path: displayPath });
 
   return (
     <Tooltip>
@@ -355,13 +383,16 @@ export function ThreadStatusLabel({
   status: ThreadStatusPill;
   compact?: boolean;
 }) {
+  const { t } = useI18n();
+  const label = localizedThreadStatusLabel(status.label, t);
+
   if (compact) {
     return (
       <Tooltip>
         <TooltipTrigger
           render={
             <span
-              aria-label={status.label}
+              aria-label={label}
               className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
             />
           }
@@ -372,7 +403,7 @@ export function ThreadStatusLabel({
             }`}
           />
         </TooltipTrigger>
-        <TooltipPopup side="top">{status.label}</TooltipPopup>
+        <TooltipPopup side="top">{label}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -382,7 +413,7 @@ export function ThreadStatusLabel({
       <TooltipTrigger
         render={
           <span
-            aria-label={status.label}
+            aria-label={label}
             className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
           />
         }
@@ -392,9 +423,9 @@ export function ThreadStatusLabel({
             status.pulse ? "animate-status-pulse" : ""
           }`}
         />
-        <span className="hidden md:inline">{status.label}</span>
+        <span className="hidden md:inline">{label}</span>
       </TooltipTrigger>
-      <TooltipPopup side="top">{status.label}</TooltipPopup>
+      <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -405,6 +436,7 @@ export function ThreadStatusLabel({
  * thread status dot, matching the sidebar's leading indicators.
  */
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
+  const { t } = useI18n();
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
@@ -429,7 +461,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     threadBranch: thread.branch,
     gitStatus: gitStatus.data,
   });
-  const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
+  const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider, t);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -471,6 +503,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
  * environment indicator, matching the sidebar's trailing indicators.
  */
 export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSummary }) {
+  const { t } = useI18n();
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
     threadId: thread.id,
@@ -480,8 +513,8 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   const isRemoteThread =
     primaryEnvironmentId !== null && thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel = environment?.label ?? null;
-  const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
-  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
+  const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? t("sidebar.remote")) : null;
+  const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds, t);
 
   if (!terminalStatus && !isRemoteThread) {
     return null;

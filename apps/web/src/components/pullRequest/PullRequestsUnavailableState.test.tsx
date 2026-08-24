@@ -1,7 +1,17 @@
 import { isValidElement, type ReactElement, type ReactNode } from "react";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
+
+vi.mock("~/i18n", () => ({
+  useI18n: () => ({
+    t: (key: string) =>
+      ({
+        "pullRequest.loadFailed": "Could not load pull requests",
+        "pullRequest.retry": "Retry",
+      })[key] ?? key,
+  }),
+}));
 
 function textOf(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);

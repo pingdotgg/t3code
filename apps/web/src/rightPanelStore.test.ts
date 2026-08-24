@@ -3,6 +3,8 @@ import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  agentSurface,
+  agentSurfaceId,
   migratePersistedRightPanelState,
   pullRequestSurfaceId,
   selectActiveRightPanel,
@@ -212,6 +214,68 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("drops the legacy singleton agents surface during migration", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "agents",
+            surfaces: [{ id: "agents", kind: "agents" }],
+          },
+          "env-1:thread-B": {
+            isOpen: true,
+            activeSurfaceId: "agents",
+            surfaces: [
+              { id: "diff", kind: "diff" },
+              { id: "agents", kind: "agents" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: false,
+          activeSurfaceId: null,
+          surfaces: [],
+        },
+        "env-1:thread-B": {
+          isOpen: true,
+          activeSurfaceId: "diff",
+          surfaces: [{ id: "diff", kind: "diff" }],
+        },
+      },
+    });
+  });
+
+  it("keeps only per-agent surfaces whose id matches their agent id", () => {
+    const valid = agentSurface("agent/one");
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: valid.id,
+            surfaces: [
+              valid,
+              { id: "agent:wrong", kind: "agents", agentId: "agent/two" },
+              { id: "agent:missing", kind: "agents" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "agent:agent%2Fone",
+          surfaces: [valid],
+        },
+      },
+    });
+  });
+
   it("open sets the active panel for a thread", () => {
     useRightPanelStore.getState().open(refA, "preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");
@@ -219,7 +283,7 @@ describe("rightPanelStore", () => {
   });
 
   it("opening a different kind keeps both surfaces and activates the new one", () => {
-    useRightPanelStore.getState().open(refA, "agents");
+    useRightPanelStore.getState().openAgent(refA, "agent-1");
     useRightPanelStore.getState().open(refA, "preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");
     expect(
@@ -227,18 +291,27 @@ describe("rightPanelStore", () => {
     ).toHaveLength(2);
   });
 
+  it("tracks one surface per agent", () => {
+    useRightPanelStore.getState().openAgent(refA, "agent/one");
+    useRightPanelStore.getState().openAgent(refA, "agent two");
+    useRightPanelStore.getState().openAgent(refA, "agent/one");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "agent:agent%2Fone",
+      surfaces: [agentSurface("agent/one"), agentSurface("agent two")],
+    });
+  });
+
   it("reopening an inactive singleton activates its existing surface", () => {
     useRightPanelStore.getState().open(refA, "diff");
-    useRightPanelStore.getState().open(refA, "agents");
+    useRightPanelStore.getState().openAgent(refA, "agent-1");
     useRightPanelStore.getState().open(refA, "diff");
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
       activeSurfaceId: "diff",
-      surfaces: [
-        { id: "diff", kind: "diff" },
-        { id: "agents", kind: "agents" },
-      ],
+      surfaces: [{ id: "diff", kind: "diff" }, agentSurface("agent-1")],
     });
   });
 
@@ -317,15 +390,15 @@ describe("rightPanelStore", () => {
 
   it("removes persisted file surfaces when their workspace no longer exists", () => {
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
-    useRightPanelStore.getState().open(refA, "agents");
+    useRightPanelStore.getState().openAgent(refA, "agent-1");
     useRightPanelStore.getState().openFile(refA, "README.md");
 
     useRightPanelStore.getState().reconcileFileSurfaces(refA, false);
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "agents",
-      surfaces: [{ id: "agents", kind: "agents" }],
+      activeSurfaceId: agentSurfaceId("agent-1"),
+      surfaces: [agentSurface("agent-1")],
     });
 
     useRightPanelStore.getState().openFile(refB, "conductor.json");
@@ -338,16 +411,16 @@ describe("rightPanelStore", () => {
   });
 
   it("close hides the panel without clearing its selected surface", () => {
-    useRightPanelStore.getState().open(refA, "agents");
+    useRightPanelStore.getState().openAgent(refA, "agent-1");
     useRightPanelStore.getState().close(refA);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
     expect(
       selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
-    ).toEqual({ id: "agents", kind: "agents" });
+    ).toEqual(agentSurface("agent-1"));
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: false,
-      activeSurfaceId: "agents",
-      surfaces: [{ id: "agents", kind: "agents" }],
+      activeSurfaceId: agentSurfaceId("agent-1"),
+      surfaces: [agentSurface("agent-1")],
     });
   });
 
@@ -386,7 +459,7 @@ describe("rightPanelStore", () => {
   });
 
   it("removeThread clears persisted state", () => {
-    useRightPanelStore.getState().open(refA, "agents");
+    useRightPanelStore.getState().openAgent(refA, "agent-1");
     useRightPanelStore.getState().removeThread(refA);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
   });

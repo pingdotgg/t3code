@@ -93,6 +93,7 @@ function RawMessageRow(props: {
   timestampFormat: Parameters<typeof formatTimestamp>[1];
   defaultOpen: boolean;
 }) {
+  const { t } = useI18n();
   const { message } = props;
   const [open, setOpen] = useState(props.defaultOpen);
   const pretty = useMemo(() => {
@@ -117,7 +118,7 @@ function RawMessageRow(props: {
           )}
         />
         <span className="shrink-0 text-xs font-medium text-foreground">
-          {message.role ?? "unknown"}
+          {message.role ?? t("context.unknown")}
         </span>
         <span className="min-w-0 flex-1 truncate text-muted-foreground/70 text-xs">
           {message.id}
@@ -178,6 +179,7 @@ export function ContextPanel(props: { environmentId: EnvironmentId; threadId: Th
 
   const providerDisplay = formatProviderDisplayName(
     contextQuery.data?.provider ?? thread?.session?.providerName ?? null,
+    t,
   );
   const modelDisplay = thread?.modelSelection.model ?? "—";
   const usedPercentage = usage?.usedPercentage ?? null;

@@ -16,6 +16,7 @@ import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  deriveThreadFeedTerminalAssistantMessageIds,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
@@ -564,6 +565,204 @@ describe("buildThreadFeed", () => {
       "turn-fold:turn-1",
       "assistant-final",
     ]);
+  });
+
+  it("waits for an explicit final answer before folding a phased turn", () => {
+    const turnId = TurnId.make("turn-phased-commentary");
+    const thread = makeThread({
+      id: ThreadId.make("thread-phased-commentary"),
+      projectId: ProjectId.make("project-1"),
+      title: "Commentary without final",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:06.000Z",
+        assistantMessageId: MessageId.make("assistant-commentary"),
+      },
+      messages: [
+        {
+          id: MessageId.make("assistant-commentary"),
+          role: "assistant",
+          text: "I am still checking this.",
+          reasoningText: "Considering the next step.",
+          phase: "commentary",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:02.000Z",
+          updatedAt: "2026-04-01T00:00:03.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-before-final"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Read files",
+          createdAt: "2026-04-01T00:00:04.000Z",
+          turnId,
+          payload: {
+            title: "Read files",
+            itemType: "file_read",
+            status: "completed",
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(deriveThreadFeedPresentation(feed, thread.latestTurn, new Set())).toEqual(feed);
+    expect(deriveThreadFeedTerminalAssistantMessageIds(feed)).toEqual(new Set());
+  });
+
+  it("folds all phased commentary only after final and keeps legacy turn bounds", () => {
+    const turnId = TurnId.make("turn-phased-final");
+    const phasedFeed: ThreadFeedEntry[] = [
+      {
+        type: "message",
+        id: MessageId.make("phased-commentary"),
+        createdAt: "2026-04-01T00:00:01.000Z",
+        message: {
+          id: MessageId.make("phased-commentary"),
+          role: "assistant",
+          text: "Inspecting the implementation.",
+          phase: "commentary",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:01.000Z",
+          updatedAt: "2026-04-01T00:00:02.000Z",
+        },
+      },
+      {
+        type: "activity-group",
+        id: "phased-tool",
+        createdAt: "2026-04-01T00:00:03.000Z",
+        turnId,
+        activities: [
+          {
+            id: "phased-tool",
+            createdAt: "2026-04-01T00:00:03.000Z",
+            turnId,
+            summary: "Read files",
+            detail: null,
+            canExpand: false,
+            getFullDetail: () => null,
+            getCopyText: () => "Read files",
+            icon: "eye",
+            toolLike: true,
+            status: "success",
+          },
+        ],
+      },
+      {
+        type: "message",
+        id: MessageId.make("phased-final"),
+        createdAt: "2026-04-01T00:00:04.000Z",
+        message: {
+          id: MessageId.make("phased-final"),
+          role: "assistant",
+          text: "Done.",
+          phase: "final_answer",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:04.000Z",
+          updatedAt: "2026-04-01T00:00:05.000Z",
+        },
+      },
+    ];
+
+    expect(deriveThreadFeedTerminalAssistantMessageIds(phasedFeed)).toEqual(
+      new Set(["phased-final"]),
+    );
+    expect(
+      deriveThreadFeedPresentation(phasedFeed, null, new Set()).map((entry) => entry.id),
+    ).toEqual(["turn-fold:turn-phased-final", "phased-final"]);
+    expect(
+      deriveThreadFeedPresentation(phasedFeed, null, new Set([turnId])).map((entry) => entry.id),
+    ).toEqual(["turn-fold:turn-phased-final", "phased-commentary", "phased-tool", "phased-final"]);
+  });
+
+  it("orders an early-created final after work and hides its reasoning only while folded", () => {
+    const turnId = TurnId.make("turn-early-final");
+    const thread = makeThread({
+      id: ThreadId.make("thread-early-final"),
+      projectId: ProjectId.make("project-1"),
+      title: "Early final",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: "2026-04-01T00:00:00.000Z",
+        startedAt: "2026-04-01T00:00:01.000Z",
+        completedAt: "2026-04-01T00:00:08.000Z",
+        assistantMessageId: MessageId.make("early-final"),
+      },
+      messages: [
+        {
+          id: MessageId.make("early-commentary"),
+          role: "assistant",
+          text: "Checking the implementation.",
+          phase: "commentary",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:01.000Z",
+          updatedAt: "2026-04-01T00:00:02.000Z",
+        },
+        {
+          id: MessageId.make("early-final"),
+          role: "assistant",
+          text: "The change is complete.",
+          reasoningText: "This reasoning belongs behind the work fold.",
+          phase: "final_answer",
+          turnId,
+          streaming: false,
+          createdAt: "2026-04-01T00:00:03.000Z",
+          updatedAt: "2026-04-01T00:00:08.000Z",
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("late-tool"),
+          kind: "tool.completed",
+          tone: "tool",
+          summary: "Ran tests",
+          createdAt: "2026-04-01T00:00:06.000Z",
+          turnId,
+          payload: {
+            title: "Ran tests",
+            itemType: "command_execution",
+            status: "completed",
+          },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed.map((entry) => entry.id)).toEqual(["early-commentary", "late-tool", "early-final"]);
+
+    const collapsed = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set());
+    expect(collapsed.map((entry) => entry.id)).toEqual([
+      "turn-fold:turn-early-final",
+      "early-final",
+    ]);
+    expect(collapsed.at(-1)).toMatchObject({
+      type: "message",
+      hideAssistantReasoning: true,
+      message: { reasoningText: "This reasoning belongs behind the work fold." },
+    });
+
+    const expanded = deriveThreadFeedPresentation(feed, thread.latestTurn, new Set([turnId]));
+    expect(expanded.map((entry) => entry.id)).toEqual([
+      "turn-fold:turn-early-final",
+      "early-commentary",
+      "late-tool",
+      "early-final",
+    ]);
+    expect(expanded.at(-1)).toMatchObject({
+      type: "message",
+      message: { reasoningText: "This reasoning belongs behind the work fold." },
+    });
+    expect(expanded.at(-1)).not.toHaveProperty("hideAssistantReasoning");
   });
 
   it("measures a steer-superseded turn from its user boundary through trailing work", () => {

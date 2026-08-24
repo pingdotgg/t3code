@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import type { OrchestrationThread } from "@t3tools/contracts";
 
+import { foldSubagentActivities } from "./subagentRuntime.ts";
 import { applyThreadDetailEvent } from "./threadReducer.ts";
 
 const baseEventFields = {
@@ -394,6 +395,7 @@ describe("applyThreadDetailEvent", () => {
           role: "assistant",
           text: "Done.",
           reasoning: "",
+          phase: "final_answer",
           turnId: TurnId.make("turn-1"),
           streaming: false,
           createdAt: "2026-04-01T07:00:00.000Z",
@@ -406,6 +408,7 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.latestTurn?.turnId).toBe("turn-1");
         expect(result.thread.latestTurn?.state).toBe("completed");
         expect(result.thread.latestTurn?.assistantMessageId).toBe("msg-3");
+        expect(result.thread.messages[0]?.phase).toBe("final_answer");
       }
     });
 
@@ -642,6 +645,7 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.activities).toHaveLength(1);
         expect(result.thread.activities[0]?.kind).toBe("file-edit");
+        expect(result.thread.activities[0]?.sequence).toBe(12);
       }
     });
 
@@ -685,6 +689,60 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.activities).toHaveLength(130);
         expect(result.thread.activities[0]?.id).toBe("activity-0");
+      }
+    });
+
+    it("keeps legacy unsequenced activity before a new live subagent event", () => {
+      const legacyCompletion: OrchestrationThread["activities"][number] = {
+        id: EventId.make("activity-legacy-completed"),
+        tone: "info",
+        kind: "task.completed",
+        summary: "Completed an earlier run",
+        payload: {
+          taskId: "child-1",
+          agentKind: "agent",
+          status: "completed",
+        },
+        turnId: TurnId.make("turn-1"),
+        createdAt: "2026-04-01T11:00:00.000Z",
+      };
+
+      const result = applyThreadDetailEvent(
+        { ...baseThread, activities: [legacyCompletion] },
+        {
+          ...baseEventFields,
+          sequence: 130,
+          occurredAt: "2026-04-01T11:01:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: {
+              id: EventId.make("activity-live-running"),
+              tone: "info",
+              kind: "task.progress",
+              summary: "Reactivated child",
+              payload: {
+                taskId: "child-1",
+                agentKind: "agent",
+                status: "running",
+              },
+              turnId: TurnId.make("turn-1"),
+              createdAt: "2026-04-01T11:01:00.000Z",
+            },
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-legacy-completed",
+          "activity-live-running",
+        ]);
+        expect(result.thread.activities[1]?.sequence).toBe(130);
+        expect(foldSubagentActivities(result.thread.activities)[0]?.status).toBe("running");
       }
     });
 

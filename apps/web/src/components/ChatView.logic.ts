@@ -24,6 +24,7 @@ import {
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import type { ComposerSubmissionIntent } from "../composer-logic";
 import type { TimelineEntry } from "../session-logic";
+import type { Translate } from "../i18n";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -151,12 +152,13 @@ export function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,
   fallbackModelSelection: ModelSelection,
+  t?: Translate,
 ): Thread {
   return {
     id: threadId,
     environmentId: draftThread.environmentId,
     projectId: draftThread.projectId,
-    title: "New thread",
+    title: t?.("sidebar.newThread") ?? "New thread",
     modelSelection: fallbackModelSelection,
     runtimeMode: draftThread.runtimeMode,
     interactionMode: draftThread.interactionMode,
@@ -396,18 +398,27 @@ export function deriveComposerSendState(options: {
 export function buildExpiredTerminalContextToastCopy(
   expiredTerminalContextCount: number,
   variant: "omitted" | "empty",
+  t?: Translate,
 ): { title: string; description: string } {
   const count = Math.max(1, Math.floor(expiredTerminalContextCount));
   const noun = count === 1 ? "Expired terminal context" : "Expired terminal contexts";
   if (variant === "empty") {
     return {
-      title: `${noun} won't be sent`,
-      description: "Remove it or re-add it to include terminal output.",
+      title:
+        t?.(count === 1 ? "chat.terminalContext.emptyOne" : "chat.terminalContext.emptyMany") ??
+        `${noun} won't be sent`,
+      description:
+        t?.("chat.terminalContext.emptyDescription") ??
+        "Remove it or re-add it to include terminal output.",
     };
   }
   return {
-    title: `${noun} omitted from message`,
-    description: "Re-add it if you want that terminal output included.",
+    title:
+      t?.(count === 1 ? "chat.terminalContext.omittedOne" : "chat.terminalContext.omittedMany") ??
+      `${noun} omitted from message`,
+    description:
+      t?.("chat.terminalContext.omittedDescription") ??
+      "Re-add it if you want that terminal output included.",
   };
 }
 

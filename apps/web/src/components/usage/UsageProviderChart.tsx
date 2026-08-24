@@ -10,6 +10,7 @@ import {
   formatUsd,
 } from "@t3tools/shared/usageFormat";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
+import { useI18n } from "../../i18n";
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
@@ -198,6 +199,7 @@ export function UsageProviderChart({
   resolution,
   timeZone,
 }: UsageProviderChartProps) {
+  const { t } = useI18n();
   const periods = resolution === "hour" ? hours : days;
   const byPeriod = useMemo(
     () =>
@@ -362,7 +364,10 @@ export function UsageProviderChart({
             viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
             preserveAspectRatio="none"
             role="img"
-            aria-label={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
+            aria-label={t("usage.chart.aria", {
+              period: t(resolution === "hour" ? "usage.hourly" : "usage.daily"),
+              metric: t(metric === "tokens" ? "usage.processedTokens" : "usage.cost"),
+            })}
           >
             {ticks.map((tick) => {
               const y = toY(tick);
@@ -442,7 +447,7 @@ export function UsageProviderChart({
                 );
               })}
               <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
-                <span className="text-muted-foreground">Total</span>
+                <span className="text-muted-foreground">{t("usage.total")}</span>
                 <span className="text-foreground tabular-nums">
                   {format(hoveredColumn?.total ?? 0)}
                 </span>

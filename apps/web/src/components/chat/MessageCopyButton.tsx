@@ -1,7 +1,7 @@
 import { memo, useRef } from "react";
 import { CopyIcon, CheckIcon } from "lucide-react";
 import { Button } from "../ui/button";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { localizedClipboardErrorMessage, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { anchoredToastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -25,7 +25,7 @@ const onCopy = (ref: React.RefObject<HTMLButtonElement | null>, title: string) =
 
 const onCopyError = (
   ref: React.RefObject<HTMLButtonElement | null>,
-  error: Error,
+  description: string,
   title: string,
 ) => {
   if (ref.current) {
@@ -38,7 +38,7 @@ const onCopyError = (
       },
       timeout: ANCHORED_TOAST_TIMEOUT_MS,
       title,
-      description: error.message,
+      description,
     });
   }
 };
@@ -58,7 +58,8 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   const ref = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
     onCopy: () => onCopy(ref, t("chat.copy.success")),
-    onError: (error: Error) => onCopyError(ref, error, t("chat.copy.failed")),
+    onError: (error) =>
+      onCopyError(ref, localizedClipboardErrorMessage(error, t), t("chat.copy.failed")),
     timeout: ANCHORED_TOAST_TIMEOUT_MS,
   });
 

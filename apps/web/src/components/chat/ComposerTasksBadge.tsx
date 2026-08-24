@@ -3,6 +3,7 @@ import { memo } from "react";
 
 import { formatDuration } from "../../session-logic";
 import { cn } from "~/lib/utils";
+import { useI18n } from "~/i18n";
 import { Button } from "../ui/button";
 
 export interface ComposerTasksProgress {
@@ -71,10 +72,15 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
 }) {
+  const { t } = useI18n();
   if (progress.totalSteps <= 0) return null;
 
   const allDone = progress.completedSteps >= progress.totalSteps;
-  const label = `Tasks: ${progress.completedSteps} of ${progress.totalSteps} complete. Current task: ${progress.step}`;
+  const label = t("chat.tasks.progress", {
+    completed: progress.completedSteps,
+    total: progress.totalSteps,
+    task: progress.step,
+  });
   if (placement === "inline") {
     return (
       <span className="inline-flex shrink-0 items-center gap-0.5" data-composer-tasks-badge="true">
@@ -88,7 +94,7 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
           onPointerDown={(event) => event.preventDefault()}
         >
           <ListTodoIcon aria-hidden className="size-3 shrink-0" />
-          <span>Tasks</span>
+          <span>{t("chat.tasks.label")}</span>
           <TaskSegments steps={steps} />
           <span
             className={cn(
@@ -102,7 +108,7 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
         <Button
           size="icon-micro"
           variant="ghost-muted"
-          aria-label="Dismiss tasks for this turn"
+          aria-label={t("chat.tasks.dismiss")}
           className="shrink-0"
           onClick={onDismiss}
           onPointerDown={(event) => event.preventDefault()}
@@ -131,7 +137,7 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
         onPointerDown={(event) => event.preventDefault()}
       >
         <ListTodoIcon aria-hidden className="size-3.5 shrink-0" />
-        <span className="shrink-0">Tasks</span>
+        <span className="shrink-0">{t("chat.tasks.label")}</span>
         <span
           className="min-w-0 flex-1 truncate text-left font-medium text-foreground/80"
           data-composer-task-current="true"
@@ -151,7 +157,7 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
       <Button
         size="icon-micro"
         variant="ghost-muted"
-        aria-label="Dismiss tasks for this turn"
+        aria-label={t("chat.tasks.dismiss")}
         className="shrink-0"
         onClick={onDismiss}
         onPointerDown={(event) => event.preventDefault()}
@@ -173,6 +179,7 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
 }) {
+  const { t } = useI18n();
   return (
     <div className="chat-composer-top-drawer" data-chat-composer-tasks-drawer="true">
       <div className="flex items-center gap-1 px-3 py-1.5 sm:px-4">
@@ -184,7 +191,7 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
           onPointerDown={(event) => event.preventDefault()}
         >
           <ListTodoIcon aria-hidden className="size-3.5 shrink-0" />
-          <span className="font-medium text-foreground">Tasks</span>
+          <span className="font-medium text-foreground">{t("chat.tasks.label")}</span>
           <span className="tabular-nums">
             {progress.completedSteps}/{progress.totalSteps}
           </span>
@@ -192,7 +199,7 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
         <Button
           size="icon-micro"
           variant="ghost-muted"
-          aria-label="Dismiss tasks for this turn"
+          aria-label={t("chat.tasks.dismiss")}
           className="shrink-0"
           onClick={onDismiss}
           onPointerDown={(event) => event.preventDefault()}
@@ -235,7 +242,7 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
               {step.durationMs !== undefined
                 ? formatDuration(step.durationMs)
                 : step.status === "inProgress"
-                  ? "now"
+                  ? t("chat.tasks.now")
                   : null}
             </span>
           </div>

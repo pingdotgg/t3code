@@ -1,5 +1,6 @@
 import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "lucide-react";
 
+import { useI18n } from "~/i18n";
 import { cn } from "~/lib/utils";
 
 import ChatMarkdown from "../ChatMarkdown";
@@ -25,6 +26,7 @@ export function PullRequestMarkdown({
   cwd: string;
   className?: string;
 }) {
+  const { t } = useI18n();
   const segments = splitPullRequestBody(text);
   return (
     <div className={cn("space-y-3", className)}>
@@ -47,7 +49,7 @@ export function PullRequestMarkdown({
           >
             <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate">
-              {isVideo ? "Play video on GitHub" : "Open attachment on GitHub"}
+              {isVideo ? t("pullRequest.attachment.playVideo") : t("pullRequest.attachment.open")}
             </span>
             <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
           </a>

@@ -77,6 +77,18 @@ vi.mock("../../hooks/useSettings", () => ({
   },
 }));
 
+vi.mock("../../i18n", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../i18n")>();
+  return {
+    ...actual,
+    useI18n: () => ({
+      locale: "en" as const,
+      setLocale: () => undefined,
+      t: actual.createTranslator("en"),
+    }),
+  };
+});
+
 vi.mock("../../environments/primary", () => ({
   usePrimarySessionState: () => ({ data: null, error: null, isPending: false, refresh: vi.fn() }),
 }));

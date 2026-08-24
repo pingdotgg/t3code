@@ -521,6 +521,7 @@ export function projectEvent(
             role: payload.role,
             text: payload.text,
             reasoningText: payload.reasoning,
+            ...(payload.phase !== undefined ? { phase: payload.phase } : {}),
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
             turnId: payload.turnId,
             streaming: payload.streaming,
@@ -543,6 +544,7 @@ export function projectEvent(
                       message.reasoningText ?? "",
                       message.streaming,
                     ),
+                    ...(message.phase !== undefined ? { phase: message.phase } : {}),
                     streaming: message.streaming,
                     updatedAt: message.updatedAt,
                     turnId: message.turnId,
@@ -797,10 +799,14 @@ export function projectEvent(
           if (!thread) {
             return nextBase;
           }
+          const activity =
+            payload.activity.sequence === undefined
+              ? { ...payload.activity, sequence: event.sequence }
+              : payload.activity;
 
           const activities = [
-            ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
-            payload.activity,
+            ...thread.activities.filter((entry) => entry.id !== activity.id),
+            activity,
           ]
             .toSorted(compareThreadActivities)
             .slice(-500);

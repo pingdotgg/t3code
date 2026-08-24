@@ -44,7 +44,6 @@ import {
   expandCollapsedComposerCursor,
   replaceTextRange,
 } from "../../composer-logic";
-import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
 import {
   dataTransferHasComposerMention,
@@ -260,35 +259,41 @@ import {
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
-import { useI18n } from "../../i18n";
+import { useI18n, type Translate } from "../../i18n";
 
-const runtimeModeConfig: Record<
-  RuntimeMode,
-  { label: string; description: string; icon: LucideIcon }
-> = {
-  "approval-required": {
-    label: "Supervised",
-    description: "Ask before commands and file changes.",
-    icon: LockIcon,
-  },
-  "auto-accept-edits": {
-    label: "Auto-accept edits",
-    description: "Auto-approve edits, ask before other actions.",
-    icon: PenLineIcon,
-  },
-  auto: {
-    label: "Auto",
-    description: "Supported providers approve routine actions; others still ask.",
-    icon: SparklesIcon,
-  },
-  "full-access": {
-    label: "Full access",
-    description: "Allow commands and edits without prompts.",
-    icon: LockOpenIcon,
-  },
-};
+function getRuntimeModeConfig(
+  t: Translate,
+): Record<RuntimeMode, { label: string; description: string; icon: LucideIcon }> {
+  return {
+    "approval-required": {
+      label: t("chat.access.supervised"),
+      description: t("chat.runtime.supervisedDescription"),
+      icon: LockIcon,
+    },
+    "auto-accept-edits": {
+      label: t("chat.access.autoAccept"),
+      description: t("chat.runtime.autoAcceptDescription"),
+      icon: PenLineIcon,
+    },
+    auto: {
+      label: t("chat.access.auto"),
+      description: t("chat.runtime.autoDescription"),
+      icon: SparklesIcon,
+    },
+    "full-access": {
+      label: t("chat.access.full"),
+      description: t("chat.runtime.fullDescription"),
+      icon: LockOpenIcon,
+    },
+  };
+}
 
-const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
+const runtimeModeOptions: RuntimeMode[] = [
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+];
 const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-composer-drawer-layer="true"]',
   '[data-slot="popover-popup"]',
@@ -337,12 +342,14 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const { t } = useI18n();
+  const runtimeModeConfig = getRuntimeModeConfig(t);
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
   const interactionModeTooltip =
     props.interactionMode === "plan"
-      ? "Plan mode — click to return to normal build mode"
-      : "Default mode — click to enter plan mode";
+      ? t("chat.interaction.planTooltip")
+      : t("chat.interaction.buildTooltip");
 
   const interactionModeToggle = props.showInteractionModeToggle ? (
     <>
@@ -369,7 +376,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             <ComposerControlIcon icon={BotIcon} opticalSize="large" />
           )}
           <span className="sr-only sm:not-sr-only">
-            {props.interactionMode === "plan" ? "Plan" : "Build"}
+            {props.interactionMode === "plan"
+              ? t("chat.interaction.plan")
+              : t("chat.interaction.build")}
           </span>
         </TooltipTrigger>
         <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
@@ -387,7 +396,12 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           onValueChange={(value) => props.onRuntimeModeChange(value!)}
         >
           <TooltipTrigger
-            render={<ComposerSelectControl className="font-medium" aria-label="Runtime mode" />}
+            render={
+              <ComposerSelectControl
+                className="font-medium"
+                aria-label={t("chat.composer.runtimeMode")}
+              />
+            }
           >
             <ComposerControlIcon icon={RuntimeModeIcon} />
             <SelectValue>{runtimeModeOption.label}</SelectValue>
@@ -449,6 +463,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <>
       {props.activeContextWindow ? (
@@ -459,7 +474,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         />
       ) : null}
       {props.isPreparingWorktree ? (
-        <span className="text-secondary-label text-xs">Preparing worktree...</span>
+        <span className="text-secondary-label text-xs">{t("chat.composer.preparingWorktree")}</span>
       ) : null}
       <ComposerPrimaryActions
         compact={props.compact}
@@ -649,6 +664,19 @@ export interface ChatComposerProps {
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const { t } = useI18n();
+  const formatPromptLengthValidationMessage = useCallback(
+    ({ excessCharacters, limit }: { excessCharacters: number; limit: number }) =>
+      t(
+        excessCharacters === 1
+          ? "chat.composer.promptOverLimitOne"
+          : "chat.composer.promptOverLimitMany",
+        {
+          excess: excessCharacters.toLocaleString(),
+          limit: limit.toLocaleString(),
+        },
+      ),
+    [t],
+  );
   const {
     composerDraftTarget,
     environmentId,
@@ -1315,7 +1343,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectSelectionRequired ||
     environmentUnavailable !== null ||
     !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
+  const collapsedComposerPrimaryActionLabel = t("chat.action.send");
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -1383,11 +1411,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useEffect(() => {
     if (composerSubmissionError === null) return;
-    const nextError = getComposerPromptLengthValidationMessage(prompt);
+    const nextError = getComposerPromptLengthValidationMessage(
+      prompt,
+      formatPromptLengthValidationMessage,
+    );
     if (nextError !== composerSubmissionError) {
       setComposerSubmissionError(nextError);
     }
-  }, [composerSubmissionError, prompt]);
+  }, [composerSubmissionError, formatPromptLengthValidationMessage, prompt]);
 
   useEffect(() => {
     setProviderInputSubmissionError(null);
@@ -1916,14 +1947,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         event?.preventDefault();
         toastManager.add({
           type: "info",
-          title: "Still compressing a pasted image.",
-          description: "Send again once its thumbnail appears.",
+          title: t("chat.composer.imageCompressing"),
+          description: t("chat.composer.imageCompressingDescription"),
         });
         return;
       }
       const submission = submitComposerDraft({
         prompt: promptRef.current,
         submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+        formatPromptLengthValidationMessage,
         event,
         onSend: (sendEvent) => {
           // ChatView reports its final composed-input preflight through the
@@ -1943,11 +1975,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThreadId,
       activePendingProgress,
       blurMobileComposerAfterSend,
+      formatPromptLengthValidationMessage,
       isSendDisabled,
       noProviderAvailable,
       onSend,
       promptRef,
       shouldBlurMobileComposerOnSubmit,
+      t,
     ],
   );
   const expandMobileComposer = useCallback(() => {
@@ -2059,9 +2093,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!durable) {
         toastManager.add({
           type: "warning",
-          title: "Restored prompt may reappear in the stash",
-          description:
-            "Browser storage rejected the update, so this entry could still be there after a reload.",
+          title: t("chat.stash.restoreMayReappear"),
+          description: t("chat.stash.restoreMayReappearDescription"),
           data: { hideCopyButton: true },
         });
       }
@@ -2127,23 +2160,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const missingImageReasons: string[] = [];
       if (entry.droppedImageNames.length > 0) {
         missingImageReasons.push(
-          `${entry.droppedImageNames.join(", ")} exceeded the stash size limit when this prompt was saved.`,
+          t("chat.stash.imageSizeLimit", { names: entry.droppedImageNames.join(", ") }),
         );
       }
       if (entry.unreadableImageNames && entry.unreadableImageNames.length > 0) {
         missingImageReasons.push(
-          `${entry.unreadableImageNames.join(", ")} could not be read when this prompt was saved.`,
+          t("chat.stash.imageUnreadable", { names: entry.unreadableImageNames.join(", ") }),
         );
       }
       if (unrestoredImageNames.length > 0) {
         missingImageReasons.push(
-          `${unrestoredImageNames.join(", ")} could not be restored: the composer is at its ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}-image limit.`,
+          t("chat.stash.imageLimit", {
+            names: unrestoredImageNames.join(", "),
+            count: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          }),
         );
       }
       if (missingImageReasons.length > 0) {
         toastManager.add({
           type: "warning",
-          title: "Some images were not restored",
+          title: t("chat.stash.imagesNotRestored"),
           description: missingImageReasons.join(" "),
         });
       }
@@ -2163,6 +2199,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptRef,
       setComposerDraftPrompt,
       takeStashEntry,
+      t,
     ],
   );
 
@@ -2172,14 +2209,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!durable) {
         toastManager.add({
           type: "warning",
-          title: "Stash entry may come back",
-          description:
-            "Browser storage rejected the delete, so this prompt could reappear after a reload.",
+          title: t("chat.stash.deleteMayReappear"),
+          description: t("chat.stash.deleteMayReappearDescription"),
           data: { hideCopyButton: true },
         });
       }
     },
-    [takeStashEntry],
+    [t, takeStashEntry],
   );
 
   const stashCurrentPrompt = useCallback(async () => {
@@ -2227,9 +2263,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!written) {
         toastManager.add({
           type: "error",
-          title: "Could not stash this prompt",
-          description:
-            "Browser storage rejected the write, so the composer was left as-is. Free up site data and try again.",
+          title: t("chat.stash.writeFailed"),
+          description: t("chat.stash.writeFailedDescription"),
           data: { hideCopyButton: true },
         });
         return;
@@ -2240,9 +2275,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!durable) {
         toastManager.add({
           type: "warning",
-          title: "Stashed prompt will not survive a reload",
-          description:
-            "Browser storage is unavailable, so this stash is kept in memory only for this session.",
+          title: t("chat.stash.memoryOnly"),
+          description: t("chat.stash.memoryOnlyDescription"),
           data: { hideCopyButton: true },
         });
       }
@@ -2259,8 +2293,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (evicted) {
         toastManager.add({
           type: "warning",
-          title: "Oldest stashed prompt discarded",
-          description: `The stash holds ${MAX_STASH_ENTRIES} prompts; the oldest was removed to make room.`,
+          title: t("chat.stash.evicted"),
+          description: t("chat.stash.evictedDescription", { count: MAX_STASH_ENTRIES }),
           data: { hideCopyButton: true },
         });
       }
@@ -2307,9 +2341,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (!imagesDurable && durable && images.length > 0) {
           toastManager.add({
             type: "warning",
-            title: "Stashed images were not saved",
-            description:
-              "The prompt was stashed, but browser storage rejected its images. They will be missing if you reload.",
+            title: t("chat.stash.imagesNotSaved"),
+            description: t("chat.stash.imagesNotSavedDescription"),
             data: { hideCopyButton: true },
           });
         }
@@ -2319,8 +2352,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         // them evaporate.
         toastManager.add({
           type: "warning",
-          title: "Stashed images did not attach",
-          description: `That prompt was restored or deleted before ${kept.length} image${kept.length === 1 ? "" : "s"} finished saving. Re-attach ${kept.length === 1 ? "it" : "them"} if you still need ${kept.length === 1 ? "it" : "them"}.`,
+          title: t("chat.stash.imagesNotAttached"),
+          description: t(
+            kept.length === 1
+              ? "chat.stash.imageNotAttachedDescription"
+              : "chat.stash.imagesNotAttachedDescription",
+            { count: kept.length },
+          ),
           data: { hideCopyButton: true },
         });
       }
@@ -2337,6 +2375,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptRef,
     pulseStashBadge,
     stashEntryToQueue,
+    t,
   ]);
 
   const toggleStashMenu = useCallback(() => {
@@ -2485,7 +2524,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (pendingUserInputs.length > 0) {
       toastManager.add({
         type: "error",
-        title: "Attach images after answering plan questions.",
+        title: t("chat.composer.attachAfterPlan"),
       });
       return;
     }
@@ -2503,15 +2542,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     let error: string | null = null;
     for (const file of files) {
       if (!file.type.startsWith("image/")) {
-        error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
+        error = t("chat.composer.unsupportedImage", { name: file.name });
         continue;
       }
       if (!isProviderSendTurnSupportedImageMimeType(file.type)) {
-        error = `'${file.name}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
+        error = t("chat.composer.supportedImageTypes", { name: file.name });
         continue;
       }
       if (reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+        error = t("chat.composer.maxImages", { count: PROVIDER_SEND_TURN_MAX_ATTACHMENTS });
         break;
       }
       acceptedFiles.push(file);
@@ -2531,8 +2570,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (!compressed.ok) {
           compressionError =
             compressed.reason === "unreadable"
-              ? `'${file.name}' could not be read as an image.`
-              : `'${file.name}' is too large to attach, even after compression.`;
+              ? t("chat.composer.imageUnreadable", { name: file.name })
+              : t("chat.composer.imageTooLarge", { name: file.name });
           continue;
         }
         const attachmentFile = compressed.file;
@@ -2618,8 +2657,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onInsertRejected: () => {
       toastManager.add({
         type: "error",
-        title: "Unable to add to chat",
-        description: "The composer is busy; try again once it is ready.",
+        title: t("chat.composer.addFailed"),
+        description: t("chat.composer.busyDescription"),
       });
     },
   });
@@ -2796,6 +2835,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           prompt: promptRef.current,
           providerInput,
           submissionTarget: "provider-turn",
+          formatPromptLengthValidationMessage,
         });
         providerInputRejectedRef.current = validationMessage !== null;
         setProviderInputSubmissionError(validationMessage);
@@ -2816,6 +2856,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerPreviewAnnotations,
       composerReviewComments,
       focusComposer,
+      formatPromptLengthValidationMessage,
       isConnecting,
       isComposerApprovalState,
       pendingUserInputs.length,
@@ -2940,9 +2981,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     )}
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={expandMobileComposer}
-                    aria-label="Write custom answer"
+                    aria-label={t("chat.composer.writeAnswer")}
                   >
-                    {activePendingProgress?.customAnswer || "Write custom answer"}
+                    {activePendingProgress?.customAnswer || t("chat.composer.writeAnswer")}
                   </button>
                   {inlineTasksBadge}
                   {inlineStashBadge}
@@ -3036,13 +3077,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   )}
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={expandMobileComposer}
-                  aria-label="Expand composer"
+                  aria-label={t("chat.composer.expand")}
                 >
                   {activePendingProgress
-                    ? activePendingProgress.customAnswer ||
-                      "Type your own answer, or leave this blank to use the selected option"
+                    ? activePendingProgress.customAnswer || t("chat.composer.answerPlaceholder")
                     : prompt.trim() ||
-                      (noProviderAvailable ? "Enable a provider in Settings" : "Ask anything...")}
+                      (noProviderAvailable
+                        ? t("chat.composer.enableProviderShort")
+                        : t("chat.composer.askAnything"))}
                 </button>
                 {inlineTasksBadge}
                 {inlineStashBadge}
@@ -3173,7 +3215,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             <button
                               type="button"
                               className="h-full w-full cursor-zoom-in"
-                              aria-label={`Preview ${image.name}`}
+                              aria-label={t("chat.image.previewNamed", { name: image.name })}
                               onClick={() => {
                                 const preview = buildExpandedImagePreview(composerImages, image.id);
                                 if (!preview) return;
@@ -3197,7 +3239,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 render={
                                   <span
                                     role="img"
-                                    aria-label="Draft attachment may not persist"
+                                    aria-label={t("chat.attachment.mayNotPersist")}
                                     className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
                                   >
                                     <CircleAlertIcon className="size-3" />
@@ -3208,8 +3250,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 side="top"
                                 className="max-w-64 whitespace-normal leading-tight"
                               >
-                                Draft attachment could not be saved locally and may be lost on
-                                navigation.
+                                {t("chat.attachment.mayNotPersistDescription")}
                               </TooltipPopup>
                             </Tooltip>
                           )}
@@ -3218,7 +3259,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             size="icon-xs"
                             className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
                             onClick={() => removeComposerImage(image.id)}
-                            aria-label={`Remove ${image.name}`}
+                            aria-label={t("chat.attachment.removeNamed", { name: image.name })}
                           >
                             <XIcon />
                           </Button>
@@ -3251,19 +3292,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onPaste={onComposerPaste}
                   placeholder={
                     isComposerApprovalState
-                      ? (activePendingApproval?.detail ??
-                        "Resolve this approval request to continue")
+                      ? (activePendingApproval?.detail ?? t("chat.composer.resolveApproval"))
                       : activePendingProgress
-                        ? "Type your own answer, or leave this blank to use the selected option"
+                        ? t("chat.composer.answerPlaceholder")
                         : showPlanFollowUpPrompt && activeProposedPlan
-                          ? "Add feedback to refine the plan, or leave this blank to implement it"
+                          ? t("chat.composer.planFeedback")
                           : projectSelectionRequired
-                            ? "Choose a project above to start a thread"
+                            ? t("chat.composer.chooseProject")
                             : noProviderAvailable
-                              ? "Enable a provider in Settings to send a message"
+                              ? t("chat.composer.enableProvider")
                               : phase === "disconnected"
-                                ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                ? t("chat.composer.followUp")
+                                : t("chat.composer.defaultPlaceholder")
                   }
                   disabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
                 />
@@ -3327,7 +3367,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       className="shrink-0 gap-2 px-2 text-secondary-label sm:px-3"
                     >
                       <CircleAlertIcon className="size-4" />
-                      No provider available
+                      {t("chat.provider.noneAvailable")}
                     </Button>
                   ) : (
                     <ProviderModelPicker

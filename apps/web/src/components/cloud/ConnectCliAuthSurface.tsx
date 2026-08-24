@@ -11,6 +11,7 @@ import {
 } from "../../cloud/connectCliAuth";
 import { isElectron } from "../../env";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useI18n } from "../../i18n";
 import { AuthSurfaceShell } from "../auth/AuthSurfaceShell";
 import { resolveClerkSignInProps } from "../clerk/authRedirect";
 import { Button } from "../ui/button";
@@ -37,13 +38,6 @@ function ConnectCliAuthMessage({
   );
 }
 
-const invalidLinkMessage = {
-  eyebrow: "Authorization request",
-  title: "This connect link is incomplete",
-  description:
-    "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
-} as const;
-
 /**
  * /connect: the URL the CLI prints for both flows. Waits for a Clerk session,
  * then forwards the CLI's PKCE request to Clerk's authorize endpoint — with a
@@ -51,6 +45,7 @@ const invalidLinkMessage = {
  * straight to the waiting CLI, and the hosted callback page otherwise.
  */
 export function ConnectCliAuthorizeSurface() {
+  const { t } = useI18n();
   const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
   const clerk = useClerk();
   const { isLoaded, isSignedIn } = useAuth();
@@ -95,7 +90,11 @@ export function ConnectCliAuthorizeSurface() {
   if (!request) {
     return (
       <AuthSurfaceShell>
-        <ConnectCliAuthMessage {...invalidLinkMessage} />
+        <ConnectCliAuthMessage
+          eyebrow={t("cloud.cli.authorizationRequest")}
+          title={t("cloud.cli.incompleteTitle")}
+          description={t("cloud.cli.incompleteDescription")}
+        />
       </AuthSurfaceShell>
     );
   }
@@ -105,20 +104,16 @@ export function ConnectCliAuthorizeSurface() {
       <ConnectCliAuthMessage
         eyebrow={
           request.loopbackPort === undefined
-            ? "Step 1 of 2 · Browser authorization"
-            : "Browser authorization"
+            ? t("cloud.cli.step1BrowserAuthorization")
+            : t("cloud.cli.browserAuthorization")
         }
-        title="Connecting your terminal"
-        description={
-          isSignedIn
-            ? "Redirecting to authorize T3 Connect for your CLI…"
-            : "Sign in to continue authorizing T3 Connect for your CLI."
-        }
+        title={t("cloud.cli.connectingTerminal")}
+        description={isSignedIn ? t("cloud.cli.redirecting") : t("cloud.cli.signInDescription")}
       />
       {isLoaded && !isSignedIn ? (
         <div className="mt-6">
           <Button type="button" onClick={openSignIn}>
-            Sign in
+            {t("auth.signIn")}
           </Button>
         </div>
       ) : null}
@@ -131,18 +126,21 @@ export function ConnectCliAuthorizeSurface() {
  * user enters in the waiting terminal.
  */
 export function ConnectCliCallbackSurface() {
+  const { t } = useI18n();
   const [result] = useState(readConnectCliCallbackResult);
   const [expectedState] = useState(readConnectCliAuthState);
   const { user } = useUser();
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "authentication code" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: t("cloud.cli.authorizationCode"),
+  });
 
   if (!result) {
     return (
       <AuthSurfaceShell>
         <ConnectCliAuthMessage
-          eyebrow="Step 2 of 2 · Terminal handoff"
-          title="Authorization did not complete"
-          description="No authorization code was returned. Re-run `t3 connect` in your terminal and try again."
+          eyebrow={t("cloud.cli.step2TerminalHandoff")}
+          title={t("cloud.cli.incompleteAuthTitle")}
+          description={t("cloud.cli.incompleteAuthDescription")}
         />
       </AuthSurfaceShell>
     );
@@ -156,9 +154,9 @@ export function ConnectCliCallbackSurface() {
     return (
       <AuthSurfaceShell>
         <ConnectCliAuthMessage
-          eyebrow="Step 2 of 2 · Terminal handoff"
-          title="This code belongs to a different request"
-          description="This authorization response does not match a connect request started in this browser. Re-run `t3 connect` in your terminal and open the freshly printed URL in this browser."
+          eyebrow={t("cloud.cli.step2TerminalHandoff")}
+          title={t("cloud.cli.mismatchedTitle")}
+          description={t("cloud.cli.mismatchedDescription")}
         />
       </AuthSurfaceShell>
     );
@@ -170,21 +168,23 @@ export function ConnectCliCallbackSurface() {
   return (
     <AuthSurfaceShell>
       <ConnectCliAuthMessage
-        eyebrow="Step 2 of 2 · Terminal handoff"
-        title="Almost connected"
+        eyebrow={t("cloud.cli.step2TerminalHandoff")}
+        title={t("cloud.cli.almostConnected")}
         description={
           accountLabel
-            ? `Enter this code in your waiting terminal to connect it as ${accountLabel}.`
-            : "Enter this code in your waiting terminal to finish connecting."
+            ? t("cloud.cli.enterCodeAccount", { account: accountLabel })
+            : t("cloud.cli.enterCode")
         }
       />
 
       <div className="mt-6 overflow-hidden rounded-xl border border-border/80 bg-background/65">
         <div className="flex items-center justify-between border-b border-border/70 px-4 py-2.5">
           <span className="text-[10px] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-            One-time authorization code
+            {t("cloud.cli.oneTimeCode")}
           </span>
-          <span className="font-mono text-[10px] text-muted-foreground">expires shortly</span>
+          <span className="font-mono text-[10px] text-muted-foreground">
+            {t("cloud.cli.expiresSoon")}
+          </span>
         </div>
         <code
           className="block p-4 font-mono text-sm leading-relaxed break-all select-all"
@@ -196,13 +196,12 @@ export function ConnectCliCallbackSurface() {
 
       <div className="mt-4 flex items-center gap-3">
         <Button type="button" onClick={() => copyToClipboard(authCode)}>
-          {isCopied ? "Copied!" : "Copy authorization code"}
+          {isCopied ? t("cloud.cli.copied") : t("cloud.cli.copyCode")}
         </Button>
       </div>
 
       <p className="mt-6 text-xs leading-relaxed text-muted-foreground">
-        Only enter this code in a terminal session you started yourself. Anyone holding it can link
-        their machine to your T3 Connect account while it is valid.
+        {t("cloud.cli.safetyNotice")}
       </p>
     </AuthSurfaceShell>
   );

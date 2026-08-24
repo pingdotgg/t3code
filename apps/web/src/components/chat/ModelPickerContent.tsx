@@ -761,9 +761,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                           contentClassName="flex w-full items-center gap-3"
                         >
                           <div className="min-w-0 flex-1 text-left">
-                            <div className="text-xs font-medium leading-snug">Legacy models</div>
+                            <div className="text-xs font-medium leading-snug">
+                              {t("chat.model.legacy")}
+                            </div>
                             <div className="mt-1 text-xs font-normal leading-snug text-muted-foreground/70">
-                              {legacySection.legacyModels.length} models
+                              {t(
+                                legacySection.legacyModels.length === 1
+                                  ? "chat.model.countOne"
+                                  : "chat.model.countMany",
+                                { count: legacySection.legacyModels.length },
+                              )}
                             </div>
                           </div>
                           <ChevronRightIcon
@@ -824,7 +831,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               </ComboboxListVirtualized>
             </div>
             <ComboboxEmpty className="not-empty:py-6 empty:h-0 text-xs font-normal leading-snug">
-              No models found
+              {t("chat.model.none")}
             </ComboboxEmpty>
           </div>
         </Combobox>

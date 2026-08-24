@@ -19,7 +19,7 @@ export function PreviewUnreachable({ url, code, description, onReload }: Props) 
   const { t } = useI18n();
   const [showDetails, setShowDetails] = useState(false);
   const host = safeHost(url) ?? url;
-  const friendly = describePreviewError(description);
+  const friendly = describePreviewError(description, t);
   const errorLabel = description.length > 0 ? description : `ERR_${Math.abs(code) || "FAILED"}`;
 
   return (

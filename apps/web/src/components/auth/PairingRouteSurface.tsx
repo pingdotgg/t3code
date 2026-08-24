@@ -52,7 +52,9 @@ export function PairingRouteSurface({
   const { t } = useI18n();
   const autoPairTokenRef = useRef<string | null>(peekPairingTokenFromUrl());
   const [credential, setCredential] = useState(() => autoPairTokenRef.current ?? "");
-  const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
+  const [errorMessage, setErrorMessage] = useState(() =>
+    initialErrorMessage ? localizeAuthErrorMessage(initialErrorMessage, t) : "",
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const autoSubmitAttemptedRef = useRef(false);
 
@@ -294,14 +296,29 @@ export function HostedPairingRouteSurface() {
 
 function errorMessageFromUnknown(error: unknown, t: Translate): string {
   if (error instanceof Error && error.message.trim().length > 0) {
-    return error.message;
+    return localizeAuthErrorMessage(error.message, t);
   }
 
   if (typeof error === "string" && error.trim().length > 0) {
-    return error;
+    return localizeAuthErrorMessage(error, t);
   }
 
   return t("auth.failed");
+}
+
+function localizeAuthErrorMessage(message: string, t: Translate): string {
+  switch (message.trim()) {
+    case "Invalid pairing token. Check the token and try again.":
+      return t("auth.invalidPairingToken");
+    case "Timed out waiting for authenticated session after bootstrap.":
+      return t("auth.sessionTimeout");
+    case "Enter a pairing token to continue.":
+      return t("auth.pairingTokenRequired");
+    case "Authentication failed.":
+      return t("auth.failed");
+    default:
+      return message;
+  }
 }
 
 function describeAuthGate(bootstrapMethods: ReadonlyArray<string>, t: Translate): string {
