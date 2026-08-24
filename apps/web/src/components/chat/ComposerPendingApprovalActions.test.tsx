@@ -21,4 +21,23 @@ describe("ComposerPendingApprovalActions", () => {
     expect(markup).toContain("sm:text-[11px]");
     expect(markup).not.toContain("sm:h-6");
   });
+
+  it("shows only the approval choices advertised by an MCP server", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalActions
+        requestId={ApprovalRequestId.make("approval-safari")}
+        isResponding={false}
+        options={[
+          { decision: "decline", label: "Decline" },
+          { decision: "acceptAlways", label: "Always allow Safari" },
+          { decision: "accept", label: "Approve" },
+        ]}
+        onRespondToApproval={async () => undefined}
+      />,
+    );
+
+    expect(markup).toContain("Always allow Safari");
+    expect(markup).toContain(">Approve<");
+    expect(markup).not.toContain("Always allow this session");
+  });
 });

@@ -17,10 +17,12 @@ import {
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
+  describeMcpElicitation,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
+  toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 
@@ -244,6 +246,112 @@ describe("buildTurnStartParams", () => {
           text: "Review",
         },
       ],
+    });
+  });
+});
+
+describe("Codex MCP elicitation approvals", () => {
+  const request = {
+    mode: "form",
+    message: "Allow ChatGPT to use Safari?",
+    serverName: "computer-use",
+    threadId: "provider-thread-1",
+    turnId: "turn-1",
+    _meta: {
+      app_name: "Safari",
+      persist: ["session", "always"],
+    },
+    requestedSchema: {
+      type: "object",
+      properties: {
+        approval: {
+          type: "string",
+          oneOf: [
+            { const: "once", title: "Allow once" },
+            { const: "session", title: "Allow for this session" },
+            { const: "always", title: "Always allow Safari" },
+          ],
+        },
+      },
+      required: ["approval"],
+    },
+  } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
+
+  it("preserves the app name and advertised persistence choices", () => {
+    NodeAssert.deepStrictEqual(describeMcpElicitation(request), {
+      appName: "Safari",
+      options: [
+        { decision: "cancel", label: "Cancel" },
+        { decision: "decline", label: "Decline" },
+        { decision: "acceptForSession", label: "Allow for this session" },
+        { decision: "acceptAlways", label: "Always allow Safari" },
+        { decision: "accept", label: "Approve" },
+      ],
+    });
+  });
+
+  it("extracts the app name from a Computer Use request without metadata", () => {
+    const { _meta, ...requestWithoutMetadata } = request;
+
+    NodeAssert.equal(describeMcpElicitation(requestWithoutMetadata).appName, "Safari");
+  });
+
+  it("returns the accepted form option to Codex", () => {
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(request, "accept"), {
+      action: "accept",
+      content: { approval: "once" },
+    });
+  });
+
+  it("returns session-scoped approval in the MCP response", () => {
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(request, "acceptForSession"), {
+      action: "accept",
+      _meta: { persist: "session" },
+      content: { approval: "session" },
+    });
+  });
+
+  it("returns persistent approval in the MCP response", () => {
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(request, "acceptAlways"), {
+      action: "accept",
+      _meta: { persist: "always" },
+      content: { approval: "always" },
+    });
+  });
+
+  it("returns rejection without form content", () => {
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(request, "decline"), {
+      action: "decline",
+    });
+  });
+
+  it("returns cancellation without form content", () => {
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(request, "cancel"), {
+      action: "cancel",
+    });
+  });
+
+  it("supports boolean permanent-approval fields", () => {
+    const booleanRequest = {
+      ...request,
+      _meta: { app_name: "Safari" },
+      requestedSchema: {
+        type: "object",
+        properties: {
+          always: { type: "boolean", title: "Always allow Safari" },
+        },
+      },
+    } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
+
+    NodeAssert.ok(
+      describeMcpElicitation(booleanRequest).options.some(
+        (option) => option.decision === "acceptAlways",
+      ),
+    );
+    NodeAssert.deepStrictEqual(toMcpElicitationResponse(booleanRequest, "acceptAlways"), {
+      action: "accept",
+      _meta: { persist: "always" },
+      content: { always: true },
     });
   });
 });

@@ -6,6 +6,7 @@ import {
   ProviderItemId,
   type ProviderInstanceId,
   type ProviderApprovalDecision,
+  type ProviderApprovalOption,
   type ProviderEvent,
   type ProviderInteractionMode,
   type ProviderRequestKind,
@@ -73,6 +74,49 @@ const CodexUserInputAnswerObject = Schema.Struct({
 });
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 const isCodexUserInputAnswerObject = Schema.is(CodexUserInputAnswerObject);
+const McpElicitationMetadata = Schema.Struct({
+  app: Schema.optionalKey(Schema.String),
+  app_name: Schema.optionalKey(Schema.String),
+  appName: Schema.optionalKey(Schema.String),
+  connector_name: Schema.optionalKey(Schema.String),
+  connectorName: Schema.optionalKey(Schema.String),
+  allowPersistentApproval: Schema.optionalKey(Schema.Boolean),
+  persist: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+  target: Schema.optionalKey(
+    Schema.Struct({
+      app: Schema.optionalKey(Schema.String),
+      name: Schema.optionalKey(Schema.String),
+    }),
+  ),
+  tool_params: Schema.optionalKey(
+    Schema.Struct({
+      app: Schema.optionalKey(Schema.String),
+      app_name: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+const McpElicitationFormField = Schema.Struct({
+  type: Schema.optionalKey(Schema.String),
+  title: Schema.optionalKey(Schema.String),
+  description: Schema.optionalKey(Schema.String),
+  default: Schema.optionalKey(Schema.Unknown),
+  enum: Schema.optionalKey(Schema.Array(Schema.String)),
+  enumNames: Schema.optionalKey(Schema.Array(Schema.String)),
+  oneOf: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        const: Schema.String,
+        title: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+});
+const McpElicitationForm = Schema.Struct({
+  properties: Schema.optionalKey(Schema.Record(Schema.String, McpElicitationFormField)),
+  required: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+const isMcpElicitationMetadata = Schema.is(McpElicitationMetadata);
+const isMcpElicitationForm = Schema.is(McpElicitationForm);
 
 // TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
 // `V2TurnStartParams` schema includes `collaborationMode` directly.
@@ -229,6 +273,162 @@ interface PendingUserInput {
   readonly turnId: TurnId | undefined;
   readonly itemId: ProviderItemId | undefined;
   readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+}
+
+type McpElicitationPersistenceDecision = Extract<
+  ProviderApprovalDecision,
+  "acceptForSession" | "acceptAlways"
+>;
+
+function mcpElicitationPersistenceDecision(
+  value: string,
+): McpElicitationPersistenceDecision | null {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("session")) return "acceptForSession";
+  if (
+    normalized.includes("always") ||
+    normalized.includes("permanent") ||
+    normalized.includes("forever") ||
+    normalized.includes("persistent")
+  ) {
+    return "acceptAlways";
+  }
+  return null;
+}
+
+function mcpElicitationFormFields(payload: EffectCodexSchema.McpServerElicitationRequestParams) {
+  if (payload.mode === "url" || !isMcpElicitationForm(payload.requestedSchema)) {
+    return undefined;
+  }
+  return payload.requestedSchema;
+}
+
+function mcpElicitationFieldOptions(field: typeof McpElicitationFormField.Type) {
+  if (field.oneOf) {
+    return field.oneOf.map((option) => ({ value: option.const, label: option.title }));
+  }
+  return (field.enum ?? []).map((value, index) => ({
+    value,
+    label: field.enumNames?.[index],
+  }));
+}
+
+function isMcpElicitationPersistenceField(
+  key: string,
+  field: typeof McpElicitationFormField.Type,
+): boolean {
+  return (
+    mcpElicitationPersistenceDecision(key) !== null ||
+    key.toLowerCase() === "persist" ||
+    mcpElicitationPersistenceDecision(field.title ?? "") !== null ||
+    mcpElicitationPersistenceDecision(field.description ?? "") !== null
+  );
+}
+
+/** Returns the app and approval choices advertised by an MCP elicitation. */
+export function describeMcpElicitation(
+  payload: EffectCodexSchema.McpServerElicitationRequestParams,
+): { readonly appName: string; readonly options: ReadonlyArray<ProviderApprovalOption> } {
+  const metadata = isMcpElicitationMetadata(payload._meta) ? payload._meta : undefined;
+  const appName =
+    metadata?.app_name ??
+    metadata?.appName ??
+    metadata?.app ??
+    metadata?.target?.app ??
+    metadata?.target?.name ??
+    metadata?.tool_params?.app_name ??
+    metadata?.tool_params?.app ??
+    payload.message.match(/^Allow ChatGPT to use (.+?)\?$/i)?.[1] ??
+    metadata?.connector_name ??
+    metadata?.connectorName ??
+    payload.serverName;
+  const persistenceOptions = new Map<McpElicitationPersistenceDecision, string>();
+  const persist = metadata?.persist;
+  for (const value of typeof persist === "string" ? [persist] : (persist ?? [])) {
+    const decision = mcpElicitationPersistenceDecision(value);
+    if (decision) persistenceOptions.set(decision, "");
+  }
+  if (metadata?.allowPersistentApproval) {
+    persistenceOptions.set("acceptAlways", "");
+  }
+
+  const form = mcpElicitationFormFields(payload);
+  for (const [key, field] of Object.entries(form?.properties ?? {})) {
+    for (const option of mcpElicitationFieldOptions(field)) {
+      const decision = mcpElicitationPersistenceDecision(option.value);
+      if (decision) persistenceOptions.set(decision, option.label ?? "");
+    }
+    if (field.type === "boolean" && isMcpElicitationPersistenceField(key, field)) {
+      persistenceOptions.set("acceptAlways", field.title ?? "");
+    }
+  }
+
+  return {
+    appName,
+    options: [
+      { decision: "cancel", label: "Cancel" },
+      { decision: "decline", label: "Decline" },
+      ...(persistenceOptions.has("acceptForSession")
+        ? [
+            {
+              decision: "acceptForSession" as const,
+              label: persistenceOptions.get("acceptForSession") || "Always allow this session",
+            },
+          ]
+        : []),
+      ...(persistenceOptions.has("acceptAlways")
+        ? [
+            {
+              decision: "acceptAlways" as const,
+              label: persistenceOptions.get("acceptAlways") || "Always allow",
+            },
+          ]
+        : []),
+      { decision: "accept", label: "Approve" },
+    ],
+  };
+}
+
+/** Converts a T3 approval decision into the MCP elicitation wire response. */
+export function toMcpElicitationResponse(
+  payload: EffectCodexSchema.McpServerElicitationRequestParams,
+  decision: ProviderApprovalDecision,
+): EffectCodexSchema.McpServerElicitationRequestResponse {
+  if (decision === "decline" || decision === "cancel") {
+    return { action: decision };
+  }
+
+  const persist =
+    decision === "acceptForSession"
+      ? "session"
+      : decision === "acceptAlways"
+        ? "always"
+        : undefined;
+  const form = mcpElicitationFormFields(payload);
+  const content: Record<string, unknown> = {};
+
+  for (const [key, field] of Object.entries(form?.properties ?? {})) {
+    const options = mcpElicitationFieldOptions(field);
+    const chosenOption = options.find((option) =>
+      persist
+        ? mcpElicitationPersistenceDecision(option.value) === decision
+        : /once|accept|approve|allow/i.test(option.value) &&
+          mcpElicitationPersistenceDecision(option.value) === null,
+    );
+    if (chosenOption) {
+      content[key] = chosenOption.value;
+    } else if (field.type === "boolean" && isMcpElicitationPersistenceField(key, field)) {
+      content[key] = decision === "acceptAlways";
+    } else if (field.default !== undefined) {
+      content[key] = field.default;
+    }
+  }
+
+  return {
+    action: "accept",
+    ...(persist ? { _meta: { persist } } : {}),
+    ...(form ? { content } : {}),
+  };
 }
 
 type CodexServerNotification = {
@@ -1544,7 +1744,7 @@ export const makeCodexSessionRuntime = (
           ),
         );
         return {
-          decision: resolved,
+          decision: resolved === "acceptAlways" ? "acceptForSession" : resolved,
         } satisfies EffectCodexSchema.CommandExecutionRequestApprovalResponse;
       }),
     );
@@ -1602,8 +1802,63 @@ export const makeCodexSessionRuntime = (
           ),
         );
         return {
-          decision: resolved,
+          decision: resolved === "acceptAlways" ? "acceptForSession" : resolved,
         } satisfies EffectCodexSchema.FileChangeRequestApprovalResponse;
+      }),
+    );
+
+    yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
+      Effect.gen(function* () {
+        const requestId = ApprovalRequestId.make(yield* randomUUIDv4("mcp-elicitation-request"));
+        const turnId = payload.turnId
+          ? TurnId.make(payload.turnId)
+          : (yield* Ref.get(sessionRef)).activeTurnId;
+        const jsonRpcId = payload.mode === "url" ? payload.elicitationId : requestId;
+        const decision = yield* Deferred.make<ProviderApprovalDecision>();
+
+        yield* Ref.update(pendingApprovalsRef, (current) => {
+          const next = new Map(current);
+          next.set(requestId, {
+            requestId,
+            jsonRpcId,
+            requestKind: "mcp-elicitation",
+            turnId,
+            itemId: undefined,
+            decision,
+          });
+          return next;
+        });
+        yield* Ref.update(approvalCorrelationsRef, (current) => {
+          const next = new Map(current);
+          next.set(jsonRpcId, {
+            requestId,
+            requestKind: "mcp-elicitation",
+            turnId,
+            itemId: undefined,
+          });
+          return next;
+        });
+
+        yield* emitEvent({
+          kind: "request",
+          threadId: options.threadId,
+          method: "mcpServer/elicitation/request",
+          requestId,
+          requestKind: "mcp-elicitation",
+          ...(turnId ? { turnId } : {}),
+          payload,
+        });
+
+        const resolved = yield* Deferred.await(decision).pipe(
+          Effect.ensuring(
+            Ref.update(pendingApprovalsRef, (current) => {
+              const next = new Map(current);
+              next.delete(requestId);
+              return next;
+            }),
+          ),
+        );
+        return toMcpElicitationResponse(payload, resolved);
       }),
     );
 

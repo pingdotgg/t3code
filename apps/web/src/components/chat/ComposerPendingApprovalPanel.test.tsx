@@ -50,4 +50,24 @@ describe("ComposerPendingApprovalPanel", () => {
 
     expect(markup).toContain("File read approval");
   });
+
+  it("shows the app name and message for an MCP access request", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel
+        approval={{
+          requestId: ApprovalRequestId.make("approval-safari"),
+          requestKind: "mcp-elicitation",
+          createdAt: "2026-08-24T00:00:00.000Z",
+          appName: "Safari",
+          detail: "Allow ChatGPT to use Safari?",
+        }}
+        pendingCount={1}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="App access approval"');
+    expect(markup).toContain('aria-label="App access request"');
+    expect(markup).toContain(">Safari<");
+    expect(markup).toContain("Allow ChatGPT to use Safari?");
+  });
 });
