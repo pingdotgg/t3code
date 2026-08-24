@@ -762,6 +762,24 @@ describe("ProviderRuntimeIngestion", () => {
 
     harness.emit({
       type: "turn.aborted",
+      eventId: asEventId("evt-other-turn-aborted"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.500Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-other"),
+      payload: { reason: "A different turn aborted." },
+    });
+
+    await harness.drain();
+    const activeReadModel = await harness.readModel();
+    const activeThread = activeReadModel.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(activeThread?.session?.status).toBe("running");
+    expect(activeThread?.session?.activeTurnId).toBe(turnId);
+
+    harness.emit({
+      type: "turn.aborted",
       eventId: asEventId("evt-turn-aborted"),
       provider: ProviderDriverKind.make("codex"),
       createdAt: abortedAt,
