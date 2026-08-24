@@ -1,5 +1,6 @@
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -43,6 +44,13 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 // take well beyond the default 30s (e.g. a 375k-file repo takes ~40s on an idle
 // machine). Give it generous headroom while still bounding a genuinely hung git.
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
+// `.worktreeinclude` at the repository root lists gitignore-style patterns of
+// untracked files (typically gitignored ones like `.env`) to copy from the
+// source checkout into each newly created worktree.
+const WORKTREE_INCLUDE_FILE_NAME = ".worktreeinclude";
+// Listing the candidates walks the full untracked tree, ignored directories
+// included, which can take a while on large repositories.
+const WORKTREE_INCLUDE_LIST_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
@@ -2760,13 +2768,113 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const copyWorktreeIncludedFiles = Effect.fn("copyWorktreeIncludedFiles")(function* (
+    cwd: string,
+    worktreePath: string,
+  ) {
+    const repositoryPaths = yield* resolveRepositoryPaths(cwd);
+    const sourceRoot = repositoryPaths?.worktreeRoot ?? cwd;
+    const includeFilePath = path.join(sourceRoot, WORKTREE_INCLUDE_FILE_NAME);
+    if (!(yield* fileSystem.exists(includeFilePath))) {
+      return;
+    }
+
+    // Git applies the gitignore-style patterns itself: list the untracked
+    // files in the source checkout that match the `.worktreeinclude` entries.
+    const listed = yield* executeGit(
+      "GitVcsDriver.createWorktree.listIncludedFiles",
+      sourceRoot,
+      ["ls-files", "--others", "--ignored", `--exclude-from=${includeFilePath}`, "-z"],
+      {
+        fallbackErrorDetail: "git ls-files for .worktreeinclude failed",
+        timeoutMs: WORKTREE_INCLUDE_LIST_TIMEOUT_MS,
+        // Truncate oversized listings instead of failing, so a huge match set
+        // still copies a partial set. splitNullSeparatedGitStdoutPaths drops
+        // the possibly-partial last entry.
+        appendTruncationMarker: true,
+      },
+    );
+    if (listed.stdoutTruncated) {
+      yield* Effect.logWarning(
+        ".worktreeinclude matched more files than fit in the git output buffer; copying a partial set",
+        { sourceRoot, worktreePath },
+      );
+    }
+
+    const relativePaths = splitNullSeparatedGitStdoutPaths(listed);
+    if (relativePaths.length === 0) {
+      return;
+    }
+    const realWorktreeRoot = yield* fileSystem.realPath(worktreePath);
+    for (const relativePath of relativePaths) {
+      const targetFilePath = path.join(worktreePath, relativePath);
+      yield* Effect.gen(function* () {
+        // A path untracked in the source checkout can still be tracked in the
+        // checked-out branch; the checked-out version wins over the local copy.
+        if (yield* fileSystem.exists(targetFilePath)) {
+          return;
+        }
+        // Tracked symlinks in the checked-out tree could otherwise redirect
+        // the write outside the worktree (dangling link at the target path,
+        // or a symlinked parent directory).
+        const targetIsSymlink = yield* fileSystem.readLink(targetFilePath).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+        if (targetIsSymlink) {
+          return yield* Effect.logWarning(
+            ".worktreeinclude entry resolves through a symlink; skipped",
+            { relativePath, worktreePath },
+          );
+        }
+        const targetDir = path.dirname(targetFilePath);
+        // Verify containment on the deepest existing ancestor before creating
+        // anything, so a recursive mkdir cannot follow a tracked symlink out
+        // of the worktree either.
+        let existingAncestor = targetDir;
+        while (!(yield* fileSystem.exists(existingAncestor))) {
+          existingAncestor = path.dirname(existingAncestor);
+        }
+        const realAncestor = yield* fileSystem.realPath(existingAncestor);
+        if (
+          realAncestor !== realWorktreeRoot &&
+          !realAncestor.startsWith(realWorktreeRoot + path.sep)
+        ) {
+          return yield* Effect.logWarning(
+            ".worktreeinclude entry resolves through a symlink; skipped",
+            { relativePath, worktreePath },
+          );
+        }
+        yield* fileSystem.makeDirectory(targetDir, { recursive: true });
+        yield* fileSystem.copyFile(path.join(sourceRoot, relativePath), targetFilePath);
+      }).pipe(
+        // Best effort per entry: one broken file must not block the rest.
+        // Interruptions still propagate so cancellation is not masked.
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("failed to copy a .worktreeinclude file into the new worktree", {
+                relativePath,
+                worktreePath,
+                cause,
+              }),
+        ),
+      );
+    }
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
     const targetBranch = input.newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
-    const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+    // git resolves a relative worktree path against its cwd; mirror that so
+    // the copy step and the returned path always point at the real location.
+    const worktreePath = path.resolve(
+      input.cwd,
+      input.path ?? path.join(worktreesDir, repoName, sanitizedBranch),
+    );
     const args = input.newRefName
       ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
@@ -2789,6 +2897,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         baseBranch,
       ]);
     }
+
+    // Best effort: a failed copy leaves the worktree usable, so log instead of
+    // rolling back the creation. Interruptions still propagate so cancellation
+    // is not masked.
+    yield* copyWorktreeIncludedFiles(input.cwd, worktreePath).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterrupts(cause)
+          ? Effect.interrupt
+          : Effect.logWarning("failed to copy .worktreeinclude files into the new worktree", {
+              cwd: input.cwd,
+              worktreePath,
+              cause,
+            }),
+      ),
+    );
 
     return {
       worktree: {
