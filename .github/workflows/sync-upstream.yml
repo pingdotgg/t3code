@@ -24,17 +24,47 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          before=$(gh api "repos/$GH_REPO/branches/main" --jq .commit.sha)
+          gh auth setup-git
+          git clone --single-branch --branch main --no-tags "https://github.com/$GH_REPO.git" .
+          git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch --no-tags upstream main
 
-          # The fork-sync API can update workflow files with contents:write.
-          # A Git push with GITHUB_TOKEN cannot.
-          gh api --method POST "repos/$GH_REPO/merge-upstream" -f branch=main
-
-          after=$(gh api "repos/$GH_REPO/branches/main" --jq .commit.sha)
-          if [[ "$before" == "$after" ]]; then
+          if git merge-base --is-ancestor upstream/main HEAD; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          workflow_base=$(git merge-base HEAD upstream/main)
+          git diff --name-status "$workflow_base" upstream/main -- .github/workflows \
+            > "$RUNNER_TEMP/upstream-workflows.txt"
+
+          # Workflows are fork-owned. GITHUB_TOKEN cannot push upstream workflow
+          # changes, and the fork has different release and package operations.
+          if ! git merge --no-commit upstream/main; then
+            conflicts=$(git diff --name-only --diff-filter=U -- . \
+              ':(exclude).github/workflows/**')
+            if [[ -n "$conflicts" ]]; then
+              printf 'Unresolved upstream conflicts:\n%s\n' "$conflicts" >&2
+              exit 1
+            fi
+          fi
+          git restore --source=HEAD --staged --worktree -- .github/workflows
+          git \
+            -c user.name=github-actions[bot] \
+            -c user.email=41898282+github-actions[bot]@users.noreply.github.com \
+            commit --no-edit
+          git push origin HEAD:main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          if [[ -s "$RUNNER_TEMP/upstream-workflows.txt" ]]; then
+            echo "::warning title=Upstream workflows preserved::Review the workflow changes listed in the job summary"
+            {
+              echo "### Upstream workflow changes need manual review"
+              echo
+              echo '```text'
+              cat "$RUNNER_TEMP/upstream-workflows.txt"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Publish updated packages
