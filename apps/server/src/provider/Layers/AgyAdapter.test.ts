@@ -286,15 +286,11 @@ describe("AgyAdapter", () => {
         }),
       );
 
-      it.effect("closes the turn and restores the session when initialization times out", () =>
+      it.effect("cleans local session state when initialization times out", () =>
         Effect.gen(function* () {
           const mock = yield* Effect.promise(() => makeMockAgyWrapper({ emitInit: false }));
           const adapter = yield* makeAgyAdapter(decodeAgySettings({ binaryPath: mock.binaryPath }));
           const threadId = ThreadId.make("thread-init-timeout");
-          const receivedEvents: Array<ProviderRuntimeEvent> = [];
-          const eventFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-            Effect.sync(() => receivedEvents.push(event)),
-          ).pipe(Effect.forkChild);
 
           yield* adapter.startSession({
             threadId,
@@ -308,20 +304,11 @@ describe("AgyAdapter", () => {
           const error = yield* Fiber.join(sendFiber);
 
           expect(error.message).toContain("did not initialize");
-          expect((yield* adapter.listSessions())[0]?.status).toBe("ready");
-          expect(
-            receivedEvents.some(
-              (event) => event.type === "turn.completed" && event.payload.state === "failed",
-            ),
-          ).toBe(true);
-          expect(
-            receivedEvents.some(
-              (event) => event.type === "session.state.changed" && event.payload.state === "ready",
-            ),
-          ).toBe(true);
+          const session = (yield* adapter.listSessions())[0];
+          expect(session?.status).toBe("ready");
+          expect(session?.activeTurnId).toBeUndefined();
 
           yield* adapter.stopSession(threadId);
-          yield* Fiber.interrupt(eventFiber);
           yield* Effect.promise(() => NodeFSP.rm(mock.dir, { recursive: true, force: true }));
         }),
       );

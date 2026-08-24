@@ -879,19 +879,6 @@ export const makeAgyAdapter = Effect.fn("makeAgyAdapter")(function* (
         activeTurnId: undefined,
         updatedAt: yield* nowIso,
       };
-      yield* emit({
-        ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
-        type: "turn.completed",
-        payload: {
-          state: "failed",
-          errorMessage: "Antigravity CLI did not initialize a conversation.",
-        },
-      });
-      yield* emit({
-        ...(yield* buildEventBase({ threadId: input.threadId })),
-        type: "session.state.changed",
-        payload: { state: "ready" },
-      });
       return yield* new ProviderAdapterRequestError({
         provider: PROVIDER,
         method: "sendTurn",
