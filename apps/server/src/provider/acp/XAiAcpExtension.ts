@@ -26,6 +26,7 @@ interface PendingXAiPromptCompletion {
 
 const completedXAiPromptIdLimit = 128;
 const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
+// Grok Build reports costUsdTicks in 10^-10 USD units, so dividing by this yields USD.
 const usdTicksPerUsd = 10_000_000_000;
 
 const XAiAskUserQuestionOption = Schema.Struct({

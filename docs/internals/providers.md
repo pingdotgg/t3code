@@ -103,7 +103,7 @@ adapter retains the model reported by session setup. A concrete model or reasoni
 Several Grok Build notifications do not yet have a truthful adapter-only mapping:
 
 - ACP `available_commands_update` is session and workspace scoped, while provider slash commands in
-  T3 are currently instance wide. This needs a per-session command contract before it can be shown.
+  T3 are currently instance-wide. This needs a per-session command contract before it can be shown.
 - xAI model-catalog update notifications arrive on a live adapter session, while provider snapshots
   are owned by the driver. Dynamic refresh needs an explicit adapter-to-driver invalidation channel.
 - Grok Build 1.0.5 does not advertise ACP modes. Newer source accepts `session/set_mode`, but its
