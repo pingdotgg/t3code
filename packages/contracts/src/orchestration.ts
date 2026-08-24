@@ -750,9 +750,9 @@ const ThreadPinCommand = Schema.Struct({
   type: Schema.Literal("thread.pin"),
   commandId: CommandId,
   threadId: ThreadId,
-  // Initial slot in the user-arranged pinned order (see ThreadPinReorderCommand).
-  // Optional: clients on pre-reorder servers omit it, and the pinned block
-  // falls back to creation order for keyless threads.
+  // Requested slot in the user-arranged pinned order (see ThreadPinReorderCommand).
+  // Omitting it preserves an existing pin's slot, while keyless new pins fall
+  // back to creation order.
   orderKey: Schema.optional(TrimmedNonEmptyString),
 });
 
