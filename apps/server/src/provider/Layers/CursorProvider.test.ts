@@ -459,7 +459,7 @@ describe("buildCursorCapabilitiesFromConfigOptions", () => {
 });
 
 describe("checkCursorProviderStatus", () => {
-  it("reports the install docs when the Cursor CLI command is missing", async () => {
+  it("reports the install docs and USERPROFILE skills when the Cursor CLI is missing", async () => {
     const provider = await runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -478,7 +478,7 @@ describe("checkCursorProviderStatus", () => {
             apiEndpoint: "",
             customModels: [],
           },
-          { ...process.env, HOME: home },
+          { USERPROFILE: home },
         );
       }),
     );

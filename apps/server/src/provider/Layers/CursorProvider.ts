@@ -998,7 +998,8 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
-  const skills = yield* discoverCursorSkills(environment?.HOME);
+  const cursorHome = environment?.HOME ?? environment?.USERPROFILE;
+  const skills = yield* discoverCursorSkills(cursorHome);
 
   if (!cursorSettings.enabled) {
     return buildServerProvider({
