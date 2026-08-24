@@ -160,13 +160,22 @@ export const make = Effect.gen(function* () {
         { concurrency: PROJECT_CONCURRENCY },
       );
 
-      const unavailable = batches.find(
-        (batch) =>
-          "error" in batch &&
-          (batch.error._tag === "GitHubIssueCliMissingError" ||
-            batch.error._tag === "GitHubIssueCliUnauthenticatedError"),
+      // A missing `gh` is the one failure no repository can survive, so it ends the request.
+      const cliMissing = batches.find(
+        (batch) => "error" in batch && batch.error._tag === "GitHubIssueCliMissingError",
       );
-      if (unavailable && "error" in unavailable) return yield* unavailable.error;
+      if (cliMissing && "error" in cliMissing) return yield* cliMissing.error;
+
+      // Authentication is per host: an unauthenticated Enterprise remote must not discard the
+      // issues another repository answered with. Only a workspace that is entirely locked out
+      // gets the global "run gh auth login" error, which is the only case where it is the answer.
+      const unauthenticated = batches.filter(
+        (batch) => "error" in batch && batch.error._tag === "GitHubIssueCliUnauthenticatedError",
+      );
+      if (unauthenticated.length > 0 && unauthenticated.length === batches.length) {
+        const [first] = unauthenticated;
+        if (first && "error" in first) return yield* first.error;
+      }
 
       const entries: GitHubIssueListEntry[] = [];
       const errors: GitHubIssueListResult["errors"][number][] = [];
@@ -176,7 +185,11 @@ export const make = Effect.gen(function* () {
           errors.push({
             projectId: batch.project.project.id,
             projectTitle: batch.project.project.title,
-            message: `${batch.project.repository} could not be read.`,
+            // The failing host is named here because it is the one the reader has to sign in to.
+            message:
+              batch.error._tag === "GitHubIssueCliUnauthenticatedError"
+                ? `${batch.project.repository} needs GitHub CLI authentication. Run \`gh auth login --hostname ${batch.project.host}\` and retry.`
+                : `${batch.project.repository} could not be read.`,
           });
           continue;
         }

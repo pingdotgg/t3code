@@ -24,13 +24,16 @@ import { Spinner } from "../components/ui/spinner";
 import { isElectron } from "../env";
 import { cn } from "../lib/utils";
 import { githubIssueEnvironment } from "../state/githubIssues";
-import { useAllEnvironmentShellsBootstrapped, useProjects } from "../state/entities";
+import { useEnvironmentShellBootstrapped, useProjects } from "../state/entities";
 import { usePrimaryEnvironment } from "../state/environments";
 import { useEnvironmentQuery } from "../state/query";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 
-/** "Every project" wears the one value no project id can be. */
-const ALL_PROJECTS_VALUE = "";
+/**
+ * "Every project" wears a value no project id can be, matching the pull request filters. A
+ * project id is a UUID, so this can never collide with one.
+ */
+const ALL_PROJECTS_VALUE = "all";
 
 const STATE_OPTIONS = [
   { value: "open", label: "Open" },
@@ -76,8 +79,10 @@ function GitHubIssuesRoute() {
   const supported =
     primaryEnvironment?.serverConfig?.environment.capabilities.githubIssues === true;
   const projects = useProjects();
-  // An unread shell has no projects yet, which is not the same answer as having none.
-  const projectsKnown = useAllEnvironmentShellsBootstrapped();
+  // An unread shell has no projects yet, which is not the same answer as having none. Scoped to
+  // the primary environment because that is the only one this page reads: the all-environments
+  // gate would stay shut while some other server is still connecting.
+  const projectsKnown = useEnvironmentShellBootstrapped(environmentId);
   const githubProjects = useMemo(
     () =>
       projects
@@ -146,6 +151,9 @@ function GitHubIssuesRoute() {
     q?: string | undefined;
   }) => {
     void navigate({
+      // Filters are transient edits, not places: without this every keystroke of a search would
+      // push a history entry and Back would walk the query one character at a time.
+      replace: true,
       search: (current) => {
         const {
           repository: _repository,
@@ -282,7 +290,10 @@ function GitHubIssuesRoute() {
               <Select
                 value={scopedProjectId ?? ALL_PROJECTS_VALUE}
                 onValueChange={(value: string | null) =>
-                  updateFilters({ projectId: value ? (value as ProjectId) : undefined })
+                  updateFilters({
+                    projectId:
+                      value && value !== ALL_PROJECTS_VALUE ? (value as ProjectId) : undefined,
+                  })
                 }
               >
                 <SelectTrigger

@@ -122,32 +122,39 @@ export function GitHubIssueDetailContent({
 
   return (
     <article className="mx-auto w-full max-w-3xl px-5 py-6 sm:px-8">
-      <div className="flex items-start gap-4">
-        <CircleDotIcon
-          className={cn(
-            "mt-1 size-5 shrink-0",
-            detail.state === "open" ? "text-success-foreground" : "text-muted-foreground",
-          )}
-        />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-balance font-semibold text-xl leading-tight">{detail.title}</h2>
-          <p className="mt-1 text-muted-foreground text-sm">
-            {detail.repository} #{detail.number} · opened by {detail.author?.login ?? "unknown"} ·{" "}
-            {formatRelativeTimeLabel(detail.createdAt)}
-          </p>
+      {/* Both buttons are shrink-0, and the right panel leaves roughly 290px of content below
+          760px, so on one row they would squeeze the title into a ribbon. The action group drops
+          to its own line instead, the way the pull request panel gives its title a full row. */}
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-4">
+          <CircleDotIcon
+            className={cn(
+              "mt-1 size-5 shrink-0",
+              detail.state === "open" ? "text-success-foreground" : "text-muted-foreground",
+            )}
+          />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-balance font-semibold text-xl leading-tight">{detail.title}</h2>
+            <p className="mt-1 text-muted-foreground text-sm">
+              {detail.repository} #{detail.number} · opened by {detail.author?.login ?? "unknown"} ·{" "}
+              {formatRelativeTimeLabel(detail.createdAt)}
+            </p>
+          </div>
         </div>
-        <Button size="sm" onClick={() => void fixInThread()} disabled={preparing}>
-          <WrenchIcon className="size-4" />
-          {preparing ? "Preparing..." : "Fix in a thread"}
-        </Button>
-        <Button
-          render={<a href={detail.url} target="_blank" rel="noreferrer noopener" />}
-          size="icon-sm"
-          variant="outline"
-          aria-label="Open issue on GitHub"
-        >
-          <ExternalLinkIcon className="size-4" />
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => void fixInThread()} disabled={preparing}>
+            <WrenchIcon className="size-4" />
+            {preparing ? "Preparing..." : "Fix in a thread"}
+          </Button>
+          <Button
+            render={<a href={detail.url} target="_blank" rel="noreferrer noopener" />}
+            size="icon-sm"
+            variant="outline"
+            aria-label="Open issue on GitHub"
+          >
+            <ExternalLinkIcon className="size-4" />
+          </Button>
+        </div>
       </div>
 
       <div className="mt-5 flex flex-wrap gap-1.5">
