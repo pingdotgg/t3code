@@ -241,6 +241,32 @@ interface ClaudeTaskAgentState {
   effort: string | undefined;
 }
 
+/**
+ * How many racing snapshot models to buffer per session. A snapshot whose
+ * task_started never arrives would otherwise pin its entry for the session's
+ * lifetime; oldest entries evict first.
+ */
+const PENDING_TASK_MODEL_CAP = 64;
+
+/**
+ * Buffers a subagent snapshot's authoritative model under its
+ * parent_tool_use_id, for snapshots that beat their task_started to the
+ * stream. task_started consumes the entry when it registers the task.
+ */
+function rememberPendingTaskModel(
+  pending: Map<string, string>,
+  parentToolUseId: string,
+  model: string,
+): void {
+  pending.set(parentToolUseId, model);
+  if (pending.size > PENDING_TASK_MODEL_CAP) {
+    const oldest = pending.keys().next();
+    if (!oldest.done) {
+      pending.delete(oldest.value);
+    }
+  }
+}
+
 interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -262,6 +288,12 @@ interface ClaudeSessionContext {
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   readonly taskAgents: Map<string, ClaudeTaskAgentState>;
+  /**
+   * Authoritative subagent models from assistant snapshots that arrived before
+   * their task_started registered the task, keyed by parent_tool_use_id.
+   * Written through `rememberPendingTaskModel`, consumed by task_started.
+   */
+  readonly pendingTaskModels: Map<string, string>;
   /**
    * Last emitted workflow-member fingerprint per member slot. A coordinator
    * task_progress repeats the FULL member array every tick; without a
@@ -2875,8 +2907,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const owningTaskId = agentIdForParentToolUse(context.taskAgents, assistantParentToolUseId);
       const snapshotModel = trimmedString(message.message.model);
       const owningAgent = owningTaskId ? context.taskAgents.get(owningTaskId) : undefined;
-      if (owningAgent && snapshotModel) {
-        owningAgent.model = snapshotModel;
+      if (snapshotModel) {
+        if (owningAgent) {
+          owningAgent.model = snapshotModel;
+        } else {
+          // The snapshot beat its task_started (or its tool_use_id was never
+          // recorded): hold the model until the task registers.
+          rememberPendingTaskModel(
+            context.pendingTaskModels,
+            assistantParentToolUseId,
+            snapshotModel,
+          );
+        }
       }
       context.lastAssistantUuid = message.uuid;
       yield* updateResumeCursor(context);
@@ -3190,12 +3232,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const owningAgentId = launchingTool?.agentId;
         // Model/effort: the Agent tool's input carries explicit overrides;
         // absent ones inherit the session's selection (SDK behavior).
-        // Subagent assistant snapshots later refine model with the
-        // authoritative API id. AgentInput.effort may be a named level or an
-        // integer.
+        // Subagent assistant snapshots refine model with the authoritative API
+        // id: one that already arrived is buffered and outranks the seed here,
+        // later ones refine the record in place. AgentInput.effort may be a
+        // named level or an integer.
         const launchInput = launchingTool?.input;
+        const toolUseId = message.tool_use_id;
+        const bufferedModel = toolUseId ? context.pendingTaskModels.get(toolUseId) : undefined;
+        if (toolUseId) {
+          context.pendingTaskModels.delete(toolUseId);
+        }
         const model =
-          trimmedString(launchInput?.model) ?? trimmedString(context.session.model ?? undefined);
+          bufferedModel ??
+          trimmedString(launchInput?.model) ??
+          trimmedString(context.session.model ?? undefined);
         const rawLaunchEffort = launchInput?.effort;
         const effort =
           trimmedString(rawLaunchEffort) ??
@@ -3807,6 +3857,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const inFlightTools = new Map<number, ToolInFlight>();
       const claudeTasks = new Map<string, ClaudeTaskState>();
       const taskAgents = new Map<string, ClaudeTaskAgentState>();
+      const pendingTaskModels = new Map<string, string>();
       const workflowMemberFingerprints = new Map<string, string>();
       const liveTaskIds = new Set<string>();
 
@@ -4270,6 +4321,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         claudeTasks,
         taskAgents,
+        pendingTaskModels,
         workflowMemberFingerprints,
         liveTaskIds,
         turnState: undefined,

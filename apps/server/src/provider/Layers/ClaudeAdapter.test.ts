@@ -1997,6 +1997,84 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("a subagent snapshot that beats task_started still wins over the seed", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "effort", value: "max" }],
+        ),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      // The subagent streams its first assistant snapshot before the task is
+      // registered, so there is no agent to refine yet.
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent_early",
+        message: {
+          model: "claude-sonnet-5[1m]",
+          content: [],
+        },
+        uuid: "early-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-early",
+        description: "Agent E",
+        task_type: "local_agent",
+        tool_use_id: "toolu_agent_early",
+        uuid: "task-early-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "task-early",
+        description: "Agent E",
+        usage: { total_tokens: 100, tool_uses: 1, duration_ms: 10 },
+        uuid: "task-early-progress-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber));
+      const started = taskEvents[0];
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.model, "claude-sonnet-5[1m]");
+        assert.equal(started.payload.effort, "max");
+      }
+      const progress = taskEvents[1];
+      assert.equal(progress?.type, "task.progress");
+      if (progress?.type === "task.progress") {
+        assert.equal(progress.payload.model, "claude-sonnet-5[1m]");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("closes the session when the Claude stream aborts after a turn starts", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
