@@ -26,9 +26,6 @@ export function useSidebarActiveThreadScroll(input: {
     const routeChangedFromSidebar =
       routeThreadChanged && sidebarNavigationThreadKeyRef.current === routeThreadKey;
 
-    if (!hasThreadRoute) {
-      initialScrollPendingRef.current = false;
-    }
     const initialScrollPending = initialScrollPendingRef.current;
 
     if (!sidebarIsVisible) {
