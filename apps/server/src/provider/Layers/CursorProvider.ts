@@ -998,6 +998,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
+  const skills = yield* discoverCursorSkills(environment?.HOME);
 
   if (!cursorSettings.enabled) {
     return buildServerProvider({
@@ -1005,6 +1006,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       enabled: false,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: false,
         version: null,
@@ -1031,6 +1033,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: !isCommandMissingCause(error),
         version: null,
@@ -1049,6 +1052,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: true,
         version: null,
@@ -1072,6 +1076,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: true,
         version: parsed.version,
@@ -1105,7 +1110,6 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveredModels = discoveryExit.value;
     }
   }
-  const skills = yield* discoverCursorSkills(environment?.HOME);
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,

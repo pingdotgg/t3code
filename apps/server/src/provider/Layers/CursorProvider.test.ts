@@ -461,11 +461,25 @@ describe("buildCursorCapabilitiesFromConfigOptions", () => {
 describe("checkCursorProviderStatus", () => {
   it("reports the install docs when the Cursor CLI command is missing", async () => {
     const provider = await runNode(
-      checkCursorProviderStatus({
-        enabled: true,
-        binaryPath: missingCursorBinaryPath,
-        apiEndpoint: "",
-        customModels: [],
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectory({ prefix: "cursor-home-" });
+        const skillDir = path.join(home, ".agents", "skills", "review");
+        yield* fileSystem.makeDirectory(skillDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(skillDir, "SKILL.md"),
+          ["---", "name: review", "description: Review changes.", "---"].join("\n"),
+        );
+        return yield* checkCursorProviderStatus(
+          {
+            enabled: true,
+            binaryPath: missingCursorBinaryPath,
+            apiEndpoint: "",
+            customModels: [],
+          },
+          { ...process.env, HOME: home },
+        );
       }),
     );
 
@@ -474,6 +488,14 @@ describe("checkCursorProviderStatus", () => {
       status: "error",
       auth: { status: "unknown" },
       message: cursorCliCommandMissingMessage,
+      skills: [
+        {
+          name: "review",
+          description: "Review changes.",
+          enabled: true,
+          scope: "user",
+        },
+      ],
     });
   });
 
