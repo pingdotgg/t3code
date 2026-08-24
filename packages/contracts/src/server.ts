@@ -61,6 +61,23 @@ export const ServerProviderAuth = Schema.Struct({
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
+/** One subscription-plan quota window reported by a provider. */
+export const ProviderPlanUsageWindow = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  resetsAt: Schema.NullOr(IsoDateTime),
+  windowDurationMinutes: Schema.optional(NonNegativeInt),
+});
+export type ProviderPlanUsageWindow = typeof ProviderPlanUsageWindow.Type;
+
+/** Provider-authored plan utilization, sampled during the provider health probe. */
+export const ProviderPlanUsage = Schema.Struct({
+  checkedAt: IsoDateTime,
+  windows: Schema.Array(ProviderPlanUsageWindow),
+});
+export type ProviderPlanUsage = typeof ProviderPlanUsage.Type;
+
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
@@ -192,6 +209,7 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  planUsage: Schema.optionalKey(ProviderPlanUsage),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
 });

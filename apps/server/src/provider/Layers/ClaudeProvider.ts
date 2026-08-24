@@ -42,6 +42,7 @@ import {
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import { normalizeClaudePlanUsage } from "../providerPlanUsage.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -641,6 +642,7 @@ type ClaudeCapabilitiesProbe = {
    * the subscription/token fields are absent and auth is external AWS creds.
    */
   readonly apiProvider: string | undefined;
+  readonly rateLimits?: unknown;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
 
@@ -724,7 +726,8 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * message is ever written to the subprocess stdin. This means the Claude
  * Code subprocess completes its local initialization IPC (returning
  * account info and slash commands) but never starts an API request to
- * Anthropic. We read the init data and then abort the subprocess.
+ * Anthropic. We read the init data, request account usage over the SDK's
+ * control channel when available, and then abort the subprocess.
  *
  * This is used as a fallback when `claude auth status` does not include
  * subscription type information.
@@ -765,11 +768,15 @@ const probeClaudeCapabilities = (
             readonly apiProvider?: string;
           }
         | undefined;
+      const usage = await q
+        .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
+        .catch(() => null);
       return {
         email: account?.email,
         subscriptionType: account?.subscriptionType,
         tokenSource: account?.tokenSource,
         apiProvider: account?.apiProvider,
+        rateLimits: usage?.rate_limits as unknown,
         slashCommands: parseClaudeInitializationCommands(init.commands),
       } satisfies ClaudeCapabilitiesProbe;
     });
@@ -953,6 +960,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  const planUsage = normalizeClaudePlanUsage(capabilities.rateLimits, checkedAt);
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -960,6 +968,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     models,
     slashCommands: dedupedSlashCommands,
     skills,
+    ...(planUsage ? { planUsage } : {}),
     probe: {
       installed: true,
       version: parsedVersion,

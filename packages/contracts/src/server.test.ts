@@ -45,6 +45,35 @@ describe("ServerProvider", () => {
     expect(parsed.skills).toEqual([]);
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
+    expect(parsed.planUsage).toBeUndefined();
+  });
+
+  it("decodes provider plan usage windows", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      planUsage: {
+        checkedAt: "2026-08-24T18:00:00.000Z",
+        windows: [
+          {
+            id: "weekly",
+            label: "Weekly",
+            usedPercent: 72,
+            resetsAt: "2026-08-28T01:00:00.000Z",
+            windowDurationMinutes: 10_080,
+          },
+        ],
+      },
+    });
+
+    expect(parsed.planUsage?.windows).toEqual([
+      {
+        id: "weekly",
+        label: "Weekly",
+        usedPercent: 72,
+        resetsAt: "2026-08-28T01:00:00.000Z",
+        windowDurationMinutes: 10_080,
+      },
+    ]);
   });
 
   it("defaults one-click update support when decoding older advisory snapshots", () => {

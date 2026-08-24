@@ -510,6 +510,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
         ? ["Show skills in slash menu"]
         : []),
+      ...(settings.showPlanUsageInSidebar !== DEFAULT_UNIFIED_SETTINGS.showPlanUsageInSidebar
+        ? ["Plan usage indicator"]
+        : []),
       ...(settings.enableLegacyTokenStreaming !==
       DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming
         ? ["Stream token by token"]
@@ -576,6 +579,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
+      settings.showPlanUsageInSidebar,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
       settings.wordWrap,
@@ -653,6 +657,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+      showPlanUsageInSidebar: DEFAULT_UNIFIED_SETTINGS.showPlanUsageInSidebar,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
@@ -2103,6 +2108,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ showSkillsInSlashMenu: Boolean(checked) })
               }
               aria-label="Show skills in slash menu"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("plan-usage-indicator")}
+          description="Show the most constrained AI subscription limit beside Usage in the sidebar. Hover it for every reported limit."
+          resetAction={
+            settings.showPlanUsageInSidebar !== DEFAULT_UNIFIED_SETTINGS.showPlanUsageInSidebar ? (
+              <SettingResetButton
+                label="plan usage indicator"
+                onClick={() =>
+                  updateSettings({
+                    showPlanUsageInSidebar: DEFAULT_UNIFIED_SETTINGS.showPlanUsageInSidebar,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showPlanUsageInSidebar}
+              onCheckedChange={(checked) =>
+                updateSettings({ showPlanUsageInSidebar: Boolean(checked) })
+              }
+              aria-label="Show plan usage in sidebar"
             />
           }
         />

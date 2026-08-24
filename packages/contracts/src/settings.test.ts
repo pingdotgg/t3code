@@ -110,6 +110,13 @@ describe("ClientSettings sidebar", () => {
     );
   });
 
+  it("keeps provider plan usage hidden until the user opts in", () => {
+    expect(decodeClientSettings({}).showPlanUsageInSidebar).toBe(false);
+    expect(decodeClientSettingsPatch({ showPlanUsageInSidebar: true }).showPlanUsageInSidebar).toBe(
+      true,
+    );
+  });
+
   it("allows auto-settle by inactivity to be disabled", () => {
     expect(
       decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,

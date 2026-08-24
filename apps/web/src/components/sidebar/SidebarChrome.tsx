@@ -5,10 +5,10 @@ import {
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
-import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironments } from "../../state/environments";
 import {
@@ -31,6 +31,11 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
+import {
+  collectSidebarPlanUsage,
+  highestPlanUsagePercent,
+  sidebarPlanUsageTone,
+} from "./SidebarPlanUsage.logic";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -143,6 +148,89 @@ function SidebarUtilityItem({
   );
 }
 
+function formatPlanUsageReset(resetsAt: string | null): string | null {
+  if (!resetsAt) return null;
+  const reset = new Date(resetsAt);
+  if (Number.isNaN(reset.getTime())) return null;
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(reset);
+}
+
+function SidebarPlanUsageItem({ onClick }: { onClick: () => void }) {
+  const showPlanUsage = useClientSettings((settings) => settings.showPlanUsageInSidebar);
+  const { environments } = useEnvironments();
+  const entries = useMemo(() => collectSidebarPlanUsage(environments), [environments]);
+  const highestPercent = showPlanUsage ? highestPlanUsagePercent(entries) : null;
+  const roundedPercent = highestPercent === null ? null : Math.round(highestPercent);
+  const tone = highestPercent === null ? "muted" : sidebarPlanUsageTone(highestPercent);
+  const showEnvironment = environments.length > 1;
+  const label =
+    roundedPercent === null ? "Usage" : `Usage, highest plan utilization ${roundedPercent}%`;
+
+  return (
+    <SidebarMenuItem className="shrink-0">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SidebarMenuButton
+              aria-label={label}
+              className={cn(
+                "w-auto [&>svg]:text-current!",
+                tone === "warning" && "text-warning hover:text-warning",
+                tone === "danger" && "text-destructive hover:text-destructive",
+              )}
+              onClick={onClick}
+              size={roundedPercent === null ? "icon" : "default"}
+            >
+              <ChartNoAxesColumnIcon />
+              {roundedPercent === null ? null : (
+                <span className="font-mono text-[11px] tabular-nums">{roundedPercent}%</span>
+              )}
+            </SidebarMenuButton>
+          }
+        />
+        <TooltipPopup align="start" className="max-w-80" side="top">
+          {showPlanUsage && entries.length > 0 ? (
+            <div className="grid min-w-52 gap-1.5 py-1">
+              <div className="font-medium text-foreground">Plan usage</div>
+              {entries.map((entry) => {
+                const reset = formatPlanUsageReset(entry.resetsAt);
+                return (
+                  <div className="grid grid-cols-[1fr_auto] gap-x-4" key={entry.key}>
+                    <div className="min-w-0">
+                      <div className="truncate text-foreground/85">
+                        {entry.providerLabel} · {entry.windowLabel}
+                      </div>
+                      {showEnvironment || reset ? (
+                        <div className="truncate text-[10px] text-muted-foreground">
+                          {[
+                            showEnvironment ? entry.environmentLabel : null,
+                            reset ? `Resets ${reset}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      ) : null}
+                    </div>
+                    <span className="font-mono tabular-nums text-foreground">
+                      {Math.round(entry.usedPercent)}%
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            "Usage"
+          )}
+        </TooltipPopup>
+      </Tooltip>
+    </SidebarMenuItem>
+  );
+}
+
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
@@ -216,11 +304,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
-          <SidebarUtilityItem
-            icon={<ChartNoAxesColumnIcon />}
-            label="Usage"
-            onClick={handleUsageClick}
-          />
+          <SidebarPlanUsageItem onClick={handleUsageClick} />
         </>
       )}
       <SidebarUpdatePill />

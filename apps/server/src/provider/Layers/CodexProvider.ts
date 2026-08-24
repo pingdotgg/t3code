@@ -33,6 +33,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import { normalizeCodexPlanUsage } from "../providerPlanUsage.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
@@ -45,6 +46,7 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse | undefined;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
@@ -395,24 +397,27 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
     return {
       account: accountResponse,
+      rateLimits: undefined,
       version,
       models: appendCustomCodexModels([], input.customModels ?? []),
       skills: [],
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      client.request("account/rateLimits/read", undefined).pipe(Effect.option),
     ],
     { concurrency: "unbounded" },
   );
 
   return {
     account: accountResponse,
+    rateLimits: Option.getOrUndefined(rateLimits),
     version,
     models: applyPreferredCodexDefaultModel(
       appendCustomCodexModels(models, input.customModels ?? []),
@@ -600,6 +605,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   const snapshot = probeResult.success.value;
   const accountStatus = accountProbeStatus(snapshot.account);
+  const planUsage = normalizeCodexPlanUsage(snapshot.rateLimits, checkedAt);
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
@@ -607,6 +613,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     checkedAt,
     models: snapshot.models,
     skills: snapshot.skills,
+    ...(planUsage ? { planUsage } : {}),
     slashCommands: [
       {
         name: "feedback",

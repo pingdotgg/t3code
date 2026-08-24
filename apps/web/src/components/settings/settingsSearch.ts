@@ -137,6 +137,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "plan-usage-indicator",
+    title: "Plan usage indicator",
+    to: "/settings/general",
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/general",
