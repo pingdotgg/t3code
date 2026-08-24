@@ -174,7 +174,7 @@ const buildCmd = Command.make(
       }
 
       // The t3 Claude plugin is resolved at runtime from dist/claude-plugin next
-      // to the bundle (see resolveT3ClaudePluginDir); without this copy bundled
+      // to the bundle (see resolveT3ClaudePluginLocation); without this copy bundled
       // builds silently lose the t3:handoff skill.
       const pluginSource = path.join(serverDir, "claude-plugin");
       const pluginTarget = path.join(serverDir, "dist/claude-plugin");

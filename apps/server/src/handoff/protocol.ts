@@ -24,6 +24,18 @@ export const T3_THREAD_ID_ENV = "T3_THREAD_ID";
  * sessions where no installed `d` binary is on PATH (e.g. dev servers).
  */
 export const T3_CLI_ENV = "T3_CLI";
+/**
+ * CLI entry the shim at `T3_CLI` runs. Injected because the entry is not
+ * always reachable from the shim's own directory: a packaged desktop app
+ * unpacks the plugin but keeps the server bundle inside its asar archive.
+ */
+export const T3_CLI_ENTRY_ENV = "T3_CLI_ENTRY";
+/**
+ * Executable the shim reads `T3_CLI_ENTRY` with — this server's own runtime,
+ * so an archived entry is read by the same asar-aware Electron binary that
+ * runs the server.
+ */
+export const T3_CLI_RUNTIME_ENV = "T3_CLI_RUNTIME";
 
 export const HANDOFF_HTTP_PATH = "/handoff";
 

@@ -21,6 +21,7 @@ import {
   type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { HostProcessExecutablePath } from "@t3tools/shared/hostProcess";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
@@ -82,7 +83,7 @@ import { makeHandoffCallbackEnvironment } from "../../handoff/callbackEnvironmen
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { resolveT3ClaudePluginDir } from "../Drivers/ClaudePlugin.ts";
+import { resolveT3ClaudePluginLocation } from "../Drivers/ClaudePlugin.ts";
 import {
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
@@ -1708,10 +1709,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     claudeSettings.binaryPath,
     claudeEnvironment,
   );
-  const t3ClaudePluginDir = yield* resolveT3ClaudePluginDir().pipe(
+  const t3ClaudePlugin = yield* resolveT3ClaudePluginLocation().pipe(
     Effect.provideService(Path.Path, path),
     Effect.provideService(FileSystem.FileSystem, fileSystem),
   );
+  const t3ClaudePluginDir = t3ClaudePlugin?.pluginDir;
+  const hostExecutablePath = yield* HostProcessExecutablePath;
   const nativeEventLogger =
     options?.nativeEventLogger ??
     (options?.nativeEventLogPath !== undefined
@@ -4318,7 +4321,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ? {
             ...claudeEnvironment,
             ...makeHandoffCallbackEnvironment(mcpSession, {
-              ...(t3ClaudePluginDir ? { cliShimPath: path.join(t3ClaudePluginDir, "bin", "t3") } : {}),
+              ...(t3ClaudePluginDir
+                ? { cliShimPath: path.join(t3ClaudePluginDir, "bin", "t3") }
+                : {}),
+              ...(t3ClaudePlugin?.cliEntryPath
+                ? {
+                    cliEntryPath: t3ClaudePlugin.cliEntryPath,
+                    cliRuntimePath: hostExecutablePath,
+                  }
+                : {}),
             }),
           }
         : claudeEnvironment;

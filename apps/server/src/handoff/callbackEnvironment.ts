@@ -14,13 +14,24 @@
  * @module handoff/callbackEnvironment
  */
 import type { McpProviderSessionConfig } from "../mcp/McpProviderSession.ts";
-import { T3_CLI_ENV, T3_SERVER_ORIGIN_ENV, T3_SERVER_TOKEN_ENV, T3_THREAD_ID_ENV } from "./protocol.ts";
+import {
+  T3_CLI_ENTRY_ENV,
+  T3_CLI_ENV,
+  T3_CLI_RUNTIME_ENV,
+  T3_SERVER_ORIGIN_ENV,
+  T3_SERVER_TOKEN_ENV,
+  T3_THREAD_ID_ENV,
+} from "./protocol.ts";
 
 export function makeHandoffCallbackEnvironment(
   session: McpProviderSessionConfig,
   options?: {
     /** Absolute path of the plugin's `bin/d` shim; omitted → sessions fall back to `d` on PATH. */
     readonly cliShimPath?: string;
+    /** CLI entry the shim runs; omitted → the shim resolves one next to itself. */
+    readonly cliEntryPath?: string;
+    /** Executable that reads the entry; omitted → the shim falls back to `node`. */
+    readonly cliRuntimePath?: string;
   },
 ): Record<string, string> {
   const origin = new URL(session.endpoint).origin;
@@ -32,5 +43,9 @@ export function makeHandoffCallbackEnvironment(
     [T3_SERVER_TOKEN_ENV]: token,
     [T3_THREAD_ID_ENV]: session.threadId,
     ...(options?.cliShimPath ? { [T3_CLI_ENV]: options.cliShimPath } : {}),
+    ...(options?.cliEntryPath ? { [T3_CLI_ENTRY_ENV]: options.cliEntryPath } : {}),
+    ...(options?.cliEntryPath && options.cliRuntimePath
+      ? { [T3_CLI_RUNTIME_ENV]: options.cliRuntimePath }
+      : {}),
   };
 }

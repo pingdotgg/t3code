@@ -13,7 +13,9 @@ lineage as `handoff.created` / `handoff.received` thread activities.
 The CLI finds and authenticates to the server via **env injected at session spawn**:
 `T3_SERVER_ORIGIN`, `T3_THREAD_ID`, a narrow-scoped `T3_SERVER_TOKEN`, and `T3_CLI` — a single
 executable-shim path, never a "runtime + script" pair (zsh does not word-split unquoted
-parameters). The token is the session's existing MCP bearer credential (`McpSessionRegistry`):
+parameters). The shim itself is handed the CLI entry and the runtime to read it with
+(`T3_CLI_ENTRY`, `T3_CLI_RUNTIME`), because in a packaged desktop app the server bundle stays
+inside an asar archive that only the Electron binary can read (through `ELECTRON_RUN_AS_NODE`). The token is the session's existing MCP bearer credential (`McpSessionRegistry`):
 already per-thread, already expiring, already revoked when the session stops — and it _resolves
 to_ the parent thread server-side, so lineage identity comes from the credential and cannot be
 confused. The skill ships as the `handoff` skill of the T3-owned local plugin (SDK `plugins`
@@ -40,6 +42,16 @@ a first-class thread: same notifications and inbox behavior as a user-prompted o
 its seed turn counts as **user-initiated** for the turn-completed notification kind. The parent is
 left untouched (no auto-settle/snooze). Lineage lives in thread activities (detail view), not the
 sidebar shell; chain UI would require promoting it to a shell field.
+
+## Packaging
+
+`claude` is a plain subprocess and cannot read an asar archive, so the plugin directory handed to
+the SDK must be real files: desktop builds unpack `apps/server/dist/claude-plugin` (electron-builder
+`asarUnpack` on macOS/Linux, the `server.asar` sidecar's `unpackDir` on Windows), and
+`resolveT3ClaudePluginLocation` returns the `.unpacked` twin whenever the plugin resolves inside an
+archive. Packed with no twin it returns nothing and logs a warning rather than handing over a path
+that exists only for the server: skill discovery reads through the same asar-aware fs, so otherwise
+`t3:handoff` shows up in the picker while loading nowhere.
 
 ## Providers
 

@@ -99,7 +99,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   environment?: NodeJS.ProcessEnv,
   options?: {
     /**
-     * Directory of the T3-shipped Claude plugin (see `resolveT3ClaudePluginDir`).
+     * Directory of the T3-shipped Claude plugin (see `resolveT3ClaudePluginLocation`).
      * Its skills are injected into every session via the SDK `plugins` option
      * and addressed plugin-qualified (`t3:<skill>`), so they never collide
      * with user/project skills. Passed explicitly by the caller so discovery

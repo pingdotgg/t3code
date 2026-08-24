@@ -41,7 +41,7 @@ import {
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { resolveT3ClaudePluginDir } from "../Drivers/ClaudePlugin.ts";
+import { resolveT3ClaudePluginLocation } from "../Drivers/ClaudePlugin.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -921,7 +921,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
-  const t3PluginDir = yield* resolveT3ClaudePluginDir();
+  const t3Plugin = yield* resolveT3ClaudePluginLocation();
+  const t3PluginDir = t3Plugin?.pluginDir;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment, {
     ...(t3PluginDir ? { t3PluginDir } : {}),
   });

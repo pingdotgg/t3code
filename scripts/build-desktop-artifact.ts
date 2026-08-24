@@ -801,6 +801,11 @@ export const MAC_FILE_EXCLUSIONS = [
   "!**/node_modules/node-pty/prebuilds/win32-*/**/*",
   "!**/node_modules/node-pty/third_party/conpty/**/*",
 ] as const;
+// The t3 Claude plugin (skills plus the `bin/t3` shim) is loaded by the
+// `claude` subprocess, which is a plain process and cannot read an asar
+// archive: packed, the plugin exists for the server but for nothing else, so
+// t3:handoff would show up in the picker and load nowhere.
+export const DESKTOP_ASAR_UNPACK = ["apps/server/dist/claude-plugin/**/*"] as const;
 // Windows ships the server tree (bundle + node_modules) as a separate
 // resources/server.asar sidecar instead of loose files: the NSIS installer
 // then extracts a handful of large archives instead of thousands of small
@@ -814,6 +819,11 @@ export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 // asar redirect convention). Everything else stays packed.
 export const WINDOWS_SERVER_ASAR_UNPACK_GLOB =
   "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
+// The Claude plugin is read by the `claude` subprocess, which is not
+// asar-aware, so it has to be a real directory too (see DESKTOP_ASAR_UNPACK).
+// A directory prefix rather than a glob: `**` does not match the plugin's own
+// dot-prefixed `.claude-plugin` manifest directory.
+export const WINDOWS_SERVER_ASAR_UNPACK_DIR = "apps/server/dist/claude-plugin";
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
 // platform packages are dead weight (see above), and node_modules/.bin shims
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
@@ -2087,10 +2097,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
-    // All platforms keep app.asar fully packed; electron-builder's default
-    // smart unpack extracts native libraries, which loaders find in
+    // Beyond the Claude plugin, app.asar stays packed; electron-builder's
+    // default smart unpack extracts native libraries, which loaders find in
     // app.asar.unpacked. Windows additionally ships the server tree as the
     // hand-packed server.asar sidecar (see WINDOWS_SERVER_ASAR_RESOURCE).
+    asarUnpack: [...DESKTOP_ASAR_UNPACK],
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -2311,6 +2322,7 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
       createPackageWithOptions(input.sourceDir, input.asarPath, {
         dot: true,
         unpack: WINDOWS_SERVER_ASAR_UNPACK_GLOB,
+        unpackDir: WINDOWS_SERVER_ASAR_UNPACK_DIR,
         globOptions: { ignore: resolveWindowsServerAsarIgnoreGlobs(input.arch) },
       }),
     catch: (cause) => new WindowsServerSidecarPackError({ asarPath: input.asarPath, cause }),

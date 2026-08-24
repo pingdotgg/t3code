@@ -1,8 +1,17 @@
 #!/bin/sh
-# t3 CLI shim, shipped with the T3 Code Claude plugin. Sessions spawned by a dev
-# server have no installed `t3` on PATH, so T3 Code injects this shim's path as
-# $T3_CLI. It resolves the CLI entry relative to itself: the monorepo source
-# layout first, then the bundled dist layout.
+# t3 CLI shim, shipped with the T3 Code Claude plugin. Sessions have no
+# installed `t3` on PATH, so T3 Code injects this shim's path as $T3_CLI.
+#
+# The server also injects the exact CLI entry ($T3_CLI_ENTRY) and the runtime
+# to read it with ($T3_CLI_RUNTIME): in a packaged desktop app the entry lives
+# inside an asar archive, which only the Electron binary can read, and it does
+# so through ELECTRON_RUN_AS_NODE (a plain `node` ignores that variable).
+if [ -n "$T3_CLI_ENTRY" ]; then
+  ELECTRON_RUN_AS_NODE=1 exec "${T3_CLI_RUNTIME:-node}" "$T3_CLI_ENTRY" "$@"
+fi
+
+# Fallback for sessions spawned without that env: resolve the entry relative to
+# this shim, source layout first, then the bundled dist layout.
 dir="$(cd "$(dirname "$0")" && pwd)"
 for entry in "$dir/../../src/bin.ts" "$dir/../../bin.mjs"; do
   if [ -f "$entry" ]; then

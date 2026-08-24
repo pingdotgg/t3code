@@ -61,6 +61,7 @@ import {
   WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
   WINDOWS_SERVER_EXTRA_RESOURCES,
   WINDOWS_SERVER_ASAR_RESOURCE,
+  WINDOWS_SERVER_ASAR_UNPACK_DIR,
   WINDOWS_SERVER_ASAR_UNPACK_GLOB,
   WINDOWS_SERVER_RESOURCE_SOURCE_DIR,
 } from "./build-desktop-artifact.ts";
@@ -481,12 +482,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
-      // All platforms keep app.asar fully packed; Windows ships the server
-      // tree as the hand-packed server.asar sidecar in extraResources instead
-      // of unpacking thousands of loose files at install time.
-      assert.notProperty(mac, "asarUnpack");
-      assert.notProperty(linux, "asarUnpack");
-      assert.notProperty(win, "asarUnpack");
+      // Only the Claude plugin leaves app.asar — the `claude` subprocess
+      // cannot read an archive. Windows ships the server tree as the
+      // hand-packed server.asar sidecar in extraResources instead of
+      // unpacking thousands of loose files at install time.
+      for (const config of [mac, linux, win]) {
+        assert.deepStrictEqual(config.asarUnpack, ["apps/server/dist/claude-plugin/**/*"]);
+      }
       assert.deepStrictEqual(win.extraResources, [
         {
           from: "apps/desktop/prod-resources/resource-monitor",
@@ -502,6 +504,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         WINDOWS_SERVER_ASAR_UNPACK_GLOB,
         "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}",
       );
+      assert.equal(WINDOWS_SERVER_ASAR_UNPACK_DIR, "apps/server/dist/claude-plugin");
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
