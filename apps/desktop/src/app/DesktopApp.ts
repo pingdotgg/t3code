@@ -223,7 +223,13 @@ const bootstrap = Effect.gen(function* () {
         Option.isNone(primaryConfig.value.preflightFailure) &&
         !(yield* Ref.get(state.quitting))
       ) {
-        yield* desktopWindow.createMain;
+        yield* desktopWindow.handleBackendConfigured.pipe(
+          Effect.catch((error) =>
+            logBootstrapWarning("failed to open main window after backend configuration", {
+              error: error.message,
+            }),
+          ),
+        );
       }
     }
     // Bring up the WSL backend if the user previously enabled it. The

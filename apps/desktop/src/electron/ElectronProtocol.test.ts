@@ -21,7 +21,8 @@ vi.mock("electron", () => ({
 
 import * as ElectronProtocol from "./ElectronProtocol.ts";
 
-const fileProtocolTestLayer = Layer.mergeAll(NodeServices.layer, ElectronProtocol.layer);
+const electronProtocolLayer = ElectronProtocol.layer.pipe(Layer.provide(NodeServices.layer));
+const fileProtocolTestLayer = Layer.merge(NodeServices.layer, electronProtocolLayer);
 
 describe("ElectronProtocol", () => {
   beforeEach(() => {
@@ -92,7 +93,7 @@ describe("ElectronProtocol", () => {
       assert.isNull(forwardedHeaders.get("referer"));
       assert.isNull(forwardedHeaders.get("sec-fetch-site"));
       assert.deepEqual(unhandleMock.mock.calls, [["t3code-dev"]]);
-    }).pipe(Effect.provide(ElectronProtocol.layer)),
+    }).pipe(Effect.provide(electronProtocolLayer)),
   );
 
   it.effect("rejects custom protocol requests for another host", () =>
@@ -117,7 +118,7 @@ describe("ElectronProtocol", () => {
 
       assert.equal(response.status, 404);
       assert.equal(netFetchMock.mock.calls.length, 0);
-    }).pipe(Effect.provide(ElectronProtocol.layer)),
+    }).pipe(Effect.provide(electronProtocolLayer)),
   );
 
   it.effect("retries transient renderer target failures", () =>
@@ -145,7 +146,7 @@ describe("ElectronProtocol", () => {
 
       assert.equal(yield* Effect.promise(() => response.text()), "ready");
       assert.equal(netFetchMock.mock.calls.length, 2);
-    }).pipe(Effect.provide(ElectronProtocol.layer)),
+    }).pipe(Effect.provide(electronProtocolLayer)),
   );
 
   it.effect("serves packaged renderer assets with SPA fallback", () =>
@@ -243,7 +244,7 @@ describe("ElectronProtocol", () => {
       assert.equal(traversal.status, 404);
       assert.equal(malformedPath.status, 404);
       assert.equal(netFetchMock.mock.calls.length, 0);
-    }).pipe(Effect.scoped, Effect.provide(ElectronProtocol.layer)),
+    }).pipe(Effect.scoped, Effect.provide(electronProtocolLayer)),
   );
 
   it.effect("preserves protocol registration failures", () =>
@@ -267,7 +268,7 @@ describe("ElectronProtocol", () => {
       assert.equal(error.scheme, "t3code-dev");
       assert.strictEqual(error.cause, cause);
       assert.equal(error.message, 'Failed to register Electron protocol scheme "t3code-dev".');
-    }).pipe(Effect.provide(ElectronProtocol.layer)),
+    }).pipe(Effect.provide(electronProtocolLayer)),
   );
 
   it.effect("preserves protocol unregistration failures", () =>
@@ -297,7 +298,7 @@ describe("ElectronProtocol", () => {
         assert.strictEqual(error.cause, cause);
         assert.equal(error.message, 'Failed to unregister Electron protocol scheme "t3code".');
       }
-    }).pipe(Effect.provide(ElectronProtocol.layer)),
+    }).pipe(Effect.provide(electronProtocolLayer)),
   );
 
   it("keeps executable sources host-restricted while allowing runtime network resources", () => {

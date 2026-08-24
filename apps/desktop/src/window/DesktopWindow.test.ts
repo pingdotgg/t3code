@@ -205,6 +205,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly isDevelopment?: boolean;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -263,7 +264,16 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        input.isDevelopment === false
+          ? DesktopEnvironment.layer({ ...environmentInput, isPackaged: true }).pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  NodeServices.layer,
+                  DesktopConfig.layerTest({ T3CODE_PORT: "3773" }),
+                ),
+              ),
+            )
+          : desktopEnvironmentLayer,
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
@@ -461,6 +471,31 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.setAutoHideCursor.mock.calls, [[false]]);
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("recreates a packaged window before backend readiness", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        isDevelopment: false,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+
+        yield* desktopWindow.handleBackendConfigured;
+        assert.equal(yield* Ref.get(createCount), 1);
+
+        yield* Ref.set(mainWindow, Option.none());
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(createCount), 2);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -1169,6 +1204,25 @@ describe("DesktopWindow", () => {
           assert.equal(Option.getOrThrow(registeredMain), main.window);
         }).pipe(Effect.provide(scenario.layer));
       }),
+  );
+
+  it.effect("retries a failed packaged window open on activate", () =>
+    Effect.gen(function* () {
+      const main = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([null, main.window]);
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+
+        const configuredExit = yield* Effect.exit(desktopWindow.handleBackendConfigured);
+        assert.equal(configuredExit._tag, "Failure");
+        assert.equal(yield* Ref.get(scenario.createCalls), 1);
+
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(scenario.createCalls), 2);
+        assert.equal(Option.getOrThrow(yield* Ref.get(scenario.mainWindow)), main.window);
+      }).pipe(Effect.provide(scenario.layer));
+    }),
   );
 
   it.effect(
