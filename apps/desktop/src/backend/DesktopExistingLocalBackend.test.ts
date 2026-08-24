@@ -37,6 +37,14 @@ describe("parseSystemdT3Home", () => {
     );
   });
 
+  it("decodes escaping emitted by the systemd service renderer", () => {
+    assert.equal(parseSystemdT3Home("Environment=T3CODE_HOME=/srv/t3%%data\n"), "/srv/t3%data");
+    assert.equal(
+      parseSystemdT3Home('Environment=T3CODE_HOME="/srv/t3%% data\\\\slot\\"quoted"\n'),
+      '/srv/t3% data\\slot"quoted',
+    );
+  });
+
   it("uses the last assignment so systemd drop-ins override the base unit", () => {
     assert.equal(
       parseSystemdT3Home(
@@ -273,7 +281,8 @@ describe("pairExistingLocalBackend", () => {
       }).pipe(Effect.flip);
 
       assert.equal(error._tag, "ExistingLocalBackendPairingError");
-      assert.include(error.detail, "does not advertise Desktop attachment credentials");
+      assert.equal(error.reason, "missing-credential");
+      assert.isUndefined(error.cause);
       assert.equal(requestCount, 0);
     }),
   );
@@ -293,6 +302,8 @@ describe("pairExistingLocalBackend", () => {
       }).pipe(Effect.flip);
 
       assert.equal(error._tag, "ExistingLocalBackendPairingError");
+      assert.equal(error.reason, "token-exchange-rejected");
+      assert.isDefined(error.cause);
       assert.include(error.message, "Could not establish a secure Desktop session");
     }),
   );

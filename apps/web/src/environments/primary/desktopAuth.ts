@@ -8,7 +8,11 @@ function readDesktopPrimaryConfigKey(): string {
   const primary = window.desktopBridge
     ?.getLocalEnvironmentBootstraps?.()
     .find((entry) => entry.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
-  return [primary?.httpBaseUrl ?? "", primary?.bootstrapToken ?? ""].join("\u0000");
+  return [
+    primary?.httpBaseUrl ?? "",
+    primary?.bootstrapToken ?? "",
+    primary?.authSessionKey ?? "",
+  ].join("\u0000");
 }
 
 export function readDesktopPrimaryBearerToken(): Promise<string | null> {

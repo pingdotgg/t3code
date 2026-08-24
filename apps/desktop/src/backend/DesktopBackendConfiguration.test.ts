@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as NetService from "@t3tools/shared/Net";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -100,13 +101,20 @@ function existingBackendTestLayer(input: {
   readonly baseDir: string;
   readonly oauthResponses: ReadonlyArray<Response>;
   readonly onHttpRequest?: (url: string) => void;
+  readonly net?: NetService.NetServiceShape;
+  readonly serverExposure?: DesktopServerExposure.DesktopServerExposure["Service"];
 }) {
   let oauthResponseIndex = 0;
   return Layer.effect(
     DesktopBackendConfiguration.DesktopBackendConfiguration,
     DesktopBackendConfiguration.make,
   ).pipe(
-    Layer.provideMerge(serverExposureLayer),
+    Layer.provideMerge(Layer.succeed(NetService.NetService, input.net ?? NetService.make())),
+    Layer.provideMerge(
+      input.serverExposure === undefined
+        ? serverExposureLayer
+        : Layer.succeed(DesktopServerExposure.DesktopServerExposure, input.serverExposure),
+    ),
     Layer.provideMerge(DesktopAppSettings.layerTest()),
     Layer.provideMerge(DesktopWslEnvironment.layerTest()),
     Layer.provideMerge(DesktopWslServerTree.layerTest()),
@@ -260,6 +268,8 @@ describe("DesktopBackendConfiguration", () => {
         const attachedConfig = yield* configuration.resolvePrimary;
         assert.equal(attachedConfig.manageProcess, false);
         assert.equal(attachedConfig.attachedBearerToken, "desktop-bearer-token");
+        assert.isString(attachedConfig.authSessionKey);
+        assert.isNotEmpty(attachedConfig.authSessionKey);
         assert.equal(
           Duration.toMillis(attachedConfig.readinessTimeout ?? Duration.zero),
           Duration.toMillis(Duration.seconds(5)),
@@ -309,6 +319,7 @@ describe("DesktopBackendConfiguration", () => {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         const first = yield* configuration.resolveExistingLocalBackend;
         assert.equal(first._tag, "ReadyToAttach");
+        const firstConfig = yield* configuration.resolvePrimary;
 
         yield* fileSystem.writeFileString(
           runtimePath,
@@ -323,13 +334,15 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(moved.attachment.credential, "attach-two");
           assert.equal(moved.attachment.bearerToken, "bearer-two");
         }
+        const movedConfig = yield* configuration.resolvePrimary;
+        assert.notEqual(movedConfig.authSessionKey, firstConfig.authSessionKey);
 
         assert.isTrue(yield* configuration.invalidateExistingLocalBackendAttachment);
         yield* fileSystem.remove(runtimePath);
         const unavailable = yield* configuration.resolveExistingLocalBackend;
         assert.equal(unavailable._tag, "PairingFailed");
         if (unavailable._tag === "PairingFailed") {
-          assert.include(unavailable.error.detail, "previously attached server");
+          assert.equal(unavailable.error.reason, "server-unavailable");
         }
       }).pipe(
         Effect.provide(
@@ -407,6 +420,83 @@ describe("DesktopBackendConfiguration", () => {
         );
       }),
     ),
+  );
+
+  it.effect("selects a free port when an attached launch becomes independent", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-independent-backend-config-test-",
+      });
+      yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${baseDir}/userdata/server-runtime.json`,
+        `{"version":1,"pid":${String(process.pid)},"port":41773,"origin":"http://127.0.0.1:41773","desktopAttachToken":"attach-secret","startedAt":"2026-08-21T00:00:00.000Z"}`,
+      );
+
+      let exposurePort = 41_773;
+      const configuredPorts: number[] = [];
+      const serverExposure = {
+        getState: Effect.die("unexpected getState"),
+        backendConfig: Effect.sync(() => ({
+          port: exposurePort,
+          bindHost: "127.0.0.1",
+          httpBaseUrl: new URL(`http://127.0.0.1:${String(exposurePort)}`),
+          tailscaleServeEnabled: false,
+          tailscaleServePort: 8443,
+        })),
+        configureFromSettings: ({ port }: { readonly port: number }) =>
+          Effect.sync(() => {
+            exposurePort = port;
+            configuredPorts.push(port);
+            return {
+              mode: "local-only" as const,
+              endpointUrl: null,
+              advertisedHost: null,
+              tailscaleServeEnabled: false,
+              tailscaleServePort: 8_443,
+            };
+          }),
+        setMode: () => Effect.die("unexpected setMode"),
+        setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
+        getAdvertisedEndpoints: Effect.succeed([]),
+      } satisfies DesktopServerExposure.DesktopServerExposure["Service"];
+      const net = {
+        ...NetService.make(),
+        canListenOnHost: (port: number) => Effect.succeed(port === 3_774),
+      } satisfies NetService.NetServiceShape;
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        assert.equal((yield* configuration.resolveExistingLocalBackend)._tag, "ReadyToAttach");
+        assert.equal((yield* configuration.resolvePrimary).bootstrap.port, 41_773);
+
+        yield* configuration.useIndependentBackendForLaunch;
+        const independent = yield* configuration.resolvePrimary;
+
+        assert.deepEqual(configuredPorts, [3_774]);
+        assert.equal(independent.bootstrap.port, 3_774);
+        assert.equal(independent.httpBaseUrl.href, "http://127.0.0.1:3774/");
+        assert.equal(independent.bootstrap.t3Home, `${baseDir}/desktop-independent`);
+      }).pipe(
+        Effect.provide(
+          existingBackendTestLayer({
+            baseDir,
+            oauthResponses: [
+              Response.json({
+                access_token: "desktop-bearer-token",
+                issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                token_type: "Bearer",
+                expires_in: 3600,
+                scope: "orchestration:read",
+              }),
+            ],
+            net,
+            serverExposure,
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("resolvePrimary starts from server.asar without materializing the WSL tree", () =>

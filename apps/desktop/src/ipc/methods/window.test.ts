@@ -73,6 +73,37 @@ describe("getLocalEnvironmentBootstraps", () => {
     }).pipe(Effect.provide(DesktopBackendPool.layerTest([defaultWslInstance]))),
   );
 
+  it.effect("publishes a new auth session key for an attached primary", () => {
+    const { runningDistro: _runningDistro, ...readyPrimaryConfig } = readyWslConfig;
+    const attachedPrimary: DesktopBackendManager.DesktopBackendInstance = {
+      ...defaultWslInstance,
+      id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
+      label: Effect.succeed("Local environment"),
+      currentConfig: Effect.succeed(
+        Option.some({
+          ...readyPrimaryConfig,
+          manageProcess: false,
+          authSessionKey: "attached-session-two",
+        }),
+      ),
+    };
+
+    return Effect.gen(function* () {
+      const result = yield* getLocalEnvironmentBootstraps.handler();
+      assert.deepEqual(result, [
+        {
+          id: "primary",
+          label: "Local environment",
+          runningDistro: null,
+          httpBaseUrl: "http://127.0.0.1:3774/",
+          wsBaseUrl: "ws://127.0.0.1:3774/",
+          bootstrapToken: "bootstrap-token",
+          authSessionKey: "attached-session-two",
+        },
+      ]);
+    }).pipe(Effect.provide(DesktopBackendPool.layerTest([attachedPrimary])));
+  });
+
   it.effect("publishes a pending bootstrap only while a transient retry is scheduled", () => {
     const retryingConfig: DesktopBackendManager.DesktopBackendStartConfig = {
       ...readyWslConfig,

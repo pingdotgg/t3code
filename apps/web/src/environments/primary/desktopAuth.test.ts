@@ -28,7 +28,7 @@ describe("desktop primary auth", () => {
   });
 
   it("refreshes the bearer token when an attachment is reconfigured", async () => {
-    let bootstrapToken = "attach-one";
+    let authSessionKey = "session-one";
     const getLocalEnvironmentBearerToken = vi
       .fn()
       .mockResolvedValueOnce("desktop-bearer-one")
@@ -40,14 +40,15 @@ describe("desktop primary auth", () => {
           label: "Local environment",
           httpBaseUrl: "http://127.0.0.1:41773",
           wsBaseUrl: "ws://127.0.0.1:41773",
-          bootstrapToken,
+          bootstrapToken: "stable-attach-credential",
+          authSessionKey,
         },
       ],
       getLocalEnvironmentBearerToken,
     } as unknown as DesktopBridge;
 
     await expect(readDesktopPrimaryBearerToken()).resolves.toBe("desktop-bearer-one");
-    bootstrapToken = "attach-two";
+    authSessionKey = "session-two";
     await expect(readDesktopPrimaryBearerToken()).resolves.toBe("desktop-bearer-two");
     expect(getLocalEnvironmentBearerToken).toHaveBeenCalledTimes(2);
   });

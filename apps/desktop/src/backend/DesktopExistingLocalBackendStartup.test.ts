@@ -22,7 +22,8 @@ const backend: DesktopExistingLocalBackend.ExistingLocalBackend = {
 const pairingError = new DesktopExistingLocalBackend.ExistingLocalBackendPairingError({
   baseDir: backend.baseDir,
   origin: backend.origin,
-  detail: "pairing failed",
+  reason: "token-exchange-rejected",
+  cause: new Error("pairing failed"),
 });
 
 const pairingFailed: DesktopBackendConfiguration.ExistingLocalBackendResolution = {

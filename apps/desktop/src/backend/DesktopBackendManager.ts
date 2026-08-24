@@ -109,6 +109,10 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   // resolved config lets the renderer authenticate immediately without
   // deferring attachment failure until after the window opens.
   readonly attachedBearerToken?: string;
+  // Opaque revision for renderer-side bearer caching. A successful re-pair
+  // gets a new key even when the server origin and attach credential stay the
+  // same, so the renderer asks main for the replacement bearer session.
+  readonly authSessionKey?: string;
 }
 
 // A preflight failure records whether it is fatal. Transient failures (WSL
@@ -492,9 +496,10 @@ const runAttachedBackend = Effect.fn("runAttachedBackend")(function* (
       timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
     }).pipe(
       Effect.as(true),
-      Effect.catchTag("BackendReadinessTimeoutError", (error) =>
-        (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.as(false)),
-      ),
+      Effect.catchTags({
+        BackendReadinessTimeoutError: (error) =>
+          (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.as(false)),
+      }),
     );
     if (!stillReady) {
       return {

@@ -175,7 +175,8 @@ describe("DesktopBackendPool", () => {
       const pairingError = new DesktopExistingLocalBackend.ExistingLocalBackendPairingError({
         baseDir: backend.baseDir,
         origin: backend.origin,
-        detail: "server rejected attachment",
+        reason: "token-exchange-rejected",
+        cause: new Error("server rejected attachment"),
       });
       const showMessageBox: ElectronDialog.ElectronDialog["Service"]["showMessageBox"] = () =>
         Ref.updateAndGet(dialogCount, (count) => count + 1).pipe(

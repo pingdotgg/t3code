@@ -1,5 +1,6 @@
 import * as NodeOS from "node:os";
 
+import * as NetService from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -18,6 +19,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import serverPackageJson from "../../../server/package.json" with { type: "json" };
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopBackendPort from "./DesktopBackendPort.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopExistingLocalBackend from "./DesktopExistingLocalBackend.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
@@ -63,6 +65,7 @@ type ExistingLocalBackendSelection =
 
 export type DesktopBackendConfigurationError =
   | PlatformError.PlatformError
+  | DesktopBackendPort.DesktopBackendPortUnavailableError
   | DesktopExistingLocalBackend.ExistingLocalBackendPairingError;
 
 export class DesktopBackendConfiguration extends Context.Service<
@@ -462,6 +465,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
 const resolveAttachStartConfig = Effect.fn("desktop.backendConfiguration.resolveAttach")(
   function* (input: {
     readonly attachment: DesktopExistingLocalBackend.ExistingLocalBackendAttachment;
+    readonly authSessionKey: string;
   }): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
     never,
@@ -495,6 +499,7 @@ const resolveAttachStartConfig = Effect.fn("desktop.backendConfiguration.resolve
       manageProcess: false,
       attachedPid: input.attachment.backend.pid,
       attachedBearerToken: input.attachment.bearerToken,
+      authSessionKey: input.authSessionKey,
       // Attached servers are already known to be healthy when pairing
       // succeeds. Keep subsequent health checks short so the desktop can
       // begin reconnection while a service restart is still in progress.
@@ -707,6 +712,7 @@ export const make = Effect.gen(function* () {
   const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
   const settings = yield* DesktopAppSettings.DesktopAppSettings;
   const crypto = yield* Crypto.Crypto;
+  const net = yield* NetService.NetService;
   // SynchronizedRef (not a plain Ref) so the read-generate-write is atomic.
   // crypto.randomBytes is a yield point, and resolvePrimary + resolveWsl can
   // resolve concurrently; with a plain Ref both could observe None, generate
@@ -805,7 +811,7 @@ export const make = Effect.gen(function* () {
             error: new DesktopExistingLocalBackend.ExistingLocalBackendPairingError({
               baseDir: previousBackend.baseDir,
               origin: previousBackend.origin,
-              detail: "The previously attached server is no longer available.",
+              reason: "server-unavailable",
             }),
           } as const;
           return [failed, selection] as const;
@@ -817,9 +823,10 @@ export const make = Effect.gen(function* () {
           httpClient,
         }).pipe(
           Effect.map((value) => ({ _tag: "Success", value }) as const),
-          Effect.catchTag("ExistingLocalBackendPairingError", (error) =>
-            Effect.succeed({ _tag: "Failure", error } as const),
-          ),
+          Effect.catchTags({
+            ExistingLocalBackendPairingError: (error) =>
+              Effect.succeed({ _tag: "Failure", error } as const),
+          }),
         );
         if (attachment._tag === "Failure") {
           const failed = { _tag: "PairingFailed", backend, error: attachment.error } as const;
@@ -893,6 +900,7 @@ export const make = Effect.gen(function* () {
       const attachment = existingResolution.attachment;
       return yield* resolveAttachStartConfig({
         attachment,
+        authSessionKey: yield* crypto.randomUUIDv4,
       }).pipe(Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment));
     }
     const shared = yield* sharedInputs;
@@ -900,10 +908,23 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
-    const t3Home =
-      existingResolution._tag === "Disabled" && existingResolution.reason === "independent-launch"
-        ? path.join(environment.baseDir, "desktop-independent")
-        : environment.baseDir;
+    const independentLaunch =
+      existingResolution._tag === "Disabled" && existingResolution.reason === "independent-launch";
+    if (independentLaunch) {
+      const currentExposure = yield* serverExposure.backendConfig;
+      const currentPortAvailable = yield* DesktopBackendPort.isDesktopBackendPortAvailable(
+        currentExposure.port,
+      ).pipe(Effect.provideService(NetService.NetService, net));
+      if (!currentPortAvailable) {
+        const nextPort = yield* DesktopBackendPort.resolveDesktopBackendPort(Option.none()).pipe(
+          Effect.provideService(NetService.NetService, net),
+        );
+        yield* serverExposure.configureFromSettings({ port: nextPort.port });
+      }
+    }
+    const t3Home = independentLaunch
+      ? path.join(environment.baseDir, "desktop-independent")
+      : environment.baseDir;
     return yield* resolvePrimaryStartConfig({ ...shared, resourceMonitorPath, t3Home }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
@@ -971,5 +992,5 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(DesktopBackendConfiguration, make).pipe(
-  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(Layer.mergeAll(FetchHttpClient.layer, NetService.layer)),
 );

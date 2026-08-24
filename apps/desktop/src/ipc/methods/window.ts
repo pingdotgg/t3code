@@ -140,6 +140,7 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
         ...(bootstrap.desktopBootstrapToken
           ? { bootstrapToken: bootstrap.desktopBootstrapToken }
           : {}),
+        ...(config.value.authSessionKey ? { authSessionKey: config.value.authSessionKey } : {}),
       });
     }
     return bootstraps;

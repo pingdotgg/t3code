@@ -46,16 +46,31 @@ export interface ExistingLocalBackendAttachment {
   readonly bearerToken: string;
 }
 
+const ExistingLocalBackendPairingReason = Schema.Literals([
+  "missing-credential",
+  "token-exchange-rejected",
+  "server-unavailable",
+]);
+
+const pairingReasonMessage = {
+  "missing-credential":
+    "The running server does not advertise Desktop attachment credentials. Update and restart that server, then try again.",
+  "token-exchange-rejected":
+    "The server rejected or could not complete the Desktop session exchange.",
+  "server-unavailable": "The previously attached server is no longer available.",
+} as const;
+
 export class ExistingLocalBackendPairingError extends Schema.TaggedErrorClass<ExistingLocalBackendPairingError>()(
   "ExistingLocalBackendPairingError",
   {
     baseDir: Schema.String,
     origin: Schema.String,
-    detail: Schema.String,
+    reason: ExistingLocalBackendPairingReason,
+    cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return `Could not establish a secure Desktop session with the running T3 Code server at ${this.origin}: ${this.detail}`;
+    return `Could not establish a secure Desktop session with the running T3 Code server at ${this.origin}: ${pairingReasonMessage[this.reason]}`;
   }
 }
 
@@ -84,19 +99,33 @@ const extractT3HomeAssignment = (
   if (index === -1) return null;
   const rest = envValue.slice(index + marker.length);
   if (rest.startsWith('"')) {
-    const end = rest.indexOf('"', 1);
-    return end === -1 ? rest.slice(1) : rest.slice(1, end);
+    let value = "";
+    for (let index = 1; index < rest.length; index += 1) {
+      const character = rest[index];
+      if (character === '"') return value.replaceAll("%%", "%");
+      if (character === "\\" && index + 1 < rest.length) {
+        const escaped = rest[index + 1];
+        if (escaped === "\\" || escaped === '"') {
+          value += escaped;
+          index += 1;
+          continue;
+        }
+      }
+      value += character;
+    }
+    return value.replaceAll("%%", "%");
   }
   if (rest.startsWith("'")) {
     const end = rest.indexOf("'", 1);
-    return end === -1 ? rest.slice(1) : rest.slice(1, end);
+    const value = end === -1 ? rest.slice(1) : rest.slice(1, end);
+    return value.replaceAll("%%", "%");
   }
   if (options?.remainderIsValue === true) {
-    return rest.length > 0 ? rest : null;
+    return rest.length > 0 ? rest.replaceAll("%%", "%") : null;
   }
   const space = rest.search(/\s/);
   const home = space === -1 ? rest : rest.slice(0, space);
-  return home.length > 0 ? home : null;
+  return home.length > 0 ? home.replaceAll("%%", "%") : null;
 };
 
 export const parseSystemdT3Home = (unitText: string): string | null => {
@@ -314,8 +343,7 @@ export const pairExistingLocalBackend = Effect.fn("desktop.existingLocalBackend.
       return yield* new ExistingLocalBackendPairingError({
         baseDir: input.backend.baseDir,
         origin: input.backend.origin,
-        detail:
-          "The running server does not advertise Desktop attachment credentials. Update and restart that server, then try again.",
+        reason: "missing-credential",
       });
     }
 
@@ -333,7 +361,8 @@ export const pairExistingLocalBackend = Effect.fn("desktop.existingLocalBackend.
           new ExistingLocalBackendPairingError({
             baseDir: input.backend.baseDir,
             origin: input.backend.origin,
-            detail: cause instanceof Error ? cause.message : "The server rejected the connection.",
+            reason: "token-exchange-rejected",
+            cause,
           }),
       ),
     );
