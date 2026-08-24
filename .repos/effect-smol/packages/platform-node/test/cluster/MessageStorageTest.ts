@@ -136,6 +136,13 @@ export class PrimaryKeyTest extends Rpc.make("PrimaryKeyTest", {
   primaryKey: (value) => value.id.toString()
 }) {}
 
+export class LongKeyRpc extends Rpc.make("LongKeyRpc", {
+  payload: {
+    id: Schema.String
+  },
+  primaryKey: (value) => value.id
+}) {}
+
 export class StreamRpc extends Rpc.make("StreamTest", {
   success: RpcSchema.Stream(Schema.Void, Schema.Never),
   payload: {

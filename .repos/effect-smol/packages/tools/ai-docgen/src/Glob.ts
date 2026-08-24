@@ -23,7 +23,7 @@ export class GlobError extends Data.TaggedError("GlobError")<{
 /**
  * Context service for glob pattern matching used by AI docgen tooling.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export class Glob extends Context.Service<Glob, {

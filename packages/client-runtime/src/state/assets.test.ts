@@ -74,6 +74,18 @@ describe("createAssetEnvironmentAtoms", () => {
     ).not.toBe(assets.createUrl(originalTarget));
     expect(
       assets.createUrl({
+        environmentId,
+        input: {
+          resource: {
+            _tag: "project-favicon",
+            cwd: "/repo/original",
+            path: "brand/icon.svg",
+          },
+        },
+      }),
+    ).not.toBe(assets.createUrl(originalTarget));
+    expect(
+      assets.createUrl({
         environmentId: EnvironmentId.make("environment-2"),
         input: originalTarget.input,
       }),

@@ -68,6 +68,46 @@ describe("AcpCoreRuntimeEvents", () => {
     });
   });
 
+  it("maps generic ACP permission kinds to dynamic tool approvals", () => {
+    const stamp = { eventId: "event-1" as never, createdAt: "2026-03-27T00:00:00.000Z" };
+
+    for (const kind of ["search", "fetch", "other", "unknown", "future-tool-kind"]) {
+      const permissionRequest = { kind };
+      const request = {
+        stamp,
+        provider: ProviderDriverKind.make("cursor"),
+        threadId: "thread-1" as never,
+        turnId: TurnId.make("turn-1"),
+        requestId: RuntimeRequestId.make(`request-${kind}`),
+        permissionRequest,
+      };
+
+      expect(
+        makeAcpRequestOpenedEvent({
+          ...request,
+          detail: kind,
+          args: {},
+          source: "acp.jsonrpc",
+          method: "session/request_permission",
+          rawPayload: { sessionId: "session-1" },
+        }),
+      ).toMatchObject({
+        type: "request.opened",
+        payload: { requestType: "dynamic_tool_call" },
+      });
+
+      expect(
+        makeAcpRequestResolvedEvent({
+          ...request,
+          decision: "accept",
+        }),
+      ).toMatchObject({
+        type: "request.resolved",
+        payload: { requestType: "dynamic_tool_call" },
+      });
+    }
+  });
+
   it("maps ACP core plan, tool-call, and content updates", () => {
     const stamp = { eventId: "event-1" as never, createdAt: "2026-03-27T00:00:00.000Z" };
     const turnId = TurnId.make("turn-1");

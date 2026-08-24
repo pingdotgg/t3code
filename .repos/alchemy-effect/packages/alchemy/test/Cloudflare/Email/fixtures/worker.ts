@@ -7,12 +7,10 @@ import { Email } from "./sender.ts";
 export default class SendEmailWorker extends Cloudflare.Worker<SendEmailWorker>()(
   "SendEmailTestWorker",
   {
-    main: import.meta.filename,
-    subdomain: { enabled: true, previewsEnabled: false },
-    compatibility: { date: "2024-09-23", flags: ["nodejs_compat"] },
+    main: import.meta.url,
   },
   Effect.gen(function* () {
-    const email = yield* Cloudflare.SendEmail.bind(Email);
+    const email = yield* Cloudflare.Email.Send(Email);
 
     return {
       fetch: Effect.gen(function* () {
@@ -45,5 +43,5 @@ export default class SendEmailWorker extends Cloudflare.Worker<SendEmailWorker>(
         return HttpServerResponse.text("ok");
       }),
     };
-  }).pipe(Effect.provide(Cloudflare.SendEmailBindingLive)),
+  }).pipe(Effect.provide(Cloudflare.Email.SendBinding)),
 ) {}

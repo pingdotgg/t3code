@@ -1,9 +1,10 @@
 import { DEFAULT_TERMINAL_ID, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { useThemeColor } from "../../lib/useThemeColor";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAttachedTerminalSession } from "../../state/use-terminal-session";
@@ -32,7 +33,10 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
 ) {
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const resizeTerminal = useAtomCommand(terminalEnvironment.resize, "terminal resize");
+  const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
+  const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const nativeTerminalAvailable = hasNativeTerminalSurface();
+  const iconColor = useThemeColor("--color-icon");
   const terminalId = DEFAULT_TERMINAL_ID;
   const lastGridSizeRef = useRef<TerminalGridSize>({
     cols: DEFAULT_TERMINAL_COLS,
@@ -62,6 +66,94 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
 
   const terminalKey = `${props.environmentId}:${props.threadId}:${terminalId}`;
   const isRunning = terminal.status === "running" || terminal.status === "starting";
+
+  // Close the session and dismiss the panel when the process ends while
+  // attached (e.g. typing `exit`), mirroring the web drawer's
+  // onSessionExited flow.
+  const runningTerminalKeyRef = useRef<string | null>(null);
+  const reopenedStaleTerminalKeyRef = useRef<string | null>(null);
+
+  // Attach subscriptions are cached with an idle TTL; reopening the panel
+  // after its session ended reuses the stale stream without a new attach
+  // RPC. Issue an explicit open so the server respawns the session and its
+  // snapshot flows into the live subscription.
+  useEffect(() => {
+    if (isRunning) {
+      reopenedStaleTerminalKeyRef.current = null;
+      return;
+    }
+    if (
+      attachInput === null ||
+      (terminal.status !== "closed" && terminal.status !== "exited") ||
+      terminal.version === 0 ||
+      runningTerminalKeyRef.current === terminalKey ||
+      reopenedStaleTerminalKeyRef.current === terminalKey
+    ) {
+      return;
+    }
+    reopenedStaleTerminalKeyRef.current = terminalKey;
+    void openTerminal({
+      environmentId: props.environmentId,
+      input: {
+        threadId: props.threadId,
+        terminalId,
+        cwd: props.cwd,
+        worktreePath: props.worktreePath,
+        cols: lastGridSizeRef.current.cols,
+        rows: lastGridSizeRef.current.rows,
+      },
+    }).then((result) => {
+      // Release the guard on failure so a later render can retry the respawn.
+      if (result._tag === "Failure" && reopenedStaleTerminalKeyRef.current === terminalKey) {
+        reopenedStaleTerminalKeyRef.current = null;
+      }
+    });
+  }, [
+    attachInput,
+    isRunning,
+    openTerminal,
+    props.cwd,
+    props.environmentId,
+    props.threadId,
+    props.worktreePath,
+    terminal.status,
+    terminal.version,
+    terminalId,
+    terminalKey,
+  ]);
+
+  useEffect(() => {
+    // Forget both markers while hidden: if the process ends while the panel
+    // is unobserved (or was just auto-closed), the next show must take the
+    // stale-reopen path instead of treating it as a live exit or skipping
+    // the respawn.
+    if (attachInput === null) {
+      runningTerminalKeyRef.current = null;
+      reopenedStaleTerminalKeyRef.current = null;
+      return;
+    }
+    if (isRunning) {
+      runningTerminalKeyRef.current = terminalKey;
+      return;
+    }
+    // The web drawer treats both exited and closed as session end.
+    const sessionEnded = terminal.status === "exited" || terminal.status === "closed";
+    if (!sessionEnded || runningTerminalKeyRef.current !== terminalKey) {
+      return;
+    }
+    runningTerminalKeyRef.current = null;
+    // Mark this key handled so the stale-attach effect doesn't respawn the
+    // session the user just ended.
+    reopenedStaleTerminalKeyRef.current = terminalKey;
+    void closeTerminal({
+      environmentId: props.environmentId,
+      input: {
+        threadId: props.threadId,
+        terminalId,
+      },
+    });
+    props.onClose();
+  }, [attachInput, closeTerminal, isRunning, props, terminal.status, terminalId, terminalKey]);
 
   const sendResize = useCallback(
     (size: TerminalGridSize) => {
@@ -124,13 +216,13 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
   }
 
   return (
-    <View className="absolute inset-x-3 bottom-28 top-28 overflow-hidden rounded-[8px] border border-white/10 bg-neutral-950 shadow-2xl">
-      <View className="flex-row items-center justify-between border-b border-white/10 px-3 py-2">
+    <View className="absolute inset-x-3 bottom-28 top-28 overflow-hidden rounded-[8px] border border-border bg-screen shadow-2xl">
+      <View className="flex-row items-center justify-between border-b border-border px-3 py-2">
         <View className="min-w-0 flex-1">
-          <Text className="font-t3-bold text-sm text-neutral-100" numberOfLines={1}>
+          <Text className="font-t3-bold text-sm text-foreground" numberOfLines={1}>
             Terminal
           </Text>
-          <Text className="text-2xs text-neutral-500" numberOfLines={1}>
+          <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
             {nativeTerminalAvailable ? "Native Ghostty surface" : "Text fallback active"}
           </Text>
         </View>
@@ -141,10 +233,10 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
             </Text>
           ) : null}
           <Pressable
-            className="h-8 w-8 items-center justify-center rounded-[8px] bg-white/10"
+            className="h-8 w-8 items-center justify-center rounded-[8px] bg-subtle"
             onPress={props.onClose}
           >
-            <SymbolView name="xmark" size={13} tintColor="#e5e5e5" type="monochrome" />
+            <SymbolView name="xmark" size={13} tintColor={iconColor} type="monochrome" />
           </Pressable>
         </View>
       </View>

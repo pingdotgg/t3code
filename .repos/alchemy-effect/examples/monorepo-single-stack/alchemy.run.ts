@@ -14,7 +14,7 @@ export default Alchemy.Stack(
     const backend = yield* Service;
     const path = yield* Path;
 
-    const website = yield* Cloudflare.Vite("Website", {
+    const website = yield* Cloudflare.Website.Vite("Website", {
       rootDir: path.resolve(import.meta.dirname, "frontend"),
       env: {
         VITE_API_URL: backend.url.as<string>(),

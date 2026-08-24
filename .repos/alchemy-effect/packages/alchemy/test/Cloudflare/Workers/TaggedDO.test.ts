@@ -1,6 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
-import * as Test from "@/Test/Vitest";
-import { expect } from "@effect/vitest";
+import * as Test from "@/Test/Alchemy";
+import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
@@ -21,15 +21,21 @@ const logLevel = Effect.provideService(
 const stack = beforeAll(deploy(Stack));
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
-const testTimeout = 20_000;
+// Under a full-suite run the edge propagates fresh `*.workers.dev` URLs much
+// more slowly than in isolation — give each test ample room.
+const testTimeout = 120_000;
 const requestTimeout = "5 seconds";
 // Fresh `*.workers.dev` URLs propagate through the edge over a few seconds —
 // the first requests routinely return 404 / 500 before the script is
 // resolvable. `Effect.retry` only fires on Effect failures, not on HTTP
 // status codes, so we explicitly `Effect.fail` non-2xx responses to force a
-// retry through `readinessRetry`.
+// retry through `readinessRetry`. Cap the backoff at 3s so 15 attempts stay
+// bounded (~45s) instead of the raw exponential blowing past the timeout.
 const readinessRetry = {
-  schedule: Schedule.exponential("500 millis"),
+  schedule: Schedule.min([
+    Schedule.exponential("500 millis"),
+    Schedule.spaced("3 seconds"),
+  ]),
   times: 15,
 } as const;
 
@@ -39,7 +45,7 @@ const requestUntilReady = (
   effect.pipe(
     Effect.timeout(requestTimeout),
     Effect.flatMap(
-      Effect.fnUntraced(function* (res) {
+      Effect.fn(function* (res) {
         return res.status >= 200 && res.status < 300
           ? res
           : yield* Effect.fail(

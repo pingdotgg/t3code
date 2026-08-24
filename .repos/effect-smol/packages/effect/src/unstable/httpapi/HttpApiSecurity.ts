@@ -6,35 +6,6 @@
  * `HttpApiMiddleware.Service`, `HttpApiBuilder`, generated clients, and OpenAPI
  * generation, but they do not authenticate requests by themselves.
  *
- * **Mental model**
- *
- * Create a scheme with {@link bearer}, {@link apiKey}, or {@link basic}, attach
- * it to middleware, and let the HTTP API builder decode the matching credential
- * shape from each request. OpenAPI generation emits the same declaration as
- * `components.securitySchemes` plus operation security requirements.
- *
- * **Common tasks**
- *
- * Use {@link bearer} for `Authorization: Bearer ...` tokens, {@link basic} for
- * HTTP Basic username/password credentials, and {@link apiKey} for keys passed
- * through headers, query parameters, or cookies. Use {@link annotate} or
- * {@link annotateMerge} to add documentation metadata for generated OpenAPI
- * descriptions.
- *
- * **Gotchas**
- *
- * Middleware must reject empty or invalid credentials. Bearer tokens and API-key
- * values are delivered as `Redacted` values; Basic credentials expose the
- * username and redact the password. Bearer and Basic schemes read the
- * `Authorization` header, API-key headers use HTTP header name normalization,
- * and API-key query or cookie names are matched exactly. OpenAPI annotations do
- * not change runtime decoding.
- *
- * **See also**
- *
- * `HttpApiMiddleware` for implementing security checks and `HttpApiBuilder` for
- * installing middleware and setting API-key cookies on responses.
- *
  * @since 4.0.0
  */
 import * as Context from "../../Context.ts"

@@ -1,5 +1,7 @@
 import * as cloudfront from "@distilled.cloud/aws/cloudfront";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -59,7 +61,7 @@ export interface KeyValueStore extends Resource<
  *
  * KeyValueStores can be associated with CloudFront Functions and are useful for
  * routing metadata or other small edge-time lookup tables.
- *
+ * @resource
  * @section Creating KeyValueStores
  * @example Basic Store
  * ```typescript
@@ -77,10 +79,13 @@ export const KeyValueStoreProvider = () =>
     KeyValueStore,
     Effect.gen(function* () {
       const getByName = Effect.fn(function* (name: string) {
-        const listed = yield* cloudfront.listKeyValueStores({});
-        const store =
-          listed.KeyValueStoreList?.Items?.find((item) => item.Name === name) ??
-          undefined;
+        const store = yield* cloudfront.listKeyValueStores.pages({}).pipe(
+          Stream.map((page) => page.KeyValueStoreList?.Items ?? []),
+          Stream.flattenIterable,
+          Stream.filter((item) => item.Name === name),
+          Stream.runHead,
+          Effect.map(Option.getOrUndefined),
+        );
         if (!store?.Name) {
           return undefined;
         }
@@ -118,6 +123,20 @@ export const KeyValueStoreProvider = () =>
           }
           return toAttrs(current.KeyValueStore, current.ETag, name);
         }),
+        // CloudFront is global; `listKeyValueStores` enumerates every store in
+        // the account. The list summary carries no ETag, so it's undefined here
+        // (matches the `etag: string | undefined` attribute).
+        list: () =>
+          cloudfront.listKeyValueStores.pages({}).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.KeyValueStoreList?.Items ?? []).map((store) =>
+                  toAttrs(store, undefined, store.Name),
+                ),
+              ),
+            ),
+          ),
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
           const name =
             output?.keyValueStoreName ?? (yield* createName(id, news));

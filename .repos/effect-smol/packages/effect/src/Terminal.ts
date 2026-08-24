@@ -1,32 +1,11 @@
 /**
- * The `Terminal` module defines Effect's service for interactive terminal
- * capabilities. Programs can query dimensions, read a line of input, subscribe
- * to low-level key events, and display text without depending directly on Node,
- * the browser, or a test-specific console implementation.
+ * Service definition for interactive terminal capabilities. Programs can query
+ * terminal dimensions, read a line of input, receive low-level key events, and
+ * display text without depending directly on a specific platform implementation.
  *
- * **Mental model**
- *
- * `Terminal` sits above raw standard I/O. `Stdio` exposes process streams,
- * while `Terminal` exposes already interpreted terminal operations as an Effect
- * service. Application code depends on the {@link Terminal} service; platform
- * runtimes and tests provide the concrete implementation, often by constructing
- * one with {@link make}.
- *
- * **Common tasks**
- *
- * - Read prompt answers with `readLine` and handle user cancellation through
- *   {@link QuitError}.
- * - Build interactive prompts from `readInput` by consuming {@link UserInput}
- *   values with parsed key metadata and optional raw character input.
- * - Write terminal output through `display` while keeping platform failures in
- *   the Effect error channel.
- *
- * **Gotchas**
- *
- * - `readLine` can fail with {@link QuitError} when the user requests to quit,
- *   commonly via `Ctrl+C`.
- * - `readInput` requires a `Scope` because the returned dequeue represents a
- *   live input subscription.
+ * This module defines the `Terminal` service, input event shapes, key metadata,
+ * the `QuitError` used when a user cancels input, a guard for that error, and a
+ * constructor for custom terminal service implementations.
  *
  * @since 4.0.0
  */
@@ -181,7 +160,7 @@ export const isQuitError = (u: unknown): u is QuitError => Predicate.hasProperty
  * Use to access or provide platform terminal capabilities such as reading
  * input, writing output, and inspecting terminal dimensions.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const Terminal: Context.Service<Terminal, Terminal> = Context.Service("effect/platform/Terminal")

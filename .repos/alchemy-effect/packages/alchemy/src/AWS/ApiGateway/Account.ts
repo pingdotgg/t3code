@@ -1,7 +1,6 @@
 import * as ag from "@distilled.cloud/aws/api-gateway";
 import * as Effect from "effect/Effect";
 import { isResolved } from "../../Diff.ts";
-import type { Input } from "../../Input.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import type { Providers } from "../Providers.ts";
@@ -14,6 +13,7 @@ export interface AccountProps {
   cloudwatchRoleArn?: string;
 }
 
+/** @resource */
 export interface Account extends Resource<
   "AWS.ApiGateway.Account",
   AccountProps,
@@ -76,6 +76,19 @@ export const AccountProvider = () =>
             managesCloudwatchRoleArn: output?.managesCloudwatchRoleArn ?? false,
           };
         }),
+        // Account settings are an account/region singleton — there is no
+        // collection API, only `getAccount`. Return the single instance as a
+        // one-element array (account singleton pattern).
+        list: () =>
+          ag.getAccount({}).pipe(
+            Effect.map((a) => [
+              {
+                cloudwatchRoleArn: a.cloudwatchRoleArn,
+                managesCloudwatchRoleArn: false,
+              },
+            ]),
+            Effect.catchTag("NotFoundException", () => Effect.succeed([])),
+          ),
         reconcile: Effect.fn(function* ({ news: newsIn, session }) {
           if (!isResolved(newsIn)) {
             return yield* Effect.die("Account props were not resolved");

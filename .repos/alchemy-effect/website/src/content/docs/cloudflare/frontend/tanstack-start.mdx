@@ -1,0 +1,202 @@
+---
+title: TanStack Start
+description: Deploy TanStack Start (React or Solid) to Cloudflare with Cloudflare.Website.Vite — SSR, typed Worker bindings, and HMR dev with real cloud resources.
+sidebar:
+  order: 5
+---
+
+TanStack Start is pure Vite — `tanstackStart()` and `viteReact()` are
+ordinary plugins in `vite.config.ts`, so
+[`Cloudflare.Website.Vite`](/cloudflare/frontend/vite) builds the client
+assets and the SSR server bundle in a single `vite build` pass, no
+adapter or Wrangler config required. Support is verified: the
+[examples/cloudflare-tanstack](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-tanstack)
+example is checked in, and a live test deploys it in dev mode with real
+Alchemy-managed R2 bindings.
+
+```typescript
+// vite.config.ts
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [tanstackStart(), viteReact()],
+});
+```
+
+## Remove `@cloudflare/vite-plugin`
+
+:::caution[Remove @cloudflare/vite-plugin if present]
+The TanStack CLI adds `@cloudflare/vite-plugin` to `vite.config.ts`
+automatically when scaffolding a new app. Alchemy appends its own
+Cloudflare Vite plugin and is **not compatible** with
+`@cloudflare/vite-plugin` — remove it:
+
+```diff lang="typescript"
+// vite.config.ts
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+-import { cloudflare } from "@cloudflare/vite-plugin";
+
+export default defineConfig({
+-  plugins: [
+-    cloudflare({ viteEnvironment: { name: "ssr" } }),
+-    tanstackStart(),
+-    viteReact(),
+-  ],
++  plugins: [tanstackStart(), viteReact()],
+});
+```
+
+Also drop the dependency:
+
+```sh
+bun remove @cloudflare/vite-plugin
+```
+:::
+
+## Declare the Website
+
+Use the class form of `Cloudflare.Website.Vite` so the app gets a named
+type you can infer bindings from:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import Backend, { Bucket } from "./src/backend.ts";
+
+export class Website extends Cloudflare.Website.Vite<Website>()("Website", {
+  compatibility: {
+    flags: ["nodejs_compat"],
+  },
+  env: {
+    BUCKET: Bucket,
+    BACKEND: Backend,
+  },
+  assets: {
+    runWorkerFirst: true,
+  },
+}) {}
+
+export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
+```
+
+`nodejs_compat` gives the SSR server bundle the Node APIs it needs at
+runtime; each `env` entry becomes a native Worker binding (`BUCKET` an
+R2 bucket, `BACKEND` a service binding to another Worker); and
+`runWorkerFirst` routes requests to the SSR Worker before static-asset
+matching, so server routes win over files. `WebsiteEnv` is the typed
+shape of those bindings, derived from the class.
+
+## Add it to the Stack
+
+Yield the class from the Stack alongside anything it binds to:
+
+```typescript
+// alchemy.run.ts
+export default Alchemy.Stack(
+  "CloudflareTanstackExample",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const backend = yield* Backend;
+    const website = yield* Website;
+
+    return {
+      backendUrl: backend.url.as<string>(),
+      websiteUrl: website.url.as<string>(),
+    };
+  }),
+);
+```
+
+One Stack deploys the Backend Worker, the R2 bucket, and the TanStack
+Start app together, and returns both URLs as stack outputs.
+
+## Read bindings in server code
+
+Expose the Worker `env` through a small module so every server route
+imports the same typed handle:
+
+```typescript
+// src/env.ts
+import * as cf from "cloudflare:workers";
+import type { WebsiteEnv } from "../alchemy.run.ts";
+
+// In development mode with TanStack Start, `import { env } from "cloudflare:workers"`
+// does not work at the top level.
+// As a workaround, we use a proxy to access the env object.
+export const env = new Proxy({} as WebsiteEnv, {
+  get(_, prop) {
+    return cf.env[prop as keyof typeof cf.env];
+  },
+});
+```
+
+The Proxy matters: TanStack Start's dev server evaluates route modules
+outside the Worker request context, so a top-level
+`import { env } from "cloudflare:workers"` breaks in dev — deferring the
+property access until a handler actually runs sidesteps it.
+
+## Call bindings from a route
+
+Inside a server route handler, `env` is the standard Cloudflare runtime
+API, fully typed:
+
+```typescript
+// src/routes/api.hello.ts
+const object = await env.BUCKET.get(key);
+
+const res = await env.BACKEND.fetch(
+  `https://backend/?key=${encodeURIComponent(key)}`,
+);
+```
+
+`env.BACKEND` is a service binding to an Effect-native Worker — beyond
+`fetch`, you can call its typed RPC methods directly; see
+[Schemaless RPC](/cloudflare/apis/schemaless-rpc).
+
+## Deploy and dev
+
+```sh
+bun alchemy deploy
+```
+
+For local development:
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` boots TanStack Start's Vite dev server with HMR while the
+bindings stay attached to the **real** Alchemy-managed cloud resources —
+this exact combination (TanStack Start dev mode + live R2 binding) is
+covered by a live test in the Alchemy repo, so `env.BUCKET.get(key)`
+hits the same bucket in dev as in production.
+
+## Solid variant
+
+TanStack Start's Solid flavor works the same way — swap the plugins in
+`vite.config.ts` and keep the identical `alchemy.run.ts` shape (see
+[examples/cloudflare-tanstack-start-solid](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-tanstack-start-solid)):
+
+```typescript
+// vite.config.ts
+import { tanstackStart } from "@tanstack/solid-start/plugin/vite";
+import { defineConfig } from "vite";
+import viteSolid from "vite-plugin-solid";
+
+export default defineConfig({
+  plugins: [tanstackStart(), viteSolid({ ssr: true })],
+});
+```
+
+`@tanstack/solid-start` provides the same `tanstackStart()` plugin
+entry point, so `Cloudflare.Website.Vite` builds it identically —
+`nodejs_compat` on, no other changes.

@@ -1,0 +1,484 @@
+---
+title: Effect HTTP API on Lambda
+description: Build a schema-validated HTTP API with Effect's HttpApi module and deploy it as an AWS Lambda Function behind a Function URL.
+sidebar:
+  order: 5
+---
+
+Effect HTTP defines real REST endpoints — URLs, path params, query
+strings, typed bodies — behind an RPC-like typed interface, which
+makes it the natural fit when your consumers aren't Effect (or
+aren't TypeScript at all) and want a plain HTTP client. This page is
+the Lambda wiring; the concept lives at
+[Effect HTTP](/apis/effect-http), and [RPC](/apis) covers choosing
+between the RPC styles.
+
+The [Lambda](/aws/compute/lambda) page serves HTTP with a hand-rolled
+`fetch` handler — raw request parsing, manual routing. That works,
+but as your API grows you lose type safety at the boundary: request
+payloads aren't validated, response shapes aren't enforced, and
+errors slip through untyped.
+
+Effect's `HttpApi` module solves this. You declare endpoints with
+schemas for payloads, responses, and errors, then implement handlers
+against those schemas. The result is an `HttpEffect` — the same type
+a Lambda's `fetch` expects — so it plugs in directly. It's the exact
+same module used in the
+[Workers version of this guide](/cloudflare/apis/effect-http-api);
+the spec and handlers are portable, only the host changes.
+
+The mental model:
+
+1. **Define the schema and API outside the Function.** Both are pure
+   descriptions and can be imported by clients.
+2. **Bind resources and construct handlers inside the Function's
+   Init phase.** The Init phase runs at deploy time *and* at cold
+   start, so we only do pure construction here — bindings, layers,
+   never per-request work.
+3. **Return `{ fetch }`** where `fetch` is an `HttpEffect` produced
+   by `HttpRouter.toHttpEffect`. That's the value Lambda invokes on
+   every request.
+4. **Deploy** and call the API from a fully typed test.
+
+A complete, runnable version of this app lives at
+[`examples/aws-lambda-httpapi`](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-lambda-httpapi).
+
+## 1. Define the schema
+
+Start with a domain model. The schema lives outside the Function so
+the same file can be imported by clients without pulling in any
+runtime code.
+
+```typescript
+// src/Job.ts
+import * as Schema from "effect/Schema";
+
+export type JobId = Schema.Schema.Type<typeof JobId>;
+export const JobId = Schema.String.annotate({
+  description: "The ID of the job",
+});
+
+export class Job extends Schema.Class<Job>("Job")({
+  id: JobId,
+  content: Schema.String,
+}) {}
+
+export class JobNotFound extends Schema.TaggedErrorClass<JobNotFound>()(
+  "JobNotFound",
+  { id: Schema.String },
+  { httpApiStatus: 404 },
+) {}
+```
+
+`Schema.Class` gives you a runtime-validated class with an inferred
+TypeScript type. `Schema.TaggedErrorClass` gives you a typed error
+you can fail with from handlers and discriminate against on the
+client — `httpApiStatus: 404` tells the HttpApi runtime which status
+code to serialize it as.
+
+## 2. Declare the API
+
+Endpoints are declarations — they describe `(method, path, query,
+payload, success, error)` without implementing anything yet. Putting
+them in their own file keeps the spec importable from both the
+server *and* a typed client.
+
+```typescript
+// src/JobApi.ts
+import * as Schema from "effect/Schema";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
+import { Job, JobId, JobNotFound } from "./Job.ts";
+
+export const getJob = HttpApiEndpoint.get("getJob", "/", {
+  success: Job,
+  error: JobNotFound,
+  query: {
+    jobId: JobId,
+  },
+});
+
+export const createJob = HttpApiEndpoint.post("createJob", "/", {
+  success: JobId,
+  payload: Schema.Struct({
+    content: Schema.String,
+  }),
+});
+
+export const JobApi = HttpApi.make("JobApi").add(
+  HttpApiGroup.make("Jobs").add(getJob, createJob),
+);
+```
+
+Nothing executes yet — `JobApi` is purely a value-level description.
+The same constant is what we'll hand to the client at the end of
+this guide.
+
+## 3. Build the Function
+
+Now wire it up. Create `src/JobFunction.ts` with an empty Init
+phase and a public Function URL:
+
+```typescript
+// src/JobFunction.ts
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+
+export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
+  "JobFunction",
+  { main: import.meta.url, url: true },
+  Effect.gen(function* () {
+    return {};
+  }),
+) {}
+```
+
+The generator is the **Init phase**. It runs at *deploy time* (when
+Alchemy plans the stack and collects bindings into IAM policies and
+environment variables) and again *inside the deployed Lambda* at
+cold start, where the same yields resolve to live clients. Anything
+you `yield*` here must be safe in both contexts — resource bindings,
+layer construction, never per-request work.
+
+### 3a. Declare the table and bind operations
+
+Jobs need somewhere durable to live. Yield a DynamoDB `Table` inside
+Init to declare the resource, then bind the two operations the
+handlers will need:
+
+```diff lang="typescript"
+  Effect.gen(function* () {
++   const table = yield* AWS.DynamoDB.Table("JobsTable", {
++     partitionKey: "id",
++     attributes: { id: "S" },
++   });
++
++   const getItem = yield* AWS.DynamoDB.GetItem(table);
++   const putItem = yield* AWS.DynamoDB.PutItem(table);
+
+    return {};
+  }),
+```
+
+Each binding does double duty: at deploy time it attaches a
+least-privilege IAM statement to the function's execution role
+(`GetItem` grants exactly `dynamodb:GetItem` on this table's ARN);
+at runtime it returns a typed callable that injects the table name
+automatically.
+
+### 3b. Provide the binding implementations
+
+The bindings are contracts; their implementations are Layers that
+must be bundled into the function. Provide them on the Init Effect:
+
+```diff lang="typescript"
+  Effect.gen(function* () {
+    // ...
+- }),
++ }).pipe(
++   Effect.provide(
++     Layer.mergeAll(
++       AWS.DynamoDB.GetItemHttp,
++       AWS.DynamoDB.PutItemHttp,
++     ),
++   ),
++ ),
+```
+
+`GetItemHttp` / `PutItemHttp` implement the binding contracts over
+DynamoDB's HTTP API, signed with the Lambda's execution role — no
+credentials to wire up.
+
+### 3c. Construct the handler group
+
+`HttpApiBuilder.group` *constructs* a `Layer` that wires handlers
+into the API spec. It's pure — it doesn't run them — so it's safe to
+build inside Init. The handlers close over the `getItem` / `putItem`
+bindings from step 3a:
+
+```diff lang="typescript"
+    const getItem = yield* AWS.DynamoDB.GetItem(table);
+    const putItem = yield* AWS.DynamoDB.PutItem(table);
+
++   const jobsGroup = HttpApiBuilder.group(JobApi, "Jobs", (handlers) =>
++     handlers
++       .handle("getJob", ({ query }) =>
++         getItem({ Key: { id: { S: query.jobId } } }).pipe(
++           Effect.orDie,
++           Effect.flatMap(({ Item }) =>
++             Item
++               ? Effect.succeed(
++                   new Job({
++                     id: Item.id?.S ?? query.jobId,
++                     content: Item.content?.S ?? "",
++                   }),
++                 )
++               : Effect.fail(new JobNotFound({ id: query.jobId })),
++           ),
++         ),
++       )
++       .handle("createJob", ({ payload }) =>
++         Effect.gen(function* () {
++           const jobId = crypto.randomUUID();
++           yield* putItem({
++             Item: {
++               id: { S: jobId },
++               content: { S: payload.content },
++             },
++           });
++           return jobId;
++         }).pipe(Effect.orDie),
++       ),
++   );
+
+    return {};
+```
+
+Each handler receives a typed request. `query.jobId` is a `string`
+because that's what the endpoint declared, and the return type must
+satisfy `Job` (or fail with `JobNotFound`). Mismatches are caught at
+compile time. `Effect.orDie` converts DynamoDB's infrastructure
+errors into defects — the HttpApi runtime turns those into 500s —
+keeping the typed error channel reserved for `JobNotFound`.
+
+### 3d. Return `{ fetch }`
+
+The return value of Init is the Function's runtime surface — for an
+HTTP Lambda that means an object with a `fetch` field.
+`HttpApiBuilder.layer(JobApi)` assembles the API from the handler
+group, and `HttpRouter.toHttpEffect` converts that Layer into the
+`HttpEffect` that `fetch` expects:
+
+```diff lang="typescript"
+    return {
+-   };
++     fetch: yield* HttpRouter.toHttpEffect(
++       HttpApiBuilder.layer(JobApi).pipe(Layer.provide(jobsGroup)),
++     ),
++   };
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        AWS.DynamoDB.GetItemHttp,
+        AWS.DynamoDB.PutItemHttp,
++       HttpPlatform.layer,
++       Etag.layer,
+      ),
+    ),
+  ),
+```
+
+`HttpPlatform.layer` and `Etag.layer` are platform services the
+builder needs (content negotiation, ETag generation) — they join the
+binding implementations in the same `Layer.mergeAll`.
+
+### Putting it together
+
+Here's the complete `src/JobFunction.ts`:
+
+```typescript
+// src/JobFunction.ts
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Etag from "effect/unstable/http/Etag";
+import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import { Job, JobNotFound } from "./Job.ts";
+import { JobApi } from "./JobApi.ts";
+
+export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
+  "JobFunction",
+  { main: import.meta.url, url: true },
+  Effect.gen(function* () {
+    const table = yield* AWS.DynamoDB.Table("JobsTable", {
+      partitionKey: "id",
+      attributes: { id: "S" },
+    });
+
+    const getItem = yield* AWS.DynamoDB.GetItem(table);
+    const putItem = yield* AWS.DynamoDB.PutItem(table);
+
+    const jobsGroup = HttpApiBuilder.group(JobApi, "Jobs", (handlers) =>
+      handlers
+        .handle("getJob", ({ query }) =>
+          getItem({ Key: { id: { S: query.jobId } } }).pipe(
+            Effect.orDie,
+            Effect.flatMap(({ Item }) =>
+              Item
+                ? Effect.succeed(
+                    new Job({
+                      id: Item.id?.S ?? query.jobId,
+                      content: Item.content?.S ?? "",
+                    }),
+                  )
+                : Effect.fail(new JobNotFound({ id: query.jobId })),
+            ),
+          ),
+        )
+        .handle("createJob", ({ payload }) =>
+          Effect.gen(function* () {
+            const jobId = crypto.randomUUID();
+            yield* putItem({
+              Item: {
+                id: { S: jobId },
+                content: { S: payload.content },
+              },
+            });
+            return jobId;
+          }).pipe(Effect.orDie),
+        ),
+    );
+
+    return {
+      fetch: yield* HttpRouter.toHttpEffect(
+        HttpApiBuilder.layer(JobApi).pipe(Layer.provide(jobsGroup)),
+      ),
+    };
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        AWS.DynamoDB.GetItemHttp,
+        AWS.DynamoDB.PutItemHttp,
+        HttpPlatform.layer,
+        Etag.layer,
+      ),
+    ),
+  ),
+) {}
+```
+
+## 4. Add to the Stack
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import JobFunction from "./src/JobFunction.ts";
+
+export default Alchemy.Stack(
+  "JobApi",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const func = yield* JobFunction;
+    return { url: func.functionUrl };
+  }),
+);
+```
+
+Yielding `JobFunction` deploys the function *and* everything it
+declared inside Init — the DynamoDB table, the generated IAM role
+with the two table-scoped statements, and the Function URL.
+
+## 5. Deploy
+
+```sh
+bun alchemy deploy
+```
+
+Hit the URL from the deploy output with `curl`:
+
+```sh
+curl -X POST https://<id>.lambda-url.us-west-2.on.aws/ \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Ship the docs"}'
+# → "d3adb33f-..."
+
+curl "https://<id>.lambda-url.us-west-2.on.aws/?jobId=d3adb33f-..."
+# → {"id":"d3adb33f-...","content":"Ship the docs"}
+```
+
+Invalid payloads get automatic 400 responses with structured
+validation errors, and a missing job comes back as a 404 — the
+`httpApiStatus` we declared on `JobNotFound`.
+
+## 6. Call it from a typed test
+
+Because `JobApi` is just a value, the same spec drives a fully typed
+client — no codegen, no string URLs. Combine `HttpApiClient` with
+the test harness to deploy the Stack and exercise the API
+end-to-end:
+
+```typescript
+// test/api.test.ts
+import * as AWS from "alchemy/AWS";
+import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import Stack from "../alchemy.run.ts";
+import { JobApi } from "../src/JobApi.ts";
+
+const { test, beforeAll, deploy } = Test.make({
+  providers: AWS.providers(),
+  state: AWS.state(),
+});
+
+const stack = beforeAll(deploy(Stack));
+
+test(
+  "create and fetch a job through the typed client",
+  Effect.gen(function* () {
+    const { url } = yield* stack;
+    const client = yield* HttpApiClient.make(JobApi, { baseUrl: url });
+
+    // a fresh Function URL can take a few seconds to start serving
+    const jobId = yield* client.Jobs.createJob({
+      payload: { content: "Ship the docs" },
+    }).pipe(
+      Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 10 }),
+    );
+
+    const job = yield* client.Jobs.getJob({ query: { jobId } });
+    expect(job.content).toBe("Ship the docs");
+
+    const missing = yield* client.Jobs.getJob({
+      query: { jobId: "does-not-exist" },
+    }).pipe(Effect.flip);
+    expect(missing._tag).toBe("JobNotFound");
+  }),
+);
+```
+
+```sh
+bun test test/api.test.ts
+```
+
+`client.Jobs.getJob` returns
+`Effect<Job, JobNotFound | HttpClientError>` — the `JobNotFound`
+branch is a real typed value you can pattern-match on (here via
+`Effect.flip`), not an HTTP status code you have to interpret.
+
+## Go further
+
+The full
+[`examples/aws-lambda-httpapi`](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-lambda-httpapi)
+example grows this app in a few directions: it hides DynamoDB behind
+a cloud-agnostic `JobStorage` service (with a drop-in S3
+implementation), publishes job-created notifications to SNS, fans
+table changes out to SQS via DynamoDB Streams, and adds a CloudWatch
+dashboard and alarm. The
+[Layers](/infrastructure-as-effects/layers) page
+explains the service-Layer pattern it uses.
+
+## Where next
+
+- [Effect HTTP](/apis/effect-http) — the concept home: endpoints,
+  groups, handlers, and typed clients, independent of any host.
+- [RPC](/apis) — deciding between schemaless RPC, Effect RPC, and
+  Effect HTTP.
+- [Lambda](/aws/compute/lambda) — how the Function class, Function URLs,
+  and the test harness work.
+- [Effect HTTP API on Workers](/cloudflare/apis/effect-http-api) —
+  the same `HttpApi` spec deployed to Cloudflare.
+- [DynamoDB](/aws/data/dynamodb) — the table resource and the rest of
+  its bindings.
+- [REST API (API Gateway v1)](/aws/apis/api-gateway) — put API
+  Gateway in front instead of a Function URL.

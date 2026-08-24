@@ -60,6 +60,8 @@ const testLayer = Layer.mergeAll(
       loadAgentAwarenessRegistrationRecord: Effect.succeed(null),
       saveAgentAwarenessRegistrationRecord: () => Effect.void,
       clearAgentAwarenessRegistrationRecord: Effect.void,
+      loadRecentThreadShortcuts: Effect.succeed([]),
+      saveRecentThreadShortcuts: () => Effect.void,
     }),
   ),
 );

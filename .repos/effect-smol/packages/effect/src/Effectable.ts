@@ -1,38 +1,8 @@
 /**
- * The `Effectable` module provides low-level building blocks for defining
- * custom values that behave like `Effect`s. It is primarily used by library
- * authors who need domain-specific effect-like data types, such as service
- * keys, configuration descriptions, prompts, or other declarative programs
- * that can be yielded inside `Effect.gen`.
- *
- * **Mental model**
- *
- * - `Effectable` does not run effects by itself; it provides prototypes that
- *   implement the internal Effect protocol.
- * - {@link Prototype} creates a primitive Effect prototype with a custom
- *   evaluation function that receives the current `Fiber`.
- * - {@link Class} is an abstract base class for defining custom classes whose
- *   instances are also `Effect` values.
- * - The success, error, and service requirements of the custom type are
- *   preserved through the `Effect.Effect<A, E, R>` type parameters.
- *
- * **Common tasks**
- *
- * - Build an effect-like interface around a declarative data structure.
- * - Implement a custom `evaluate` hook that interprets the value in terms of
- *   the current fiber and returns the underlying `Effect`.
- * - Extend {@link Class} when a nominal class-based API is more convenient
- *   than manually wiring a prototype.
- *
- * **Gotchas**
- *
- * - This module is intentionally low-level; most application code should use
- *   `Effect` constructors and combinators instead.
- * - `evaluate` must return an `Effect` with the same success, error, and
- *   service types as the custom value.
- * - Because these APIs participate in the internal Effect protocol, keep
- *   implementations small and follow existing modules such as `Config` and
- *   `Context` when adding new effect-like types.
+ * Low-level helpers for making custom values behave like Effects. The module
+ * exposes a prototype builder and an abstract base class that let
+ * domain-specific values, such as service keys or configuration descriptions,
+ * be evaluated by Effect and yielded inside `Effect.gen`.
  *
  * @since 4.0.0
  */

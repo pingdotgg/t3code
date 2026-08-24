@@ -1,17 +1,17 @@
 {
   "name": "@effect/platform-node",
   "type": "module",
-  "version": "4.0.0-beta.73",
+  "version": "4.0.0-beta.102",
   "license": "MIT",
   "description": "Platform specific implementations for the Node.js runtime",
   "homepage": "https://effect.website",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Effect-TS/effect-smol.git",
+    "url": "https://github.com/Effect-TS/effect.git",
     "directory": "packages/platform-node"
   },
   "bugs": {
-    "url": "https://github.com/Effect-TS/effect-smol/issues"
+    "url": "https://github.com/Effect-TS/effect/issues"
   },
   "tags": [
     "node",
@@ -57,7 +57,6 @@
   "scripts": {
     "codegen": "effect-utils codegen",
     "build": "tsc -b tsconfig.json && pnpm babel",
-    "build:tsgo": "tsgo -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
     "check": "tsc -b tsconfig.json",
     "test": "vitest",
@@ -66,7 +65,7 @@
   "dependencies": {
     "@effect/platform-node-shared": "workspace:^",
     "mime": "^4.1.0",
-    "undici": "^8.2.0"
+    "undici": "^8.7.0"
   },
   "peerDependencies": {
     "effect": "workspace:^",
@@ -76,7 +75,7 @@
     "@testcontainers/mysql": "^11.14.0",
     "@testcontainers/postgresql": "^11.14.0",
     "@testcontainers/redis": "^11.14.0",
-    "@types/node": "^25.7.0",
+    "@types/node": "^26.1.1",
     "effect": "workspace:^"
   }
 }

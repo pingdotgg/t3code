@@ -2,23 +2,9 @@
  * Node.js implementation of the Effect HTTP platform service.
  *
  * This module connects the portable `HttpPlatform` file response helpers to
- * Node runtime primitives. It is used by Node HTTP servers and static file
- * handlers when returning local files, public assets, downloads, byte ranges,
- * or Web `File` values as `HttpServerResponse` bodies.
- *
- * Path-based responses are served with `node:fs.createReadStream`; Web `File`
- * responses are bridged with `Readable.fromWeb`. The implementation fills in
- * `content-type` from `Mime`, falls back to `application/octet-stream`, and
- * writes the `content-length` for the selected range or whole file. Node's
- * stream `end` option is inclusive, so the platform converts Effect's half-open
- * range before reading. Empty bodies use an empty readable stream.
- *
- * Provide `layer` at the Node runtime edge when file responses, static serving,
- * or response bodies created from files need real filesystem and ETag support.
- * These responses are raw Node streams, so they are intended for the Node HTTP
- * server adapter; keep files available until the response body has been
- * consumed and prefer the portable `HttpServerResponse` constructors when a
- * response does not depend on Node file or stream behavior.
+ * Node runtime primitives. It serves local files through Node readable streams,
+ * supports byte ranges, converts Web `File` values to readable streams, and
+ * fills in content type and content length headers when needed.
  *
  * @since 4.0.0
  */

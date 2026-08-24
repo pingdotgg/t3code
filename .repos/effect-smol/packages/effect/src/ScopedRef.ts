@@ -1,23 +1,11 @@
 /**
- * The `ScopedRef` module provides a mutable reference for values that are tied
- * to scoped resources. Each value stored in a `ScopedRef` is acquired within its
- * own `Scope`, and replacing the value safely releases the resources associated
- * with the previous value.
+ * Stores a current value together with the scope that owns it.
  *
- * Use `ScopedRef` when an application needs to keep a current resource-backed
- * value, such as a live client, connection, subscription, or cached handle, and
- * later swap it for a newly acquired value without leaking the old resources.
- * Reads are simple, while updates are synchronized and resource-safe.
- *
- * **Gotchas**
- *
- * - A `ScopedRef` must itself be created and used within a `Scope`; when that
- *   scope closes, the currently stored value is finalized.
- * - Use {@link fromAcquire} or {@link set} for resourceful values so acquisition
- *   and finalization are tracked correctly.
- * - Use {@link make} only for values that do not acquire resources.
- * - Updating a `ScopedRef` waits for the replacement acquisition and old
- *   finalization to complete before returning.
+ * A `ScopedRef<A>` is useful for resource-backed values such as clients,
+ * connections, subscriptions, or handles. Replacing the value acquires the
+ * replacement in a new scope and releases the resources owned by the previous
+ * value. Reads can be effectful or synchronous, and updates are synchronized so
+ * only one replacement happens at a time.
  *
  * @since 2.0.0
  */
@@ -73,8 +61,7 @@ const makeUnsafe = <A>(
 }
 
 /**
- * Creates a new `ScopedRef` from an effect that resourcefully produces a
- * value.
+ * Creates a new `ScopedRef` from an effect that acquires the initial value.
  *
  * **When to use**
  *
@@ -150,7 +137,7 @@ export const get = <A>(self: ScopedRef<A>): Effect.Effect<A> => Effect.sync(() =
  * `fromAcquire` so acquisition and finalization are tracked.
  *
  * @see {@link fromAcquire} for creating a `ScopedRef` from an effect that acquires the initial value
- * @see {@link set} for replacing the current value with a resourcefully acquired value
+ * @see {@link set} for replacing the current value with a newly acquired value
  *
  * @category constructors
  * @since 2.0.0
@@ -164,14 +151,13 @@ export const make = <A>(evaluate: LazyArg<A>): Effect.Effect<ScopedRef<A>, never
   })
 
 /**
- * Sets the value of this reference to the specified resourcefully-created
- * value, releasing any resources associated with the old value.
+ * Sets the value of this reference to a newly acquired scoped value, releasing
+ * any resources associated with the old value.
  *
  * **When to use**
  *
- * Use to replace the current value of an existing `ScopedRef` with a
- * resourcefully acquired value while releasing resources for the previous
- * value.
+ * Use to replace the current value of an existing `ScopedRef` with a newly
+ * acquired scoped value while releasing resources for the previous value.
  *
  * **Details**
  *

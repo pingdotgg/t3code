@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
@@ -10,6 +11,63 @@ import {
   replaceTextRange,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+
+describe("composerSubmissionIntentForEnter", () => {
+  it("submits plain Enter on desktop", () => {
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: false,
+        modifierKey: false,
+        isDraftThread: true,
+      }),
+    ).toBe("foreground");
+  });
+
+  it("inserts a newline for plain Enter on mobile", () => {
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: true,
+        shiftKey: false,
+        modifierKey: false,
+        isDraftThread: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("inserts a newline for Shift+Enter", () => {
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: true,
+        modifierKey: false,
+        isDraftThread: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("submits a new thread in the background with Mod+Enter", () => {
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: false,
+        modifierKey: true,
+        isDraftThread: true,
+      }),
+    ).toBe("background");
+  });
+
+  it("keeps Mod+Enter in the foreground for an active thread", () => {
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: false,
+        modifierKey: true,
+        isDraftThread: false,
+      }),
+    ).toBe("foreground");
+  });
+});
 
 describe("detectComposerTrigger", () => {
   it("detects @path trigger at cursor", () => {
@@ -231,12 +289,21 @@ describe("collapseExpandedComposerCursor", () => {
     );
   });
 
-  it("keeps replacement cursors aligned when another mention already exists earlier", () => {
+  it("keeps package-like text expanded when another mention already exists earlier", () => {
     const text = "open @AGENTS.md then @src/index.ts ";
     const expandedCursor = text.length;
     const collapsedCursor = collapseExpandedComposerCursor(text, expandedCursor);
 
-    expect(collapsedCursor).toBe("open ".length + 1 + " then ".length + 2);
+    expect(collapsedCursor).toBe("open ".length + 1 + " then @src/index.ts ".length);
+    expect(expandCollapsedComposerCursor(text, collapsedCursor)).toBe(expandedCursor);
+  });
+
+  it("collapses only genuine mentions when package-like text exists earlier", () => {
+    const text = "install @scope/pkg then @README.md ";
+    const expandedCursor = text.length;
+    const collapsedCursor = collapseExpandedComposerCursor(text, expandedCursor);
+
+    expect(collapsedCursor).toBe("install @scope/pkg then ".length + 1 + " ".length);
     expect(expandCollapsedComposerCursor(text, collapsedCursor)).toBe(expandedCursor);
   });
 

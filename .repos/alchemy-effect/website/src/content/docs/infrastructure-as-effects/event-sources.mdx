@@ -1,0 +1,231 @@
+---
+title: Event Sources
+description: An event source is a binding that runs your Function when something happens on a resource — one call wires the event-source mapping, the permissions, and a typed handler.
+---
+
+An **Event Source** is a [Binding](/infrastructure-as-effects/binding) that
+*triggers* your Function when something happens on a resource — a
+message lands on a queue, an object lands in a bucket, a table row
+changes. Batch sources hand your handler the records as an Effect
+`Stream` — the whole event loop becomes a value you can map, filter,
+batch, and pipe. Per-event sources (cron, webhooks) instead call a
+function you provide with each event, returning an Effect.
+Everything on this page builds on the binding mechanics — the
+deploy-time/runtime split, the generated permissions — covered in
+[Bindings](/infrastructure-as-effects/binding).
+
+## Consuming a queue
+
+Event sources are declared inside the
+[Effectful Constructor](/infrastructure-as-effects/functions-and-servers#the-effectful-constructor-pattern),
+like any other binding:
+
+```typescript
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+
+export default class OrderProcessor extends AWS.Lambda.Function<OrderProcessor>()(
+  "OrderProcessor",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const queue = yield* AWS.SQS.Queue("Orders");
+
+    yield* AWS.SQS.consumeQueueMessages(queue, (records) =>
+      records.pipe(
+        Stream.map((r) => r.body),
+        Stream.runForEach((body) => Effect.log(`order: ${body}`)),
+      ),
+    );
+  }).pipe(Effect.provide(AWS.Lambda.QueueEventSource)),
+) {}
+```
+
+A pure consumer exposes no interface, so the constructor returns
+nothing — it just declares what it listens to. The `consume*`
+callable is the contract; `AWS.Lambda.QueueEventSource` is one of
+its interchangeable implementation Layers — the same
+contract-plus-Layer split every binding has
+([Bindings](/infrastructure-as-effects/binding#a-contract-and-a-layer)).
+
+## What one call wires
+
+`consumeQueueMessages(queue, handler)` does three jobs in one call:
+
+1. **Permissions** — an IAM policy granting `sqs:ReceiveMessage`,
+   `sqs:DeleteMessage`, and `sqs:GetQueueAttributes` on the queue's
+   exact ARN.
+2. **The trigger** — an `AWS.Lambda.EventSourceMapping` resource
+   pointing the queue at this Function, created and destroyed with
+   the Function's lifecycle.
+3. **The typed handler** — a runtime listener that claims `aws:sqs`
+   events and pipes each batch's records into your handler as a
+   `Stream<SQSRecord>`.
+
+There is no separate mapping resource to declare, no policy JSON,
+and no `event.Records` unpacking — the deploy-time half is fenced
+behind the same `__ALCHEMY_RUNTIME__` guard as every binding (see
+[Phases](/infrastructure-as-effects/phases#the-__alchemy_runtime__-guard)).
+
+## The same shape on Cloudflare
+
+`Cloudflare.Queues.consumeQueueMessages` mirrors the AWS call. At
+deploy time it yields the matching `Cloudflare.Queues.Consumer`
+resource so Cloudflare dispatches batches to this Worker; at runtime
+it registers the `queue` event listener:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { RoundTripQueue } from "./queue.ts";
+
+export default Cloudflare.Worker(
+  "QueueWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const queue = yield* RoundTripQueue;
+
+    yield* Cloudflare.Queues.consumeQueueMessages<{ text: string }>(
+      queue,
+      { batchSize: 10, maxRetries: 3, retryDelay: "1 second" },
+      (stream) =>
+        Stream.runForEach(stream, (msg) => Effect.log(msg.body.text)),
+    );
+
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("ok");
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Queues.EventSourceLive)),
+);
+```
+
+The consumer settings (`batchSize`, `maxRetries`, `maxWaitTime`,
+`retryDelay`, `deadLetterQueue`) travel with the call — a single
+declaration captures both the runtime handler and the deploy-time
+consumer configuration.
+
+## Every event source
+
+The shape never changes — only the `consume*` callable, the record
+type, and the runtime layer you provide. Each source links to its
+guide in the provider hub:
+
+**AWS** (handlers receive a `Stream` per batch):
+
+| Source          | Callable                                        | Stream element        | Runtime layer                 |
+| --------------- | ----------------------------------------------- | --------------------- | ----------------------------- |
+| [SQS Queue](/aws/messaging/sqs)       | `SQS.consumeQueueMessages(queue, fn)`           | `SQSRecord`           | `Lambda.QueueEventSource`     |
+| [Kinesis Stream](/aws/messaging/kinesis)  | `Kinesis.consumeStreamRecords(stream, props, fn)` | `KinesisEventRecord`  | `Lambda.StreamEventSource`    |
+| [DynamoDB Table](/aws/messaging/dynamodb-streams)  | `DynamoDB.consumeTableChanges(table, props, fn)`  | `StreamRecord<T>`     | `Lambda.TableEventSource`     |
+| [S3 Bucket](/aws/messaging/s3-events)       | `S3.consumeBucketEvents(bucket, fn)`            | `BucketNotification`  | `Lambda.BucketEventSource`    |
+| [SNS Topic](/aws/messaging/sns)       | `SNS.consumeTopicNotifications(topic, fn)`      | `TopicNotification`   | `Lambda.TopicEventSource`     |
+| [EventBridge Bus](/aws/messaging/eventbridge) | `EventBridge.consumeBusEvents(bus, pattern, fn)` | `EventRecord<Detail>` | `Lambda.EventSource`          |
+
+EventBridge can also *route* matching events to another resource
+instead of consuming them locally:
+`yield* events(bus, { source: ["my.app"] }).toQueue(queue)` — the
+same descriptor, with `.toLambda` / `.toQueue` / `.toEcsTask`
+targets.
+
+**Cloudflare**:
+
+| Source            | Callable                                       | Handler receives              | Runtime layer                                    |
+| ----------------- | ---------------------------------------------- | ----------------------------- | ------------------------------------------------ |
+| [Queue](/cloudflare/messaging/queues)             | `Queues.consumeQueueMessages(queue, fn)`       | `Stream` of `Message<Body>`   | `Queues.EventSourceLive`                         |
+| [Cron Trigger](/cloudflare/messaging/cron)      | `Workers.cron(expression, fn)`                 | `ScheduledController` per fire | `Workers.CronEventSourceLive`                    |
+| [GitHub repository](/cloudflare/messaging/github-events) | `GitHub.consumeRepositoryEvents(props, fn)`    | `WebhookEvent` per delivery   | `Workers.GitHubRepositoryEventSourceLive`        |
+
+## Not every source is a Stream
+
+Sources that deliver one event at a time hand your handler the event
+directly instead of a `Stream`. A cron trigger fires once per
+schedule:
+
+```typescript
+export default Cloudflare.Worker(
+  "Nightly",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    yield* Cloudflare.Workers.cron("0 12 * * *", (controller) =>
+      Effect.log(`scheduled at ${controller.scheduledTime}`),
+    );
+
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("ok");
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Workers.CronEventSourceLive)),
+);
+```
+
+The deploy-time half attaches the cron expression to the Worker; the
+runtime half registers the `scheduled` listener. Same pattern for
+GitHub: `consumeRepositoryEvents` provisions a repository Webhook
+pointing at the Worker's URL, and the runtime listener verifies each
+delivery's HMAC signature before invoking your handler.
+
+## It's a real Effect Stream
+
+The `Stream` your handler receives is the same `Stream` from any
+Effect program — every combinator composes. Filter change records,
+reshape them, and drop `Effect.retry`, `Stream.throttle`, or
+`Stream.groupedWithin` anywhere along the chain:
+
+```typescript
+const sink = yield* AWS.SQS.QueueSink(queue);
+
+yield* AWS.DynamoDB.consumeTableChanges(
+  table,
+  { streamViewType: "NEW_AND_OLD_IMAGES", startingPosition: "TRIM_HORIZON" },
+  (stream) =>
+    stream.pipe(
+      Stream.map((record) =>
+        JSON.stringify({
+          eventName: record.eventName,
+          keys: record.dynamodb.Keys,
+        }),
+      ),
+      Stream.run(sink),
+    ),
+);
+```
+
+*(layers elided — see [Sinks](/infrastructure-as-effects/sinks) for
+the full constructor)*
+
+That `sink` is a [Sink](/infrastructure-as-effects/sinks) — the
+write-side dual of an event source — turning source → transform →
+sink into one expression.
+
+## Batching and failure semantics
+
+Batching is configured on the `consume*` call and forwarded to the
+platform. On AWS, `batchSize` and `maximumBatchingWindow`
+shape each invocation's batch; the stream sources (Kinesis,
+DynamoDB) add `startingPosition`, `parallelizationFactor`,
+`bisectBatchOnFunctionError`, `maximumRetryAttempts`,
+`maximumRecordAge`, and `destinationConfig` to bound a
+poison-pill record's blast radius. If your handler fails, the
+invocation fails and the source redelivers the batch according to
+those settings.
+
+On Cloudflare, a batch is `ack()`ed when your handler succeeds and
+`retry()`ed when it fails — Cloudflare then applies `maxRetries` and
+`retryDelay` before dead-lettering to `deadLetterQueue`. Per-message
+control stays available: call `msg.ack()` or `msg.retry()` on
+individual messages inside the handler.
+
+## Where next
+
+- [Sinks](/infrastructure-as-effects/sinks) — the write-side dual:
+  resources as Effect `Sink`s, with batching and IAM generated the
+  same way.
+- [Bindings](/infrastructure-as-effects/binding) — the deploy-time
+  mechanics every event source is built on.
+- [Functions & Servers](/infrastructure-as-effects/functions-and-servers) —
+  the Effectful Constructor these examples live inside.

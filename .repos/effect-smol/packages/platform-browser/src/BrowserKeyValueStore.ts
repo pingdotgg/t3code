@@ -6,49 +6,8 @@
  * origin-scoped values that should survive reloads and browser restarts, use
  * {@link layerSessionStorage} for tab / page-session state, and use
  * {@link layerIndexedDb} when the store should be asynchronous and backed by
- * IndexedDB.
- *
- * ## Mental model
- *
- * All exports provide the same `KeyValueStore.KeyValueStore` service; the layer
- * chooses the browser storage backend. The Web Storage layers delegate to
- * `globalThis.localStorage` or `globalThis.sessionStorage` and adapt the
- * string-only API, encoding `Uint8Array` values as base64. The IndexedDB layer
- * stores strings and `Uint8Array` values in an object store and requires the
- * browser `IndexedDb` service to open the database.
- *
- * ## Common tasks
- *
- * - Persist user preferences, lightweight caches, or drafts with
- *   {@link layerLocalStorage}.
- * - Keep tab-scoped workflow state with {@link layerSessionStorage}.
- * - Avoid blocking the main thread for larger client-side stores by using
- *   {@link layerIndexedDb}.
- *
- * ## Gotchas
- *
- * These layers only work where browser storage APIs are available. Browsers may
- * deny storage in private modes, sandboxed frames, disabled-storage settings, or
- * quota-limited contexts. Web Storage is synchronous and origin-scoped, so keep
- * payloads small and do not use it as a secure store for secrets. IndexedDB is
- * asynchronous but can still be blocked by permissions, quota limits, version
- * upgrades, or other open tabs.
- *
- * **Example** (Provide localStorage to a program)
- *
- * ```ts
- * import { BrowserKeyValueStore } from "@effect/platform-browser"
- * import { Effect } from "effect"
- * import { KeyValueStore } from "effect/unstable/persistence"
- *
- * const program = Effect.gen(function*() {
- *   const store = yield* KeyValueStore.KeyValueStore
- *   yield* store.set("theme", "dark")
- *   return yield* store.get("theme")
- * }).pipe(
- *   Effect.provide(BrowserKeyValueStore.layerLocalStorage)
- * )
- * ```
+ * IndexedDB. The IndexedDB layer requires the browser `IndexedDb` service and
+ * accepts an optional database name.
  *
  * @since 4.0.0
  */
@@ -82,8 +41,8 @@ export const layerSessionStorage: Layer.Layer<KeyValueStore.KeyValueStore> = Key
  *
  * **When to use**
  *
- * Use when a browser `KeyValueStore` needs persistent asynchronous IndexedDB
- * storage instead of the synchronous Web Storage APIs.
+ * Use when you need persistent asynchronous IndexedDB storage for a browser
+ * `KeyValueStore` instead of the synchronous Web Storage APIs.
  *
  * **Details**
  *

@@ -1,251 +1,75 @@
-import * as STS from "@distilled.cloud/aws/sts";
+/**
+ * A "guestbook" app on EKS Auto Mode that exercises the full Kubernetes
+ * container surface:
+ *
+ * - a stack-owned network + `compute: "auto"` cluster + DynamoDB table +
+ *   a namespace applied as a raw manifest via `EKS.Manifest` (`src/infra.ts`),
+ * - `Api` — an effectful `AWS.EKS.Deployment` (bundled `main:` image source)
+ *   behind an internet-facing NLB with DynamoDB bindings on the pod-identity
+ *   role, plus the typed `podTemplate` escape hatch (`src/Api.ts`),
+ * - `Web` — an EXTERNAL `AWS.EKS.Deployment` (registry `image:` source, no
+ *   Effect runtime in the container), nginx behind its own NLB,
+ * - `SeedJob` — an inline-effect one-shot `AWS.EKS.Job` (`{ run }`) that
+ *   seeds the guestbook table when the batch/v1 Job is applied on deploy
+ *   (`src/SeedJob.ts`).
+ */
 import * as Alchemy from "alchemy";
 import * as AWS from "alchemy/AWS";
-import * as EC2 from "alchemy/AWS/EC2";
-import * as EKS from "alchemy/AWS/EKS";
-import * as Kubernetes from "alchemy/Kubernetes";
-import * as Output from "alchemy/Output";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-
-const aws = AWS.providers();
-
-const EKS_ADMIN_PRINCIPAL_ARN = Config.string("EKS_ADMIN_PRINCIPAL_ARN").pipe(
-  Config.option,
-  Config.map(Option.getOrUndefined),
-);
-
-const clusterName = "alchemy-eks-auto-example";
-const namespace = "demo";
-const serviceAccount = "pod-identity-demo";
-
-const toIamPrincipalArn = (arn: string): string | undefined => {
-  const assumedRole = arn.match(
-    /^arn:([^:]+):sts::([0-9]{12}):assumed-role\/(.+)\/[^/]+$/,
-  );
-  if (assumedRole) {
-    const [, partition, accountId, rolePath] = assumedRole;
-    return `arn:${partition}:iam::${accountId}:role/${rolePath}`;
-  }
-
-  if (arn.includes(":role/") || arn.includes(":user/")) {
-    return arn;
-  }
-
-  return undefined;
-};
-
-const resolveClusterAdminPrincipalArn = Effect.gen(function* () {
-  const configured = yield* EKS_ADMIN_PRINCIPAL_ARN;
-  if (configured) {
-    return configured;
-  }
-
-  const caller = yield* STS.getCallerIdentity({});
-  const principalArn =
-    typeof caller.Arn === "string" ? toIamPrincipalArn(caller.Arn) : undefined;
-
-  if (!principalArn) {
-    return yield* Effect.fail(
-      new Error(
-        "Unable to infer an IAM principal ARN for cluster access. Set EKS_ADMIN_PRINCIPAL_ARN before deploy.",
-      ),
-    );
-  }
-
-  return principalArn;
-});
+import ApiLive, { Api } from "./src/Api.ts";
+import {
+  EntriesTable,
+  GuestbookCluster,
+  GuestbookNamespace,
+} from "./src/infra.ts";
+import SeedJob from "./src/SeedJob.ts";
 
 export default Alchemy.Stack(
   "AwsEksExample",
   {
-    providers: aws,
+    providers: AWS.providers(),
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const tags = {
-      Example: "aws-eks",
-      Surface: "eks",
-      Mode: "auto",
-    };
+    const cluster = yield* GuestbookCluster;
+    const table = yield* EntriesTable;
+    const ns = yield* GuestbookNamespace;
 
-    const clusterAdminPrincipalArn = yield* resolveClusterAdminPrincipalArn;
+    // ── Api — effectful server in the TAGGED form (bundled `main:`).
+    // `ApiLive` (the `Api.make(...)` Layer, provided below) carries the
+    // props + init program; its init declares the DynamoDB bindings that
+    // land on the generated pod-identity role; see src/Api.ts.
+    const api = yield* Api;
 
-    const network = yield* EC2.Network("Network", {
-      cidrBlock: "10.42.0.0/16",
-      availabilityZones: 2,
-      nat: "single",
-      tags,
-    });
-
-    const cluster = yield* EKS.AutoCluster("Cluster", {
-      clusterName,
-      network,
-      tags,
-    });
-
-    const clusterAdmin = yield* EKS.AccessEntry("ClusterAdmin", {
-      clusterName: cluster.cluster.clusterName,
-      principalArn: clusterAdminPrincipalArn,
-      accessPolicies: [
-        {
-          policyArn:
-            "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy",
-          accessScope: {
-            type: "cluster",
-          },
-        },
-      ],
-      tags,
-    });
-
-    const metricsServer = yield* EKS.Addon("MetricsServer", {
-      clusterName: cluster.cluster.clusterName,
-      addonName: "metrics-server",
-      tags,
-    });
-
-    const snapshotController = yield* EKS.Addon("SnapshotController", {
-      clusterName: cluster.cluster.clusterName,
-      addonName: "snapshot-controller",
-      tags,
-    });
-
-    const demoNamespace = yield* Kubernetes.Namespace("DemoNamespace", {
-      cluster: cluster.cluster,
-      name: namespace,
-      labels: {
-        "app.kubernetes.io/part-of": "aws-eks-example",
-      },
-    });
-
-    const echoServer = yield* EKS.LoadBalancedWorkload("EchoServer", {
-      cluster: cluster.cluster,
-      namespace: demoNamespace,
-      name: "echo-server",
-      labels: {
-        "app.kubernetes.io/name": "echo-server",
-        "app.kubernetes.io/part-of": "aws-eks-example",
-      },
+    // ── Web — EXTERNAL deployment: a pre-built registry image (mirrored
+    // into ECR), no Effect runtime in the container. Auto Mode's built-in
+    // controller provisions the NLB for the LoadBalancer Service; port 80,
+    // so `web.url` carries no port suffix.
+    const web = yield* AWS.EKS.Deployment("Web", {
+      cluster,
+      image: "public.ecr.aws/nginx/nginx:1.27",
+      namespace: ns.name,
       replicas: 2,
-      containers: [
-        {
-          name: "echo-server",
-          image: "registry.k8s.io/echoserver:1.10",
-          ports: [
-            {
-              containerPort: 8080,
-              name: "http",
-            },
-          ],
-          resources: {
-            requests: {
-              cpu: "50m",
-              memory: "64Mi",
-            },
-            limits: {
-              cpu: "250m",
-              memory: "128Mi",
-            },
-          },
-        },
-      ],
-      ports: [
-        {
-          name: "http",
-          port: 80,
-          targetPort: 8080,
-        },
-      ],
+      port: 80,
+      serviceType: "LoadBalancer",
+      resources: {
+        requests: { cpu: "50m", memory: "64Mi" },
+        limits: { cpu: "250m", memory: "128Mi" },
+      },
     });
 
-    const podIdentityWorkload = yield* EKS.PodIdentityWorkload(
-      "PodIdentityDemo",
-      {
-        cluster: cluster.cluster,
-        namespace: demoNamespace,
-        name: "pod-identity-demo",
-        serviceAccountName: serviceAccount,
-        tags,
-        serviceAccountLabels: {
-          "app.kubernetes.io/name": serviceAccount,
-          "app.kubernetes.io/part-of": "aws-eks-example",
-        },
-        labels: {
-          "app.kubernetes.io/name": "pod-identity-demo",
-          "app.kubernetes.io/part-of": "aws-eks-example",
-        },
-        containers: [
-          {
-            name: "aws-cli",
-            image: "public.ecr.aws/aws-cli/aws-cli:2.17.37",
-            command: ["/bin/sh", "-lc"],
-            args: [
-              [
-                "while true; do",
-                "  date;",
-                "  aws sts get-caller-identity;",
-                "  sleep 60;",
-                "done",
-              ].join(" "),
-            ],
-            resources: {
-              requests: {
-                cpu: "50m",
-                memory: "64Mi",
-              },
-              limits: {
-                cpu: "250m",
-                memory: "128Mi",
-              },
-            },
-          },
-        ],
-      },
-    );
-
-    const clusterInfoJob = yield* Kubernetes.Job("ClusterInfoJob", {
-      cluster: cluster.cluster,
-      namespace: demoNamespace,
-      name: "cluster-info",
-      labels: {
-        "app.kubernetes.io/name": "cluster-info",
-        "app.kubernetes.io/part-of": "aws-eks-example",
-      },
-      containers: [
-        {
-          name: "cluster-info",
-          image: "public.ecr.aws/docker/library/busybox:1.36",
-          command: ["/bin/sh", "-lc"],
-          args: [
-            [
-              'echo "demo workload is running on EKS Auto Mode";',
-              "nslookup echo-server.demo.svc.cluster.local || true;",
-            ].join(" "),
-          ],
-        },
-      ],
-    });
+    // ── SeedJob — inline-effect one-shot Job; runs to completion on deploy
+    // (Kubernetes runs a batch/v1 Job as soon as it is applied).
+    const seedJob = yield* SeedJob;
 
     return {
-      clusterName: cluster.cluster.clusterName,
-      clusterArn: cluster.cluster.clusterArn,
-      endpoint: cluster.cluster.endpoint,
-      adminPrincipalArn: clusterAdmin.principalArn,
-      namespace: demoNamespace.name,
-      serviceAccount: podIdentityWorkload.serviceAccount.name,
-      podIdentityAssociationArn:
-        podIdentityWorkload.podIdentityAssociation.associationArn,
-      workloadRoleArn: podIdentityWorkload.roleArn,
-      metricsServerAddonArn: metricsServer.addonArn,
-      snapshotControllerAddonArn: snapshotController.addonArn,
-      echoDeploymentName: echoServer.deployment.name,
-      echoServiceName: echoServer.service?.name,
-      podIdentityDeploymentName: podIdentityWorkload.deployment.name,
-      clusterInfoJobName: clusterInfoJob.name,
-      accessSummary: Output.interpolate`Granted cluster-admin access on ${cluster.cluster.clusterName} to ${clusterAdmin.principalArn}.`,
-      workloadSummary: Output.interpolate`Demo workloads are declared in TypeScript and reconciled into namespace ${demoNamespace.name} on ${cluster.cluster.clusterName}.`,
+      clusterName: cluster.clusterName,
+      // Full URL including the Service port (http://<nlb-hostname>:3000).
+      apiUrl: api.url,
+      webUrl: web.url,
+      tableName: table.tableName,
+      namespace: ns.name,
+      seedJobName: seedJob.jobName,
     };
-  }).pipe(Effect.orDie),
+  }).pipe(Effect.provide(ApiLive)),
 );

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   CheckpointRef,
+  CommandId,
   EventId,
   MessageId,
   ProjectId,
@@ -34,6 +35,8 @@ const baseThread: OrchestrationThread = {
   createdAt: "2026-04-01T00:00:00.000Z",
   updatedAt: "2026-04-01T00:00:00.000Z",
   archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
   deletedAt: null,
   messages: [],
   proposedPlans: [],
@@ -121,8 +124,15 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.archived / thread.unarchived", () => {
-    it("sets archivedAt", () => {
-      const result = applyThreadDetailEvent(baseThread, {
+    it("sets archivedAt and clears title regeneration", () => {
+      const regeneratingThread: OrchestrationThread = {
+        ...baseThread,
+        titleRegeneration: {
+          requestId: CommandId.make("regenerate-title"),
+          startedAt: "2026-04-01T02:00:00.000Z",
+        },
+      };
+      const result = applyThreadDetailEvent(regeneratingThread, {
         ...baseEventFields,
         sequence: 3,
         occurredAt: "2026-04-01T03:00:00.000Z",
@@ -139,6 +149,7 @@ describe("applyThreadDetailEvent", () => {
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.archivedAt).toBe("2026-04-01T03:00:00.000Z");
+        expect(result.thread.titleRegeneration).toBeNull();
       }
     });
 
@@ -160,6 +171,111 @@ describe("applyThreadDetailEvent", () => {
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.archivedAt).toBeNull();
+      }
+    });
+  });
+
+  describe("thread.settled / thread.unsettled", () => {
+    it("sets the settled override and timestamp", () => {
+      const settledAt = "2026-04-01T05:00:00.000Z";
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: settledAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.settled",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          settledAt,
+          updatedAt: settledAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.settledOverride).toBe("settled");
+        expect(result.thread.settledAt).toBe(settledAt);
+      }
+    });
+
+    it.each([
+      ["user", "active"],
+      ["activity", null],
+    ] as const)("unsettles for %s with override %s", (reason, settledOverride) => {
+      const settledThread: OrchestrationThread = {
+        ...baseThread,
+        settledOverride: "settled",
+        settledAt: "2026-04-01T05:00:00.000Z",
+      };
+      const updatedAt = "2026-04-01T06:00:00.000Z";
+      const result = applyThreadDetailEvent(settledThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: updatedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.unsettled",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          reason,
+          updatedAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.settledOverride).toBe(settledOverride);
+        expect(result.thread.settledAt).toBeNull();
+      }
+    });
+  });
+
+  describe("thread.pinned / thread.unpinned", () => {
+    it("sets pinnedAt", () => {
+      const pinnedAt = "2026-04-01T05:00:00.000Z";
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: pinnedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.pinned",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          pinnedAt,
+          updatedAt: pinnedAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.pinnedAt).toBe(pinnedAt);
+      }
+    });
+
+    it("clears pinnedAt", () => {
+      const pinnedThread: OrchestrationThread = {
+        ...baseThread,
+        pinnedAt: "2026-04-01T05:00:00.000Z",
+      };
+      const updatedAt = "2026-04-01T06:00:00.000Z";
+      const result = applyThreadDetailEvent(pinnedThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: updatedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.unpinned",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          updatedAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.pinnedAt).toBeNull();
       }
     });
   });
@@ -564,6 +680,94 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.activities).toHaveLength(130);
         expect(result.thread.activities[0]?.id).toBe("activity-0");
+      }
+    });
+
+    it("replaces earlier resolvable context-window updates for the same turn", () => {
+      const contextWindowActivity = (id: string, sequence: number, usedTokens: unknown) => ({
+        id: EventId.make(id),
+        tone: "info" as const,
+        kind: "context-window.updated",
+        summary: "Context window updated",
+        payload: { usedTokens },
+        turnId: TurnId.make("turn-1"),
+        sequence,
+        createdAt: "2026-04-01T11:00:00.000Z",
+      });
+      const otherTurnActivity = contextWindowActivity("activity-other-turn", 2, 500);
+      const existingActivities = [
+        contextWindowActivity("activity-cw-1", 1, 1_000),
+        { ...otherTurnActivity, turnId: TurnId.make("turn-0") },
+        // Malformed row (no usedTokens): must survive, and must not be
+        // treated as the latest value by consumers.
+        contextWindowActivity("activity-cw-malformed", 3, undefined),
+        contextWindowActivity("activity-cw-2", 4, 2_000),
+      ];
+
+      const result = applyThreadDetailEvent(
+        { ...baseThread, activities: existingActivities },
+        {
+          ...baseEventFields,
+          sequence: 20,
+          occurredAt: "2026-04-01T11:02:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: contextWindowActivity("activity-cw-3", 5, 3_000),
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        const ids = result.thread.activities.map((activity) => activity.id);
+        // Same-turn resolvable rows collapse to the newest; the other turn's
+        // row and the malformed row are untouched.
+        expect(ids).toEqual(["activity-other-turn", "activity-cw-malformed", "activity-cw-3"]);
+      }
+    });
+
+    it("does not collapse context-window history for a malformed update", () => {
+      const resolvable = {
+        id: EventId.make("activity-cw-resolvable"),
+        tone: "info" as const,
+        kind: "context-window.updated",
+        summary: "Context window updated",
+        payload: { usedTokens: 1_000 },
+        turnId: TurnId.make("turn-1"),
+        sequence: 1,
+        createdAt: "2026-04-01T11:00:00.000Z",
+      };
+
+      const result = applyThreadDetailEvent(
+        { ...baseThread, activities: [resolvable] },
+        {
+          ...baseEventFields,
+          sequence: 21,
+          occurredAt: "2026-04-01T11:03:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: {
+              ...resolvable,
+              id: EventId.make("activity-cw-broken"),
+              payload: { usedTokens: Number.NaN },
+              sequence: 2,
+            },
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        // The resolvable row must survive so consumers can still derive a
+        // usage value by walking backwards past the malformed row.
+        const ids = result.thread.activities.map((activity) => activity.id);
+        expect(ids).toEqual(["activity-cw-resolvable", "activity-cw-broken"]);
       }
     });
   });

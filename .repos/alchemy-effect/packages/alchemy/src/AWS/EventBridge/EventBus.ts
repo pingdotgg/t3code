@@ -1,13 +1,12 @@
-import { Region } from "@distilled.cloud/aws/Region";
 import * as eventbridge from "@distilled.cloud/aws/eventbridge";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
-import type { Providers } from "../Providers.ts";
 import {
   createInternalTags,
   createTagsList,
@@ -15,6 +14,7 @@ import {
   hasAlchemyTags,
 } from "../../Tags.ts";
 import { AWSEnvironment, type AccountID } from "../Environment.ts";
+import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 import type { QueueArn } from "../SQS/Queue.ts";
 
@@ -69,6 +69,19 @@ export interface EventBusProps {
   logConfig?: eventbridge.LogConfig;
 
   /**
+   * Whether to delete any rules remaining on the bus (removing their
+   * targets first) when the bus is destroyed. Rules managed by the same
+   * stack are always deleted before the bus by the engine, and AWS-managed
+   * rules (e.g. the hidden archival rule an Archive leaves behind while
+   * AWS's async cleanup lags) are always force-swept; `forceDestroy`
+   * additionally sweeps rules created out-of-band (or leaked by an
+   * interrupted deploy), which would otherwise block bus deletion with
+   * `EventBusHasRules` forever.
+   * @default false
+   */
+  forceDestroy?: boolean;
+
+  /**
    * Tags to assign to the event bus.
    */
   tags?: Record<string, string>;
@@ -76,7 +89,7 @@ export interface EventBusProps {
 
 /**
  * An Amazon EventBridge event bus for receiving and routing events.
- *
+ * @resource
  * @section Creating Event Buses
  * @example Custom Event Bus
  * ```typescript
@@ -121,9 +134,6 @@ export const EventBusProvider = () =>
   Provider.effect(
     EventBus,
     Effect.gen(function* () {
-      const region = yield* Region;
-      const { accountId } = yield* AWSEnvironment;
-
       const createEventBusName = (id: string, props: { name?: string } = {}) =>
         Effect.gen(function* () {
           if (props.name) {
@@ -177,7 +187,38 @@ export const EventBusProvider = () =>
             ? attrs
             : Unowned(attrs);
         }),
+        list: () =>
+          Effect.gen(function* () {
+            // Enumerate every event bus in the ambient account/region via
+            // manual NextToken pagination (listEventBuses is not a paginated
+            // distilled op). The AWS-managed `default` bus is excluded — the
+            // EventBus resource cannot manage it (name "default" is reserved).
+            const attrs: {
+              eventBusName: EventBusName;
+              eventBusArn: EventBusArn;
+              description?: string;
+            }[] = [];
+            let nextToken: string | undefined;
+            do {
+              const page = yield* eventbridge.listEventBuses({
+                NextToken: nextToken,
+              });
+              for (const bus of page.EventBuses ?? []) {
+                if (!bus.Name || !bus.Arn || bus.Name === "default") {
+                  continue;
+                }
+                attrs.push({
+                  eventBusName: bus.Name,
+                  eventBusArn: bus.Arn as EventBusArn,
+                  description: bus.Description,
+                });
+              }
+              nextToken = page.NextToken;
+            } while (nextToken);
+            return attrs;
+          }),
         reconcile: Effect.fn(function* ({ id, news = {}, output, session }) {
+          const { accountId, region } = yield* AWSEnvironment.current;
           const eventBusName =
             output?.eventBusName ?? (yield* createEventBusName(id, news));
           const eventBusArn = (output?.eventBusArn ??
@@ -286,10 +327,92 @@ export const EventBusProvider = () =>
             description: news.description,
           };
         }),
-        delete: Effect.fn(function* (input) {
-          yield* eventbridge.deleteEventBus({
-            Name: input.output.eventBusName,
-          });
+        delete: Effect.fn(function* ({ olds = {}, output }) {
+          const eventBusName = output.eventBusName;
+
+          // Rules the engine knows about are deleted first (they depend on
+          // the bus), but AWS-managed rules can linger: deleting an archive
+          // removes its hidden archival rule *asynchronously*, sometimes
+          // minutes later, during which deleteEventBus keeps failing with
+          // EventBusHasRules. Sweep remaining rules with Force (required for
+          // managed rules) instead of waiting out AWS's async cleanup:
+          // AWS-managed rules (`ManagedBy` set) are always swept; rules
+          // created out-of-band by the user are only swept when
+          // `forceDestroy` is enabled.
+          yield* Effect.gen(function* () {
+            let nextToken: string | undefined;
+            do {
+              const page = yield* eventbridge.listRules({
+                EventBusName: eventBusName,
+                NextToken: nextToken,
+              });
+              for (const rule of page.Rules ?? []) {
+                if (!rule.Name) continue;
+                if (!rule.ManagedBy && !olds.forceDestroy) continue;
+                const targets = yield* eventbridge
+                  .listTargetsByRule({
+                    Rule: rule.Name,
+                    EventBusName: eventBusName,
+                  })
+                  .pipe(
+                    Effect.catchTag("ResourceNotFoundException", () =>
+                      Effect.succeed({ Targets: [] }),
+                    ),
+                  );
+                const targetIds = (targets.Targets ?? []).map((t) => t.Id);
+                if (targetIds.length > 0) {
+                  yield* eventbridge
+                    .removeTargets({
+                      Rule: rule.Name,
+                      EventBusName: eventBusName,
+                      Ids: targetIds,
+                      Force: true,
+                    })
+                    .pipe(
+                      Effect.catchTag(
+                        ["ResourceNotFoundException", "ManagedRuleException"],
+                        () => Effect.void,
+                      ),
+                    );
+                }
+                yield* eventbridge
+                  .deleteRule({
+                    Name: rule.Name,
+                    EventBusName: eventBusName,
+                    Force: true,
+                  })
+                  .pipe(
+                    Effect.catchTag(
+                      ["ResourceNotFoundException", "ManagedRuleException"],
+                      () => Effect.void,
+                    ),
+                  );
+              }
+              nextToken = page.NextToken;
+            } while (nextToken);
+          }).pipe(
+            // Bus already gone (or vanishes mid-sweep) — nothing to sweep.
+            Effect.catchTag("ResourceNotFoundException", () => Effect.void),
+          );
+
+          // The sweep and EventBridge's own bookkeeping are eventually
+          // consistent — a just-deleted rule can still count against the bus
+          // for a few seconds. Retry the typed dependency violation on a
+          // bounded schedule.
+          yield* eventbridge
+            .deleteEventBus({
+              Name: eventBusName,
+            })
+            .pipe(
+              Effect.retry({
+                while: (e): boolean => e._tag === "EventBusHasRules",
+                schedule: Schedule.spaced("3 seconds"),
+                times: 10,
+              }),
+              // Bus already gone (deleted out-of-band, or a previous
+              // destroy partially succeeded) — delete is idempotent.
+              Effect.catchTag("ResourceNotFoundException", () => Effect.void),
+            );
         }),
       };
     }),

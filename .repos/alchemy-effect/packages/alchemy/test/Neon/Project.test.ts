@@ -1,7 +1,8 @@
 import * as Neon from "@/Neon";
-import * as Test from "@/Test/Vitest";
+import * as Provider from "@/Provider";
+import * as Test from "@/Test/Alchemy";
 import { getProject } from "@distilled.cloud/neon";
-import { expect } from "@effect/vitest";
+import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -13,6 +14,21 @@ const logLevel = Effect.provideService(
   MinimumLogLevel,
   process.env.DEBUG ? "Debug" : "Info",
 );
+
+const expectPooledOrigin = (project: {
+  pooledConnectionUri: string;
+  pooledOrigin: Neon.PostgresOrigin;
+}) => {
+  const uri = new URL(project.pooledConnectionUri);
+  expect(project.pooledOrigin).toMatchObject({
+    scheme: uri.protocol === "postgresql:" ? "postgresql" : "postgres",
+    host: uri.hostname,
+    port: uri.port ? Number(uri.port) : 5432,
+    database: uri.pathname.replace(/^\//, ""),
+    user: decodeURIComponent(uri.username),
+  });
+  expect(project.pooledOrigin.password).toBeDefined();
+};
 
 test.provider("create and delete project with default props", (stack) =>
   Effect.gen(function* () {
@@ -28,9 +44,40 @@ test.provider("create and delete project with default props", (stack) =>
     expect(project.projectName).toBeDefined();
     expect(project.defaultBranchId).toBeDefined();
     expect(project.connectionUri).toContain("postgres");
+    expect(project.pooledConnectionUri).toContain("postgres");
+    expectPooledOrigin(project);
 
     const fetched = yield* getProject({ project_id: project.projectId });
     expect(fetched.project.id).toEqual(project.projectId);
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
+test.provider("project with default props does not change on update", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const deploy = stack.deploy(Neon.Project("DefaultProjectUpdate"));
+
+    const created = yield* deploy;
+
+    expect(created.projectId).toBeDefined();
+    expect(created.projectName).toBeDefined();
+    expect(created.defaultBranchId).toBeDefined();
+    expect(created.connectionUri).toContain("postgres");
+    expectPooledOrigin(created);
+
+    const fetched = yield* getProject({ project_id: created.projectId });
+    expect(fetched.project.id).toEqual(created.projectId);
+
+    const updated = yield* deploy;
+
+    expect(updated.projectId).toEqual(created.projectId);
+    expect(updated.projectName).toEqual(created.projectName);
+    expect(updated.defaultBranchId).toEqual(created.defaultBranchId);
+    expect(updated.connectionUri).toEqual(created.connectionUri);
+    expectPooledOrigin(updated);
 
     yield* stack.destroy();
   }).pipe(logLevel),
@@ -66,6 +113,27 @@ test.provider("enable logical replication on update", (stack) =>
     expect(fetched.project.settings).toMatchObject({
       enable_logical_replication: true,
     });
+
+    yield* stack.destroy();
+  }).pipe(logLevel),
+);
+
+test.provider("list enumerates the deployed project", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const deployed = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Neon.Project("ListProject");
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Neon.Project);
+    const all = yield* provider.list();
+
+    const found = all.find((p) => p.projectId === deployed.projectId);
+    expect(found).toBeDefined();
+    expectPooledOrigin(found!);
 
     yield* stack.destroy();
   }).pipe(logLevel),

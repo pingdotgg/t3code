@@ -39,6 +39,8 @@
   "[markdown]": {
     "editor.defaultFormatter": "dprint.dprint"
   },
-  "deno.enable": false,
-  "js/ts.tsdk.path": "node_modules/typescript/lib"
+  "js/ts.tsdk.path": "./node_modules/typescript/lib",
+  "js/ts.tsdk.additionalLocations": ["./node_modules/typescript/lib"],
+  "js/ts.tsdk.promptToUseWorkspaceVersion": true,
+  "js/ts.experimental.useTsgo": true
 }

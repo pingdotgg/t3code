@@ -1,35 +1,10 @@
 /**
- * Platform-neutral primitives for code running inside worker-like runtimes.
+ * Worker-side primitives for worker-like runtimes.
  *
- * This module gives browser workers, shared workers, Node worker threads, Bun
- * workers, and child-process adapters the same server-side shape: start a
- * runner, receive messages tagged by a numeric port id, and send replies back
- * through the matching transport.
- *
- * **Mental model**
- *
- * `WorkerRunnerPlatform` is installed inside the worker-like runtime. Starting
- * it yields a `WorkerRunner`, and `WorkerRunner.run` attaches the message
- * handler. Incoming values use the small `PlatformMessage` protocol:
- * `[0, payload]` delivers a request and `[1]` closes a port. Higher-level
- * protocols, such as RPC over workers, decide how payloads are encoded before
- * they reach this layer.
- *
- * **Common tasks**
- *
- * - Start the current platform from the {@link WorkerRunnerPlatform} service
- * - Handle inbound messages with `WorkerRunner.run`
- * - Send responses or notifications with `WorkerRunner.send`
- * - Observe optional disconnect notifications through `WorkerRunner.disconnects`
- *
- * **Gotchas**
- *
- * This module does not serialize payloads; values must already be acceptable to
- * the selected runtime's message mechanism. Structured-clone support, transfer
- * lists, `messageerror` events, and single-port runtimes such as Node or Bun
- * all affect which payloads and resource lifetimes are safe. Handler effects
- * run on the runtime captured by `run`, so services required by a handler must
- * be provided to that running effect.
+ * A `WorkerRunner` receives messages tagged by a numeric port id, sends replies
+ * back through the same transport, and can expose disconnect notifications. The
+ * module also defines the small platform message shape and the
+ * `WorkerRunnerPlatform` service that starts a platform-specific runner.
  *
  * @since 4.0.0
  */

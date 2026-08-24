@@ -1,5 +1,5 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@/Cloudflare";
+import * as Alchemy from "@/index";
 import * as Effect from "effect/Effect";
 import * as path from "pathe";
 import RateLimitEffectWorker from "./effect.ts";
@@ -8,8 +8,7 @@ export const AsyncWorker = Cloudflare.Worker("RateLimitAsyncWorker", {
   main: path.resolve(import.meta.dirname, "async.ts"),
   url: true,
   env: {
-    THROTTLE: Cloudflare.RateLimit({
-      name: "THROTTLE",
+    THROTTLE: Cloudflare.RateLimit("THROTTLE", {
       namespaceId: 11_002,
       simple: { limit: 2, period: 10 },
     }),

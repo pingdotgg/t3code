@@ -1,0 +1,246 @@
+---
+title: File layout
+description: How to organize an Alchemy project — one file per Resource or Layer, group Resources that travel together by concern, and keep alchemy.run.ts as the composition root.
+---
+
+A typical alchemy app ([`examples/cloudflare-neon-drizzle`](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-neon-drizzle)):
+
+```sh
+.
+├── alchemy.run.ts       # composition root — export default the Stack
+├── src/
+│   ├── Api.ts           # the Worker (Function/Server + its runtime code)
+│   ├── Db.ts            # Database + Branch + Hyperdrive — one concern
+│   └── schema.ts        # Drizzle schema shared by Db.ts and Api.ts
+└── test/
+    └── integ.test.ts    # deploys the Stack, hits the live URL
+```
+
+Three rules produce this shape: one file per Resource or Layer,
+group Resources that travel together, and keep `alchemy.run.ts`
+as the composition root. This page walks a project from one file
+to that shape.
+
+## Start with one file
+
+Everything in `alchemy.run.ts` is a perfectly good starting
+point:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export const DB = Cloudflare.D1.Database("DB");
+
+export const Bucket = Cloudflare.R2.Bucket("Bucket");
+
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: { DB, Bucket },
+});
+
+export default Alchemy.Stack(
+  "CloudflareWorker",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const worker = yield* Worker;
+    return { url: worker.url.as<string>() };
+  }),
+);
+```
+
+This is fine until the file accumulates runtime code, stage
+logic, and a dozen Resources — then split.
+
+## One file per Resource
+
+A Resource declaration is a value; give it its own module:
+
+```typescript
+// src/Photos.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Photos = Cloudflare.R2.Bucket("Photos");
+```
+
+A declaration is inert until a Stack yields it — importing this
+file deploys nothing.
+
+Workers get the same treatment, with `main: import.meta.url`
+making the file its own entrypoint:
+
+```typescript
+// src/Api.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.gen(function* () {
+        // handle requests
+      }),
+    };
+  }),
+) {}
+```
+
+The Worker's declaration and its runtime code live in one file —
+there is no separate `wrangler.toml` pointing at a script.
+
+Layers follow the same rule — the `SandboxLive` Layer lives in
+`src/Sandbox.ts` (see
+[Layers](/infrastructure-as-effects/layers)).
+
+## Group by concern
+
+Resources that change together share a file:
+
+```typescript
+// src/Db.ts
+import * as Drizzle from "alchemy/Drizzle";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+
+export const NeonDb = Effect.gen(function* () {
+  const schema = yield* Drizzle.Schema("app-schema", {
+    schema: "./src/schema.ts",
+    out: "./migrations",
+  });
+
+  const project = yield* Neon.Project("app-db", {
+    region: "aws-us-east-1",
+  });
+
+  const branch = yield* Neon.Branch("app-branch", {
+    project,
+    migrationsDir: schema.out,
+  });
+
+  return { project, branch, schema };
+});
+```
+
+A migration touches all three — Schema regenerates the SQL,
+Branch applies it — so they share a file. The heuristic: group
+Resources when they share a lifecycle.
+
+## Wrap units in Effects, not in the Stack
+
+`NeonDb` above is an exported `Effect.gen` — a unit of
+composition anything can build on:
+
+```typescript
+// src/Db.ts
+export const Hyperdrive = Effect.gen(function* () {
+  const { branch } = yield* NeonDb;
+  return yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+    origin: branch.origin,
+  });
+});
+```
+
+Both `Hyperdrive` and `alchemy.run.ts` yield `NeonDb`, but each
+Resource is memoized by its logical ID — the database is
+provisioned once no matter how many units yield it.
+
+## Stage-conditional config
+
+When a Resource's props differ by stage, read the stage where the
+Resource is declared:
+
+```typescript
+const { stage } = yield* Alchemy.Stack;
+
+const sandbox = yield* Cloudflare.Container("Sandbox", {
+  instanceType: stage === "prod" ? "standard-1" : "dev",
+});
+```
+
+The decision lives next to the Resource it affects, not in
+`alchemy.run.ts`. The most common case — `pr-*` stages borrowing
+staging's database via `.ref` — is covered in
+[References](/infrastructure-as-code/references).
+
+## alchemy.run.ts is the composition root
+
+With the units in `src/`, the root file shrinks to wiring:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
+import * as Neon from "alchemy/Neon";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+import Api from "./src/Api.ts";
+import { Hyperdrive, NeonDb } from "./src/Db.ts";
+
+export default Alchemy.Stack(
+  "CloudflareNeonDrizzleExample",
+  {
+    providers: Layer.mergeAll(
+      Cloudflare.providers(),
+      Drizzle.providers(),
+      Neon.providers(),
+    ),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const { branch } = yield* NeonDb;
+    const hd = yield* Hyperdrive;
+    const api = yield* Api;
+
+    return {
+      url: api.url.as<string>(),
+      branchId: branch.branchId,
+      hyperdriveId: hd.hyperdriveId,
+    };
+  }),
+);
+```
+
+It has four jobs: name the Stack, merge Providers, pick a State
+Store, wire units into outputs. The CLI discovers
+`alchemy.run.ts` at the project root automatically; pass a path
+to override (`alchemy deploy ./infra/app.ts`).
+
+If `alchemy.run.ts` is growing, something is missing a home in
+`src/`.
+
+## The shape
+
+```
+.
+├── alchemy.run.ts   # composition root — Stack, Providers, State Store, outputs
+├── .alchemy/        # local state — gitignore it
+└── src/
+    ├── Api.ts       # Worker — declaration + runtime code
+    ├── Db.ts        # database unit — Schema + Project + Branch + Hyperdrive
+    ├── Photos.ts    # one-line Resource
+    ├── Sandbox.ts   # Container Layer
+    └── schema.ts    # plain application code (Drizzle schema)
+```
+
+Tests mirror the tree under `test/`; the tutorial builds this
+shape step by step ([Part 2](/cloudflare/tutorial/part-2)).
+
+## Where next
+
+- [Monorepo](/project-structure/monorepo) — the workspace-level version of
+  this question: one Stack or one per package.
+- [References](/infrastructure-as-code/references) — when the split
+  crosses Stack boundaries.
+- [Layers](/infrastructure-as-effects/layers) — promote
+  a multi-Resource unit into a swappable Layer.
+- [Stacks](/infrastructure-as-code/stack) — the Stack service, stages, and
+  outputs used by the composition root.

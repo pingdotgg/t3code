@@ -29,7 +29,7 @@ export type Monitor = Resource<
  *   baseline by more than `tolerance` over `compareDays`.
  *
  * Changing `type` triggers a replacement; everything else updates in place.
- *
+ * @resource
  * @see https://axiom.co/docs/monitor-data/monitors
  *
  * @section Creating a Monitor
@@ -89,10 +89,21 @@ export const MonitorProvider = () =>
       const create = yield* Axiom.createMonitor;
       const update = yield* Axiom.updateMonitor;
       const get = yield* Axiom.getMonitor;
+      const list = yield* Axiom.getMonitors;
       const del = yield* Axiom.deleteMonitor;
 
       return {
         stables: ["id"],
+        // Enumerate every monitor in the org. Axiom exposes a single
+        // account-wide `GET /v2/monitors` collection op (no pagination) whose
+        // item schema is identical to `getMonitor`/`createMonitor`'s output, so
+        // we fetch it once and each row already carries the exact `read`
+        // Attributes shape — directly usable by `delete` with no follow-up get.
+        list: () =>
+          Effect.gen(function* () {
+            const monitors = yield* list({});
+            return monitors.map((m) => m);
+          }),
         diff: Effect.fn(function* ({ news, output }) {
           if (!isResolved(news)) return undefined;
           if (output && news.type !== output.type) {

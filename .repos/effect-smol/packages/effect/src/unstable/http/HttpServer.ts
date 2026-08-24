@@ -1,34 +1,11 @@
 /**
- * Runtime boundary for serving Effect HTTP responses on a concrete HTTP server.
+ * Service for serving Effect HTTP responses on a concrete HTTP server.
  *
- * `HttpServer` is the service implemented by platform adapters and consumed by
- * routers, API layers, tests, and applications that start serving from a
- * `Layer`. It exposes the listening address and a `serve` operation that runs
- * an `HttpServerResponse` effect for each incoming request.
- *
- * **Mental model**
- *
- * The server owns the listener and supplies `HttpServerRequest` for every
- * request. The application effect only describes how to produce a response, so
- * request-scoped data comes from the server while the rest of the environment is
- * still provided by the surrounding layer graph. `serve` ties listener lifetime
- * to a layer scope, and `serveEffect` performs the same work inside an explicit
- * `Scope`.
- *
- * **Common tasks**
- *
- * - Build a server service from a platform adapter with `make`.
- * - Serve an HTTP app with `serve` or `serveEffect`.
- * - Format or log the listening address with `formatAddress`,
- *   `addressFormattedWith`, `logAddress`, or `withLogAddress`.
- * - Create a test client that targets the running server with `makeTestClient`
- *   or `layerTestClient`.
- *
- * **Gotchas**
- *
- * Middleware is applied at the server boundary, after the server has supplied
- * the request service. Test clients only support TCP addresses, and rewrite
- * `0.0.0.0` to `127.0.0.1` for local requests.
+ * Platform adapters provide `HttpServer`, and routers or applications consume
+ * it to run an `HttpServerResponse` effect for each incoming request. The
+ * service exposes the listening address, while this module also includes helpers
+ * for address formatting, server logging, and clients that target the current
+ * server in tests.
  *
  * @since 4.0.0
  */

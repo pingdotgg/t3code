@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Option, PartitionedSemaphore } from "effect"
+import { Effect, Fiber, Option, PartitionedSemaphore } from "effect"
 
 describe("PartitionedSemaphore", () => {
   it.effect("module-level combinators delegate to the instance api", () =>
@@ -70,5 +70,23 @@ describe("PartitionedSemaphore", () => {
 
       assert.deepStrictEqual(result, Option.none())
       assert.isFalse(executed)
+    }))
+
+  it.effect("interrupting a partially satisfied waiter releases all acquired permits", () =>
+    Effect.gen(function*() {
+      const sem = yield* PartitionedSemaphore.make<string>({ permits: 4 })
+
+      yield* PartitionedSemaphore.take(sem, "a", 3)
+      const waiter = yield* PartitionedSemaphore.take(sem, "b", 3).pipe(Effect.forkChild)
+      yield* Effect.yieldNow
+
+      yield* PartitionedSemaphore.release(sem, 1)
+      assert.strictEqual(yield* PartitionedSemaphore.available(sem), 0)
+      yield* Fiber.interrupt(waiter)
+      assert.strictEqual(yield* PartitionedSemaphore.available(sem), 2)
+      yield* PartitionedSemaphore.release(sem, 2)
+
+      assert.strictEqual(yield* PartitionedSemaphore.available(sem), 4)
+      yield* PartitionedSemaphore.take(sem, "c", 4)
     }))
 })

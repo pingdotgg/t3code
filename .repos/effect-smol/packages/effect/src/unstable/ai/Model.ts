@@ -1,53 +1,12 @@
 /**
- * The `Model` module wraps a provider-specific language model layer with the
- * metadata Effect AI needs at runtime. A `Model` is still a `Layer`, but it
- * also provides the current provider name and model name to programs that need
- * to inspect or report which model is in use.
+ * Wraps an AI model layer with provider and model metadata.
  *
- * **Mental model**
- *
- * - `make` combines a provider identifier, a model identifier, and a layer that
- *   provides AI services such as `LanguageModel`.
- * - Providing the resulting model installs both the provider services and the
- *   metadata services {@link ProviderName} and {@link ModelName}.
- * - `captureRequirements` lets effectful setup capture the current environment
- *   into a concrete model layer.
- *
- * **Common tasks**
- *
- * - Create a provider-backed model with {@link make}.
- * - Provide the model to a program with `Effect.provide`.
- * - Read {@link ProviderName} and {@link ModelName} inside shared workflows,
- *   telemetry, or provider-agnostic services.
- *
- * **Gotchas**
- *
- * - The provider and model names are metadata; the actual implementation still
- *   comes from the layer passed to {@link make}.
- * - If the underlying layer has requirements, those requirements must be
- *   satisfied before the model can be provided.
- *
- * **Example** (Providing model metadata)
- *
- * ```ts
- * import { Effect } from "effect"
- * import type { Layer } from "effect"
- * import { LanguageModel, Model } from "effect/unstable/ai"
- *
- * declare const languageModelLayer: Layer.Layer<LanguageModel.LanguageModel>
- *
- * const model = Model.make("example-provider", "fast-text", languageModelLayer)
- *
- * const program = Effect.gen(function*() {
- *   const provider = yield* Model.ProviderName
- *   const modelName = yield* Model.ModelName
- *   const response = yield* LanguageModel.generateText({
- *     prompt: `Generate with ${provider}/${modelName}`
- *   })
- *
- *   return response.text
- * }).pipe(Effect.provide(model))
- * ```
+ * A `Model` can be used anywhere its underlying `Layer` can be used. It also
+ * provides the current provider name and model name through the Effect context.
+ * This module includes the `Model` interface, the `ProviderName` and
+ * `ModelName` service tags, and the `make` constructor. Models can also capture
+ * their required services from the current context when they need to be used
+ * inside another Effect service.
  *
  * @since 4.0.0
  */

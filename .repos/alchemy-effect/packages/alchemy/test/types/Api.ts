@@ -1,4 +1,5 @@
 import * as Cloudflare from "@/Cloudflare";
+import type { RuntimeContext } from "@/RuntimeContext.ts";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
@@ -7,7 +8,7 @@ import Agent from "./Agent.ts";
 export const Api2 = Cloudflare.Worker(
   "Api",
   {
-    main: import.meta.filename,
+    main: import.meta.url,
     observability: {
       enabled: true,
     },
@@ -31,19 +32,19 @@ const _____ = Effect.gen(function* () {
   const worker = yield* Api2;
   const _url = worker.url;
   const _eff = Effect.gen(function* () {
-    const rpc = yield* Cloudflare.bindWorker(worker);
+    const rpc = yield* Cloudflare.Workers.bindWorker(worker);
     rpc.getUser();
   });
 
   const worker2 = yield* Api;
   const _eff2 = Effect.gen(function* () {
-    const rpc2 = yield* Cloudflare.bindWorker(worker2);
+    const rpc2 = yield* Cloudflare.Workers.bindWorker(worker2);
     rpc2.getUser();
   });
 
   const worker3 = yield* Api3;
   const _eff3 = Effect.gen(function* () {
-    const rpc3 = yield* Cloudflare.bindWorker(worker3);
+    const rpc3 = yield* Cloudflare.Workers.bindWorker(worker3);
     rpc3.getUser();
   });
 });
@@ -52,7 +53,7 @@ const _____ = Effect.gen(function* () {
 export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
   {
-    main: import.meta.filename,
+    main: import.meta.url,
     observability: {
       enabled: true,
     },
@@ -111,20 +112,25 @@ export default class Api extends Cloudflare.Worker<Api>()(
 export class Api3 extends Cloudflare.Worker<
   Api3,
   {
-    getUser: () => Effect.Effect<{ id: string; name: string }>;
+    getUser: () => Effect.Effect<
+      { id: string; name: string },
+      never,
+      RuntimeContext
+    >;
   }
->()("Api3", {
-  main: import.meta.filename,
-  observability: {
-    enabled: true,
-  },
-}) {}
+>()("Api3") {}
 
 export const Api3Live = Api3.make(
+  {
+    main: import.meta.url,
+    observability: {
+      enabled: true,
+    },
+  },
   Effect.gen(function* () {
     const agent = yield* Agent;
     return {
-      getUser: Effect.fnUntraced(function* () {
+      getUser: Effect.fn(function* () {
         const user = agent.getByName("");
 
         return {

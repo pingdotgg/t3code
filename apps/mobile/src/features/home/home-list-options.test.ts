@@ -1,5 +1,4 @@
 import {
-  DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE,
   DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
   DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
 } from "@t3tools/contracts";
@@ -14,7 +13,6 @@ const defaults: HomeListOptions = {
       ? "updated_at"
       : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
   threadSortOrder: DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
-  projectGroupingMode: DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE,
 };
 
 describe("home list options", () => {
@@ -22,10 +20,12 @@ describe("home list options", () => {
     expect(hasCustomHomeListOptions(defaults)).toBe(false);
   });
 
-  it("marks environment filters and grouping changes as customized", () => {
+  it("marks environment filters as customized", () => {
     expect(
       hasCustomHomeListOptions({ ...defaults, selectedEnvironmentId: "environment-1" as never }),
     ).toBe(true);
-    expect(hasCustomHomeListOptions({ ...defaults, projectGroupingMode: "separate" })).toBe(true);
+    expect(
+      hasCustomHomeListOptions({ ...defaults, selectedProjectKey: "environment-1:project-1" }),
+    ).toBe(true);
   });
 });

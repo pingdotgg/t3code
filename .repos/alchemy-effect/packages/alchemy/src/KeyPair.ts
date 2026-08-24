@@ -143,4 +143,8 @@ export const KeyPairProvider = () =>
     read: Effect.fn(function* ({ output }) {
       return output;
     }),
+    // Non-listable: the keypair is generated client-side with `node:crypto` and
+    // lives only in alchemy state (the private key is write-only). There is no
+    // remote service to enumerate, so listing yields nothing.
+    list: () => Effect.succeed([]),
   });

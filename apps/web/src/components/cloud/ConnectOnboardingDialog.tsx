@@ -1,7 +1,7 @@
 import { useAuth } from "@clerk/react";
 import { AuthAdministrativeScopes, AuthRelayWriteScope } from "@t3tools/contracts";
 import { CheckIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
@@ -411,20 +411,16 @@ function OnboardingToggleRow({
 function DevicesStep() {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
-  const savedEnvironmentIds = useMemo(
-    () =>
-      environments
-        .filter((environment) => environment.entry.target._tag !== "PrimaryConnectionTarget")
-        .map((environment) => environment.environmentId),
-    [environments],
+  const savedEnvironments = environments.filter(
+    (environment) => environment.entry.target._tag !== "PrimaryConnectionTarget",
   );
 
   return (
     <div className="overflow-hidden rounded-lg border">
       <CloudEnvironmentConnectRows
         primaryEnvironmentId={primaryEnvironment?.environmentId ?? null}
-        savedEnvironmentIds={savedEnvironmentIds}
-        showSavedAsConnected
+        savedEnvironments={savedEnvironments}
+        showSavedEnvironments
         empty={
           <p className="px-4 py-6 text-center text-sm text-muted-foreground">
             No other environments are published to your account yet. Publish one from another device

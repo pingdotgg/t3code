@@ -1,0 +1,156 @@
+---
+title: Workers for Platforms
+description: Run your customers' Workers in your own account — create a dispatch namespace, upload user Workers into it, and route requests from a platform Worker with the Get binding.
+sidebar:
+  order: 26
+---
+
+Workers for Platforms lets you run your customers' code on Cloudflare's
+edge inside your own account. Customer ("user") Workers live in a
+**dispatch namespace** — they get no routes or URLs of their own.
+Instead, a **platform Worker** you control receives every request and
+forwards it to the right user Worker by script name.
+
+:::note
+Workers for Platforms is a paid add-on. On accounts without the
+subscription, namespace creation fails with an entitlement error.
+:::
+
+## Create a dispatch namespace
+
+Declare the namespace as a shared constant so both the Stack and the
+platform Worker can reference the same resource:
+
+```typescript
+// src/namespace.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Customers = Cloudflare.WorkersForPlatforms.DispatchNamespace(
+  "Customers",
+  { name: "my-platform-customers" },
+);
+```
+
+The `name` is the namespace's identity — there is no rename API, so
+changing it triggers a replacement (omit it to get a generated name).
+Deleting a namespace also deletes every script uploaded into it.
+
+## Upload user Workers into the namespace
+
+Setting a Worker's `namespace` prop deploys it *into* the namespace as
+a user Worker instead of as a routable account-level script:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { Customers } from "./src/namespace.ts";
+import PlatformWorker from "./src/platform.ts";
+
+export default Alchemy.Stack(
+  "Platform",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    const namespace = yield* Customers;
+
+    yield* Cloudflare.Worker("CustomerA", {
+      namespace: namespace.name,
+      script: `export default {
+        async fetch(request) {
+          return Response.json({ handledBy: "customer-a" });
+        },
+      };`,
+    });
+
+    const platform = yield* PlatformWorker; // defined next
+    return { url: platform.url.as<string>() };
+  }),
+);
+```
+
+Referencing the namespace's `name` output establishes the dependency
+edge, so the namespace is created before the user Worker is uploaded
+into it (and the script is deleted first on destroy). The `script`
+form takes raw ESM source — typically whatever code your customer
+uploaded — but `main` with a local entrypoint works too.
+
+## Dispatch from the platform Worker
+
+`Cloudflare.WorkersForPlatforms.Get(namespace)` binds the namespace to
+the Worker and returns a dynamic-dispatch client; `dispatch.get(name)`
+looks up a user Worker by script name and returns a `Fetcher`:
+
+```typescript
+// src/platform.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Customers } from "./namespace.ts";
+
+export default class PlatformWorker extends Cloudflare.Worker<PlatformWorker>()(
+  "PlatformWorker",
+  { main: import.meta.filename, url: true },
+  Effect.gen(function* () {
+    const dispatch = yield* Cloudflare.WorkersForPlatforms.Get(Customers);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        // Route however your platform maps requests to customers —
+        // here the first path segment is the script name.
+        const url = new URL(request.url, "http://platform");
+        const match = url.pathname.match(/^\/dispatch\/([^/]+)(\/.*)?$/);
+        if (!match) {
+          return HttpServerResponse.text("platform ok");
+        }
+        const [, scriptName, rest] = match;
+        const userWorker = yield* dispatch.get(scriptName).pipe(Effect.orDie);
+        const response = yield* Effect.promise(() =>
+          userWorker.fetch(new Request(`https://user-worker${rest ?? "/"}`)),
+        );
+        return HttpServerResponse.fromWeb(response);
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.WorkersForPlatforms.GetBinding)),
+) {}
+```
+
+Provide `GetBinding` as a layer so the client resolves the native
+`dispatch_namespace` runtime binding. A request to
+`/dispatch/customer-a/hello` is forwarded to the `customer-a` user
+Worker with the trailing path intact; dispatching to a script name
+that doesn't exist in the namespace surfaces as an error from the
+edge, never a user-Worker response.
+
+## Or bind on `env`
+
+For a plain async handler, pass the namespace on the Worker's `env`
+instead — `InferEnv` types it as the native runtime binding:
+
+```typescript
+const platform = Cloudflare.Worker("Platform", {
+  main: "./src/handler.ts",
+  url: true,
+  env: { DISPATCH: Customers },
+});
+type Env = Cloudflare.InferEnv<typeof platform>;
+
+// src/handler.ts
+export default {
+  async fetch(request: Request, env: Env) {
+    return env.DISPATCH.get("customer-a").fetch(request);
+  },
+};
+```
+
+`env.DISPATCH.get(name)` returns the same `Fetcher` the Effect-native
+client wraps — pick whichever style matches the rest of the Worker.
+
+## Where next
+
+- [Workers](/cloudflare/compute/workers) — the two-phase Worker model the
+  platform Worker is built on.
+- [DispatchNamespace API reference](/providers/cloudflare/workersforplatforms/dispatchnamespace)
+- [Get API reference](/providers/cloudflare/workersforplatforms/get)

@@ -31,6 +31,12 @@ const TestLayer = ElectronMenu.layer.pipe(
   Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
 );
 
+const makeWindow = (zoomFactor = 1): Electron.BrowserWindow =>
+  ({
+    id: 7,
+    webContents: { getZoomFactor: () => zoomFactor },
+  }) as unknown as Electron.BrowserWindow;
+
 describe("ElectronMenu", () => {
   beforeEach(() => {
     buildFromTemplateMock.mockReset();
@@ -70,7 +76,7 @@ describe("ElectronMenu", () => {
 
       const electronMenu = yield* ElectronMenu.ElectronMenu;
       const selectedItemId = yield* electronMenu.showContextMenu({
-        window: {} as Electron.BrowserWindow,
+        window: makeWindow(),
         items: [{ id: "copy", label: "Copy" }],
         position: Option.none(),
       });
@@ -81,25 +87,64 @@ describe("ElectronMenu", () => {
 
   it.effect("resolves with none when the menu closes without a click", () =>
     Effect.gen(function* () {
+      let popupOptions: Electron.PopupOptions | undefined;
       buildFromTemplateMock.mockImplementation(() => ({
         popup: (options: Electron.PopupOptions) => {
+          popupOptions = options;
           options.callback?.();
         },
       }));
 
       const electronMenu = yield* ElectronMenu.ElectronMenu;
       const selectedItemId = yield* electronMenu.showContextMenu({
-        window: {} as Electron.BrowserWindow,
-        items: [{ id: "copy", label: "Copy" }],
+        window: makeWindow(2),
+        items: [
+          { id: "copy", label: "Copy" },
+          { id: "delete", label: "Delete", destructive: true, separatorBefore: true },
+        ],
         position: Option.some({ x: 10.8, y: 20.2 }),
       });
 
       assert.isTrue(Option.isNone(selectedItemId));
+      assert.equal(popupOptions?.x, 21);
+      assert.equal(popupOptions?.y, 40);
       assert.deepEqual(buildFromTemplateMock.mock.calls[0]?.[0][0], {
         label: "Copy",
         enabled: true,
         click: buildFromTemplateMock.mock.calls[0]?.[0][0].click,
       });
+      assert.deepEqual(
+        buildFromTemplateMock.mock.calls[0]?.[0].map(
+          (item: Electron.MenuItemConstructorOptions) => item.type ?? item.label,
+        ),
+        ["Copy", "separator", "Delete"],
+      );
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("keeps a preceding non-destructive action in the destructive section", () =>
+    Effect.gen(function* () {
+      buildFromTemplateMock.mockImplementation(() => ({
+        popup: (options: Electron.PopupOptions) => options.callback?.(),
+      }));
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window: makeWindow(),
+        items: [
+          { id: "copy", label: "Copy" },
+          { id: "archive", label: "Archive", separatorBefore: true },
+          { id: "delete", label: "Delete", destructive: true },
+        ],
+        position: Option.none(),
+      });
+
+      assert.deepEqual(
+        buildFromTemplateMock.mock.calls[0]?.[0].map(
+          (item: Electron.MenuItemConstructorOptions) => item.type ?? item.label,
+        ),
+        ["Copy", "separator", "Archive", "Delete"],
+      );
     }).pipe(Effect.provide(TestLayer)),
   );
 

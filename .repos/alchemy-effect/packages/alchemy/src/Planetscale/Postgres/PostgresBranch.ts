@@ -29,6 +29,12 @@ export interface PostgresBranchProps extends BaseBranchProps {
   clusterSize?: PostgresClusterSize;
 
   /**
+   * Total number of replicas for the branch. `0` creates or converges the
+   * branch to non-HA/single-node; `2+` enables HA.
+   */
+  replicas?: number;
+
+  /**
    * Parent branch — either a string name or another {@link PostgresBranch}.
    * @default "main"
    */
@@ -81,6 +87,7 @@ export type PostgresBranch = Resource<
   Providers
 >;
 
+/** @resource */
 export const PostgresBranch = Resource<PostgresBranch>(
   "Planetscale.PostgresBranch",
 );

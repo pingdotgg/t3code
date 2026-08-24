@@ -1,36 +1,12 @@
 /**
- * Error model used by the unstable HTTP server runtime.
+ * Describes failures raised while handling HTTP server requests.
  *
- * This module defines the tagged failures that can occur while a server accepts
- * a request, matches a route, runs a handler, or builds and sends a response.
+ * `HttpServerError` covers failures that happen while accepting a request,
+ * matching a route, running a handler, or building and sending a response.
  * Request-scoped failures keep the request that caused them, and response
- * failures keep the response that was being produced, so applications can log,
- * report, or translate failures without reconstructing HTTP context.
- *
- * **Mental model**
- *
- * {@link HttpServerError} wraps a concrete {@link HttpServerErrorReason}.
- * {@link RequestParseError}, {@link RouteNotFound}, and {@link InternalError}
- * describe failures before or during request handling, while
- * {@link ResponseError} describes a failure tied to a response that was already
- * being built or sent. {@link ServeError} represents lower-level server
- * implementation failures outside an individual handler response.
- *
- * **Common tasks**
- *
- * Use {@link isHttpServerError} to refine unknown failures, inspect `request`
- * and `response` when reporting failures, and use {@link causeResponse} or
- * {@link exitResponse} when a handler cause or exit must be translated into the
- * HTTP response sent to the client.
- *
- * **Gotchas**
- *
- * The default response mapping is intentionally small: request parse errors
- * become `400`, route misses become ignored `404` failures, internal and
- * response errors become `500`, client aborts marked with {@link ClientAbort}
- * become `499`, and server-side interrupts become `503`. A
- * {@link ResponseError} does not reuse the failed response when converted; it
- * produces an empty `500` because that response may be invalid or partly sent.
+ * failures keep the response being produced. This module also includes helpers
+ * for turning failed causes or exits into HTTP responses and an annotation for
+ * interrupts caused by client aborts.
  *
  * @since 4.0.0
  */

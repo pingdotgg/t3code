@@ -1,17 +1,17 @@
 import * as EC2 from "@distilled.cloud/aws/ec2";
 import * as ec2 from "@distilled.cloud/aws/ec2";
-import { Region } from "@distilled.cloud/aws/Region";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import type { ScopedPlanStatusSession } from "../../Cli/Cli.ts";
 import { isResolved, somePropsAreDifferent } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
-import type { Providers } from "../Providers.ts";
 import { createInternalTags, createTagsList, diffTags } from "../../Tags.ts";
 import type { AccountID } from "../Environment.ts";
 import { AWSEnvironment } from "../Environment.ts";
+import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 
 export type VpcId = `vpc-${string}`;
@@ -158,20 +158,206 @@ export interface Vpc extends Resource<
       ipv6Pool?: string;
     }>;
 
+    /**
+     * The tags currently assigned to the VPC, including alchemy auto-tags.
+     */
     tags?: Record<string, string>;
   },
   never,
   Providers
 > {}
+/**
+ * An Amazon VPC (Virtual Private Cloud) — an isolated virtual network that is
+ * the root of any custom AWS networking topology. Subnets, route tables,
+ * gateways, security groups, and instances are all created inside a VPC.
+ *
+ * Changing the `cidrBlock`, `instanceTenancy`, or an IPAM/IPv6 pool replaces
+ * the VPC.
+ *
+ * @resource
+ * @section Creating a VPC
+ * A VPC is defined by a private IPv4 address range (`cidrBlock`). Pick a block
+ * from the RFC 1918 private space (e.g. `10.0.0.0/16`) that is large enough to
+ * subdivide into subnets across your Availability Zones.
+ *
+ * @example Basic VPC
+ * ```typescript
+ * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
+ *   cidrBlock: "10.0.0.0/16",
+ * });
+ * ```
+ *
+ * A `/16` gives you 65,536 addresses to carve into subnets — enough headroom
+ * for a multi-AZ, multi-tier network. This is the minimal config every other
+ * networking resource builds on.
+ *
+ * @example Allocating IPv4 from an IPAM pool
+ * ```typescript
+ * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
+ *   ipv4IpamPoolId: "ipam-pool-0123456789abcdef0",
+ *   ipv4NetmaskLength: 16,
+ * });
+ * ```
+ *
+ * Instead of hard-coding `cidrBlock`, let AWS IPAM hand out a non-overlapping
+ * range of the requested size. Use this when an organization centrally manages
+ * address space to avoid CIDR collisions between accounts.
+ *
+ * @section DNS Resolution
+ * Two independent toggles control DNS behavior inside the VPC. `enableDnsSupport`
+ * lets instances resolve names via the Amazon DNS server; `enableDnsHostnames`
+ * additionally assigns public DNS hostnames to instances with public IPs.
+ *
+ * @example Enable DNS support and hostnames
+ * ```typescript
+ * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
+ *   cidrBlock: "10.0.0.0/16",
+ *   enableDnsSupport: true,
+ *   enableDnsHostnames: true,
+ * });
+ * ```
+ *
+ * Enable both when instances need public DNS names or when you rely on private
+ * hosted zones and VPC endpoints, which require DNS resolution to function.
+ *
+ * @section Instance Tenancy
+ * @example Dedicated tenancy
+ * ```typescript
+ * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
+ *   cidrBlock: "10.0.0.0/16",
+ *   instanceTenancy: "dedicated",
+ * });
+ * ```
+ *
+ * Forcing `"dedicated"` tenancy ensures every instance launched in the VPC runs
+ * on single-tenant hardware — required by some compliance regimes, but more
+ * expensive than the `"default"` shared tenancy. This property cannot be
+ * changed after creation without replacing the VPC.
+ *
+ * @section IPv6 Addressing
+ * A VPC can carry an IPv6 `/56` block alongside its IPv4 range. The block can
+ * come from Amazon's pool, an IPAM pool, or your own BYOIP pool
+ * (`ipv6CidrBlock` + `ipv6Pool`, optionally scoped to a
+ * `ipv6CidrBlockNetworkBorderGroup`).
+ *
+ * @example Amazon-provided IPv6 block
+ * ```typescript
+ * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
+ *   cidrBlock: "10.0.0.0/16",
+ *   amazonProvidedIpv6CidrBlock: true,
+ * });
+ * ```
+ *
+ * Requests an Amazon-assigned IPv6 `/56`, the simplest way to make a VPC
+ * dual-stack. Pair it with IPv6-enabled subnets and an egress-only internet
+ * gateway for outbound-only IPv6 connectivity.
+ *
+ * @example IPv6 from an IPAM pool
+ * ```typescript
+ * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
+ *   cidrBlock: "10.0.0.0/16",
+ *   ipv6IpamPoolId: "ipam-pool-0fedcba9876543210",
+ *   ipv6NetmaskLength: 56,
+ * });
+ * ```
+ *
+ * Draws the IPv6 block from a centrally-managed IPAM pool instead of Amazon's
+ * pool, giving you deterministic, organization-governed IPv6 ranges.
+ *
+ * @section Composing a Network
+ * @example VPC with a subnet
+ * ```typescript
+ * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
+ *   cidrBlock: "10.0.0.0/16",
+ *   enableDnsSupport: true,
+ *   enableDnsHostnames: true,
+ * });
+ *
+ * const subnet = yield* AWS.EC2.Subnet("PublicSubnet", {
+ *   vpcId: vpc.vpcId,
+ *   cidrBlock: "10.0.1.0/24",
+ *   availabilityZone: "us-east-1a",
+ *   mapPublicIpOnLaunch: true,
+ * });
+ * ```
+ *
+ * Passing `vpc.vpcId` into a `Subnet` is how you build out a topology — the
+ * subnet's CIDR must fall within the VPC's `cidrBlock`. Add route tables,
+ * gateways, and security groups the same way.
+ *
+ * @section Tagging
+ * @example Tagging a VPC
+ * ```typescript
+ * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
+ *   cidrBlock: "10.0.0.0/16",
+ *   tags: {
+ *     Name: "production-vpc",
+ *     Environment: "production",
+ *   },
+ * });
+ * ```
+ *
+ * User tags are merged with alchemy's auto-tags (`alchemy::stack`,
+ * `alchemy::stage`, `alchemy::id`), which brand the VPC as managed by your
+ * stack. The `Name` tag is what surfaces in the EC2 console.
+ */
 export const Vpc = Resource<Vpc>("AWS.EC2.VPC");
+
+/**
+ * Map a raw EC2 VPC (as returned by `describeVpcs`) plus its tags to the
+ * resource's `Attributes` shape. DNS support/hostnames are not part of the
+ * `Attributes` contract, so the full shape is derivable from the describe
+ * response alone — no per-VPC `describeVpcAttribute` call is required.
+ */
+const vpcToAttributes = (
+  vpc: EC2.Vpc,
+  region: RegionID,
+  accountId: AccountID,
+  tags: Record<string, string> | undefined,
+): Vpc["Attributes"] => {
+  const vpcId = vpc.VpcId! as VpcId;
+  return {
+    vpcId,
+    vpcArn: `arn:aws:ec2:${region}:${accountId}:vpc/${vpcId}` as VpcArn,
+    cidrBlock: vpc.CidrBlock!,
+    dhcpOptionsId: vpc.DhcpOptionsId!,
+    state: vpc.State!,
+    isDefault: vpc.IsDefault ?? false,
+    ownerId: vpc.OwnerId,
+    cidrBlockAssociationSet: vpc.CidrBlockAssociationSet?.map((assoc) => ({
+      associationId: assoc.AssociationId!,
+      cidrBlock: assoc.CidrBlock!,
+      cidrBlockState: {
+        state: assoc.CidrBlockState!.State!,
+        statusMessage: assoc.CidrBlockState!.StatusMessage,
+      },
+    })),
+    ipv6CidrBlockAssociationSet: vpc.Ipv6CidrBlockAssociationSet?.map(
+      (assoc) => ({
+        associationId: assoc.AssociationId!,
+        ipv6CidrBlock: assoc.Ipv6CidrBlock!,
+        ipv6CidrBlockState: {
+          state: assoc.Ipv6CidrBlockState!.State!,
+          statusMessage: assoc.Ipv6CidrBlockState!.StatusMessage,
+        },
+        networkBorderGroup: assoc.NetworkBorderGroup,
+        ipv6Pool: assoc.Ipv6Pool,
+      }),
+    ),
+    tags,
+  };
+};
+
+/** Map the `Tags` array on a describe response to a plain record. */
+const tagsFromVpc = (vpc: EC2.Vpc): Record<string, string> =>
+  Object.fromEntries(
+    (vpc.Tags ?? []).map((tag: EC2.Tag) => [tag.Key!, tag.Value!]),
+  );
 
 export const VpcProvider = () =>
   Provider.effect(
     Vpc,
     Effect.gen(function* () {
-      const region = yield* Region;
-      const { accountId } = yield* AWSEnvironment;
-
       const createTags = Effect.fn(function* (
         id: string,
         tags?: Record<string, string>,
@@ -201,6 +387,7 @@ export const VpcProvider = () =>
         }),
 
         reconcile: Effect.fn(function* ({ id, news = {}, output, session }) {
+          const { accountId, region } = yield* AWSEnvironment.current;
           const desiredTags = yield* createTags(id, news.tags);
 
           // Observe — find the VPC if we already have its id, else describe
@@ -316,38 +503,30 @@ export const VpcProvider = () =>
             );
           }
 
-          return {
-            vpcId,
-            vpcArn: `arn:aws:ec2:${region}:${accountId}:vpc/${vpcId}` as VpcArn,
-            cidrBlock: finalVpc.CidrBlock!,
-            dhcpOptionsId: finalVpc.DhcpOptionsId!,
-            state: finalVpc.State!,
-            isDefault: finalVpc.IsDefault ?? false,
-            ownerId: finalVpc.OwnerId,
-            cidrBlockAssociationSet: finalVpc.CidrBlockAssociationSet?.map(
-              (assoc) => ({
-                associationId: assoc.AssociationId!,
-                cidrBlock: assoc.CidrBlock!,
-                cidrBlockState: {
-                  state: assoc.CidrBlockState!.State!,
-                  statusMessage: assoc.CidrBlockState!.StatusMessage,
-                },
-              }),
-            ),
-            ipv6CidrBlockAssociationSet:
-              finalVpc.Ipv6CidrBlockAssociationSet?.map((assoc) => ({
-                associationId: assoc.AssociationId!,
-                ipv6CidrBlock: assoc.Ipv6CidrBlock!,
-                ipv6CidrBlockState: {
-                  state: assoc.Ipv6CidrBlockState!.State!,
-                  statusMessage: assoc.Ipv6CidrBlockState!.StatusMessage,
-                },
-                networkBorderGroup: assoc.NetworkBorderGroup,
-                ipv6Pool: assoc.Ipv6Pool,
-              })),
-            tags: desiredTags,
-          };
+          return vpcToAttributes(finalVpc, region, accountId, desiredTags);
         }),
+
+        list: () =>
+          Effect.gen(function* () {
+            const { accountId, region } = yield* AWSEnvironment.current;
+            // Enumerate every VPC in this account/region, paginating
+            // exhaustively. Each item is hydrated to the full `Attributes`
+            // shape via the shared mapper so it's directly usable by `delete`.
+            return yield* ec2.describeVpcs.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  (page.Vpcs ?? [])
+                    // The default VPC is account furniture AWS provisions (and
+                    // test/AWS/DefaultVpc.ts recreates); never census/nuke it.
+                    .filter((vpc) => !vpc.IsDefault)
+                    .map((vpc) =>
+                      vpcToAttributes(vpc, region, accountId, tagsFromVpc(vpc)),
+                    ),
+                ),
+              ),
+            );
+          }),
 
         delete: Effect.fn(function* ({ output, session }) {
           const vpcId = output.vpcId;
@@ -375,11 +554,17 @@ export const VpcProvider = () =>
                   );
                 },
                 // Use fixed 5s delay instead of exponential to avoid very long waits
-                schedule: Schedule.fixed(5000).pipe(
-                  Schedule.both(Schedule.recurs(60)), // Up to 5 minutes total
-                  Schedule.tapOutput(([, attempt]) =>
+                schedule: Schedule.max([
+                  Schedule.fixed(5000),
+                  // A dependency that has not drained within ~50s is a real
+                  // cleanup defect. Preserve state and fail promptly so a
+                  // subsequent destroy/nuke can retry after fixing the child,
+                  // rather than hanging this resource for five minutes.
+                  Schedule.recurs(10),
+                ]).pipe(
+                  Schedule.tap(({ attempt }) =>
                     session.note(
-                      `Waiting for dependencies to clear... (attempt ${attempt + 1})`,
+                      `Waiting for dependencies to clear... (attempt ${attempt})`,
                     ),
                   ),
                 ),
@@ -434,12 +619,11 @@ const waitForVpcAvailable = (
   }).pipe(
     Effect.retry({
       while: (e) => e instanceof VpcPending,
-      schedule: Schedule.fixed(2000).pipe(
-        Schedule.both(Schedule.recurs(30)), // Max 60 seconds
-        Schedule.tapOutput(([, attempt]) =>
+      schedule: Schedule.max([Schedule.fixed(2000), Schedule.recurs(30)]).pipe(
+        Schedule.tap(({ attempt }) =>
           session
             ? session.note(
-                `Waiting for VPC to be available... (${(attempt + 1) * 2}s)`,
+                `Waiting for VPC to be available... (${attempt * 2}s)`,
               )
             : Effect.void,
         ),
@@ -469,10 +653,9 @@ const waitForVpcDeleted = (vpcId: string, session: ScopedPlanStatusSession) =>
   }).pipe(
     Effect.retry({
       while: (e) => e instanceof VpcStillExists,
-      schedule: Schedule.fixed(2000).pipe(
-        Schedule.both(Schedule.recurs(15)), // Max 30 seconds
-        Schedule.tapOutput(([, attempt]) =>
-          session.note(`Waiting for VPC deletion... (${(attempt + 1) * 2}s)`),
+      schedule: Schedule.max([Schedule.fixed(2000), Schedule.recurs(15)]).pipe(
+        Schedule.tap(({ attempt }) =>
+          session.note(`Waiting for VPC deletion... (${attempt * 2}s)`),
         ),
       ),
     }),

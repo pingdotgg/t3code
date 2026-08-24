@@ -1,8 +1,6 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { InsightRule } from "./InsightRule.ts";
 
 export interface GetInsightRuleReportRequest extends Omit<
@@ -11,10 +9,32 @@ export interface GetInsightRuleReportRequest extends Omit<
 > {}
 
 /**
- * Runtime binding for `cloudwatch:GetInsightRuleReport`.
+ * Runtime binding for `cloudwatch:GetInsightRuleReport` — fetch the
+ * top-contributor report for the bound {@link InsightRule}; the rule name
+ * is injected automatically.
+ *
+ * Provide `CloudWatch.GetInsightRuleReportHttp` on the hosting Lambda
+ * Function to satisfy the requirement.
+ * @binding
+ * @section Reading Insight Rules
+ * @example Fetch the Top Contributors for a Rule
+ * ```typescript
+ * // init — grants cloudwatch:GetInsightRuleReport on the rule
+ * const getInsightRuleReport = yield* AWS.CloudWatch.GetInsightRuleReport(rule);
+ *
+ * // runtime
+ * const now = yield* Effect.sync(() => Date.now());
+ * const result = yield* getInsightRuleReport({
+ *   StartTime: new Date(now - 3_600_000),
+ *   EndTime: new Date(now),
+ *   Period: 300,
+ * });
+ * const contributors = result.Contributors ?? [];
+ * ```
  */
-export class GetInsightRuleReport extends Binding.Service<
+export interface GetInsightRuleReport extends Binding.Service<
   GetInsightRuleReport,
+  "AWS.CloudWatch.GetInsightRuleReport",
   (
     rule: InsightRule,
   ) => Effect.Effect<
@@ -25,52 +45,8 @@ export class GetInsightRuleReport extends Binding.Service<
       cloudwatch.GetInsightRuleReportError
     >
   >
->()("AWS.CloudWatch.GetInsightRuleReport") {}
+> {}
 
-export const GetInsightRuleReportLive = Layer.effect(
-  GetInsightRuleReport,
-  Effect.gen(function* () {
-    const Policy = yield* GetInsightRuleReportPolicy;
-    const getInsightRuleReport = yield* cloudwatch.getInsightRuleReport;
-
-    return Effect.fn(function* (rule: InsightRule) {
-      const RuleName = yield* rule.ruleName;
-      yield* Policy(rule);
-
-      return Effect.fn(function* (request: GetInsightRuleReportRequest) {
-        return yield* getInsightRuleReport({
-          ...request,
-          RuleName: yield* RuleName,
-        });
-      });
-    });
-  }),
+export const GetInsightRuleReport = Binding.Service<GetInsightRuleReport>(
+  "AWS.CloudWatch.GetInsightRuleReport",
 );
-
-export class GetInsightRuleReportPolicy extends Binding.Policy<
-  GetInsightRuleReportPolicy,
-  (rule: InsightRule) => Effect.Effect<void>
->()("AWS.CloudWatch.GetInsightRuleReport") {}
-
-export const GetInsightRuleReportPolicyLive =
-  GetInsightRuleReportPolicy.layer.succeed(
-    Effect.fn(function* (host, rule) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.CloudWatch.GetInsightRuleReport(${rule}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["cloudwatch:GetInsightRuleReport"],
-                Resource: [rule.ruleArn],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `GetInsightRuleReportPolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

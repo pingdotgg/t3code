@@ -13,9 +13,12 @@ import {
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
+  DesktopPreviewSetAudioMutedInputSchema,
+  DesktopPreviewSetColorSchemeInputSchema,
+  DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
-  PreviewAnnotationPayloadSchema,
+  PreviewAnnotationSubmissionResultSchema,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -47,11 +50,15 @@ export const installPreviewEventForwarding = Effect.fn(
 
 export const createTab = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CREATE_TAB_CHANNEL,
-  payload: DesktopPreviewTabInputSchema,
+  payload: DesktopPreviewCreateTabInputSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.createTab")(function* ({ tabId }) {
+  handler: Effect.fn("desktop.ipc.preview.createTab")(function* ({
+    tabId,
+    zoomFactor,
+    colorScheme,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.createTab(tabId);
+    yield* manager.createTab(tabId, { zoomFactor, colorScheme });
   }),
 });
 
@@ -138,6 +145,24 @@ export const hardReload = tabMethod(
   "desktop.ipc.preview.hardReload",
   (manager, tabId) => manager.hardReload(tabId),
 );
+export const setColorScheme = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL,
+  payload: DesktopPreviewSetColorSchemeInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setColorScheme")(function* ({ tabId, colorScheme }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setColorScheme(tabId, colorScheme);
+  }),
+});
+export const setAudioMuted = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL,
+  payload: DesktopPreviewSetAudioMutedInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setAudioMuted")(function* ({ tabId, audioMuted }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setAudioMuted(tabId, audioMuted);
+  }),
+});
 export const openDevTools = tabMethod(
   IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
   "desktop.ipc.preview.openDevTools",
@@ -157,6 +182,16 @@ export const stopRecording = tabMethod(
   IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL,
   "desktop.ipc.preview.stopRecording",
   (manager, tabId) => manager.stopRecording(tabId),
+);
+export const openPictureInPicture = tabMethod(
+  IpcChannels.PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL,
+  "desktop.ipc.preview.openPictureInPicture",
+  (manager, tabId) => manager.openPictureInPicture(tabId),
+);
+export const closePictureInPicture = tabMethod(
+  IpcChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL,
+  "desktop.ipc.preview.closePictureInPicture",
+  (manager, tabId) => manager.closePictureInPicture(tabId),
 );
 
 export const clearCookies = DesktopIpc.makeIpcMethod({
@@ -207,7 +242,7 @@ export const setAnnotationTheme = DesktopIpc.makeIpcMethod({
 export const pickElement = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
-  result: Schema.NullOr(PreviewAnnotationPayloadSchema),
+  result: Schema.NullOr(PreviewAnnotationSubmissionResultSchema),
   handler: Effect.fn("desktop.ipc.preview.pickElement")(function* ({ tabId }) {
     const manager = yield* PreviewManager.PreviewManager;
     return yield* manager.pickElement(tabId);
@@ -346,6 +381,8 @@ export const methods = [
   zoomOut,
   resetZoom,
   hardReload,
+  setColorScheme,
+  setAudioMuted,
   openDevTools,
   clearCookies,
   clearCache,
@@ -356,6 +393,8 @@ export const methods = [
   captureScreenshot,
   revealArtifact,
   copyArtifactToClipboard,
+  openPictureInPicture,
+  closePictureInPicture,
   automationStatus,
   automationSnapshot,
   automationClick,

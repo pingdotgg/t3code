@@ -3,27 +3,39 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import type { Counter as CounterClass } from "./src/AsyncWorker.ts";
+import type { Counter, QueueMessages } from "./src/AsyncWorker.ts";
 import EffectWorker from "./src/EffectWorker.ts";
-
-export const Counter = Cloudflare.DurableObjectNamespace<CounterClass>(
-  "Counter",
-  {
-    className: "Counter",
-  },
-);
+import { SandboxLive } from "./src/SandboxContainer.ts";
 
 export type AsyncWorkerEnv = Cloudflare.InferEnv<typeof AsyncWorker>;
 
-export const AsyncWorker = Cloudflare.Worker("AsyncWorker", {
-  main: "./src/AsyncWorker.ts",
-  env: {
-    COUNTER: Counter,
-    MY_VARIABLE: "my-variable-abc123",
-    MY_SECRET: Config.redacted("MY_SECRET").pipe(
-      Config.withDefault(Redacted.make("my-secret-abc123")),
-    ),
-  },
+const AsyncWorker = Effect.gen(function* () {
+  const queue = yield* Cloudflare.Queues.Queue("AsyncWorkerQueue");
+  const worker = yield* Cloudflare.Worker("AsyncWorker", {
+    main: "./src/AsyncWorker.ts",
+    assets: {
+      directory: "./assets",
+      runWorkerFirst: true,
+    },
+    env: {
+      COUNTER: Cloudflare.DurableObject<Counter>("Counter", {
+        className: "Counter",
+      }),
+      QUEUE: queue,
+      MESSAGES: Cloudflare.DurableObject<QueueMessages>("QueueMessages", {
+        className: "QueueMessages",
+      }),
+      MY_VARIABLE: "my-variable-abc123",
+      MY_SECRET: Config.redacted("MY_SECRET").pipe(
+        Config.withDefault(Redacted.make("my-secret-abc123")),
+      ),
+    },
+  });
+  yield* Cloudflare.Queues.Consumer("Consumer", {
+    queueId: queue.queueId,
+    scriptName: worker.workerName,
+  });
+  return worker;
 });
 
 export default Alchemy.Stack(
@@ -40,5 +52,5 @@ export default Alchemy.Stack(
       asyncWorker: asyncWorker.url,
       effectWorker: effectWorker.url,
     };
-  }),
+  }).pipe(Effect.provide(SandboxLive)),
 );

@@ -1,59 +1,9 @@
 /**
- * Decimal arithmetic backed by an unscaled `bigint` and a decimal scale.
- *
- * `BigDecimal` is useful when values must keep their decimal representation
- * instead of inheriting JavaScript's binary floating-point rounding, such as
- * money, quantities, measurements, or protocol values exchanged as decimal
- * strings. The module includes constructors, parsers, arithmetic operations,
- * comparisons, rounding helpers, and string formatting.
- *
- * **Mental model**
- *
- * - A `BigDecimal` stores `value * 10^-scale`; `make(12345n, 2)` represents
- *   `123.45`
- * - Values are immutable; arithmetic returns new `BigDecimal` values
- * - Equivalent values can have different internal scales, so equality and
- *   ordering normalize trailing zeros
- * - Division can produce repeating decimals, so {@link divide} and
- *   {@link divideUnsafe} use the module's default division precision
- *
- * **Common tasks**
- *
- * - Construct values: {@link make}, {@link fromBigInt}, {@link fromString},
- *   {@link fromNumber}
- * - Render values: {@link format}, {@link toExponential},
- *   {@link toNumberUnsafe}
- * - Do arithmetic: {@link sum}, {@link subtract}, {@link multiply},
- *   {@link divide}, {@link remainder}, {@link negate}, {@link abs}
- * - Compare and constrain values: {@link equals}, {@link Order},
- *   {@link isLessThan}, {@link between}, {@link clamp}, {@link min},
- *   {@link max}
- * - Adjust decimal places: {@link scale}, {@link round}, {@link truncate},
- *   {@link ceil}, {@link floor}
- *
- * **Gotchas**
- *
- * - Prefer {@link fromString} or {@link fromBigInt} for external decimal data.
- *   {@link fromNumber} can only preserve the decimal spelling of a finite
- *   JavaScript number after any binary floating-point precision has already
- *   been lost.
- * - {@link divide} and {@link remainder} return `Option.none()` for division
- *   by zero; {@link divideUnsafe} and {@link remainderUnsafe} throw instead.
- * - Parsed scales must fit in JavaScript's safe integer range.
- *
- * **Example** (Decimal arithmetic)
- *
- * ```ts
- * import { BigDecimal } from "effect"
- *
- * const subtotal = BigDecimal.multiply(
- *   BigDecimal.fromStringUnsafe("19.99"),
- *   BigDecimal.fromBigInt(3n)
- * )
- * const total = BigDecimal.sum(subtotal, BigDecimal.fromStringUnsafe("1.50"))
- *
- * console.log(BigDecimal.format(total)) // "61.47"
- * ```
+ * Decimal numbers and arithmetic for cases where JavaScript `number` rounding
+ * is not precise enough. A `BigDecimal` stores digits as a `bigint` plus a
+ * decimal scale, which lets the module parse, compare, add, subtract, multiply,
+ * divide, round, and format decimal values such as money, quantities, and
+ * measurements.
  *
  * @since 2.0.0
  */
@@ -325,7 +275,8 @@ export const scale: {
  *
  * **When to use**
  *
- * Use to add two `BigDecimal` values.
+ * Use when you need a decimal addition function for piping or higher-order APIs
+ * while preserving decimal precision.
  *
  * **Example** (Adding decimals)
  *
@@ -372,7 +323,8 @@ export const sum: {
  *
  * **When to use**
  *
- * Use to sum all `BigDecimal` values in an iterable.
+ * Use when you need to aggregate decimal quantities with decimal precision
+ * instead of converting through JavaScript numbers.
  *
  * **Example** (Adding multiple decimals)
  *
@@ -658,8 +610,8 @@ export const divide: {
  *
  * **When to use**
  *
- * Use when you need the decimal quotient and the divisor is known to be
- * non-zero, so division by zero should be a thrown exception.
+ * Use when you need to divide `BigDecimal` values where the divisor is known
+ * to be non-zero, so division by zero should be a thrown exception.
  *
  * **Details**
  *
@@ -708,8 +660,8 @@ export const divideUnsafe: {
  *
  * **When to use**
  *
- * Use when sorting or comparing decimal values through APIs that accept an
- * ordering instance.
+ * Use when you need to sort or compare decimal values through APIs that accept
+ * an ordering instance.
  *
  * **Example** (Comparing decimals)
  *
@@ -1166,12 +1118,12 @@ export const remainder: {
 
 /**
  * Returns the decimal remainder left over when one operand is divided by a
- * non-zero second operand, throwing for division by zero.
+ * non-zero second operand.
  *
  * **When to use**
  *
- * Use when you need the decimal remainder and the divisor is known to be
- * non-zero, so division by zero should be a thrown exception.
+ * Use when you need to compute a `BigDecimal` remainder with a divisor known to
+ * be non-zero and want a plain `BigDecimal` result instead of an `Option`.
  *
  * **Gotchas**
  *
@@ -1307,12 +1259,12 @@ export const equals: {
 export const fromBigInt = (n: bigint): BigDecimal => make(n, 0)
 
 /**
- * Creates a `BigDecimal` from a finite `number`, throwing for non-finite input.
+ * Creates a `BigDecimal` from a finite `number`.
  *
  * **When to use**
  *
- * Use when a finite JavaScript number must become a `BigDecimal` and invalid
- * input should throw.
+ * Use when you need to convert a trusted finite JavaScript number to a
+ * `BigDecimal` and want a plain result instead of an `Option`.
  *
  * **Gotchas**
  *
@@ -1474,7 +1426,7 @@ export const fromString = (s: string): Option.Option<BigDecimal> => {
  *
  * **When to use**
  *
- * Use when decimal text is expected to be valid and parse errors should throw.
+ * Use when you expect decimal text to be valid and want parse errors to throw.
  *
  * **Details**
  *
@@ -1606,8 +1558,8 @@ export const toExponential = (n: BigDecimal): string => {
  *
  * **When to use**
  *
- * Use when an interop boundary requires a JavaScript number and can tolerate
- * precision loss.
+ * Use when you need a JavaScript number at an interop boundary where precision
+ * loss is acceptable.
  *
  * **Gotchas**
  *
@@ -1851,7 +1803,8 @@ export const round: {
  *
  * **When to use**
  *
- * Use to remove digits beyond a requested scale by rounding toward zero.
+ * Use when you need to discard fractional digits beyond a scale rather than
+ * round half up, half down, or toward an infinity.
  *
  * **Example** (Truncating decimals)
  *

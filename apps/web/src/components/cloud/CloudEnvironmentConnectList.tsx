@@ -1,5 +1,6 @@
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import {
+  type EnvironmentConnectionPresentation,
   RelayConnectionRegistration,
   RelayConnectionTarget,
 } from "@t3tools/client-runtime/connection";
@@ -10,7 +11,7 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import * as Option from "effect/Option";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
 import { cn } from "~/lib/utils";
@@ -22,6 +23,12 @@ import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRo
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
+import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnectionPresentation";
+
+export interface SavedCloudEnvironmentConnection {
+  readonly environmentId: EnvironmentId;
+  readonly connection: EnvironmentConnectionPresentation;
+}
 
 export function RemoteEnvironmentRowsSkeleton() {
   return (
@@ -40,19 +47,19 @@ export function RemoteEnvironmentRowsSkeleton() {
 /**
  * The user's T3 Connect environments from relay discovery, each with a
  * Connect button. The primary environment is always excluded; already-saved
- * environments are hidden unless `showSavedAsConnected` renders them as
- * connected instead (used by onboarding, where the full device mesh should be
- * visible).
+ * environments are hidden unless `showSavedEnvironments` renders them with
+ * their live connection state (used by onboarding, where the full device mesh
+ * should be visible).
  */
 export function CloudEnvironmentConnectRows({
   primaryEnvironmentId,
-  savedEnvironmentIds,
-  showSavedAsConnected = false,
+  savedEnvironments,
+  showSavedEnvironments = false,
   empty = null,
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
-  readonly savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
-  readonly showSavedAsConnected?: boolean;
+  readonly savedEnvironments: ReadonlyArray<SavedCloudEnvironmentConnection>;
+  readonly showSavedEnvironments?: boolean;
   readonly empty?: ReactNode;
 }) {
   const environmentsState = useRelayEnvironmentDiscovery();
@@ -77,7 +84,9 @@ export function CloudEnvironmentConnectRows({
   const [connectingEnvironmentId, setConnectingEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
-  const savedIds = useMemo(() => new Set(savedEnvironmentIds), [savedEnvironmentIds]);
+  const savedById = new Map(
+    savedEnvironments.map((environment) => [environment.environmentId, environment]),
+  );
 
   useEffect(() => {
     void refreshRelayEnvironments();
@@ -90,8 +99,8 @@ export function CloudEnvironmentConnectRows({
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: "Environment connected",
-        description: `${environment.label} is available through T3 Connect.`,
+        title: "Environment added",
+        description: `Connecting to ${environment.label} through T3 Connect.`,
       });
       return;
     }
@@ -121,10 +130,10 @@ export function CloudEnvironmentConnectRows({
   const visibleEnvironments = [...environmentsState.environments.values()].filter(
     ({ environment }) =>
       environment.environmentId !== primaryEnvironmentId &&
-      (showSavedAsConnected || !savedIds.has(environment.environmentId)),
+      (showSavedEnvironments || !savedById.has(environment.environmentId)),
   );
 
-  const standalone = showSavedAsConnected || savedEnvironmentIds.length === 0;
+  const standalone = showSavedEnvironments || savedEnvironments.length === 0;
 
   if (
     standalone &&
@@ -163,31 +172,57 @@ export function CloudEnvironmentConnectRows({
   }
 
   return visibleEnvironments.map(({ environment, availability, error }) => {
-    const alreadyConnected = savedIds.has(environment.environmentId);
+    const savedEnvironment = savedById.get(environment.environmentId);
+    const savedConnection = savedEnvironment
+      ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
+      : null;
+    const dotClassName = savedConnection
+      ? savedConnection.tone === "connected"
+        ? "bg-success"
+        : savedConnection.tone === "connecting"
+          ? "bg-warning"
+          : savedConnection.tone === "error"
+            ? "bg-destructive"
+            : "bg-muted-foreground/35"
+      : availability === "online"
+        ? "bg-success"
+        : availability === "error"
+          ? "bg-destructive"
+          : availability === "checking"
+            ? "bg-warning"
+            : "bg-muted-foreground/35";
+    const statusText = savedConnection
+      ? savedConnection.statusText
+      : availability === "online"
+        ? "Available · Relay online"
+        : availability === "offline"
+          ? "Available · Relay offline"
+          : availability === "checking"
+            ? "Available · Checking relay status…"
+            : (Option.getOrNull(error)?.message ?? "Available · Relay status unavailable");
     return (
       <div key={environment.environmentId} className={ITEM_ROW_CLASSNAME}>
         <div className={ITEM_ROW_INNER_CLASSNAME}>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <ConnectionStatusDot
-                dotClassName={
-                  availability === "online"
-                    ? "bg-success"
-                    : availability === "error"
-                      ? "bg-destructive"
-                      : availability === "checking"
-                        ? "bg-warning"
-                        : "bg-muted-foreground/35"
+                dotClassName={dotClassName}
+                pingClassName={
+                  savedConnection?.tone === "connecting" ||
+                  (savedConnection === null && availability === "checking")
+                    ? "bg-warning/60 duration-2000"
+                    : null
                 }
-                pingClassName={availability === "checking" ? "bg-warning/60 duration-2000" : null}
                 tooltipText={
-                  availability === "online"
-                    ? "Relay online"
-                    : availability === "offline"
-                      ? "Relay offline"
-                      : availability === "checking"
-                        ? "Checking relay status"
-                        : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
+                  savedConnection
+                    ? savedConnection.statusText
+                    : availability === "online"
+                      ? "Relay online"
+                      : availability === "offline"
+                        ? "Relay offline"
+                        : availability === "checking"
+                          ? "Checking relay status"
+                          : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
                 }
               />
               <p className="truncate text-sm font-medium">{environment.label}</p>
@@ -195,21 +230,19 @@ export function CloudEnvironmentConnectRows({
             <p
               className={cn(
                 "mt-1 truncate text-xs",
-                availability === "error" ? "text-destructive" : "text-muted-foreground",
+                savedConnection?.tone === "error" ||
+                  (savedConnection?.tone === "connecting" && savedEnvironment?.connection.error) ||
+                  (savedConnection === null && availability === "error")
+                  ? "text-destructive"
+                  : "text-muted-foreground",
               )}
             >
-              {availability === "online"
-                ? "Available · Relay online"
-                : availability === "offline"
-                  ? "Available · Relay offline"
-                  : availability === "checking"
-                    ? "Available · Checking relay status…"
-                    : (Option.getOrNull(error)?.message ?? "Available · Relay status unavailable")}
+              {statusText}
             </p>
           </div>
-          {alreadyConnected ? (
+          {savedConnection ? (
             <Button size="sm" variant="outline" disabled>
-              Connected
+              {savedConnection.buttonLabel}
             </Button>
           ) : (
             <Button

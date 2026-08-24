@@ -1,52 +1,12 @@
 /**
- * The `TxQueue` module provides queues whose state changes participate in
- * Effect transactions. A `TxQueue<A, E>` stores values of type `A`, exposes
- * write-only {@link TxEnqueue} and read-only {@link TxDequeue} handles, and can
- * complete or fail with causes observed by consumers.
+ * Transactional queues whose state changes participate in Effect transactions.
  *
- * **Mental model**
- *
- * - Queue contents and lifecycle state are transactional, so a transaction can
- *   offer, take, inspect, and update other transactional values atomically
- * - {@link take}, {@link takeAll}, {@link takeN}, {@link takeBetween}, and
- *   {@link peek} retry while the queue has no required value available
- * - {@link bounded} queues retry producers when full; {@link dropping}
- *   rejects new values; {@link sliding} removes old values; {@link unbounded}
- *   always accepts while open
- * - {@link interrupt}, {@link fail}, {@link failCause}, {@link end}, and
- *   {@link shutdown} move the queue toward completion and affect later offers
- *   and takes
- *
- * **Common tasks**
- *
- * - Create queues: {@link bounded}, {@link dropping}, {@link sliding},
- *   {@link unbounded}
- * - Produce values: {@link offer}, {@link offerAll}
- * - Consume values: {@link take}, {@link poll}, {@link peek}, {@link takeN},
- *   {@link takeBetween}, {@link takeAll}
- * - Inspect state: {@link size}, {@link isEmpty}, {@link isFull},
- *   {@link isOpen}, {@link isClosing}, {@link isDone}
- * - Finish queues: {@link end}, {@link fail}, {@link failCause},
- *   {@link interrupt}, {@link shutdown}, {@link awaitCompletion}
- *
- * **Gotchas**
- *
- * - {@link take} and {@link peek} are blocking in transactional terms: they
- *   use `Effect.txRetry` until an item is offered or the queue reaches a
- *   terminal state. Use {@link poll} when absence should be immediate.
- * - {@link offer} returns `false` for closing or done queues, and for full
- *   {@link dropping} queues
- * - Closing queues keep serving buffered values; done queues fail blocking
- *   consumers with the stored cause, while {@link poll} returns `Option.none`
- * - `TxQueue` is for coordinating transactional state. Use `Queue` for general
- *   fiber communication outside an atomic transaction.
- *
- * **See also**
- *
- * - {@link TxEnqueue} for write-only queue handles
- * - {@link TxDequeue} for read-only queue handles
- * - {@link TxChunk} and {@link TxRef} for the transactional storage used by
- *   this module
+ * A `TxQueue<A, E>` stores values of type `A`, exposes write-only `TxEnqueue`
+ * and read-only `TxDequeue` handles, and can complete, fail, or shut down with
+ * causes observed by consumers. Queue operations can retry transactionally when
+ * they cannot proceed, such as taking from an empty open queue or offering to a
+ * full bounded queue. This makes the queue useful for coordinating producers
+ * and consumers alongside other transactional state changes.
  *
  * @since 4.0.0
  */

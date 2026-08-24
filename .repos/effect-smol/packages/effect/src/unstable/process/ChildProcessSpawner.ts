@@ -1,20 +1,12 @@
 /**
- * Service contract and helpers for running child processes through Effect.
+ * Service boundary for starting and controlling child processes.
  *
- * This module defines the {@link ChildProcessSpawner} service used by child
- * process commands to start operating-system processes. A spawner turns a
- * command description into a {@link ChildProcessHandle}, which exposes scoped
- * lifecycle operations: write to stdin, stream stdout and stderr, wait for the
- * exit code, kill the process, inspect whether it is still running, and
- * temporarily unreference it from the parent process.
- *
- * Use this module when implementing a platform-specific process backend or
- * when code needs direct access to the process service. Most applications build
- * commands with the `ChildProcess` module; this service is the lower-level
- * execution boundary and also provides convenience methods for collecting exit
- * codes, strings, and output lines. The {@link make} constructor derives those
- * helpers from one primitive `spawn` implementation, so adapters only need to
- * supply process creation.
+ * `ChildProcessSpawner` is the service used by `ChildProcess` commands to start
+ * operating-system processes. A spawner turns a command description into a
+ * handle that can write to stdin, read stdout and stderr, wait for exit, kill
+ * the process, and manage whether the process keeps its parent alive. Platform
+ * backends implement this service, while most application code uses the higher
+ * level `ChildProcess` module.
  *
  * @since 4.0.0
  */
@@ -208,7 +200,7 @@ const HandleProto = {
  * @since 4.0.0
  */
 export const makeHandle = (params: Omit<ChildProcessHandle, typeof HandleTypeId>): ChildProcessHandle =>
-  Object.assign(Object.create(HandleProto), params)
+  Object.setPrototypeOf({ ...params }, HandleProto)
 
 /**
  * Creates a `ChildProcessSpawner` service from a `spawn` function, deriving

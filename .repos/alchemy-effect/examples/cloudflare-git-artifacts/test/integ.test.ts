@@ -14,13 +14,21 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
 const stack = beforeAll(deploy(Stack));
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
-const repoName = `tutorial-${Date.now().toString(36)}`;
+// Deterministic repo name — the same on every run (never Date.now()/random)
+// so a crashed run's leftover repo is purged below instead of leaking.
+const repoName = "tutorial-integ-lifecycle";
 
 test(
   "repo lifecycle",
   Effect.gen(function* () {
     const { url } = yield* stack;
     const client = yield* HttpApiClient.make(RepoApi, { baseUrl: url });
+
+    // Purge any leftover from a previously crashed run so createRepo
+    // doesn't fail with RepoConflict.
+    yield* client.repos
+      .deleteRepo({ params: { name: repoName } })
+      .pipe(Effect.catchTag("RepoNotFound", () => Effect.void));
 
     const created = yield* client.repos.createRepo({
       payload: { name: repoName, description: "tutorial repo" },

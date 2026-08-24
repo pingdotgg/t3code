@@ -7,10 +7,6 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 export class KinesisStreamFunction extends AWS.Lambda.Function<AWS.Lambda.Function>()(
   "KinesisStreamFunction",
-  {
-    main: import.meta.filename,
-    url: true,
-  },
 ) {}
 
 export class StreamAndQueue extends Context.Service<
@@ -37,24 +33,32 @@ export const StreamAndQueueLive = Layer.effect(
   }),
 );
 export default KinesisStreamFunction.make(
+  {
+    main: import.meta.url,
+    url: true,
+  },
   Effect.gen(function* () {
     const { stream, queue } = yield* StreamAndQueue;
-    const sink = yield* AWS.SQS.QueueSink.bind(queue);
+    const sink = yield* AWS.SQS.QueueSink(queue);
 
-    yield* AWS.Kinesis.records(stream, {
-      startingPosition: "LATEST",
-      batchSize: 10,
-    }).process((records) =>
-      records.pipe(
-        Stream.map((record) =>
-          JSON.stringify({
-            partitionKey: record.kinesis.partitionKey,
-            data: Buffer.from(record.kinesis.data, "base64").toString("utf8"),
-            eventID: record.eventID,
-          }),
+    yield* AWS.Kinesis.consumeStreamRecords(
+      stream,
+      {
+        startingPosition: "LATEST",
+        batchSize: 10,
+      },
+      (records) =>
+        records.pipe(
+          Stream.map((record) => ({
+            MessageBody: JSON.stringify({
+              partitionKey: record.kinesis.partitionKey,
+              data: Buffer.from(record.kinesis.data, "base64").toString("utf8"),
+              eventID: record.eventID,
+            }),
+          })),
+          Stream.run(sink),
+          Effect.orDie,
         ),
-        Stream.run(sink),
-      ),
     );
 
     const streamName = yield* stream.streamName;
@@ -74,8 +78,8 @@ export default KinesisStreamFunction.make(
   }).pipe(
     Effect.provide(
       Layer.provideMerge(
-        Layer.mergeAll(AWS.Lambda.StreamEventSource, AWS.SQS.QueueSinkLive),
-        Layer.mergeAll(AWS.SQS.SendMessageBatchLive, StreamAndQueueLive),
+        Layer.mergeAll(AWS.Lambda.StreamEventSource, AWS.SQS.QueueSinkHttp),
+        Layer.mergeAll(AWS.SQS.SendMessageBatchHttp, StreamAndQueueLive),
       ),
     ),
   ),

@@ -1,35 +1,11 @@
 /**
  * Node.js socket constructors and layers for Effect sockets.
  *
- * This module combines shared Node stream-backed socket support with
- * Node-specific WebSocket constructor layers. Use it to open TCP clients, Unix
- * domain socket clients, adapt existing Node `Duplex` streams, or provide
- * WebSocket clients to protocols built on Effect's `Socket.Socket`.
- *
- * **Mental model**
- *
- * TCP and Unix sockets come from `node:net` and are exposed as scoped
- * `Socket.Socket` values. Stream open, read, write, and close events are
- * translated to `SocketError` values, and finalization closes or destroys the
- * underlying stream. WebSocket layers provide only the constructor service used
- * by `Socket.makeWebSocket`; `layerWebSocket` combines that constructor with a
- * URL to provide a socket layer.
- *
- * **Common tasks**
- *
- * - Use `makeNet`, `makeNetChannel`, or `layerNet` for TCP connections.
- * - Set `NetConnectOpts.path` for Unix domain sockets.
- * - Use `fromDuplex` when another library already owns a Node `Duplex`.
- * - Use `layerWebSocketConstructor` for the native WebSocket when present, with
- *   fallback to `ws`; use `layerWebSocketConstructorWS` to force `ws`.
- *
- * **Gotchas**
- *
- * Socket lifetime is scoped, so release the layer or scope to close the
- * connection. Writes complete when Node accepts or flushes the chunk, not when
- * a peer processes it. Remote `end` events complete the socket run, while
- * abnormal closes, open timeouts, and stream errors surface through
- * `SocketError`; handle them in the Effect that runs the socket.
+ * This module re-exports the shared Node socket support for TCP connections,
+ * Unix domain socket connections, and Node `Duplex` streams. It also provides
+ * WebSocket constructor layers: one that uses `globalThis.WebSocket` when
+ * present and falls back to `ws`, one that always uses `ws`, and one that
+ * creates a `Socket.Socket` layer for a WebSocket URL.
  *
  * @since 4.0.0
  */

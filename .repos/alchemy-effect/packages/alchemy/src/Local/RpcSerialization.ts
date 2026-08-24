@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as NodeUtil from "node:util";
 import * as Output from "../Output.ts";
+import { isRedactedMarker, type RedactedMarker } from "../RuntimeContext.ts";
 
 type RpcEffectHandler<Args extends Array<any>, Success, Error> = (
   ...args: Args
@@ -64,7 +65,7 @@ export const wrapRpcHandlers = <T extends Record<string, any>>(
         ? streamKeys?.includes(key)
           ? wrapRpcStreamHandler(value)
           : wrapRpcEffectHandler(value)
-        : typeof value === "object" && value !== null
+        : typeof value === "object" && value !== null && !Array.isArray(value)
           ? wrapRpcHandlers(value)
           : value,
     ]),
@@ -82,14 +83,14 @@ export const unwrapRpcHandlers = <T extends Record<string, any>>(
         ? streamKeys?.includes(key)
           ? unwrapRpcStreamHandler(value)
           : unwrapRpcEffectHandler(value)
-        : typeof value === "object" && value !== null
+        : typeof value === "object" && value !== null && !Array.isArray(value)
           ? unwrapRpcHandlers(value)
           : value,
     ]),
   ) as RpcUnwrapped<T>;
 };
 
-const serializeError = Schema.encodeSync(Schema.Defect);
+const serializeError = Schema.encodeSync(Schema.Defect());
 
 const wrapRpcEffectHandler = <Args extends Array<any>, Success, Error>(
   handler: RpcEffectHandler<Args, Success, Error>,
@@ -107,7 +108,10 @@ const wrapRpcEffectHandler = <Args extends Array<any>, Success, Error>(
         cause: exit.cause.reasons.map((reason): RpcSerializedCause<Error> => {
           switch (reason._tag) {
             case "Fail":
-              return { _tag: "Fail", error: serializeError(reason.error) };
+              return {
+                _tag: "Fail",
+                error: serializeError(reason.error) as Error,
+              };
             case "Die":
               return { _tag: "Die", defect: serializeError(reason.defect) };
             case "Interrupt":
@@ -170,7 +174,10 @@ const unwrapRpcStreamHandler = <Args extends Array<any>, Success, Error>(
 
 const serializeRpcArgs = (value: unknown): unknown => {
   if (Redacted.isRedacted(value)) {
-    return { _tag: "Redacted", value: Redacted.value(value) };
+    return {
+      _tag: "Redacted",
+      value: Redacted.value(value),
+    } satisfies RedactedMarker;
   }
   if (Output.isOutput(value)) {
     return {
@@ -201,7 +208,7 @@ const deserializeRpcArgs = (value: unknown): unknown => {
   } else if (typeof value === "object" && value !== null) {
     // These values are serialized as `{_tag: "Redacted", value: ...}` and `{_tag: "Output", description: ...}`,
     // so we need to detect them manually - Redacted.isRedacted and Output.isOutput do not work.
-    if ("_tag" in value && value._tag === "Redacted" && "value" in value) {
+    if (isRedactedMarker(value)) {
       return Redacted.make(value.value);
     } else if (
       "_tag" in value &&

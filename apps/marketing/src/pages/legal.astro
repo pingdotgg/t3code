@@ -1,0 +1,172 @@
+---
+import Layout from "../layouts/Layout.astro";
+
+const documents = [
+  {
+    number: "01",
+    title: "Privacy Policy",
+    description: "How T3 Code handles information, connected services, and your privacy choices.",
+    href: "/privacy-policy",
+  },
+  {
+    number: "02",
+    title: "Terms of Service",
+    description: "The terms that govern your use of T3 Code and T3 Tools-operated services.",
+    href: "/terms-of-service",
+  },
+  {
+    number: "03",
+    title: "Security Policy",
+    description: "Our security practices, responsible disclosure process, and shared responsibilities.",
+    href: "/security-policy",
+  },
+] as const;
+---
+
+<Layout
+  title="Legal — T3 Code"
+  description="Privacy, terms, and security documents for T3 Code."
+  pageClass="legal-document-page"
+>
+  <div class="legal-index">
+    <header class="legal-index-hero">
+      <p class="eyebrow">T3 Tools, Inc. / Legal</p>
+      <h1>Legal</h1>
+      <p>Policies and terms for T3 Code, collected in one place.</p>
+    </header>
+
+    <nav class="document-list" aria-label="Legal documents">
+      {documents.map((document) => (
+        <a href={document.href} class="document-card">
+          <span class="document-number">{document.number}</span>
+          <span class="document-copy">
+            <strong>{document.title}</strong>
+            <span>{document.description}</span>
+          </span>
+          <span class="document-arrow" aria-hidden="true">&#8599;</span>
+        </a>
+      ))}
+    </nav>
+  </div>
+</Layout>
+
+<style>
+  .legal-index {
+    width: min(960px, calc(100% - 64px));
+    margin: 0 auto;
+    padding: clamp(72px, 10vw, 132px) 0 112px;
+  }
+
+  .legal-index-hero {
+    max-width: 680px;
+    animation: fade-in 0.7s ease-out both;
+  }
+
+  .legal-index h1 {
+    margin-top: 18px;
+    font-size: clamp(4rem, 10vw, 7.4rem);
+    font-weight: 500;
+    letter-spacing: -0.04em;
+    line-height: 0.9;
+  }
+
+  .legal-index-hero > p:last-child {
+    margin-top: 30px;
+    color: var(--fg-muted);
+    font-size: clamp(1.05rem, 2vw, 1.3rem);
+    line-height: 1.65;
+  }
+
+  .document-list {
+    display: grid;
+    margin-top: clamp(64px, 9vw, 96px);
+    border-top: 1px solid var(--border);
+  }
+
+  .document-card {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    gap: 24px;
+    align-items: center;
+    padding: 30px 8px;
+    border-bottom: 1px solid var(--border);
+    transition: background-color 0.18s ease, padding 0.18s ease;
+  }
+
+  .document-number {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+  }
+
+  .document-copy {
+    display: grid;
+    gap: 7px;
+  }
+
+  .document-copy strong {
+    color: var(--fg);
+    font-size: 1.2rem;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
+
+  .document-copy > span {
+    color: var(--fg-dim);
+    font-size: 0.9rem;
+    line-height: 1.55;
+  }
+
+  .document-arrow {
+    color: var(--fg-dim);
+    font-size: 1.25rem;
+    transition: color 0.18s ease, transform 0.18s ease;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .document-card:hover {
+      padding-left: 16px;
+      padding-right: 16px;
+      background: rgba(255, 255, 255, 0.025);
+    }
+
+    .document-card:hover .document-arrow {
+      color: var(--fg);
+      transform: translate(2px, -2px);
+    }
+  }
+
+  @media (max-width: 820px) {
+    .legal-index {
+      width: min(100% - 40px, 720px);
+      padding-top: 56px;
+      padding-bottom: 80px;
+    }
+
+    .document-card {
+      grid-template-columns: 30px minmax(0, 1fr) auto;
+      gap: 14px;
+      padding: 24px 4px;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .legal-index {
+      width: calc(100% - 32px);
+      padding-top: 42px;
+    }
+
+    .legal-index h1 {
+      font-size: 4.4rem;
+    }
+
+    .document-copy strong {
+      font-size: 1.08rem;
+    }
+
+    .document-copy > span {
+      font-size: 0.84rem;
+    }
+  }
+</style>

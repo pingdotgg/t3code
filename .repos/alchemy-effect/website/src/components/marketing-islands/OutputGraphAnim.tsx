@@ -151,8 +151,8 @@ export default function OutputGraphAnim() {
         </div>
         <pre className="alc-code-block__pre">
           <Hl active={step === 0}>
-            <K>const</K> bucket = <K>yield</K>* <V>Cloudflare</V>.
-            <F>R2Bucket</F>(<S>"Photos"</S>);
+            <K>const</K> bucket = <K>yield</K>* <V>Cloudflare</V>.<F>Bucket</F>(
+            <S>"Photos"</S>);
             {"\n"}
             bucket.<V>bucketName</V>; <C>{"// Output<string>"}</C>
           </Hl>
@@ -184,7 +184,7 @@ export default function OutputGraphAnim() {
         <div className="output-anim-graph" aria-hidden>
           {/* Row 1 */}
           <div className="output-anim-node output-anim-node--accent">
-            <div className="output-anim-node__label">R2Bucket</div>
+            <div className="output-anim-node__label">Bucket</div>
             <div className="output-anim-node__id">"Photos"</div>
           </div>
 

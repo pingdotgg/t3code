@@ -28,7 +28,7 @@ jobs:
       - name: Run codemods
         run: pnpm codemod
       - name: Build package
-        run: pnpm build:tsgo
+        run: pnpm build
       - name: Create snapshot
         id: snapshot
-        run: pnpx pkg-pr-new@0.0.62 publish --pnpm --comment=off ./packages/* ./packages/atom/* ./packages/ai/* ./packages/sql/* ./packages/tools/*
+        run: pnpx pkg-pr-new@0.0.78 publish --pnpm --comment=off ./packages/* ./packages/atom/* ./packages/ai/* ./packages/sql/* ./packages/tools/*

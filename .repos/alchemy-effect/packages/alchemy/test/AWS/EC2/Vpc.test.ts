@@ -1,8 +1,9 @@
 import * as AWS from "@/AWS";
 import { Vpc } from "@/AWS/EC2";
-import * as Test from "@/Test/Vitest";
+import * as Provider from "@/Provider";
+import * as Test from "./VpcTest.ts";
 import * as EC2 from "@distilled.cloud/aws/ec2";
-import { expect } from "@effect/vitest";
+import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
@@ -15,8 +16,10 @@ const logLevel = Effect.provideService(
   process.env.DEBUG ? "Debug" : "Info",
 );
 
-test.provider.skip("create, update, delete vpc", (stack) =>
+test.provider("create, update, delete vpc", (stack) =>
   Effect.gen(function* () {
+    yield* stack.destroy();
+
     const vpc = yield* stack.deploy(
       Effect.gen(function* () {
         return yield* Vpc("TestVpc", {
@@ -75,6 +78,29 @@ test.provider.skip("create, update, delete vpc", (stack) =>
   }).pipe(logLevel),
 );
 
+test.provider("list enumerates the deployed vpc", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const deployed = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Vpc("ListVpc", {
+          cidrBlock: "10.0.0.0/16",
+        });
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(Vpc);
+    const all = yield* provider.list();
+
+    expect(all.some((v) => v.vpcId === deployed.vpcId)).toBe(true);
+
+    yield* stack.destroy();
+
+    yield* assertVpcDeleted(deployed.vpcId);
+  }).pipe(logLevel),
+);
+
 const expectVpcAttribute = Effect.fn(function* (props: {
   VpcId: string;
   Attribute: EC2.VpcAttributeName;
@@ -93,7 +119,7 @@ const expectVpcAttribute = Effect.fn(function* (props: {
     ),
     Effect.retry({
       while: (e) => e._tag === "VpcAttributeStale",
-      schedule: Schedule.exponential(100),
+      schedule: Schedule.max([Schedule.exponential(100), Schedule.recurs(8)]),
     }),
   );
 });
@@ -109,7 +135,7 @@ export const assertVpcDeleted = Effect.fn(function* (vpcId: string) {
     Effect.flatMap(() => Effect.fail(new VpcStillExists())),
     Effect.retry({
       while: (e) => e._tag === "VpcStillExists",
-      schedule: Schedule.exponential(100),
+      schedule: Schedule.max([Schedule.exponential(100), Schedule.recurs(8)]),
     }),
     Effect.catchTag("InvalidVpcID.NotFound", () => Effect.void),
   );

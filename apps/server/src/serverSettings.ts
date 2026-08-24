@@ -11,11 +11,10 @@
  * @module ServerSettings
  */
 import {
-  DEFAULT_GIT_TEXT_GENERATION_MODEL,
-  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  DEFAULT_TEXT_GENERATION_MODEL,
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
-  isProviderDriverKind,
   type ModelSelection,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
@@ -47,8 +46,13 @@ import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
-import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import {
+  applyServerSettingsPatch,
+  isModelSelectionProviderEnabled,
+} from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+
+export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
 const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));
@@ -57,11 +61,60 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+/**
+ * Fold the legacy in-config `enabled` flag into the envelope-level
+ * `ProviderInstanceConfig.enabled` and strip it from the config blob, so
+ * explicit provider instances carry exactly one enabled flag. Old settings
+ * files can hold both flags with conflicting values; an explicit false on
+ * either side wins so a user's disable is never silently undone. Runs on
+ * every load and update — the file converges on the next write.
+ */
+const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSettings => {
+  let changed = false;
+  const providerInstances: Record<string, ProviderInstanceConfig> = {};
+  for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
+    const config = instance.config;
+    // Only fold boolean flags: a malformed `enabled` (e.g. `"false"`) must
+    // stay in the blob so driver schema validation flags it instead of the
+    // fold silently repairing the config.
+    if (
+      config === null ||
+      typeof config !== "object" ||
+      Array.isArray(config) ||
+      typeof (config as { readonly enabled?: unknown }).enabled !== "boolean"
+    ) {
+      providerInstances[instanceId] = instance;
+      continue;
+    }
+    const { enabled: configEnabled, ...restConfig } = config as Record<string, unknown> & {
+      readonly enabled: boolean;
+    };
+    const resolved =
+      instance.enabled === false || configEnabled === false
+        ? false
+        : (instance.enabled ?? configEnabled);
+    changed = true;
+    providerInstances[instanceId] = {
+      ...instance,
+      enabled: resolved,
+      config: restConfig,
+    } satisfies ProviderInstanceConfig;
+  }
+  if (!changed) {
+    return settings;
+  }
+  return {
+    ...settings,
+    providerInstances: providerInstances as ServerSettings["providerInstances"],
+  };
+};
+
 const normalizeServerSettings = (
   settings: ServerSettings,
 ): Effect.Effect<ServerSettings, ServerSettingsError> =>
   encodeServerSettings(settings).pipe(
     Effect.flatMap(decodeServerSettings),
+    Effect.map(foldProviderInstanceEnabledFlags),
     Effect.mapError(
       (cause) =>
         new ServerSettingsError({
@@ -127,6 +180,13 @@ export class ServerSettingsService extends Context.Service<
 
     /** Stream of settings change events. */
     readonly streamChanges: Stream.Stream<ServerSettings>;
+
+    /**
+     * Acquire a settings change subscription synchronously in the current
+     * fiber. Use this before reading a snapshot when changes between the
+     * snapshot and a lazily started stream must not be lost.
+     */
+    readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
   }
 >()("t3/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -135,12 +195,16 @@ export class ServerSettingsService extends Context.Service<
 
 const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Effect.gen(function* () {
-    const { automaticGitFetchInterval, ...overridesForMerge } = overrides;
+    const { automaticGitFetchInterval, providerHealthRefreshInterval, ...overridesForMerge } =
+      overrides;
     const merged = deepMerge(DEFAULT_SERVER_SETTINGS, overridesForMerge);
     const initialSettings = yield* normalizeServerSettings({
       ...merged,
       ...(automaticGitFetchInterval !== undefined
         ? { automaticGitFetchInterval: automaticGitFetchInterval as Duration.Duration }
+        : {}),
+      ...(providerHealthRefreshInterval !== undefined
+        ? { providerHealthRefreshInterval: providerHealthRefreshInterval as Duration.Duration }
         : {}),
     });
     const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
@@ -148,14 +212,16 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
     return {
       start: Effect.void,
       ready: Effect.void,
-      getSettings: Ref.get(currentSettingsRef),
+      getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
       updateSettings: (patch) =>
         Ref.get(currentSettingsRef).pipe(
           Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
           Effect.flatMap(normalizeServerSettings),
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+          Effect.map(resolveTextGenerationProvider),
         ),
       streamChanges: Stream.empty,
+      subscribeChanges: Effect.succeed(Stream.empty),
     } satisfies ServerSettingsService["Service"];
   });
 
@@ -165,35 +231,10 @@ export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
 
-type LegacyProviderSettings = ServerSettings["providers"][keyof ServerSettings["providers"]];
-
-const getLegacyProviderSettings = (
-  settings: ServerSettings,
-  provider: ProviderDriverKind,
-): LegacyProviderSettings | undefined =>
-  (settings.providers as Record<string, LegacyProviderSettings | undefined>)[provider];
-
-/**
- * Ensure the `textGenerationModelSelection` points to an enabled provider.
- * If the selected provider is disabled, fall back to the first enabled
- * provider with its default model.  This is applied at read-time so the
- * persisted preference is preserved for when a provider is re-enabled.
- */
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const selection = settings.textGenerationModelSelection;
-  const instanceConfig = settings.providerInstances[selection.instanceId];
-  if (instanceConfig !== undefined) {
-    return (instanceConfig.enabled ?? true) ? settings : fallbackTextGenerationProvider(settings);
-  }
-
-  if (
-    isProviderDriverKind(selection.instanceId) &&
-    getLegacyProviderSettings(settings, selection.instanceId)?.enabled
-  ) {
-    return settings;
-  }
-
-  return fallbackTextGenerationProvider(settings);
+  return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
+    ? settings
+    : fallbackTextGenerationProvider(settings);
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
@@ -208,16 +249,19 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
     textGenerationModelSelection: {
       instanceId: ProviderInstanceId.make(fallback),
       model:
-        DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
+        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
         DEFAULT_MODEL_BY_PROVIDER[fallback] ??
-        DEFAULT_GIT_TEXT_GENERATION_MODEL,
+        DEFAULT_TEXT_GENERATION_MODEL,
     } satisfies ModelSelection,
   };
 }
 
 // Values under these keys are compared as a whole — never stripped field-by-field.
 const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
+  "backgroundActivity",
   "automaticGitFetchInterval",
+  "providerHealthRefreshInterval",
+  "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
 ]);
 
@@ -308,7 +352,7 @@ const make = Effect.gen(function* () {
       });
       return DEFAULT_SERVER_SETTINGS;
     }
-    return decoded.value;
+    return foldProviderInstanceEnabledFlags(decoded.value);
   });
 
   const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
@@ -362,6 +406,23 @@ const make = Effect.gen(function* () {
         providerInstances: providerInstances as ServerSettings["providerInstances"],
       };
     });
+
+  const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
+    changes.pipe(
+      Stream.mapEffect((settings) =>
+        materializeProviderEnvironmentSecrets(settings).pipe(
+          Effect.catch((error: ServerSettingsError) =>
+            Effect.logWarning("failed to materialize provider environment secrets", {
+              operation: error.operation,
+              providerInstanceId: error.providerInstanceId,
+              environmentVariable: error.environmentVariable,
+              cause: error.cause,
+            }).pipe(Effect.as(settings)),
+          ),
+        ),
+      ),
+      Stream.map(resolveTextGenerationProvider),
+    );
 
   const persistProviderEnvironmentSecrets = (
     current: ServerSettings,
@@ -580,20 +641,11 @@ const make = Effect.gen(function* () {
         }),
       ),
     get streamChanges() {
-      return Stream.fromPubSub(changesPubSub).pipe(
-        Stream.mapEffect((settings) =>
-          materializeProviderEnvironmentSecrets(settings).pipe(
-            Effect.catch((error: ServerSettingsError) =>
-              Effect.logWarning("failed to materialize provider environment secrets", {
-                operation: error.operation,
-                providerInstanceId: error.providerInstanceId,
-                environmentVariable: error.environmentVariable,
-                cause: error.cause,
-              }).pipe(Effect.as(settings)),
-            ),
-          ),
-        ),
-        Stream.map(resolveTextGenerationProvider),
+      return materializeChanges(Stream.fromPubSub(changesPubSub));
+    },
+    get subscribeChanges() {
+      return PubSub.subscribe(changesPubSub).pipe(
+        Effect.map((subscription) => materializeChanges(Stream.fromSubscription(subscription))),
       );
     },
   } satisfies ServerSettingsService["Service"];

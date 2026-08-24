@@ -1,52 +1,13 @@
 /**
- * The `HttpApiMiddleware` module defines middleware service keys for
- * declarative HTTP APIs. Middleware wraps endpoint execution on the server and,
- * when required by an API, can also wrap requests made by generated clients.
+ * Declares middleware for schema-driven HTTP APIs.
  *
- * Middleware is where you put cross-cutting behavior that belongs to the API
- * contract: authentication, authorization, request logging, tracing, rate
- * limiting, request-scoped services, schema-error normalization, and client
- * request decoration.
- *
- * **Mental model**
- *
- * - A middleware is declared with {@link Service}; the declaration is both a
- *   `Context.Service` key and a typed description of the middleware contract.
- * - Server implementations receive the endpoint response effect plus endpoint
- *   and group metadata. Security middleware also receives decoded credentials
- *   from the configured `HttpApiSecurity` scheme.
- * - The service metadata records provided services, required services, declared
- *   error schemas, client error types, security schemes, and whether generated
- *   clients must install a matching client middleware.
- * - Client middleware is published through the {@link ForClient} marker by
- *   {@link layerClient} and participates in the generated client's request
- *   pipeline.
- *
- * **Common tasks**
- *
- * - Declare middleware services with {@link Service}.
- * - Detect security middleware with {@link isSecurity}.
- * - Convert `HttpApiSchemaError` failures into declared API errors with
- *   {@link layerSchemaErrorTransform}.
- * - Install a generated-client middleware with {@link layerClient}.
- *
- * **Gotchas**
- *
- * - Middleware error declarations must be `Schema` values, or arrays of
- *   `Schema` values, because builders and clients encode and decode them as
- *   part of the endpoint error surface.
- * - A security middleware must declare at least one security scheme. Ordinary
- *   middleware does not receive credentials.
- * - A schema-error transform must fail with an error covered by the middleware's
- *   declared error schema.
- * - `requiredForClient` adds a client-side requirement. Provide it with
- *   {@link layerClient}; the layer captures its surrounding context.
- *
- * **See also**
- *
- * - {@link Service} for declaring middleware service keys.
- * - {@link layerSchemaErrorTransform} for mapping schema failures.
- * - {@link layerClient} for generated-client middleware.
+ * HTTP API middleware wraps endpoint execution on the server and, when the API
+ * requires it, can also wrap requests made by generated clients. It is used for
+ * cross-cutting behavior that belongs to the API contract, such as
+ * authentication, authorization, logging, tracing, rate limiting,
+ * request-scoped services, schema-error handling, and client request
+ * decoration. This module defines the middleware service keys and helpers used
+ * by `HttpApi` declarations.
  *
  * @since 4.0.0
  */
@@ -54,6 +15,7 @@
 /** @effect-diagnostics classSelfMismatch:off */
 import * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
+import { getStackTraceLimit, setStackTraceLimit } from "../../internal/stackTraceLimit.ts"
 import * as Layer from "../../Layer.ts"
 import { hasProperty } from "../../Predicate.ts"
 import type * as Schema from "../../Schema.ts"
@@ -83,8 +45,8 @@ export const isSecurity = (u: AnyService): u is AnyServiceSecurity => hasPropert
 
 type ErrorConstraint = Schema.Top | ReadonlyArray<Schema.Top>
 
-type ErrorSchemaFromConstraint<E> = E extends ReadonlyArray<Schema.Top> ? E[number]
-  : E extends Schema.Top ? E
+type ErrorSchemaFromConstraint<E> = E extends ReadonlyArray<Schema.Constraint> ? E[number]
+  : E extends Schema.Constraint ? E
   : never
 
 /**
@@ -102,8 +64,8 @@ type ErrorSchemaFromConstraint<E> = E extends ReadonlyArray<Schema.Top> ? E[numb
 export type HttpApiMiddleware<Provides, E extends ErrorConstraint, Requires> = (
   httpEffect: Effect.Effect<HttpServerResponse, unhandled, Provides>,
   options: {
-    readonly endpoint: HttpApiEndpoint.AnyWithProps
-    readonly group: HttpApiGroup.AnyWithProps
+    readonly endpoint: HttpApiEndpoint.Top
+    readonly group: HttpApiGroup.Top
   }
 ) => Effect.Effect<HttpServerResponse, unhandled | ErrorSchemaFromConstraint<E>["Type"], Requires | HttpRouter.Provided>
 
@@ -128,8 +90,8 @@ export type HttpApiMiddlewareSecurity<
     httpEffect: Effect.Effect<HttpServerResponse, unhandled, Provides>,
     options: {
       readonly credential: HttpApiSecurity.HttpApiSecurity.Type<Security[K]>
-      readonly endpoint: HttpApiEndpoint.AnyWithProps
-      readonly group: HttpApiGroup.AnyWithProps
+      readonly endpoint: HttpApiEndpoint.Top
+      readonly group: HttpApiGroup.Top
     }
   ) => Effect.Effect<
     HttpServerResponse,
@@ -151,8 +113,8 @@ export type HttpApiMiddlewareSecurity<
  */
 export interface HttpApiMiddlewareClient<_E, CE, R> {
   (options: {
-    readonly endpoint: HttpApiEndpoint.AnyWithProps
-    readonly group: HttpApiGroup.AnyWithProps
+    readonly endpoint: HttpApiEndpoint.Top
+    readonly group: HttpApiGroup.Top
     readonly request: HttpClientRequest.HttpClientRequest
     readonly next: (
       request: HttpClientRequest.HttpClientRequest
@@ -348,9 +310,9 @@ export type ServiceClass<
  *
  * **When to use**
  *
- * Use when you use the optional configuration to declare required services, provided services,
- * typed error schemas, security schemes, client errors, and whether generated
- * clients must provide a matching client middleware.
+ * Use when you need an HTTP API middleware service whose configuration declares
+ * required services, provided services, typed error schemas, security schemes,
+ * client errors, or a matching client middleware requirement.
  *
  * @category schemas
  * @since 4.0.0
@@ -391,10 +353,10 @@ export const Service = <
   } | undefined
 ) => {
   const Err = globalThis.Error as any
-  const limit = Err.stackTraceLimit
-  Err.stackTraceLimit = 2
+  const limit = getStackTraceLimit()
+  setStackTraceLimit(2)
   const creationError = new Err()
-  Err.stackTraceLimit = limit
+  setStackTraceLimit(limit)
 
   class Service extends Context.Service<Self, any>()(id) {}
   const self = Service as any
@@ -458,7 +420,10 @@ export const layerSchemaErrorTransform = <Id, E extends ErrorConstraint, Require
   service: Context.Service<Id, HttpApiMiddleware<never, E, Requires>>,
   transform: (
     error: HttpApiSchemaError,
-    context: { readonly endpoint: HttpApiEndpoint.AnyWithProps; readonly group: HttpApiGroup.AnyWithProps }
+    context: {
+      readonly endpoint: HttpApiEndpoint.Top
+      readonly group: HttpApiGroup.Top
+    }
   ) => Effect.Effect<
     HttpServerResponse,
     ErrorSchemaFromConstraint<E>["Type"] | HttpApiSchemaError,

@@ -1,21 +1,13 @@
 /**
- * The `RcMap` module provides a scoped, reference-counted map for sharing
- * resources by key. It is useful when many fibers may request the same
- * resource, such as a connection, client, session, or cached handle, and the
- * resource should be acquired once, reused while it has active references, and
- * released automatically when it is no longer needed.
+ * Shares scoped resources by key and releases them when no one is using them.
  *
- * Each key is resolved with a user-provided lookup effect on first access via
- * {@link get}. Further accesses to the same key share the in-flight or acquired
- * resource and increment its reference count for the caller's current
- * `Scope`. When those scopes close, references are released; resources can be
- * closed immediately, kept alive for an idle time-to-live, invalidated
- * explicitly, or bounded by a maximum capacity.
- *
- * `RcMap` is designed for Effect resource lifecycles rather than general
- * mutable caching. The map itself is scoped, lookups require a `Scope`, and
- * complex keys should provide `Equal` / `Hash` behavior when they need
- * value-based lookup semantics.
+ * An `RcMap` runs a lookup effect the first time a key is requested, shares the
+ * in-progress or acquired resource with other callers for the same key, and
+ * tracks each caller through its current `Scope`. When the last scope for a key
+ * closes, the resource can be released, kept alive for an idle time, or removed
+ * by capacity limits or explicit invalidation. It is meant for resource
+ * lifecycles such as clients, sessions, and connections, not as a general
+ * mutable cache.
  *
  * @since 3.5.0
  */

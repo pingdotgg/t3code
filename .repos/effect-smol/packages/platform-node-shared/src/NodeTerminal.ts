@@ -1,33 +1,11 @@
 /**
  * Shared Node.js implementation of Effect's `Terminal` service.
  *
- * `NodeTerminal` adapts Node's `readline` APIs plus the current process'
- * `stdin` and `stdout` streams into {@link Terminal.Terminal}. It is the shared
- * process-backed terminal used by Node platform packages for prompts, REPLs,
- * command-line tools, and interactive programs that need line input, key input,
- * terminal dimensions, or display output.
- *
- * **Mental model**
- *
- * {@link make} creates a scoped terminal around the global process streams, and
- * {@link layer} provides that terminal with the default quit behavior for key
- * input. While the scope is active, the module owns the Node `readline`
- * interface it created; it does not own the process streams themselves.
- *
- * **Common tasks**
- *
- * Use {@link make} when a custom `shouldQuit` predicate should decide when key
- * input ends. Use {@link layer} when Ctrl+C and Ctrl+D should end the key-input
- * stream. For plain byte-oriented stdin/stdout access, use the `Stdio` service
- * instead.
- *
- * **Gotchas**
- *
- * When stdin is a TTY, raw mode is enabled while the scoped terminal is active
- * and restored on release. Raw mode changes how keys are delivered and can
- * affect other code reading stdin. In non-TTY environments such as pipes,
- * redirected input, or CI, raw mode is unavailable, keypress behavior is
- * limited, and stdout dimensions may be reported as zero.
+ * `NodeTerminal` adapts Node's `readline` APIs plus the current process
+ * `stdin` and `stdout` streams into {@link Terminal.Terminal}. The service can
+ * display output, read a line, stream key input, and read terminal dimensions.
+ * `make` manages readline and TTY raw mode in a scope, while `layer` provides
+ * the default service that ends key input on Ctrl+C or Ctrl+D.
  *
  * @since 4.0.0
  */

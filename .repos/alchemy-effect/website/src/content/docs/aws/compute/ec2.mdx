@@ -1,0 +1,181 @@
+---
+title: EC2
+description: Launch virtual machines with the Instance resource — as a raw compute primitive, or hosting a bundled long-lived Effect program served straight off the box.
+---
+
+**EC2** is for when you need the machine itself: an OS you
+control, GPUs, custom daemons, software that expects a host, or
+predictable dedicated capacity. The
+[`Instance`](/providers/aws/ec2/instance) resource plays two
+roles — a **low-level compute primitive** (launch an AMI, attach
+networking, done), or a **host for a bundled Effect program**
+that Alchemy deploys onto the machine and keeps running.
+
+This is the lowest-level of Alchemy's four runtimes: unlike
+[Lambda](/aws/compute/lambda), [ECS](/aws/compute/ecs), and
+[EKS](/aws/compute/eks), you own patching,
+scaling, and availability. Reach for it deliberately — see
+[Choosing a runtime](/aws/compute/choosing-a-runtime).
+
+## Launch an instance
+
+The minimal instance is an AMI plus an instance type. AMI IDs
+are per-region, so resolve one with Alchemy's image helpers
+instead of hard-coding — `amazonLinux()` finds the latest Amazon
+Linux AMI (there are also `amazonLinux2023`, `amazonLinux2`,
+`ubuntu2404`, `ubuntu2204`, and a general `image()` finder):
+
+```typescript
+const imageId = yield* AWS.EC2.amazonLinux();
+
+const instance = yield* AWS.EC2.Instance("AppInstance", {
+  imageId,
+  instanceType: "t3.micro",
+  subnetId: subnet.subnetId,
+});
+```
+
+The resolved instance exposes `instanceId`, `publicIpAddress`,
+`privateIpAddress`, DNS names, and the rest of the observed
+state — see the [`Instance` reference](/providers/aws/ec2/instance)
+for every prop and attribute.
+
+## Host an Effect program
+
+Give the instance a `main` entrypoint and it becomes a runtime,
+same class pattern as Lambda and ECS. Because instance props
+(the AMI lookup, the network) are themselves resolved by
+Effects, the props slot takes an `Effect.gen` block:
+
+```typescript
+// src/server.ts
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Server extends AWS.EC2.Instance<Server>()(
+  "Server",
+  Effect.gen(function* () {
+    // Props run at deploy time. Inside the deployed instance only
+    // the program below matters, so short-circuit the infra
+    // lookups — the bundler folds `__ALCHEMY_RUNTIME__` to `true`
+    // and dead-code-eliminates this branch (and the AWS SDK with
+    // it) from the machine's bundle.
+    if (globalThis.__ALCHEMY_RUNTIME__) {
+      return {
+        main: import.meta.url,
+        imageId: "",
+        instanceType: "t3.small",
+        port: 3000,
+      };
+    }
+
+    const imageId = yield* AWS.EC2.amazonLinux();
+    const network = yield* AWS.EC2.Network("AppNetwork", {
+      cidrBlock: "10.81.0.0/16",
+      availabilityZones: 1,
+    });
+    const securityGroup = yield* AWS.EC2.SecurityGroup("AppSg", {
+      vpcId: network.vpcId,
+      description: "app ingress",
+      ingress: [
+        {
+          ipProtocol: "tcp",
+          fromPort: 3000,
+          toPort: 3000,
+          cidrIpv4: "0.0.0.0/0",
+          description: "app",
+        },
+      ],
+      egress: [
+        {
+          ipProtocol: "-1",
+          cidrIpv4: "0.0.0.0/0",
+          description: "all outbound",
+        },
+      ],
+    });
+
+    return {
+      main: import.meta.url,
+      imageId,
+      instanceType: "t3.small",
+      subnetId: network.publicSubnetIds[0],
+      securityGroupIds: [securityGroup.groupId],
+      associatePublicIpAddress: true,
+      port: 3000,
+    };
+  }),
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const url = new URL(request.url, "http://instance");
+        if (url.pathname === "/health") {
+          return yield* HttpServerResponse.json({ ok: true });
+        }
+        return HttpServerResponse.text("hello from EC2");
+      }),
+    };
+  }),
+) {}
+```
+
+At deploy time Alchemy bundles the program, uploads it to S3,
+and boots the instance with a user-data script that installs
+Bun and writes a **systemd unit**. The unit syncs the bundle and
+environment from S3 on every start and runs with
+`Restart=always`, so a flaky network install self-heals and the
+service survives reboots. The `{ fetch }` handler is served by
+the instance's HTTP server on `port`; `ServerHost` + `host.run`
+background loops work exactly as they do on [ECS](/aws/compute/ecs).
+
+Hosted instances also get an Alchemy-managed IAM role and
+instance profile. Bindings use the same contract as Lambda —
+environment variables plus IAM policy statements attached to
+that role — and you can widen it with managed policies:
+
+```typescript
+// e.g. make the instance manageable via SSM Session Manager
+roleManagedPolicyArns: [
+  "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+],
+```
+
+## SSH access
+
+For direct access, create an Alchemy-managed
+[`KeyPair`](/providers/aws/ec2/keypair) and pass its name to the
+instance. The generated private key comes back as a `Redacted`
+output on the resource:
+
+```typescript
+const key = yield* AWS.EC2.KeyPair("AppKeyPair", {
+  keyType: "ed25519",
+});
+
+// then on the instance props:
+//   keyName: key.keyName
+```
+
+## Networking
+
+An instance is only as reachable as the network you launch it
+into. The example above leans on the
+[`Network`](/providers/aws/ec2/network) helper for a
+public-subnet VPC; when you need explicit control — private
+subnets, NAT, VPC endpoints, custom route tables — compose the
+primitives directly. [VPC & networking](/aws/networking) walks
+through the whole set.
+
+## Where next
+
+- [Choosing a runtime](/aws/compute/choosing-a-runtime) — Lambda first,
+  ECS for containers, EKS for Kubernetes, EC2 when you need the
+  machine.
+- [VPC & networking](/aws/networking) — the `Network` helper and
+  the VPC primitives an instance lives in.
+- [`Instance` reference](/providers/aws/ec2/instance),
+  [`KeyPair` reference](/providers/aws/ec2/keypair) — every prop
+  and attribute.

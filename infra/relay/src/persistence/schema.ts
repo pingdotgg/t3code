@@ -34,7 +34,6 @@ export const relayMobileDevices = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.deviceId] }),
-    index("idx_relay_mobile_devices_user").on(table.userId),
     uniqueIndex("idx_relay_mobile_devices_push_token").on(table.pushToken),
     uniqueIndex("idx_relay_mobile_devices_push_to_start_token").on(table.pushToStartToken),
   ],
@@ -56,7 +55,6 @@ export const relayLiveActivities = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.deviceId] }),
-    index("idx_relay_live_activities_user").on(table.userId),
     uniqueIndex("idx_relay_live_activities_activity_push_token").on(table.activityPushToken),
   ],
 );
@@ -104,6 +102,13 @@ export const relayManagedEndpointAllocations = pgTable(
     uniqueIndex("idx_relay_managed_endpoint_allocations_tunnel_name").on(table.tunnelName),
   ],
 );
+
+export const relayManagedTunnelLimits = pgTable("relay_managed_tunnel_limits", {
+  userId: varchar("user_id", { length: 191 }).primaryKey(),
+  maxTunnels: integer("max_tunnels").notNull(),
+  createdAt: varchar("created_at", { length: 64 }).notNull(),
+  updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+});
 
 export const relayEnvironmentCredentials = pgTable(
   "relay_environment_credentials",

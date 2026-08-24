@@ -67,6 +67,32 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("orders list snapshots and events with one monotonic revision", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const collector = yield* collectEvents;
+      const before = yield* manager.list({ threadId });
+
+      const opened = yield* manager.open({ threadId, url: "http://localhost:5173" });
+      yield* manager.navigate({
+        threadId,
+        tabId: opened.tabId,
+        url: "http://localhost:5173/ready",
+      });
+
+      const events = yield* collector.drain;
+      const listed = yield* manager.list({ threadId });
+      expect(events).toHaveLength(2);
+      expect(events[0]!.serverEpoch).toBe(listed.serverEpoch);
+      expect(events[1]!.serverEpoch).toBe(listed.serverEpoch);
+      expect(events[0]!.revision).toBeGreaterThan(before.revision);
+      expect(events[1]!.revision).toBeGreaterThan(events[0]!.revision);
+      expect(listed.revision).toBe(events[1]!.revision);
+      expect(listed.sessions).toHaveLength(1);
+    }),
+  );
+
   it.effect("treats bare hosts as https", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();
@@ -251,6 +277,26 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       const events = yield* collector.drain;
       const closed = events.find((e) => e.type === "closed");
       expect(closed?.type).toBe("closed");
+    }),
+  );
+
+  it.effect("gives every tab in a batch close its own monotonic revision", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      yield* manager.open({ threadId, url: "http://localhost:5173" });
+      yield* manager.open({ threadId, url: "http://localhost:3000" });
+      const collector = yield* collectEvents;
+
+      yield* manager.close({ threadId });
+
+      const events = yield* collector.drain;
+      const listed = yield* manager.list({ threadId });
+      expect(events).toHaveLength(2);
+      expect(events.every((event) => event.type === "closed")).toBe(true);
+      expect(events[1]!.revision).toBeGreaterThan(events[0]!.revision);
+      expect(listed.revision).toBe(events[1]!.revision);
+      expect(listed.sessions).toHaveLength(0);
     }),
   );
 

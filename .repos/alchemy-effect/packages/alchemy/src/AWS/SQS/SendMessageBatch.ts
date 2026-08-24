@@ -1,9 +1,6 @@
 import * as sqs from "@distilled.cloud/aws/sqs";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import * as Output from "../../Output.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Queue } from "./Queue.ts";
 
 export interface SendMessageBatchRequest extends Omit<
@@ -11,8 +8,36 @@ export interface SendMessageBatchRequest extends Omit<
   "QueueUrl"
 > {}
 
-export class SendMessageBatch extends Binding.Service<
+/**
+ * Runtime binding for `sqs:SendMessageBatch`.
+ *
+ * Bind this operation to a {@link Queue} inside a function runtime to send up
+ * to 10 messages per call with per-entry success/failure results. The binding
+ * grants the host function `sqs:SendMessage` on the queue. Provide the
+ * `SendMessageBatchHttp` layer on the Function to implement the binding.
+ *
+ * For an unbounded stream of messages with automatic batching and bounded
+ * retry of transient per-entry failures, prefer {@link QueueSink}.
+ * @binding
+ * @section Sending Message Batches
+ * @example Send a Batch of Messages
+ * ```typescript
+ * // init (provide SQS.SendMessageBatchHttp on the Function)
+ * const sendMessageBatch = yield* SQS.SendMessageBatch(queue);
+ *
+ * // runtime
+ * const result = yield* sendMessageBatch({
+ *   Entries: messages.map((body, index) => ({
+ *     Id: `${index}`,
+ *     MessageBody: body,
+ *   })),
+ * });
+ * // result.Successful / result.Failed
+ * ```
+ */
+export interface SendMessageBatch extends Binding.Service<
   SendMessageBatch,
+  "AWS.SQS.SendMessageBatch",
   (
     queue: Queue,
   ) => Effect.Effect<
@@ -20,48 +45,8 @@ export class SendMessageBatch extends Binding.Service<
       request: SendMessageBatchRequest,
     ) => Effect.Effect<sqs.SendMessageBatchResult, sqs.SendMessageBatchError>
   >
->()("AWS.SQS.SendMessageBatch") {}
+> {}
 
-export const SendMessageBatchLive = Layer.effect(
-  SendMessageBatch,
-  Effect.gen(function* () {
-    const Policy = yield* SendMessageBatchPolicy;
-    const sendMessageBatch = yield* sqs.sendMessageBatch;
-
-    return Effect.fn(function* (queue: Queue) {
-      const QueueUrl = yield* queue.queueUrl;
-      yield* Policy(queue);
-      return Effect.fn(function* (request: SendMessageBatchRequest) {
-        return yield* sendMessageBatch({
-          ...request,
-          QueueUrl: yield* QueueUrl,
-        });
-      });
-    });
-  }),
-);
-
-export class SendMessageBatchPolicy extends Binding.Policy<
-  SendMessageBatchPolicy,
-  (queue: Queue) => Effect.Effect<void>
->()("AWS.SQS.SendMessageBatch") {}
-
-export const SendMessageBatchPolicyLive = SendMessageBatchPolicy.layer.succeed(
-  Effect.fn(function* (host, queue) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.SQS.SendMessageBatch(${queue}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["sqs:SendMessage"],
-            Resource: [Output.interpolate`${queue.queueArn}`],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `SendMessageBatchPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const SendMessageBatch = Binding.Service<SendMessageBatch>(
+  "AWS.SQS.SendMessageBatch",
 );

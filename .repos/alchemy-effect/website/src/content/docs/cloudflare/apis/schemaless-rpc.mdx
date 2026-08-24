@@ -1,0 +1,310 @@
+---
+title: Schemaless RPC
+description: Typed RPC between Workers, Durable Objects, and Containers with no schema — bind the class, get the client.
+sidebar:
+  order: 2
+---
+
+The schemaless RPC pattern — what makes a member callable, how the typed client arises, what crosses the wire — is documented at [Schemaless RPC](/apis/schemaless). This page walks Cloudflare's pairings. Worker → Worker and Worker → Durable Object ride the platform's native JSRPC channel (values move by structured clone, and service bindings never traverse the public internet); Containers ride the generic fetch transport.
+
+## Expose an interface
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class BindingTargetWorker extends Cloudflare.Worker<BindingTargetWorker>()(
+  "BindingTargetWorker",
+  {
+    main: import.meta.url,
+  },
+  Effect.gen(function* () {
+    return {
+      greet: (name: string) => Effect.succeed(`hello ${name}`),
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("hello from BindingTargetWorker");
+      }),
+    };
+  }),
+) {}
+```
+
+Any non-`fetch` function member returning an Effect or a Stream becomes callable remotely, and the class instance type *is* the interface: there is no schema to declare. The full member rules live at [Schemaless RPC](/apis/schemaless).
+
+## Worker → Worker
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import BindingTargetWorker from "./binding-target-worker.ts";
+
+export default class BindingEffectCaller extends Cloudflare.Worker<BindingEffectCaller>()(
+  "BindingEffectCaller",
+  {
+    main: import.meta.url,
+  },
+  Effect.gen(function* () {
+    const target = yield* Cloudflare.Workers.bindWorker(BindingTargetWorker);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const name =
+          new URL(request.url, "http://x").searchParams.get("name") ?? "world";
+        const greeting = yield* target.greet(name);
+        return HttpServerResponse.text(String(greeting));
+      }),
+    };
+  }),
+) {}
+```
+
+`bindWorker(BindingTargetWorker)` registers a service Binding at deploy time and returns a stub typed as the target's Shape — `target.greet(name)` is fully inferred from the target class, and every call rides native JSRPC. Service bindings in depth: [Workers](/cloudflare/compute/workers#schemaless-rpc).
+
+## Worker → Durable Object
+
+### The Durable Object's shape
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
+
+const KV = Cloudflare.KV.Namespace("DurableObjectWorkerEnvironmentKV", {
+  title: "durable-object-worker-environment-kv",
+});
+
+export class WorkerEnvironmentKVObject extends Cloudflare.DurableObject<WorkerEnvironmentKVObject>()(
+  "WorkerEnvironmentKVObject",
+  Effect.gen(function* () {
+    const kv = yield* Cloudflare.KV.ReadWriteNamespace(KV);
+
+    return Effect.gen(function* () {
+      return {
+        put: (key: string, value: string) => kv.put(key, value),
+        get: (key: string) => kv.get(key),
+        tick: (n: number) =>
+          Stream.iterate(0, (i) => i + 1).pipe(
+            Stream.take(n),
+            Stream.schedule(Schedule.spaced("100 millis")),
+          ),
+      };
+    });
+  }).pipe(Effect.provide(Cloudflare.KV.ReadWriteNamespaceBinding)),
+) {}
+```
+
+A DO shape can mix value methods (`put`/`get` return Effects) with streaming methods (`tick` returns a Stream), and its init Effect may close over other bindings — here the KV Namespace it reads and writes.
+
+### Value round-trip
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { WorkerEnvironmentKVObject } from "./object.ts";
+
+export default class KVWorker extends Cloudflare.Worker<KVWorker>()(
+  "KVWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const objects = yield* WorkerEnvironmentKVObject;
+
+    return {
+      fetch: Effect.gen(function* () {
+        const object = objects.getByName("default");
+        yield* object.put("greeting", "ok").pipe(Effect.orDie);
+        const value = yield* object.get("greeting").pipe(Effect.orDie);
+        return yield* HttpServerResponse.json({ value });
+      }),
+    };
+  }),
+) {}
+```
+
+Yielding the DO class binds the namespace to the Worker, `getByName("default")` returns a stub typed as the DO's Shape, and every property access on that stub is a remote call.
+
+### Stream straight onto the response
+
+```typescript
+// GET /tick/:n — inside the same fetch handler
+const stream = objects
+  .getByName("tick")
+  .tick(n)
+  .pipe(
+    Stream.map((i) => `${i}\n`),
+    Stream.encodeText,
+  );
+return HttpServerResponse.stream(stream, {
+  headers: { "content-type": "text/plain" },
+});
+```
+
+The stub call is both an Effect and a Stream — value methods `yield*`, streaming methods pipe through `Stream.*` combinators, and elements are pulled lazily under backpressure all the way to the HTTP response. Durable Object RPC in depth: [Durable Objects](/cloudflare/compute/durable-objects#schemaless-rpc).
+
+## Another script's Durable Object
+
+```typescript
+// src/workerB.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Counter } from "./object.ts";
+import { WorkerA } from "./workerA.ts";
+
+export default class WorkerB extends Cloudflare.Worker<WorkerB>()(
+  "WorkerB",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const counters = yield* Counter.from(WorkerA);
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const name = new URL(request.url, "http://x").pathname.slice(1);
+        const value = yield* counters.getByName(name).get();
+        return HttpServerResponse.json({ value });
+      }),
+    };
+  }),
+) {}
+```
+
+`Counter.from(WorkerA)` reads WorkerA's Deps to confirm `Counter` is part of its public contract, then emits a binding with `scriptName: "WorkerA"` — WorkerB never imports the DO implementation; only the host ships the class. Full walkthrough: [Cross-Worker Durable Objects](/cloudflare/compute/cross-worker-durable-object).
+
+## Containers
+
+### Declare the Shape
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import type { RuntimeContext } from "alchemy/RuntimeContext";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+const Storage = Cloudflare.R2.Bucket("Storage");
+
+export class MyContainer extends Cloudflare.Container<
+  MyContainer,
+  {
+    ping: () => Effect.Effect<string>;
+    readObject: (
+      key: string,
+    ) => Effect.Effect<string | null, never, RuntimeContext>;
+  }
+>()("EffectfulContainer") {}
+
+export default MyContainer.make(
+  {
+    main: import.meta.url,
+    image: "oven/bun:latest",
+  },
+  Effect.gen(function* () {
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Storage);
+
+    return {
+      ping: () => Effect.succeed("pong"),
+      readObject: (key: string) =>
+        bucket.get(key).pipe(
+          Effect.flatMap((object) =>
+            object ? object.text() : Effect.succeed(null),
+          ),
+          Effect.orDie,
+        ),
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("hello from effectful container");
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketHttp)),
+);
+```
+
+Containers are the one pairing where the Shape is written explicitly as a type parameter — there is no init Effect on the class itself to infer from; `MyContainer.make` supplies the implementation (which, like a Worker's, may close over other bindings such as the R2 Bucket here).
+
+### Host it in a Durable Object
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { MyContainer } from "./container.ts";
+
+export class ContainerHost extends Cloudflare.DurableObject<ContainerHost>()(
+  "ContainerHost",
+  Effect.gen(function* () {
+    const container = yield* MyContainer;
+
+    return Effect.gen(function* () {
+      return {
+        ping: () => container.ping(),
+        // Read the object from inside the container over RPC.
+        readObjectRpc: (key: string) => container.readObject(key),
+      };
+    });
+  }).pipe(
+    Effect.provide(
+      Cloudflare.Containers.layer(MyContainer, { enableInternet: true }),
+    ),
+  ),
+) {}
+```
+
+Containers run inside Durable Objects, so the chain is Worker → DO → Container; the container leg rides the fetch transport (`POST /__rpc__/{name}`), and a forwarded value like `readObjectRpc` is itself an RPC call — nested forwarding just works. Running and connecting containers in depth: [Containers](/cloudflare/compute/containers).
+
+## Dynamically-loaded Workers
+
+```typescript
+// Init phase — register the loader binding:
+const loader = yield* Cloudflare.WorkerLoader("LOADER");
+
+// inside the fetch handler — load a sandboxed Worker from inline source:
+const worker = yield* loader.load({
+  compatibilityDate: "2026-01-28",
+  mainModule: "worker.js",
+  modules: { "worker.js": source },
+});
+const api = worker.getEntrypoint<{
+  greet: (name: string) => Effect.Effect<string>;
+}>("api");
+const greeting = yield* api.greet("world");
+```
+
+`getEntrypoint` wraps the loader entrypoint in the same stub proxy — a Worker loaded at runtime speaks schemaless RPC exactly like a statically bound one; here the caller supplies the Shape as a type argument, since there is no class to infer it from. See the [Worker Loader guide](/cloudflare/compute/worker-loader) and the [WorkerLoader API reference](/providers/cloudflare/workers/workerloader).
+
+## Async (non-Effect) consumers
+
+A plain async Worker calls a service binding directly:
+
+```typescript
+// inside a plain async fetch(request, env):
+const greeting = await env.TARGET.greet(name);
+```
+
+Or wrap the binding with `toRpcAsync` to auto-decode the wire
+envelopes:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import type Backend from "../backend.ts";
+
+const backend = Cloudflare.toRpcAsync<Backend>(env.BACKEND);
+const value = await backend.hello(key);
+```
+
+Error envelopes are thrown so `await` rejects, stream envelopes unwrap to their raw `ReadableStream<Uint8Array>` body, and `Service.fetch`/`connect` pass through unchanged. See [Vite SPA](/cloudflare/frontend/vite-spa#wrap-the-binding-for-typed-rpc).
+
+## When you need schemas
+
+Schemaless RPC has zero runtime validation by design — nothing decodes or sanitizes what arrives. At a trust boundary (external clients, versioned APIs), use schema-validated [Effect RPC](/apis/effect-rpc) instead.
+
+## Where next
+
+- [Schemaless RPC](/apis/schemaless) — the pattern: interface rules, transports, streams, errors, limits
+- [Durable Objects](/cloudflare/compute/durable-objects#schemaless-rpc) — DO stubs, streaming methods, and state
+- [Cross-Worker Durable Objects](/cloudflare/compute/cross-worker-durable-object) — bind another script's DO with `Counter.from`
+- [Containers](/cloudflare/compute/containers) — build, host, and call Containers from Durable Objects
+- [Vite SPA](/cloudflare/frontend/vite-spa#wrap-the-binding-for-typed-rpc) — consume an Effect Worker from async server routes
+- [Effect RPC](/apis/effect-rpc) — schema-first RPC for trust boundaries
