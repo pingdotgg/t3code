@@ -49,6 +49,13 @@ const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function
   yield* desktopWindow.dispatchMenuAction(action);
 });
 
+const zoomMainWindow = Effect.fn("desktop.menu.zoomMainWindow")(function* (
+  direction: DesktopWindow.MainWindowZoomDirection,
+): Effect.fn.Return<void, never, DesktopWindow.DesktopWindow> {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.zoomMain(direction);
+});
+
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -127,6 +134,9 @@ export const make = Effect.gen(function* () {
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
+    const zoomClick = (direction: DesktopWindow.MainWindowZoomDirection) => () => {
+      runMenuEffect(`zoom-${direction}`, zoomMainWindow(direction));
+    };
     const template: Electron.MenuItemConstructorOptions[] = [];
 
     if (environment.platform === "darwin") {
@@ -181,10 +191,21 @@ export const make = Effect.gen(function* () {
           { role: "forceReload" },
           { role: "toggleDevTools" },
           { type: "separator" },
-          { role: "resetZoom" },
-          { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
-          { role: "zoomIn", accelerator: "CmdOrCtrl+Plus", visible: false },
-          { role: "zoomOut" },
+          /*
+            Not the zoom roles: those act on the focused webContents, so with
+            an embedded preview WebContentsView focused they zoom the guest
+            page and the app UI appears stuck. These always zoom the main
+            window (see DesktopWindow.zoomMain).
+          */
+          { label: "Actual Size", accelerator: "CmdOrCtrl+0", click: zoomClick("reset") },
+          { label: "Zoom In", accelerator: "CmdOrCtrl+=", click: zoomClick("in") },
+          {
+            label: "Zoom In",
+            accelerator: "CmdOrCtrl+Plus",
+            visible: false,
+            click: zoomClick("in"),
+          },
+          { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
           { type: "separator" },
           { role: "togglefullscreen" },
         ],

@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Redacted from "effect/Redacted";
 import { getAuthProvider } from "../Auth/AuthProvider.ts";
-import { ALCHEMY_PROFILE, Profile } from "../Auth/Profile.ts";
+import { ALCHEMY_PROFILE, AlchemyProfile } from "../Auth/Profile.ts";
 import {
   CLOUDFLARE_AUTH_PROVIDER_NAME,
   type CloudflareAuthConfig,
@@ -19,6 +19,12 @@ import {
 } from "./Auth/AuthProvider.ts";
 
 export { Credentials, fromEnv } from "@distilled.cloud/cloudflare/Credentials";
+
+declare module "@distilled.cloud/cloudflare/Credentials" {
+  interface Credentials {
+    readonly kind: "Credentials";
+  }
+}
 
 /**
  * Build a `Credentials` layer that resolves Cloudflare credentials via the
@@ -29,7 +35,7 @@ export const fromAuthProvider = () =>
   Layer.effect(
     Credentials,
     Effect.gen(function* () {
-      const profile = yield* Profile;
+      const profile = yield* AlchemyProfile;
       const auth = yield* getAuthProvider<
         CloudflareAuthConfig,
         CloudflareResolvedCredentials
@@ -37,7 +43,14 @@ export const fromAuthProvider = () =>
       const profileName = yield* ALCHEMY_PROFILE;
       const ci = yield* Config.boolean("CI").pipe(Config.withDefault(false));
 
-      return profile.loadOrConfigure(auth, profileName, { ci }).pipe(
+      // The distilled HTTP client resolves this service's effect on *every*
+      // request (`yield* config.credentials`). `auth.read` is wrapped in a
+      // cross-process file lock, so without memoization a high-concurrency
+      // run (e.g. `unsafe nuke`) stampedes a single lock and the tail waiters
+      // blow the retry budget with "Lock file is already being held". Cache
+      // the resolution so the lock is acquired once per process, mirroring
+      // `CloudflareEnvironment.fromProfile`.
+      return yield* profile.loadOrConfigure(auth, profileName, { ci }).pipe(
         Effect.flatMap((config) =>
           auth.read(profileName, config as CloudflareAuthConfig),
         ),
@@ -69,6 +82,7 @@ export const fromAuthProvider = () =>
               message: `Failed to resolve Cloudflare credentials for profile '${profileName}': ${(e as { message?: string }).message ?? String(e)}`,
             }),
         ),
+        Effect.cached,
       );
     }),
   );

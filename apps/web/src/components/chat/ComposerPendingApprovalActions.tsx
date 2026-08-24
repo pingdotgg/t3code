@@ -1,7 +1,6 @@
 import { type ApprovalRequestId, type ProviderApprovalDecision } from "@t3tools/contracts";
 import { memo } from "react";
 import { Button } from "../ui/button";
-import { useI18n } from "../../i18n/I18nProvider";
 
 interface ComposerPendingApprovalActionsProps {
   requestId: ApprovalRequestId;
@@ -12,45 +11,50 @@ interface ComposerPendingApprovalActionsProps {
   ) => Promise<unknown>;
 }
 
+const APPROVAL_ACTION_CLASS_NAME = "font-normal";
+
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,
   isResponding,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
-  const { t } = useI18n();
   return (
     <>
       <Button
-        size="sm"
-        variant="ghost"
+        size="micro"
+        variant="ghost-muted"
+        className={APPROVAL_ACTION_CLASS_NAME}
         disabled={isResponding}
         onClick={() => void onRespondToApproval(requestId, "cancel")}
       >
-        {t("chat.approval.cancelTurn")}
+        Cancel
       </Button>
       <Button
-        size="sm"
-        variant="destructive-outline"
+        size="micro"
+        variant="ghost-muted"
+        className={`${APPROVAL_ACTION_CLASS_NAME} text-destructive-foreground [:hover,[data-pressed]]:text-destructive-foreground`}
         disabled={isResponding}
         onClick={() => void onRespondToApproval(requestId, "decline")}
       >
-        {t("chat.approval.decline")}
+        Decline
       </Button>
       <Button
-        size="sm"
-        variant="outline"
+        size="micro"
+        variant="ghost-muted"
+        className={APPROVAL_ACTION_CLASS_NAME}
         disabled={isResponding}
         onClick={() => void onRespondToApproval(requestId, "acceptForSession")}
       >
-        {t("chat.approval.allowSession")}
+        Always allow this session
       </Button>
       <Button
-        size="sm"
-        variant="default"
+        size="micro"
+        variant="ghost-muted"
+        className={`${APPROVAL_ACTION_CLASS_NAME} text-foreground`}
         disabled={isResponding}
         onClick={() => void onRespondToApproval(requestId, "accept")}
       >
-        {t("chat.approval.approveOnce")}
+        Approve
       </Button>
     </>
   );

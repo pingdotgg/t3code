@@ -10,11 +10,11 @@ import {
   type ProviderUpdateSidebarPillView,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { useI18n } from "../../i18n";
+import { Button } from "../ui/button";
 
 const PROVIDER_UPDATE_PILL_STYLES = {
   loading:
-    "bg-primary/15 text-primary group-has-[button.provider-update-main:hover]/provider-update:bg-primary/22",
+    "bg-update-surface text-update-foreground group-has-[button.provider-update-main:hover]/provider-update:bg-update/22",
   success:
     "bg-success/12 text-success group-has-[button.provider-update-main:hover]/provider-update:bg-success/18",
   warning:
@@ -40,7 +40,6 @@ function latestProviderCheckedAt(
 }
 
 export function SidebarProviderUpdatePill() {
-  const { t } = useI18n();
   const navigate = useNavigate();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const [dismissedKeys, setDismissedKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -50,16 +49,12 @@ export function SidebarProviderUpdatePill() {
   const [dismissAfterExitKey, setDismissAfterExitKey] = useState<string | null>(null);
   const [visibleAfterIso, setVisibleAfterIso] = useState<string | undefined>();
   const effectiveVisibleAfterIso = visibleAfterIso ?? latestProviderCheckedAt(providers);
-  const view = getProviderUpdateSidebarPillView(
-    providers,
-    {
-      ...(effectiveVisibleAfterIso !== undefined
-        ? { visibleAfterIso: effectiveVisibleAfterIso }
-        : {}),
-      dismissedKeys,
-    },
-    t,
-  );
+  const view = getProviderUpdateSidebarPillView(providers, {
+    ...(effectiveVisibleAfterIso !== undefined
+      ? { visibleAfterIso: effectiveVisibleAfterIso }
+      : {}),
+    dismissedKeys,
+  });
 
   useEffect(() => {
     if (visibleAfterIso === undefined && effectiveVisibleAfterIso !== undefined) {
@@ -130,7 +125,7 @@ export function SidebarProviderUpdatePill() {
 
   return (
     <div
-      className={`group/provider-update relative flex h-7 min-w-0 w-full items-center overflow-hidden rounded-lg text-xs font-medium transform-gpu transition-all duration-180 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:w-8 ${
+      className={`group/provider-update relative flex h-7 w-full items-center overflow-hidden rounded-lg text-xs font-medium transform-gpu transition-all duration-180 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform ${
         PROVIDER_UPDATE_PILL_STYLES[displayedView.tone]
       } ${
         exitingKey === displayedView.key
@@ -157,7 +152,7 @@ export function SidebarProviderUpdatePill() {
         <div
           key={displayedView.key}
           aria-hidden="true"
-          className={`provider-update-pill-progress pointer-events-none absolute inset-y-0 left-0 w-full origin-left border-r border-current/15 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.08)] ${
+          className={`pointer-events-none absolute inset-y-0 left-0 w-full origin-left animate-[provider-update-pill-countdown_var(--provider-update-pill-dismiss-ms)_linear_forwards] border-r border-current/15 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.08)] ${
             PROVIDER_UPDATE_PILL_PROGRESS_STYLES[displayedView.tone]
           }`}
           style={
@@ -174,21 +169,19 @@ export function SidebarProviderUpdatePill() {
             <button
               type="button"
               aria-label={displayedView.description}
-              className="provider-update-main relative z-[1] flex h-full min-w-0 flex-1 items-center gap-2 px-2 text-left group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+              className="provider-update-main relative z-[1] flex h-full flex-1 items-center gap-2 px-2 text-left"
               onClick={openProviderSettings}
             >
               {displayedView.tone === "loading" ? (
-                <LoaderIcon className="size-3.5 shrink-0 animate-spin" />
+                <LoaderIcon className="size-3.5 animate-spin" />
               ) : displayedView.tone === "success" ? (
-                <CircleCheckIcon className="size-3.5 shrink-0" />
+                <CircleCheckIcon className="size-3.5" />
               ) : displayedView.tone === "error" ? (
-                <TriangleAlertIcon className="size-3.5 shrink-0" />
+                <TriangleAlertIcon className="size-3.5" />
               ) : (
-                <DownloadIcon className="size-3.5 shrink-0" />
+                <DownloadIcon className="size-3.5" />
               )}
-              <span className="min-w-0 truncate whitespace-nowrap group-data-[collapsible=icon]:hidden">
-                {displayedView.title}
-              </span>
+              <span>{displayedView.title}</span>
             </button>
           }
         />
@@ -198,17 +191,18 @@ export function SidebarProviderUpdatePill() {
         <Tooltip>
           <TooltipTrigger
             render={
-              <button
-                type="button"
-                aria-label={t("update.dismissProvider")}
-                className="relative z-[1] mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 group-data-[collapsible=icon]:hidden"
+              <Button
+                size="icon-micro"
+                variant="ghost"
+                aria-label="Dismiss provider update notice"
+                className="relative z-[1] mr-1 [--control-icon-color:currentColor] rounded-md text-inherit opacity-70 hover:bg-transparent hover:opacity-100"
                 onClick={() => startExit(displayedView.key, null, displayedView.key)}
               >
                 <XIcon className="size-3.5" />
-              </button>
+              </Button>
             }
           />
-          <TooltipPopup side="top">{t("update.dismissProviderStatus")}</TooltipPopup>
+          <TooltipPopup side="top">Dismiss until provider status changes</TooltipPopup>
         </Tooltip>
       )}
     </div>

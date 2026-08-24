@@ -1,0 +1,35 @@
+{
+  "name": "alchemy-test",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Minimal Effect-native, vitest-compatible test harness and single-process runner for alchemy",
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "alchemy-test": "./bin/alchemy-test.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "bun": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./*": {
+      "types": "./lib/*.d.ts",
+      "bun": "./src/*.ts",
+      "import": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@opentui/core": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "catalog:"
+  }
+}

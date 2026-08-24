@@ -1,5 +1,6 @@
 import * as iam from "@distilled.cloud/aws/iam";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -50,13 +51,21 @@ export interface User extends Resource<
   "AWS.IAM.User",
   UserProps,
   {
+    /** The ARN of the user. */
     userArn: string;
+    /** The name of the user. */
     userName: string;
+    /** The stable unique ID of the user. */
     userId: string | undefined;
+    /** The IAM path of the user. */
     path: string | undefined;
+    /** The managed policy ARN used as the permissions boundary, if any. */
     permissionsBoundary: string | undefined;
+    /** Managed policy ARNs attached to the user. */
     managedPolicyArns: string[];
+    /** Inline policies embedded in the user, keyed by policy name. */
     inlinePolicies: Record<string, PolicyDocument>;
+    /** The tags applied to the user. */
     tags: Record<string, string>;
   },
   never,
@@ -68,7 +77,7 @@ export interface User extends Resource<
  *
  * `User` manages a long-lived IAM identity together with its attached managed
  * policies, inline policies, permissions boundary, and tags.
- *
+ * @resource
  * @section Creating IAM Users
  * @example User with Managed Policies
  * ```typescript
@@ -92,10 +101,13 @@ export const UserProvider = () =>
           : createPhysicalName({ id, maxLength: 64 });
 
       const readManagedPolicies = Effect.fn(function* (userName: string) {
-        const listed = yield* iam.listAttachedUserPolicies({
-          UserName: userName,
-        });
-        return (listed.AttachedPolicies ?? [])
+        const attached = yield* iam.listAttachedUserPolicies
+          .items({ UserName: userName })
+          .pipe(
+            Stream.runCollect,
+            Effect.map((chunk) => Array.from(chunk)),
+          );
+        return attached
           .map((policy) => policy.PolicyArn)
           .filter(
             (policyArn): policyArn is string => typeof policyArn === "string",
@@ -103,11 +115,14 @@ export const UserProvider = () =>
       });
 
       const readInlinePolicies = Effect.fn(function* (userName: string) {
-        const listed = yield* iam.listUserPolicies({
-          UserName: userName,
-        });
+        const policyNames = yield* iam.listUserPolicies
+          .items({ UserName: userName })
+          .pipe(
+            Stream.runCollect,
+            Effect.map((chunk) => Array.from(chunk)),
+          );
         const entries = yield* Effect.all(
-          (listed.PolicyNames ?? []).map((policyName) =>
+          policyNames.map((policyName) =>
             iam
               .getUserPolicy({
                 UserName: userName,
@@ -212,6 +227,54 @@ export const UserProvider = () =>
 
       return {
         stables: ["userArn", "userName", "userId"],
+        list: () =>
+          Effect.gen(function* () {
+            // IAM is global; `listUsers` enumerates every user in the
+            // account. Paginate exhaustively, then hydrate each user's
+            // managed/inline policies and tags (the list summary omits
+            // them) to produce the same Attributes shape `read` returns.
+            const users = yield* iam.listUsers.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) => page.Users ?? []),
+              ),
+            );
+
+            const hydrated = yield* Effect.forEach(
+              users,
+              (user) =>
+                Effect.gen(function* () {
+                  const [managedPolicyArns, inlinePolicies, tags] =
+                    yield* Effect.all([
+                      readManagedPolicies(user.UserName),
+                      readInlinePolicies(user.UserName),
+                      readTags(user.UserName),
+                    ]);
+                  return {
+                    userArn: user.Arn,
+                    userName: user.UserName,
+                    userId: user.UserId,
+                    path: user.Path,
+                    permissionsBoundary:
+                      user.PermissionsBoundary?.PermissionsBoundaryArn,
+                    managedPolicyArns,
+                    inlinePolicies,
+                    tags,
+                  };
+                }).pipe(
+                  // A user may be deleted concurrently mid-hydration.
+                  Effect.catchTag("NoSuchEntityException", () =>
+                    Effect.succeed(undefined),
+                  ),
+                ),
+              { concurrency: 10 },
+            );
+
+            return hydrated.filter(
+              (attrs): attrs is NonNullable<typeof attrs> =>
+                attrs !== undefined,
+            );
+          }),
         diff: Effect.fn(function* ({ id, olds, news }) {
           if (!isResolved(news)) return;
           if (
@@ -378,47 +441,44 @@ export const UserProvider = () =>
             })
             .pipe(Effect.catchTag("NoSuchEntityException", () => Effect.void));
 
-          const inlinePolicies = yield* iam
-            .listUserPolicies({
-              UserName: output.userName,
-            })
-            .pipe(
-              Effect.catchTag("NoSuchEntityException", () =>
-                Effect.succeed(undefined),
-              ),
-            );
-          for (const policyName of inlinePolicies?.PolicyNames ?? []) {
-            yield* iam
-              .deleteUserPolicy({
-                UserName: output.userName,
-                PolicyName: policyName,
-              })
-              .pipe(
-                Effect.catchTag("NoSuchEntityException", () => Effect.void),
-              );
-          }
-
-          const attachedPolicies = yield* iam
-            .listAttachedUserPolicies({
-              UserName: output.userName,
-            })
-            .pipe(
-              Effect.catchTag("NoSuchEntityException", () =>
-                Effect.succeed(undefined),
-              ),
-            );
-          for (const policy of attachedPolicies?.AttachedPolicies ?? []) {
-            if (policy.PolicyArn) {
-              yield* iam
-                .detachUserPolicy({
+          yield* iam.listUserPolicies.items({ UserName: output.userName }).pipe(
+            Stream.mapEffect((policyName) =>
+              iam
+                .deleteUserPolicy({
                   UserName: output.userName,
-                  PolicyArn: policy.PolicyArn,
+                  PolicyName: policyName,
                 })
                 .pipe(
                   Effect.catchTag("NoSuchEntityException", () => Effect.void),
-                );
-            }
-          }
+                ),
+            ),
+            Stream.runDrain,
+            // The user itself may already be gone.
+            Effect.catchTag("NoSuchEntityException", () => Effect.void),
+          );
+
+          yield* iam.listAttachedUserPolicies
+            .items({ UserName: output.userName })
+            .pipe(
+              Stream.mapEffect((policy) =>
+                policy.PolicyArn
+                  ? iam
+                      .detachUserPolicy({
+                        UserName: output.userName,
+                        PolicyArn: policy.PolicyArn,
+                      })
+                      .pipe(
+                        Effect.catchTag(
+                          "NoSuchEntityException",
+                          () => Effect.void,
+                        ),
+                      )
+                  : Effect.void,
+              ),
+              Stream.runDrain,
+              // The user itself may already be gone.
+              Effect.catchTag("NoSuchEntityException", () => Effect.void),
+            );
 
           yield* iam
             .deleteUser({

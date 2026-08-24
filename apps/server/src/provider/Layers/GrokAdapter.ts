@@ -69,7 +69,7 @@ import {
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
-const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
+const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
 const PROVIDER = ProviderDriverKind.make("grok");
 const GROK_RESUME_VERSION = 1 as const;
@@ -596,6 +596,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               : {}),
             ...acpNativeLoggers,
           }).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
             Effect.provideService(Scope.Scope, sessionScope),
             Effect.mapError(
               (cause) =>
@@ -875,7 +876,13 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             Effect.catch((cause) =>
               Effect.logError("Failed to process Grok runtime notification.", { cause }),
             ),
-            Effect.forkChild,
+            // Fork into the session scope, not the calling fiber. `forkChild`
+            // makes this a child of `startSession`, and Effect interrupts a
+            // fiber's children when it completes, so the consumer died as soon
+            // as `startSession` returned and every later notification was
+            // dropped. The scope is created, stored on the context and closed
+            // on teardown already; only the fork target was wrong.
+            Effect.forkIn(ctx.scope),
           );
 
           ctx.notificationFiber = nf;

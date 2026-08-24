@@ -26,6 +26,14 @@ describe("mobile remote connection records", () => {
       label: "T3 Code Mobile",
       deviceType: "mobile",
       os: "iOS",
+      surface: "mobile",
+    });
+  });
+
+  it("includes the mobile app version when the client provides it", () => {
+    expect(authClientMetadata("1.2.3")).toMatchObject({
+      surface: "mobile",
+      appVersion: "1.2.3",
     });
   });
 

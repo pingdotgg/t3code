@@ -1,0 +1,240 @@
+---
+title: Dashboards as code
+description: Declare Axiom dashboards — charts, layout, filter bars, saved views, and deploy annotations — as alchemy resources next to the services they observe.
+---
+
+An Axiom dashboard is a single JSON document: charts, a grid layout,
+a time window, a refresh interval. In alchemy that document is the
+input to one `Dashboard` resource, so a chart tweak is a reviewable
+diff and every stage gets the same dashboard.
+
+This guide builds an ops dashboard chart by chart, then adds the two
+resources that round it out: saved `View`s and deploy `Annotation`s.
+You'll need the Axiom provider registered ([setup](/axiom/setup)) and
+a dataset to query ([ingest](/axiom/data/ingest)).
+
+## Start with an empty dashboard
+
+```typescript
+import * as Axiom from "alchemy/Axiom";
+
+yield* Axiom.Dashboard("ops", {
+  dashboard: {
+    name: "Ops Overview",
+    owner: "",                 // org-shared — required for API tokens
+    description: "Top-level service health",
+    charts: [],
+    layout: [],
+    refreshTime: 60,           // seconds: 15 | 60 | 300
+    schemaVersion: 2,
+    timeWindowStart: "qr-now-1h",
+    timeWindowEnd: "qr-now",
+  },
+});
+```
+
+The resource takes the full dashboard document at `schemaVersion: 2`.
+Axiom assigns the `uid` on create (exposed as an output along with
+`id` and the timestamps); updates overwrite the whole document in
+place, so the deployed dashboard always matches what's in your code.
+
+## Add a chart
+
+```typescript
+import type { Chart, LayoutCell } from "alchemy/Axiom";
+
+const errors: Chart = {
+  id: "errors-5m",
+  name: "5xx errors / 5m",
+  type: "TimeSeries",
+  query: {
+    apl: `['my-app-traces']
+      | where status >= 500
+      | summarize count() by bin_auto(_time)`,
+  },
+};
+
+yield* Axiom.Dashboard("errors", {
+  dashboard: {
+    name: "Errors",
+    owner: "",
+    refreshTime: 60,
+    schemaVersion: 2,
+    timeWindowStart: "qr-now-24h",
+    timeWindowEnd: "qr-now",
+    charts: [errors],
+    layout: [{ i: errors.id, x: 0, y: 0, w: 12, h: 6 } satisfies LayoutCell],
+  },
+});
+```
+
+`chart.id` is a free-form string you pick — the layout cell's `i`
+joins to it. There's no `dataset` field: the dataset is implicit in
+the APL query (`['my-app-traces']`).
+
+## The chart union
+
+```typescript
+const p99: Chart = {
+  id: "p99",
+  name: "p99 latency",
+  type: "Statistic",
+  query: {
+    apl: `['my-app-traces'] | summarize percentile(duration_ms, 99)`,
+  },
+};
+```
+
+`Chart` is a discriminated union over the kinds Axiom's API
+validates: `TimeSeries`, `Table`, `Pie`, `Statistic`, `Heatmap`, and
+`LogStream` for data charts, plus `Note` and `SmartFilter` (below).
+Every data chart carries exactly the same payload — `{ id, name,
+type, query: { apl } }` — and switching kinds is just changing
+`type`.
+
+## Add a note
+
+```typescript
+const readme: Chart = {
+  id: "readme",
+  type: "Note",
+  text: "## Ops overview\n\nEscalation: #ops-oncall. Runbooks linked per chart.",
+};
+```
+
+`Note` is the one chart without a `query` or a `name` — its payload
+is strictly `{ id, type, text, variant? }`, with `text` rendered as
+markdown in the cell.
+
+## Add a filter bar
+
+```typescript
+const filters: Chart = {
+  id: "env-filter",
+  type: "SmartFilter",
+  filters: [
+    {
+      id: "environment",
+      type: "select",
+      name: "Environment",
+      selectType: "list",
+      options: [
+        { key: "production", value: "production", default: true },
+        { key: "staging", value: "staging" },
+      ],
+    },
+  ],
+};
+```
+
+`SmartFilter` is the wire name for what the UI calls a filter bar.
+Each entry is either a free-text `search` filter or a dropdown
+`select` filter — dropdown options come from an inline `list` (as
+here) or, with `selectType: "apl"`, from a query returning
+`{ key, value }` rows. Other charts pick the value up by declaring a
+query parameter named after the filter's `id`:
+`declare query_parameters (environment:string = "")`.
+
+## Lay out the grid
+
+```typescript
+layout: [
+  { i: "env-filter", x: 0, y: 0, w: 12, h: 2 },
+  { i: "errors-5m",  x: 0, y: 2, w: 6,  h: 6 },
+  { i: "p99",        x: 6, y: 2, w: 6,  h: 6 },
+],
+```
+
+Each `LayoutCell` positions one chart by its `i`: `x`/`y` place it on
+the grid, `w`/`h` size it, and optional `minW`/`minH`/`maxW`/`maxH`
+and `static` constrain how it can be resized or moved in the UI.
+Every chart in `charts` needs a matching cell.
+
+## Compare against yesterday
+
+```typescript
+yield* Axiom.Dashboard("compare", {
+  dashboard: {
+    name: "Compare vs yesterday",
+    owner: "",
+    refreshTime: 300,
+    schemaVersion: 2,
+    timeWindowStart: "qr-now-1h",
+    timeWindowEnd: "qr-now",
+    against: "-1d",            // overlay the same window from 24h ago
+    charts: [],
+    layout: [],
+  },
+});
+```
+
+`against` overlays each chart with the same query shifted by the
+given offset — the classic "is this spike new or does it happen every
+day at this hour" view.
+
+## Payload gotchas
+
+Axiom's `POST /v2/dashboards` is strict, and the failure modes are
+worth knowing up front:
+
+- Relative time windows use the `qr-now-{duration}` form
+  (`"qr-now-7d"`, `"qr-now"`) — plain `"now-7d"` is rejected.
+- When authenticating with an API token, `dashboard.owner` must be
+  `""`. Axiom rewrites it to the org-shared `X-AXIOM-EVERYONE`;
+  per-user "private" dashboards aren't allowed for tokens.
+- Data-chart payloads accept only `id`, `name`, `type`, `query` —
+  extra keys like `dataset` or `description` fail with
+  `Unrecognized keys: "<name>"`.
+- `refreshTime` is in seconds: `15`, `60`, or `300`.
+
+## Save a view
+
+```typescript
+yield* Axiom.View("recent-errors", {
+  name: "recent-errors",
+  description: "Last 100 5xx responses",
+  datasets: ["my-app-traces"],
+  aplQuery: `
+    ['my-app-traces']
+    | where status >= 500
+    | order by _time desc
+    | take 100
+  `,
+});
+```
+
+A `View` is a named, shareable APL query — the investigation you keep
+re-typing, pinned as a resource. Its `name` is the identifier, so
+renaming a view is a replacement (delete old, create new).
+
+## Mark deploys with annotations
+
+```typescript
+yield* Axiom.Annotation("deploy-1.2.3", {
+  type: "deploy",
+  title: "Release 1.2.3",
+  datasets: ["my-app-traces", "my-app-logs"],
+  time: new Date().toISOString(),
+  url: "https://github.com/acme/app/releases/tag/v1.2.3",
+});
+```
+
+An `Annotation` draws a vertical marker on every chart over the
+listed datasets — pass a single `time` for a point event or `time` +
+`endTime` for a range (an incident window), with `type` grouping
+markers visually. Deploy markers next to your error charts answer
+"did the release cause this" at a glance.
+
+## Where next
+
+- [Alerting](/axiom/guides/alerting) — turn the same APL queries into
+  monitors and notifiers.
+- [Ingest](/axiom/data/ingest) — datasets, tokens, and wiring OTEL output
+  into Axiom.
+- [Axiom overview](/axiom) — all resources at a glance.
+
+Reference:
+
+- [Dashboard API reference](/providers/axiom/dashboard)
+- [View API reference](/providers/axiom/view)
+- [Annotation API reference](/providers/axiom/annotation)

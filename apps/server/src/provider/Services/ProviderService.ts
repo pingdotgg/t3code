@@ -21,6 +21,8 @@ import type {
   ProviderSession,
   ProviderSessionStartInput,
   ProviderStopSessionInput,
+  ProviderUploadFeedbackInput,
+  ProviderUploadFeedbackResult,
   ThreadId,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
@@ -29,10 +31,7 @@ import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
-import type {
-  ProviderAdapterCapabilities,
-  ProviderThreadContextSnapshot,
-} from "./ProviderAdapter.ts";
+import type { ProviderAdapterCapabilities } from "./ProviderAdapter.ts";
 import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 /**
@@ -109,12 +108,11 @@ export interface ProviderServiceShape {
   }) => Effect.Effect<void, ProviderServiceError>;
 
   /**
-   * Read the provider-native context (raw messages) of a thread for
-   * inspection. Requires an active session on the owning adapter.
+   * Upload a thread and return the provider's shareable feedback identifier.
    */
-  readonly readThreadContext: (input: {
-    readonly threadId: ThreadId;
-  }) => Effect.Effect<ProviderThreadContextSnapshot, ProviderServiceError>;
+  readonly uploadFeedback: (
+    input: ProviderUploadFeedbackInput,
+  ) => Effect.Effect<ProviderUploadFeedbackResult, ProviderServiceError>;
 
   /**
    * Canonical provider runtime event stream.

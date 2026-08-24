@@ -4,18 +4,22 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { ThreadId } from "@t3tools/contracts";
+import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
+import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import {
-  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
-  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+  buildCodexDeveloperInstructions,
+  codexDefaultModeDeveloperInstructions,
+  codexPlanModeDeveloperInstructions,
 } from "../CodexDeveloperInstructions.ts";
+import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
+  makeMemoryConsolidationNotificationFilter,
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
@@ -102,6 +106,7 @@ describe("buildTurnStartParams", () => {
     NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "never",
+      approvalsReviewer: "user",
       sandboxPolicy: {
         type: "dangerFullAccess",
       },
@@ -118,7 +123,10 @@ describe("buildTurnStartParams", () => {
         settings: {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
-          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+          developer_instructions: buildCodexDeveloperInstructions("plan", {
+            model: "gpt-5.3-codex",
+            reasoningEffort: "medium",
+          }),
         },
       },
     });
@@ -144,6 +152,7 @@ describe("buildTurnStartParams", () => {
     NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "on-request",
+      approvalsReviewer: "user",
       sandboxPolicy: {
         type: "workspaceWrite",
       },
@@ -163,11 +172,55 @@ describe("buildTurnStartParams", () => {
         settings: {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
-          developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+          developer_instructions: buildCodexDeveloperInstructions("default", {
+            model: "gpt-5.3-codex",
+            reasoningEffort: "medium",
+          }),
         },
       },
     });
   });
+
+  it("reports the same fallback model and effort in settings and instructions", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Go",
+        interactionMode: "default",
+      }),
+    );
+
+    const settings = params.collaborationMode?.settings;
+    NodeAssert.equal(settings?.model, DEFAULT_MODEL);
+    NodeAssert.equal(settings?.reasoning_effort, "medium");
+    NodeAssert.ok(settings?.developer_instructions?.includes(`as ${DEFAULT_MODEL} with medium`));
+  });
+
+  it.effect("routes approvals to the auto reviewer in auto mode", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "auto",
+        prompt: "Ship it",
+      });
+
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+        },
+        input: [
+          {
+            type: "text",
+            text: "Ship it",
+          },
+        ],
+      });
+    }),
+  );
 
   it("omits collaboration mode when interaction mode is absent", () => {
     const params = Effect.runSync(
@@ -181,6 +234,7 @@ describe("buildTurnStartParams", () => {
     NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "untrusted",
+      approvalsReviewer: "user",
       sandboxPolicy: {
         type: "readOnly",
       },
@@ -194,17 +248,90 @@ describe("buildTurnStartParams", () => {
   });
 });
 
+describe("buildCodexDeveloperInstructions", () => {
+  it("appends runtime info after the mode instructions", () => {
+    const instructions = buildCodexDeveloperInstructions("default", {
+      model: "gpt-5.3-codex",
+      reasoningEffort: "high",
+    });
+
+    NodeAssert.ok(instructions.startsWith(codexDefaultModeDeveloperInstructions(true)));
+    NodeAssert.match(instructions, /T3 Code/);
+    NodeAssert.match(instructions, /Codex harness/);
+    NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
+  });
+
+  it("includes runtime info alongside plan mode instructions", () => {
+    const instructions = buildCodexDeveloperInstructions("plan", {
+      model: "gpt-5.3-codex",
+      reasoningEffort: "medium",
+    });
+
+    NodeAssert.ok(instructions.startsWith(codexPlanModeDeveloperInstructions(true)));
+    NodeAssert.match(instructions, /as gpt-5\.3-codex with medium reasoning effort/);
+  });
+
+  it("varies with the model and effort of each turn", () => {
+    const first = buildCodexDeveloperInstructions("default", {
+      model: "gpt-5.3-codex",
+      reasoningEffort: "medium",
+    });
+    const second = buildCodexDeveloperInstructions("default", {
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+    });
+
+    NodeAssert.notEqual(first, second);
+  });
+
+  it("flattens multiline metadata into single-line runtime info", () => {
+    const instructions = buildCodexDeveloperInstructions("default", {
+      model: "gpt\n5.3\ncodex",
+      reasoningEffort: " high\neffort ",
+    });
+
+    NodeAssert.match(instructions, /as gpt 5\.3 codex with high effort reasoning effort/);
+    NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
+  });
+});
+
 describe("T3 browser developer instructions", () => {
   it("prefers the product-native preview tools in both collaboration modes", () => {
     for (const instructions of [
-      CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
-      CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+      codexDefaultModeDeveloperInstructions(true),
+      codexPlanModeDeveloperInstructions(true),
     ]) {
       NodeAssert.match(instructions, /t3-code/);
       NodeAssert.match(instructions, /preview_status/);
       NodeAssert.match(instructions, /preview_open/);
       NodeAssert.match(instructions, /Do not switch to global browser skills/);
     }
+  });
+
+  it("omits the browser block entirely when the preview tools are not attached", () => {
+    for (const instructions of [
+      codexDefaultModeDeveloperInstructions(false),
+      codexPlanModeDeveloperInstructions(false),
+    ]) {
+      NodeAssert.doesNotMatch(instructions, /preview_status/);
+      NodeAssert.doesNotMatch(instructions, /preview_open/);
+      NodeAssert.doesNotMatch(instructions, /T3 Code collaborative browser/);
+      // Steering away from other browser automation must go with the tools;
+      // keeping it would leave the model talked out of its only option.
+      NodeAssert.doesNotMatch(instructions, /Do not switch to global browser skills/);
+      // The rest of the collaboration mode is untouched.
+      NodeAssert.match(instructions, /<collaboration_mode>/);
+      NodeAssert.match(instructions, /<\/collaboration_mode>/);
+    }
+  });
+
+  it("tracks the turn's MCP configuration rather than defaulting to on", () => {
+    const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
+    NodeAssert.match(buildCodexDeveloperInstructions("default", runtime, true), /preview_open/);
+    NodeAssert.doesNotMatch(
+      buildCodexDeveloperInstructions("default", runtime, false),
+      /preview_open/,
+    );
   });
 });
 
@@ -219,6 +346,171 @@ describe("hasConfiguredMcpServer", () => {
   });
 });
 
+function makeThreadStartedNotification(
+  threadId: string,
+  source: EffectCodexSchema.V2ThreadStartedNotification["thread"]["source"],
+  threadSource?: string,
+) {
+  return {
+    method: "thread/started" as const,
+    params: {
+      thread: {
+        cliVersion: "0.0.0",
+        createdAt: 0,
+        cwd: "/tmp/project",
+        ephemeral: true,
+        id: threadId,
+        modelProvider: "openai",
+        preview: "",
+        sessionId: threadId,
+        source,
+        status: { type: "idle" as const },
+        ...(threadSource ? { threadSource } : {}),
+        turns: [],
+        updatedAt: 0,
+      },
+    },
+  };
+}
+
+describe("makeMemoryConsolidationNotificationFilter", () => {
+  it("suppresses memory consolidation without hiding other Codex subagents", () => {
+    const shouldSuppress = makeMemoryConsolidationNotificationFilter();
+
+    NodeAssert.equal(
+      shouldSuppress(
+        makeThreadStartedNotification("memory-thread", "unknown", "memory_consolidation"),
+      ),
+      true,
+    );
+    NodeAssert.equal(
+      shouldSuppress({
+        method: "item/agentMessage/delta",
+        params: {
+          delta: "internal memory update",
+          itemId: "memory-message",
+          threadId: "memory-thread",
+          turnId: "memory-turn",
+        },
+      }),
+      true,
+    );
+    NodeAssert.equal(
+      shouldSuppress({
+        method: "serverRequest/resolved",
+        params: {
+          requestId: "memory-approval",
+          threadId: "memory-thread",
+        },
+      }),
+      false,
+    );
+    NodeAssert.equal(
+      shouldSuppress({
+        method: "warning",
+        params: {
+          message: "internal warning",
+          threadId: "memory-thread",
+        },
+      }),
+      true,
+    );
+    NodeAssert.equal(
+      shouldSuppress({
+        method: "item/agentMessage/delta",
+        params: {
+          delta: "normal reply",
+          itemId: "root-message",
+          threadId: "root-thread",
+          turnId: "root-turn",
+        },
+      }),
+      false,
+    );
+
+    NodeAssert.equal(
+      shouldSuppress(
+        makeThreadStartedNotification("legacy-memory-thread", {
+          subAgent: "memory_consolidation",
+        }),
+      ),
+      true,
+    );
+
+    for (const source of [
+      { subAgent: "review" as const },
+      { subAgent: "compact" as const },
+      {
+        subAgent: {
+          thread_spawn: {
+            depth: 1,
+            parent_thread_id: "root-thread",
+          },
+        },
+      },
+    ]) {
+      NodeAssert.equal(
+        shouldSuppress(makeThreadStartedNotification("visible-subagent", source)),
+        false,
+      );
+    }
+  });
+
+  it("forgets memory consolidation threads after they close", () => {
+    const shouldSuppress = makeMemoryConsolidationNotificationFilter();
+    shouldSuppress(
+      makeThreadStartedNotification("memory-thread", "unknown", "memory_consolidation"),
+    );
+
+    NodeAssert.equal(
+      shouldSuppress({
+        method: "thread/closed",
+        params: { threadId: "memory-thread" },
+      }),
+      true,
+    );
+    NodeAssert.equal(
+      shouldSuppress({
+        method: "item/agentMessage/delta",
+        params: {
+          delta: "later message",
+          itemId: "later-message",
+          threadId: "memory-thread",
+          turnId: "later-turn",
+        },
+      }),
+      false,
+    );
+  });
+});
+
+describe("codexSessionAppServerArgs", () => {
+  it("keeps the app-server subcommand when explicit args are provided", () => {
+    NodeAssert.deepStrictEqual(codexSessionAppServerArgs(["-c", "model=gpt-5"], undefined), [
+      "app-server",
+      "-c",
+      "model=gpt-5",
+    ]);
+  });
+
+  it("keeps launch args when explicit app-server args are provided", () => {
+    NodeAssert.deepStrictEqual(
+      codexSessionAppServerArgs(
+        ["-c", "mcp_servers.t3-code.url=http://127.0.0.1/mcp"],
+        "--strict-config --enable foo",
+      ),
+      [
+        "app-server",
+        "--strict-config",
+        "--enable",
+        "foo",
+        "-c",
+        "mcp_servers.t3-code.url=http://127.0.0.1/mcp",
+      ],
+    );
+  });
+});
+
 describe("isRecoverableThreadResumeError", () => {
   it("matches missing thread errors", () => {
     NodeAssert.equal(
@@ -226,6 +518,18 @@ describe("isRecoverableThreadResumeError", () => {
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
           errorMessage: "Thread does not exist",
+        }),
+      ),
+      true,
+    );
+  });
+
+  it("matches a missing rollout for a known thread id", () => {
+    NodeAssert.equal(
+      isRecoverableThreadResumeError(
+        new CodexErrors.CodexAppServerRequestError({
+          code: -32603,
+          errorMessage: "no rollout found for thread id 019fdf74-aaa9-7950-b252-7cc7a8650470",
         }),
       ),
       true,

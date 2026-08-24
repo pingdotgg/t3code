@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS,
   commitBrowserViewportChange,
+  runBrowserViewportMutation,
   subscribeBrowserViewportChange,
 } from "./browserViewportActions";
 
@@ -68,6 +69,33 @@ describe("browserViewportActions", () => {
     releaseFirst?.();
     await Promise.all([first, second]);
     expect(calls).toEqual([800, 900]);
+    unsubscribe();
+  });
+
+  it("serializes background mutations with visible viewport commits", async () => {
+    let releaseBackground: (() => void) | undefined;
+    const backgroundPending = new Promise<void>((resolve) => {
+      releaseBackground = resolve;
+    });
+    const calls: string[] = [];
+    const background = runBrowserViewportMutation("tab-shared", async () => {
+      calls.push("background");
+      await backgroundPending;
+    });
+    const unsubscribe = subscribeBrowserViewportChange("tab-shared", async () => {
+      calls.push("visible");
+    });
+    const visible = commitBrowserViewportChange("tab-shared", {
+      _tag: "freeform",
+      width: 900,
+      height: 700,
+    });
+
+    await vi.waitFor(() => expect(calls).toEqual(["background"]));
+    releaseBackground?.();
+    await Promise.all([background, visible]);
+
+    expect(calls).toEqual(["background", "visible"]);
     unsubscribe();
   });
 

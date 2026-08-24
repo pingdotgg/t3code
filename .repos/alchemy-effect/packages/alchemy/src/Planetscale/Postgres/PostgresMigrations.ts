@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import { Client } from "pg";
-import { listSqlFiles, readSqlFile, type SqlFile } from "../../Sql/SqlFile.ts";
+import { listSqlFiles, readSqlFile, type SqlFile } from "../../SQL/SqlFile.ts";
 
 const MIGRATION_ROLE_TTL_SECONDS = 600;
 
@@ -203,9 +203,10 @@ const withTemporaryPostgresRole = <A, E, R>(
           // Already-deleted roles are a success: nothing to clean up.
           Effect.catchTag("NotFound", () => Effect.void),
           Effect.retry({
-            schedule: Schedule.exponential("500 millis").pipe(
-              Schedule.both(Schedule.recurs(5)),
-            ),
+            schedule: Schedule.max([
+              Schedule.exponential("500 millis"),
+              Schedule.recurs(5),
+            ]),
           }),
           // Migrations succeeded; don't fail the parent over a release-step
           // hiccup. The role's TTL bounds the orphan window; log loudly so

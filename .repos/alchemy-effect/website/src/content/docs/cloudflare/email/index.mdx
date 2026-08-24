@@ -1,0 +1,234 @@
+---
+title: Email
+description: Cloudflare Email Routing turns a zone into a mail endpoint — enable routing, verify destinations, forward with rules and a catch-all, hand mail to a Worker, and send from Workers with the send_email binding.
+---
+
+Email Routing turns a zone you own into a mail endpoint: rules match
+inbound mail and forward it, drop it, or hand it to a Worker — and
+once routing is enabled, Workers can also *send* mail from the domain
+through a `send_email` binding.
+
+You need a zone first — see [Domains & DNS](/cloudflare/networking/domains).
+Receiving needs a verified destination address (or a Worker); sending
+needs routing enabled on the sender's domain. The category also
+covers sending subdomains and the enterprise Email Security suite,
+both below.
+
+## Enable routing on the zone
+
+`Email.Routing` is the prerequisite for both directions:
+
+```typescript
+const routing = yield* Cloudflare.Email.Routing("Routing", {
+  zone: "example.com",
+});
+// routing.zoneId, routing.enabled, routing.status
+```
+
+`zone` accepts a zone id, a zone name, or a `{ zoneId }` object;
+moving zones is a replacement, and destroy disables Email Routing on
+the zone.
+
+## Verify a destination address
+
+Rules can only forward to addresses Cloudflare has verified:
+
+```typescript
+const inbox = yield* Cloudflare.Email.Address("Inbox", {
+  email: "you@personal.example",
+});
+// inbox.verified, inbox.verifiedAt
+```
+
+Cloudflare emails a verification link on first create — until it's
+clicked, forwards don't deliver; addresses are account-scoped, and
+changing `email` is a replacement.
+
+## Forward an address
+
+`Email.Rule` matches inbound mail on the zone and applies actions:
+
+```typescript
+const rule = yield* Cloudflare.Email.Rule("InboxRule", {
+  zone: "example.com",
+  name: "Forward inbox to destination",
+  matchers: [{ type: "literal", field: "to", value: "inbox@example.com" }],
+  actions: [{ type: "forward", value: ["you@personal.example"] }],
+});
+```
+
+Mail that matches no rule falls through to the zone's catch-all;
+lower `priority` numbers run first (default `0`).
+
+## Catch everything else
+
+The catch-all is a per-zone singleton — `Email.CatchAll` puts the
+desired configuration and restores the prior state on destroy:
+
+```typescript
+yield* Cloudflare.Email.CatchAll("CatchAll", {
+  zone: routing.zoneId,
+  actions: [{ type: "forward", value: ["you@personal.example"] }],
+});
+```
+
+To silently discard unmatched mail instead:
+
+```typescript
+yield* Cloudflare.Email.CatchAll("DropTheRest", {
+  zone: routing.zoneId,
+  actions: [{ type: "drop" }],
+});
+```
+
+## Hand mail to a Worker
+
+Both `Rule` and `CatchAll` accept a `worker` action naming a deployed
+Worker script (its `workerName` attribute):
+
+```typescript
+yield* Cloudflare.Email.CatchAll("CatchAllWorker", {
+  zone: routing.zoneId,
+  actions: [{ type: "worker", value: ["my-email-worker"] }],
+});
+```
+
+Matched messages are delivered to that Worker's `email` handler
+instead of a mailbox.
+
+## Declare the send_email binding
+
+`Email.SendEmail` is a binding descriptor, not a cloud resource — it
+names the binding and pins sender/destination restrictions Cloudflare
+enforces at send time:
+
+```typescript
+// src/email.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Email = Cloudflare.Email.SendEmail("Email", {
+  allowedSenderAddresses: ["bot@example.com"],
+  destinationAddress: "you@personal.example",
+});
+```
+
+`destinationAddress` pins one verified destination,
+`allowedDestinationAddresses` allows a list (the two are mutually
+exclusive); omit all three to send to any verified destination on the
+account.
+
+## Send from a Worker
+
+Bind the descriptor with `Email.Send` in the Worker's init phase and
+provide `Email.SendBinding` as the implementation layer:
+
+```typescript
+// src/notifier.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Email } from "./email.ts";
+
+export default Cloudflare.Worker(
+  "Notifier",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const email = yield* Cloudflare.Email.Send(Email);
+
+    return {
+      fetch: Effect.gen(function* () {
+        yield* email.send({
+          from: "bot@example.com",
+          to: "you@personal.example",
+          subject: "Hello from a Worker",
+          text: "Sent via the send_email binding.",
+        });
+        return yield* HttpServerResponse.json({ ok: true });
+      }).pipe(
+        Effect.catchTag("SendEmailError", (error) =>
+          Effect.succeed(
+            HttpServerResponse.text(error.message, { status: 502 }),
+          ),
+        ),
+      ),
+    };
+  }).pipe(Effect.provide(Cloudflare.Email.SendBinding)),
+);
+```
+
+Rejections (an unverified destination, a sender outside the allow
+list) surface as a typed `SendEmailError`; the client also exposes
+`sendRaw` for a pre-built `EmailMessage` and `raw` for the underlying
+runtime binding. The `from:` address must be on a domain with routing
+enabled, and the `to:` address must be a verified destination.
+
+## Send from a subdomain
+
+`Email.SendingSubdomain` registers e.g. `mail.example.com` as a
+sender domain without touching the apex:
+
+```typescript
+const sending = yield* Cloudflare.Email.SendingSubdomain("Mail", {
+  zoneId: zone.zoneId,
+  name: "mail.example.com",
+});
+// sending.enabled — true once DNS records validated
+```
+
+For zones not on Cloudflare DNS, fetch the expected records via
+`emailSending.getSubdomainDns` and create them at your host —
+`enabled` flips to `true` once they validate.
+
+## Email Security (enterprise)
+
+The Email Security add-on filters inbound mail before delivery;
+accounts without the entitlement get a typed
+`EmailSecurityNotEntitled` error:
+
+```typescript
+yield* Cloudflare.Email.BlockSender("KnownPhisher", {
+  pattern: "phisher@malicious.example.com",
+  patternType: "EMAIL",
+});
+```
+
+The rest of the suite:
+
+- [Domain](/providers/cloudflare/email/domain) — per-domain
+  dispositions and TLS enforcement.
+- [AllowPolicy](/providers/cloudflare/email/allowpolicy) —
+  acceptable, trusted, and exempt senders.
+- [TrustedDomain](/providers/cloudflare/email/trusteddomain) —
+  suppress lookalike and new-domain detections.
+- [ImpersonationRegistryEntry](/providers/cloudflare/email/impersonationregistryentry)
+  — protect display names from BEC.
+
+## Where next
+
+The full walkthrough:
+
+- [Send & receive email](/cloudflare/email/send-and-receive) — wire both
+  directions on one zone, end to end.
+
+Related:
+
+- [Workers](/cloudflare/compute/workers) — the runtime that sends and
+  receives.
+- [Domains & DNS](/cloudflare/networking/domains) — the zone mail routes
+  through.
+- [Custom domains & routes](/cloudflare/networking/custom-domains) — get
+  or adopt the zone first.
+
+Reference:
+
+- [Routing API reference](/providers/cloudflare/email/routing)
+- [Address API reference](/providers/cloudflare/email/address)
+- [Rule API reference](/providers/cloudflare/email/rule)
+- [CatchAll API reference](/providers/cloudflare/email/catchall)
+- [Send API reference](/providers/cloudflare/email/send)
+- [SendingSubdomain API reference](/providers/cloudflare/email/sendingsubdomain)
+- [Domain API reference](/providers/cloudflare/email/domain)
+- [BlockSender API reference](/providers/cloudflare/email/blocksender)
+- [AllowPolicy API reference](/providers/cloudflare/email/allowpolicy)
+- [TrustedDomain API reference](/providers/cloudflare/email/trusteddomain)
+- [ImpersonationRegistryEntry API reference](/providers/cloudflare/email/impersonationregistryentry)

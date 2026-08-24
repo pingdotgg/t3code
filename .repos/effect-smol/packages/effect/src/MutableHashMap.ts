@@ -1,40 +1,11 @@
 /**
- * `MutableHashMap` is an in-place key-value map with fast lookup, insertion,
- * removal, clearing, and iteration. It combines a native `Map` for ordinary
- * JavaScript keys with hash buckets for keys that implement Effect `Equal` /
- * `Hash`, so callers can mix referential and structural lookup in the same
- * collection.
+ * Stores key/value entries in a mutable hash map.
  *
- * **Mental model**
- *
- * - `MutableHashMap<K, V>` stores entries on a single mutable map instance
- * - {@link set}, {@link remove}, and {@link clear} mutate that instance and
- *   return it for convenient piping
- * - Keys that implement `Equal` / `Hash` are matched structurally through hash
- *   buckets; other keys use JavaScript map semantics
- * - The map is iterable as `[key, value]` pairs and reports size in O(1)
- *
- * **Common tasks**
- *
- * - Create maps: {@link empty}, {@link make}, {@link fromIterable}
- * - Read entries: {@link get}, {@link has}, {@link size}
- * - Mutate entries: {@link set}, {@link modify}, {@link remove}, {@link clear}
- * - Narrow unknown values: {@link isMutableHashMap}
- *
- * **Gotchas**
- *
- * - This data structure is intentionally mutable; share it only when callers
- *   agree on ownership
- * - Mutating a structural key after insertion can make future lookups fail if
- *   its equality or hash changes
- * - Iteration follows the underlying storage order and should not be used as a
- *   sorting guarantee
- *
- * **Performance**
- *
- * - Lookup, insertion, removal, clearing, and size are O(1) on average
- * - Hash collisions can make key lookup and removal O(n)
- * - Iteration is O(n)
+ * `MutableHashMap` updates the same collection in place and supports fast
+ * lookup, insertion, removal, clearing, and iteration. It combines a native
+ * `Map` for ordinary JavaScript keys with hash buckets for keys that implement
+ * Effect `Equal` and `Hash`, so callers can mix reference-based and structural
+ * lookup in the same collection.
  *
  * @since 2.0.0
  */
@@ -269,7 +240,7 @@ export const fromIterable = <K, V>(entries: Iterable<readonly [K, V]>): MutableH
  *
  * **When to use**
  *
- * Use to safely read the value for a key as an `Option`.
+ * Use to safely read a `MutableHashMap` value for a key as an `Option`.
  *
  * **Details**
  *
@@ -414,7 +385,8 @@ const getFromBucket = <K, V>(
  *
  * **When to use**
  *
- * Use to test whether a key is present without reading its value.
+ * Use to test whether a key is present in a `MutableHashMap` without reading
+ * its value.
  *
  * **Example** (Checking for a key)
  *
@@ -450,7 +422,8 @@ export const has: {
  *
  * **When to use**
  *
- * Use to insert a new entry or replace an existing entry in place.
+ * Use to insert a new `MutableHashMap` entry or replace an existing entry in
+ * place.
  *
  * **Example** (Setting key-value pairs)
  *
@@ -535,7 +508,8 @@ const getRefKey = <K>(
  *
  * **When to use**
  *
- * Use to transform an existing value in place without inserting missing keys.
+ * Use to transform an existing `MutableHashMap` value in place without
+ * inserting missing keys.
  *
  * **Example** (Modifying existing values)
  *

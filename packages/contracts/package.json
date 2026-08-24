@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/contracts",
-  "version": "0.1.2-dev",
+  "version": "0.0.33",
   "private": true,
   "files": [
     "dist"
@@ -18,10 +18,6 @@
     "./relay": {
       "types": "./src/relay.ts",
       "import": "./src/relay.ts"
-    },
-    "./preview-automation-features": {
-      "types": "./src/previewAutomationFeatures.ts",
-      "import": "./src/previewAutomationFeatures.ts"
     }
   },
   "scripts": {

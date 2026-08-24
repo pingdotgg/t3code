@@ -22,9 +22,9 @@ describe("splitPromptIntoComposerSegments", () => {
   });
 
   it("keeps newlines around mention tokens", () => {
-    expect(splitPromptIntoComposerSegments("one\n@src/index.ts \ntwo")).toEqual([
+    expect(splitPromptIntoComposerSegments("one\n@AGENTS.md \ntwo")).toEqual([
       { type: "text", text: "one\n" },
-      { type: "mention", path: "src/index.ts", source: "@src/index.ts" },
+      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " \ntwo" },
     ]);
   });
@@ -69,6 +69,31 @@ describe("splitPromptIntoComposerSegments", () => {
     expect(
       splitPromptIntoComposerSegments("Read [the docs](https://example.com/docs) first"),
     ).toEqual([{ type: "text", text: "Read [the docs](https://example.com/docs) first" }]);
+  });
+
+  it.each(["@expo/ui", "@jane/foo.js", "@scope/pkg/sub/path"])(
+    "does not turn scoped package reference %s into file mention segments",
+    (reference) => {
+      const prompt = `Install ${reference} next`;
+      expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
+    },
+  );
+
+  it("keeps IME-composed text containing a scoped package reference as text", () => {
+    const prompt = "入力 @expo/ui　を追加";
+    expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
+  });
+
+  it("turns canonical scoped folder links into file mention segments", () => {
+    expect(splitPromptIntoComposerSegments("Inspect [sub](@scope/pkg/sub) next")).toEqual([
+      { type: "text", text: "Inspect " },
+      {
+        type: "mention",
+        path: "@scope/pkg/sub",
+        source: "[sub](@scope/pkg/sub)",
+      },
+      { type: "text", text: " next" },
+    ]);
   });
 
   it("decodes reserved path characters from generated links", () => {

@@ -1,8 +1,23 @@
-import { extractJSDocsSync, parseJSDoc } from "@effect/jsdocs"
+import { computeJSDocInputHash, extractJSDocsSync, parseJSDoc } from "@effect/jsdocs"
 import { assert, describe, it } from "@effect/vitest"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import * as ts from "typescript"
+
+interface SourceFileWithParseDiagnostics extends ts.SourceFile {
+  readonly parseDiagnostics: ReadonlyArray<ts.Diagnostic>
+}
+
+const signatureParseDiagnostics = (signature: string): ReadonlyArray<string> =>
+  (ts.createSourceFile(
+    "signature.ts",
+    signature,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  ) as SourceFileWithParseDiagnostics)
+    .parseDiagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))
 
 describe("jsdocs", () => {
   it("parses a raw JSDoc block", () => {
@@ -103,6 +118,374 @@ export const makeValue = () => 1
       importDeclaration: "import { Foo } from \"@effect/sample\"",
       usage: "Foo.makeValue"
     })
+  })
+
+  it("stores a stable input hash for cache checks", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "jsdocs-"))
+    fs.mkdirSync(path.join(cwd, "src"), { recursive: true })
+    fs.writeFileSync(
+      path.join(cwd, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022" },
+        include: ["src/**/*.ts"]
+      })
+    )
+    fs.writeFileSync(
+      path.join(cwd, "jsdocs.config.json"),
+      JSON.stringify({
+        tsconfig: "tsconfig.json",
+        include: ["src/**/*.ts"],
+        output: ".data/jsdocs.json"
+      })
+    )
+    fs.writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({
+        name: "@effect/sample",
+        type: "module",
+        exports: { ".": "./src/index.ts", "./*": "./src/*.ts" }
+      })
+    )
+    fs.writeFileSync(path.join(cwd, "src/index.ts"), `export * as Foo from "./Foo.ts"\n`)
+    fs.writeFileSync(
+      path.join(cwd, "src/Foo.ts"),
+      `/**
+ * Creates a value.
+ *
+ * @category constructors
+ * @since 1.0.0
+ */
+export const makeValue = () => 1
+`
+    )
+    const options = {
+      cwd,
+      tsconfig: "tsconfig.json",
+      include: ["src/**/*.ts"],
+      output: ".data/jsdocs.json"
+    }
+    const inputHash = computeJSDocInputHash(options)
+    const model = extractJSDocsSync(options)
+    assert.strictEqual(model.inputHash, inputHash)
+    assert.strictEqual(computeJSDocInputHash(options), inputHash)
+
+    fs.appendFileSync(path.join(cwd, "src/Foo.ts"), "\n")
+    assert.notStrictEqual(computeJSDocInputHash(options), inputHash)
+  })
+
+  it("extracts typechecker signatures for top-level functions", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "jsdocs-"))
+    fs.mkdirSync(path.join(cwd, "src"), { recursive: true })
+    fs.writeFileSync(
+      path.join(cwd, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022" },
+        include: ["src/**/*.ts"]
+      })
+    )
+    fs.writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({
+        name: "@effect/sample",
+        type: "module",
+        exports: { ".": "./src/index.ts", "./*": "./src/*.ts" }
+      })
+    )
+    fs.writeFileSync(path.join(cwd, "src/index.ts"), `export * as Foo from "./Foo.ts"\n`)
+    fs.writeFileSync(
+      path.join(cwd, "src/External.ts"),
+      `/**
+ * External value type.
+ *
+ * @category models
+ * @since 1.0.0
+ */
+export interface External {
+  readonly value: string
+}
+
+/**
+ * Makes an external value.
+ *
+ * @category constructors
+ * @since 1.0.0
+ */
+export const makeExternal = (value: string): External => ({ value })
+`
+    )
+    fs.writeFileSync(
+      path.join(cwd, "src/Foo.ts"),
+      `/**
+ * Parses a value.
+ *
+ * @category parsing
+ * @since 1.0.0
+ */
+export function parse(value: string): string
+export function parse(value: number): number
+export function parse(value: string | number) {
+  return value
+}
+
+/**
+ * Converts a value.
+ *
+ * @category constructors
+ * @since 1.0.0
+ */
+export const inferred = (value: number) => String(value)
+
+const aliased = (value: boolean) => !value
+
+export {
+  /**
+   * Negates a value.
+   *
+   * @category constructors
+   * @since 1.0.0
+   */
+  aliased as renamed
+}
+
+export {
+  /**
+   * Makes an external value.
+   *
+   * @category constructors
+   * @since 1.0.0
+   */
+  makeExternal as external
+} from "./External.ts"
+
+const attempt = (value: string) => value.length
+
+export {
+  /**
+   * Attempts a value.
+   *
+   * @category constructors
+   * @since 1.0.0
+   */
+  attempt as try
+}
+
+/**
+ * Handles many overloads.
+ *
+ * @category constructors
+ * @since 1.0.0
+ */
+export function many(value: 1): 1
+export function many(value: 2): 2
+export function many(value: 3): 3
+export function many(value: 4): 4
+export function many(value: 5): 5
+export function many(value: 6): 6
+export function many(value: 7): 7
+export function many(value: 8): 8
+export function many(value: 9): 9
+export function many(value: 10): 10
+export function many(value: 11): 11
+export function many(value: 12): 12
+export function many(value: 13): 13
+export function many(value: number) {
+  return value
+}
+
+/**
+ * Runs a value through a transform chain.
+ *
+ * @category constructors
+ * @since 1.0.0
+ */
+export function pipeline<A>(a: A): A
+export function pipeline<A, B>(a: A, ab: (a: A) => B): B
+export function pipeline<A, B, C>(a: A, ab: (a: A) => B, bc: (b: B) => C): C
+export function pipeline<A, B, C, D>(a: A, ab: (a: A) => B, bc: (b: B) => C, cd: (c: C) => D): D
+export function pipeline<A, B, C, D, E>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E
+): E
+export function pipeline<A, B, C, D, E, F>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E,
+  ef: (e: E) => F
+): F
+export function pipeline<A, B, C, D, E, F, G>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E,
+  ef: (e: E) => F,
+  fg: (f: F) => G
+): G
+export function pipeline<A, B, C, D, E, F, G, H>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E,
+  ef: (e: E) => F,
+  fg: (f: F) => G,
+  gh: (g: G) => H
+): H
+export function pipeline<A, B, C, D, E, F, G, H, I>(
+  a: A,
+  ab: (a: A) => B,
+  bc: (b: B) => C,
+  cd: (c: C) => D,
+  de: (d: D) => E,
+  ef: (e: E) => F,
+  fg: (f: F) => G,
+  gh: (g: G) => H,
+  hi: (h: H) => I
+): I
+export function pipeline(...args: Array<any>) {
+  return args.length === 1 ? args[0] : args.slice(1).reduce((value, f) => f(value), args[0])
+}
+
+interface Box<in out A> {}
+
+declare namespace Box {
+  export type Inner<A extends Box<any>> = A extends Box<infer T> ? T : never
+}
+
+interface Check<A> {}
+
+interface Ctor<A extends Box<any>> {
+  (value: Box.Inner<A>): A
+}
+
+/**
+ * Builds a boxed constructor.
+ *
+ * @category constructors
+ * @since 1.0.0
+ */
+export function boxed<A extends Box<any>>(
+  ...value: readonly [Check<Box.Inner<A>>, ...Array<Check<Box.Inner<A>>>]
+): Ctor<A> {
+  return null as any
+}
+
+/**
+ * Handles distinct overload modes.
+ *
+ * @category constructors
+ * @since 1.0.0
+ */
+export function modes(body: () => string): string
+export function modes(body: (value: number) => string): string
+export function modes(body: (this: string) => string): string
+export function modes(body: () => string, map: (value: string) => number): number
+export function modes(body: () => string, map: (value: string) => number, next: (value: number) => boolean): boolean
+export function modes(options: { readonly self: string }, body: (this: string) => string): string
+export function modes(name: string): (body: () => string) => string
+export function modes(self: string, body: () => string): string
+export function modes(predicate: (value: number) => boolean, body: () => number): number
+export function modes(refinement: (value: string | number) => value is string, body: () => string): string
+export function modes(...args: Array<any>) {
+  return args[0]
+}
+
+/**
+ * Service for sample values.
+ *
+ * @category services
+ * @since 1.0.0
+ */
+export class Service {
+  readonly value: string
+  /**
+   * Runs the service.
+   */
+  run(input: number): string {
+    return \`\${this.value}:\${input}\`
+  }
+}
+
+/**
+ * Default count.
+ *
+ * @category constants
+ * @since 1.0.0
+ */
+export const count = 1
+
+/**
+ * Sample value type.
+ *
+ * @category models
+ * @since 1.0.0
+ */
+export interface Sample {
+  readonly value: string
+}
+`
+    )
+    const model = extractJSDocsSync({
+      cwd,
+      tsconfig: "tsconfig.json",
+      include: ["src/**/*.ts"],
+      output: ".data/jsdocs.json"
+    })
+    const signatureByName = new Map(model.apis.map((api) => [api.apiName, api.signature]))
+    assert.deepStrictEqual(model.files.flatMap((file) => file.diagnostics), [])
+    for (const api of model.apis) {
+      if (api.signature !== null) {
+        const diagnostics = signatureParseDiagnostics(api.signature)
+        if (diagnostics.length > 0) {
+          assert.fail(`${api.apiName}: ${diagnostics.join(", ")}`)
+        }
+      }
+    }
+    assert.strictEqual(
+      signatureByName.get("parse"),
+      "declare function parse(value: string): string\ndeclare function parse(value: number): number"
+    )
+    assert.strictEqual(signatureByName.get("inferred"), "declare function inferred(value: number): string")
+    assert.strictEqual(signatureByName.get("renamed"), "declare function renamed(value: boolean): boolean")
+    assert.strictEqual(
+      signatureByName.get("try"),
+      `declare const _try: {
+  (value: string): number;
+}
+export { _try as try }`
+    )
+    assert.strictEqual(signatureByName.get("external"), "declare function external(value: string): External")
+    const manyLines = signatureByName.get("many")?.split("\n")
+    assert.strictEqual(manyLines?.length, 1)
+    assert.strictEqual(manyLines?.[0], "declare function many(value: 1): 1")
+    const pipelineLines = signatureByName.get("pipeline")?.split("\n") ?? []
+    assert.strictEqual(pipelineLines.length, 6)
+    assert.deepStrictEqual(pipelineLines.map((line) => line.match(/=>/g)?.length ?? 0), [0, 1, 2, 3, 4, 8])
+    const boxedSignature = signatureByName.get("boxed")
+    assert.strictEqual(
+      boxedSignature,
+      "declare const boxed: <A extends Box<any>>(value_0: Check<Box.Inner<A>>, ...value: Check<Box.Inner<A>>[]) => Ctor<A>"
+    )
+    const modeLines = signatureByName.get("modes")?.split("\n")
+    assert.deepStrictEqual(modeLines, [
+      "declare function modes(body: () => string): string",
+      "declare function modes(body: (this: string) => string): string",
+      "declare function modes(body: () => string, map: (value: string) => number): number",
+      "declare function modes(options: { readonly self: string; }, body: (this: string) => string): string",
+      "declare function modes(name: string): (body: () => string) => string",
+      "declare function modes(self: string, body: () => string): string",
+      "declare function modes(predicate: (value: number) => boolean, body: () => number): number",
+      "declare function modes(refinement: (value: string | number) => value is string, body: () => string): string"
+    ])
+    assert.strictEqual(signatureByName.get("Service"), null)
+    assert.strictEqual(signatureByName.get("Service.run"), null)
+    assert.strictEqual(signatureByName.get("count"), null)
+    assert.strictEqual(signatureByName.get("Sample"), null)
   })
 
   it("stores valid top-of-file module JSDoc", () => {

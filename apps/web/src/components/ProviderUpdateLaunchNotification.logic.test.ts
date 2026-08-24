@@ -7,7 +7,6 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { createTranslator } from "../i18n";
 
 import {
   buildLocalEnvironmentUpdateGroups,
@@ -23,7 +22,6 @@ import {
   getProviderUpdateInitialToastView,
   getProviderUpdateProgressToastView,
   getProviderUpdateRejectedToastView,
-  getProviderUpdateRunningToastView,
   getProviderUpdateSidebarPillView,
   getSingleProviderUpdateProgressToastView,
   hasOneClickUpdateProviderCandidate,
@@ -33,7 +31,7 @@ import {
   parseWslDistroFromInstanceId,
   providerUpdateNotificationKey,
   resolveEnvironmentUpdateRowStatus,
-  resolveProviderUpdateToastText,
+  shouldShowPrimaryProviderUpdateToast,
   type LocalEnvironmentProvidersInput,
   type LocalEnvironmentUpdateGroup,
   type LocalProviderUpdateOutcome,
@@ -294,61 +292,6 @@ describe("provider update launch notification logic", () => {
     });
   });
 
-  it("localizes provider update progress", () => {
-    const t = createTranslator("zh-CN");
-    const candidate = updateCandidate({ driver: driver("codex"), latestVersion: "1.1.0" });
-
-    expect(
-      getProviderUpdateInitialToastView(
-        { updateProviders: [candidate], oneClickProviders: [candidate] },
-        t,
-      ),
-    ).toMatchObject({
-      title: "有可用更新：Codex v1.1.0",
-      description: "立即安装更新，或查看提供商设置。",
-    });
-    expect(
-      getProviderUpdateProgressToastView({ providers: [candidate], providerCount: 1 }, t),
-    ).toMatchObject({
-      title: "正在更新提供商",
-      description: "正在运行提供商更新命令。",
-    });
-  });
-
-  it("resolves a long-lived toast with the current locale at render time", () => {
-    const view = getProviderUpdateRunningToastView(1, createTranslator("en"));
-
-    expect(resolveProviderUpdateToastText(view, createTranslator("zh-CN"))).toEqual({
-      title: "正在更新提供商",
-      description: "正在运行提供商更新命令。",
-    });
-  });
-
-  it("re-localizes generic failures and cached environment results", () => {
-    const en = createTranslator("en");
-    const zhCN = createTranslator("zh-CN");
-    const view = getProviderUpdateRejectedToastView(1, en("providerUpdate.error.generic"), en);
-    const group: LocalEnvironmentUpdateGroup = {
-      environmentId: "env-wsl" as EnvironmentId,
-      label: "WSL",
-      isPrimary: false,
-      isSettling: false,
-      candidates: [],
-      providers: [],
-    };
-
-    expect(resolveProviderUpdateToastText(view, zhCN)).toEqual({
-      title: "提供商更新失败",
-      description: "提供商更新失败。",
-    });
-    expect(
-      resolveEnvironmentUpdateRowStatus(
-        { group, error: undefined, result: view, pill: null, isPending: false },
-        zhCN,
-      ),
-    ).toEqual({ kind: "failed", text: "提供商更新失败。" });
-  });
-
   it("describes settings-only updates without one-click support", () => {
     const view = getProviderUpdateInitialToastView({
       updateProviders: [
@@ -383,6 +326,21 @@ describe("provider update launch notification logic", () => {
       type: "loading",
       title: "Updating provider",
     });
+    expect(shouldShowPrimaryProviderUpdateToast(view)).toBe(false);
+  });
+
+  it("keeps the initial prompt and terminal outcomes visible as toasts", () => {
+    expect(
+      shouldShowPrimaryProviderUpdateToast(
+        getProviderUpdateInitialToastView({
+          updateProviders: [updateCandidate({ driver: driver("codex") })],
+          oneClickProviders: [updateCandidate({ driver: driver("codex") })],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldShowPrimaryProviderUpdateToast(getProviderUpdateRejectedToastView(1, "boom")),
+    ).toBe(true);
   });
 
   it("uses server failure state for failed progress", () => {

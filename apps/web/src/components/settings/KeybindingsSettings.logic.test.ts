@@ -124,6 +124,7 @@ describe("KeybindingsSettings.logic", () => {
 
   it("formats static and project script command labels", () => {
     expect(commandLabel("commandPalette.toggle")).toBe("Command Palette: Toggle");
+    expect(commandLabel("themeEditor.toggle")).toBe("Theme Editor: Toggle");
     expect(commandLabel("script.setup-db.run")).toBe("Run Script: Setup Db");
   });
 
@@ -144,7 +145,7 @@ describe("KeybindingsSettings.logic", () => {
     expect(options).not.toContain("customModeActive");
   });
 
-  it("builds command options from defaults and resolved project bindings", () => {
+  it("builds command options from built-in commands and resolved project bindings", () => {
     const options = buildKeybindingCommandOptions([
       {
         command: "script.setup-db.run",
@@ -159,7 +160,9 @@ describe("KeybindingsSettings.logic", () => {
       },
     ] satisfies ResolvedKeybindingsConfig);
 
-    expect(options).toEqual(expect.arrayContaining(["chat.new", "script.setup-db.run"]));
+    expect(options).toEqual(
+      expect.arrayContaining(["chat.new", "rightPanel.toggleMaximized", "script.setup-db.run"]),
+    );
   });
 
   it("reports unknown when variables without rejecting parseable expressions", () => {

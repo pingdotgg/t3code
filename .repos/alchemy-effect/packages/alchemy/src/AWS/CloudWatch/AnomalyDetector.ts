@@ -2,6 +2,7 @@ import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -25,7 +26,9 @@ export interface AnomalyDetector extends Resource<
   "AWS.CloudWatch.AnomalyDetector",
   AnomalyDetectorProps,
   {
+    /** Synthetic identifier derived from the detector's metric identity. */
     detectorId: string;
+    /** The full AnomalyDetector description as last read from CloudWatch. */
     anomalyDetector: cloudwatch.AnomalyDetector;
   },
   never,
@@ -33,8 +36,10 @@ export interface AnomalyDetector extends Resource<
 > {}
 
 /**
- * A CloudWatch anomaly detector.
- *
+ * A CloudWatch anomaly detector — trains a model on a metric's historical
+ * data and computes an expected-value band, which alarms can use via the
+ * `ANOMALY_DETECTION_BAND` metric-math function.
+ * @resource
  * @section Creating Detectors
  * @example Single Metric Detector
  * ```typescript
@@ -43,6 +48,26 @@ export interface AnomalyDetector extends Resource<
  *   MetricName: "Errors",
  *   Stat: "Sum",
  * });
+ * ```
+ *
+ * @example Detector on a Custom Metric
+ * ```typescript
+ * // pair with PutMetricData publishing to the same namespace/metric
+ * const detector = yield* AnomalyDetector("PaymentsDetector", {
+ *   Namespace: "MyApp/Payments",
+ *   MetricName: "PaymentProcessed",
+ *   Stat: "Sum",
+ * });
+ * ```
+ *
+ * @section Reading Detectors at Runtime
+ * @example List Detectors from a Function
+ * ```typescript
+ * // init — see DescribeAnomalyDetectors
+ * const describeAnomalyDetectors = yield* AWS.CloudWatch.DescribeAnomalyDetectors();
+ *
+ * // runtime
+ * const result = yield* describeAnomalyDetectors({ Namespace: "MyApp/Payments" });
  * ```
  */
 export const AnomalyDetector = Resource<AnomalyDetector>(
@@ -97,9 +122,10 @@ const toDeleteRequest = (
   };
 };
 
-const detectorReadinessSchedule = Schedule.exponential(200).pipe(
-  Schedule.both(Schedule.recurs(8)),
-);
+const detectorReadinessSchedule = Schedule.max([
+  Schedule.exponential(200),
+  Schedule.recurs(8),
+]);
 
 const describeDetector = Effect.fn(function* (
   props: cloudwatch.PutAnomalyDetectorInput,
@@ -110,8 +136,17 @@ const describeDetector = Effect.fn(function* (
   },
 ) {
   const request = toDescribeRequest(props);
-  const response = yield* cloudwatch.describeAnomalyDetectors(request);
-  const detectors = response.AnomalyDetectors ?? [];
+  // Stop paginating at the first identity match; a miss drains every page
+  // anyway, which is exactly what the miss diagnostics below need.
+  const detectors = yield* cloudwatch.describeAnomalyDetectors
+    .items(request)
+    .pipe(
+      Stream.takeUntil((candidate) =>
+        matchesDetectorIdentity(candidate, props),
+      ),
+      Stream.runCollect,
+      Effect.map((chunk) => Array.from(chunk)),
+    );
   const detector = detectors.find((candidate) =>
     matchesDetectorIdentity(candidate, props),
   );
@@ -143,6 +178,21 @@ const describeDetector = Effect.fn(function* (
 export const AnomalyDetectorProvider = () =>
   Provider.succeed(AnomalyDetector, {
     stables: ["detectorId"],
+    list: () =>
+      // `describeAnomalyDetectors` is paginated and account/region-scoped;
+      // collect every page and flatten the `AnomalyDetectors` array into the
+      // full `Attributes` shape `read` produces (keyed by detector identity).
+      cloudwatch.describeAnomalyDetectors.pages({}).pipe(
+        Stream.runCollect,
+        Effect.map((chunk) =>
+          Array.from(chunk).flatMap((page) =>
+            (page.AnomalyDetectors ?? []).map((detector) => ({
+              detectorId: detectorIdentity(detector),
+              anomalyDetector: detector,
+            })),
+          ),
+        ),
+      ),
     diff: Effect.fn(function* ({ olds = {}, news = {} }) {
       if (!isResolved(news)) return undefined;
       if (detectorIdentity(olds) !== detectorIdentity(news)) {

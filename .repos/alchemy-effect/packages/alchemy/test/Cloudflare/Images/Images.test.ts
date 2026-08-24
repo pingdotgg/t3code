@@ -1,6 +1,6 @@
 import * as Cloudflare from "@/Cloudflare";
-import * as Test from "@/Test/Vitest";
-import { expect } from "@effect/vitest";
+import * as Test from "@/Test/Alchemy";
+import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -31,8 +31,20 @@ const TINY_PNG = new Uint8Array(
 
 // Cloudflare's edge takes a few seconds to start serving a fresh workers.dev
 // URL — initial requests can return Cloudflare's "There is nothing here yet"
-// 404 page. Retry until the worker answers 200 (and surface its body if it
-// doesn't, so a real failure isn't hidden by the retry loop).
+// 404 page or, while the version is still propagating to the subdomain, the
+// blue "Error 1104 / Script not found" page (served with a 5xx status). Both
+// are transient propagation states, so retry through them until the worker
+// answers 200 (and surface its body if it doesn't, so a real failure isn't
+// hidden by the retry loop).
+const looksLikeCloudflarePlaceholder = (body: string) =>
+  body.includes("There is nothing here yet") ||
+  // The "Error 1104 / Script not found" page renders the word "Error" and
+  // the code in separate HTML tags, so match the page's own markers rather
+  // than a contiguous "Error NNNN" string.
+  body.includes("Script not found") ||
+  body.includes("cf-error-code") ||
+  /Error\s+\d{3,4}/i.test(body);
+
 const postImage = (url: string) =>
   HttpClient.execute(
     HttpClientRequest.post(url).pipe(
@@ -50,10 +62,18 @@ const postImage = (url: string) =>
     ),
     Effect.retry({
       while: (e): e is WorkerNotReady =>
-        e instanceof WorkerNotReady && e.status >= 400 && e.status < 500,
-      schedule: Schedule.exponential("500 millis").pipe(
-        Schedule.both(Schedule.recurs(20)),
-      ),
+        e instanceof WorkerNotReady &&
+        ((e.status >= 400 && e.status < 500) ||
+          looksLikeCloudflarePlaceholder(e.body)),
+      // Cap each backoff at 5s (otherwise the exponential blows past a minute
+      // per sleep and looks like a hang) and stop after 30 attempts.
+      schedule: Schedule.max([
+        Schedule.min([
+          Schedule.exponential("500 millis"),
+          Schedule.spaced("5 seconds"),
+        ]),
+        Schedule.recurs(30),
+      ]),
     }),
   );
 

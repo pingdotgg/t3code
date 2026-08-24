@@ -1,0 +1,157 @@
+---
+/**
+ * `<LoopDiagram />` — server-rendered SVG of the IaC/SDK generation loop.
+ *
+ * Used by the resource-factory blog post: write resources + live tests →
+ * run against the real API → (all green) ship, with the feedback edge
+ * unmatched error → patch the SDK, regenerate → retest closing the cycle.
+ *
+ * Styled with the brand tokens (parchment panel, moss flow, honey
+ * feedback edge, JetBrains Mono labels) so it follows the active theme.
+ *
+ * Usage in MDX:
+ *   import LoopDiagram from "../../../components/LoopDiagram.astro";
+ *   <LoopDiagram />
+ */
+---
+
+<figure class="alc-loop">
+  <svg
+    class="alc-loop__svg"
+    viewBox="0 0 760 250"
+    role="img"
+    aria-label="The generation loop: write resources and live tests, run them against the real API, every unmatched error becomes an SDK patch and regeneration, retest until green, then ship the IaC and the truthful SDK together."
+  >
+    <defs>
+      <marker
+        id="alc-loop-arrow"
+        viewBox="0 0 10 10"
+        refX="9"
+        refY="5"
+        markerWidth="7"
+        markerHeight="7"
+        orient="auto-start-reverse"
+      >
+        <path d="M0,0 L10,5 L0,10 z" class="alc-loop__head"></path>
+      </marker>
+      <marker
+        id="alc-loop-arrow-warn"
+        viewBox="0 0 10 10"
+        refX="9"
+        refY="5"
+        markerWidth="7"
+        markerHeight="7"
+        orient="auto-start-reverse"
+      >
+        <path d="M0,0 L10,5 L0,10 z" class="alc-loop__head--warn"></path>
+      </marker>
+    </defs>
+
+    <!-- nodes -->
+    <rect class="alc-loop__node" x="20" y="30" width="200" height="56" rx="8"></rect>
+    <rect class="alc-loop__node" x="300" y="30" width="200" height="56" rx="8"></rect>
+    <rect class="alc-loop__node alc-loop__node--accent" x="580" y="30" width="160" height="56" rx="8"></rect>
+    <rect class="alc-loop__node alc-loop__node--warn" x="300" y="170" width="200" height="56" rx="8"></rect>
+
+    <g class="alc-loop__label" text-anchor="middle">
+      <text x="120" y="53">write resources</text>
+      <text x="120" y="72">+ live tests</text>
+      <text x="400" y="53">run against</text>
+      <text x="400" y="72">the real API</text>
+      <text x="660" y="53">ship IaC</text>
+      <text x="660" y="72">+ truthful SDK</text>
+      <text class="alc-loop__label--warn" x="400" y="193">patch the SDK,</text>
+      <text class="alc-loop__label--warn" x="400" y="212">regenerate</text>
+    </g>
+
+    <!-- forward flow -->
+    <g class="alc-loop__edge">
+      <line x1="220" y1="45" x2="296" y2="45" marker-end="url(#alc-loop-arrow)"></line>
+      <line x1="500" y1="58" x2="576" y2="58" marker-end="url(#alc-loop-arrow)"></line>
+    </g>
+    <text class="alc-loop__edge-label" x="538" y="46" text-anchor="middle">all green</text>
+
+    <!-- feedback loop -->
+    <g class="alc-loop__edge--warn">
+      <line x1="420" y1="86" x2="420" y2="166" marker-end="url(#alc-loop-arrow-warn)"></line>
+      <path d="M300,198 H262 V70 H296" marker-end="url(#alc-loop-arrow-warn)"></path>
+    </g>
+    <text class="alc-loop__edge-label alc-loop__edge-label--warn" x="430" y="130">unmatched error</text>
+    <text class="alc-loop__edge-label alc-loop__edge-label--warn" x="252" y="130" text-anchor="end">retest</text>
+  </svg>
+</figure>
+
+<style>
+  .alc-loop {
+    margin: 1.5rem 0;
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: var(--alc-radius);
+    padding: 0.75rem;
+    overflow-x: auto;
+  }
+
+  .alc-loop__svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: 100%;
+  }
+
+  .alc-loop__node {
+    fill: var(--alc-bg-elev-2);
+    stroke: var(--alc-accent-40);
+    stroke-width: 1.5;
+  }
+
+  .alc-loop__node--accent {
+    stroke: var(--alc-accent);
+    fill: color-mix(in srgb, var(--alc-accent-soft) 60%, var(--alc-bg-elev-2));
+  }
+
+  .alc-loop__node--warn {
+    stroke: var(--alc-warn);
+    fill: color-mix(in srgb, var(--alc-warn) 12%, var(--alc-bg-elev-2));
+  }
+
+  .alc-loop__label text {
+    font-family: var(--alc-font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    fill: var(--alc-fg-1);
+  }
+
+  .alc-loop__label--warn {
+    fill: var(--alc-fg-1);
+  }
+
+  .alc-loop__edge line {
+    stroke: var(--alc-accent-60);
+    stroke-width: 1.5;
+  }
+
+  .alc-loop__edge--warn line,
+  .alc-loop__edge--warn path {
+    stroke: var(--alc-warn);
+    stroke-width: 1.5;
+    fill: none;
+  }
+
+  .alc-loop__head {
+    fill: var(--alc-accent);
+  }
+
+  .alc-loop__head--warn {
+    fill: var(--alc-warn);
+  }
+
+  .alc-loop__edge-label {
+    font-family: var(--alc-font-mono);
+    font-size: 10.5px;
+    fill: var(--alc-fg-3);
+  }
+
+  .alc-loop__edge-label--warn {
+    fill: var(--alc-warn);
+  }
+</style>

@@ -14,11 +14,13 @@ import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
+import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
+import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { Button } from "../components/ui/button";
 import {
   AnchoredToastProvider,
@@ -27,8 +29,10 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { applyAppearanceFontVariables } from "~/appearanceFonts";
+import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
-import { useI18n } from "../i18n/I18nProvider";
+import { PlanAgentSelectionHeal } from "../planAgentSelectionHeal";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -36,7 +40,6 @@ import {
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
-import { getRootErrorDetails, getRootErrorMessage } from "../rootErrorPresentation";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
@@ -99,7 +102,7 @@ function RootRouteView() {
     };
   }, [pathname]);
 
-  if (pathname === "/pair") {
+  if (pathname === "/pair" || pathname === "/connect" || pathname.startsWith("/connect/")) {
     return (
       <>
         <DocumentTitleSync />
@@ -129,18 +132,78 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <DocumentTitleSync />
+        <ContrastAppearanceSync />
+        <GlassAppearanceSync />
+        <FontAppearanceSync />
         {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
         <RelayClientInstallDialog />
         <ConnectOnboardingDialog />
         <SshPasswordPromptDialog />
+        <ConfirmDialogHost />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+        {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
+        {/* Above the router: a theme draft is judged by walking the app, so the
+            editor has to survive navigation away from settings. */}
+        <ThemeEditorHost />
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function ContrastAppearanceSync() {
+  const appearanceContrast = useClientSettings((settings) => settings.appearanceContrast);
+
+  useEffect(() => {
+    applyAppearanceContrast(document.documentElement, appearanceContrast);
+  }, [appearanceContrast]);
+
+  return null;
+}
+
+function GlassAppearanceSync() {
+  const glassOpacity = useClientSettings((settings) => settings.glassOpacity);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty("--glass-opacity", `${glassOpacity}%`);
+  }, [glassOpacity]);
+
+  return null;
+}
+
+function FontAppearanceSync() {
+  const fontFamilySans = useClientSettings((settings) => settings.fontFamilySans);
+  const fontFamilyCode = useClientSettings((settings) => settings.fontFamilyCode);
+  const fontFamilyComposer = useClientSettings((settings) => settings.fontFamilyComposer);
+  const fontSizeInterface = useClientSettings((settings) => settings.fontSizeInterface);
+  const fontSizePrompt = useClientSettings((settings) => settings.fontSizePrompt);
+  const fontSizeCode = useClientSettings((settings) => settings.fontSizeCode);
+  const fontSmoothing = useClientSettings((settings) => settings.fontSmoothing);
+
+  useEffect(() => {
+    applyAppearanceFontVariables(document.documentElement, {
+      sans: fontFamilySans,
+      code: fontFamilyCode,
+      composer: fontFamilyComposer,
+      sizeInterface: fontSizeInterface,
+      sizePrompt: fontSizePrompt,
+      sizeCode: fontSizeCode,
+      smoothing: fontSmoothing,
+    });
+  }, [
+    fontFamilyCode,
+    fontFamilyComposer,
+    fontFamilySans,
+    fontSizeCode,
+    fontSizeInterface,
+    fontSizePrompt,
+    fontSmoothing,
+  ]);
+
+  return null;
 }
 
 function DocumentTitleSync() {
@@ -189,9 +252,8 @@ function HostedStaticEnvironmentBootstrap() {
 }
 
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
-  const { t } = useI18n();
-  const message = getRootErrorMessage(error, t);
-  const details = getRootErrorDetails(error, t);
+  const message = errorMessage(error);
+  const details = errorDetails(error);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
@@ -205,23 +267,23 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
           {APP_DISPLAY_NAME}
         </p>
         <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-          {t("rootError.title")}
+          Something went wrong.
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{message}</p>
 
         <div className="mt-5 flex flex-wrap gap-2">
           <Button size="sm" onClick={() => reset()}>
-            {t("rootError.tryAgain")}
+            Try again
           </Button>
           <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
-            {t("rootError.reload")}
+            Reload app
           </Button>
         </div>
 
         <details className="group mt-5 overflow-hidden rounded-lg border border-border/70 bg-background/55">
           <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-muted-foreground">
-            <span className="group-open:hidden">{t("rootError.showDetails")}</span>
-            <span className="hidden group-open:inline">{t("rootError.hideDetails")}</span>
+            <span className="group-open:hidden">Show error details</span>
+            <span className="hidden group-open:inline">Hide error details</span>
           </summary>
           <pre className="max-h-56 overflow-auto border-t border-border/70 bg-background/80 px-3 py-2 text-xs text-foreground/85">
             {details}
@@ -230,6 +292,34 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
       </section>
     </div>
   );
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+
+  return "An unexpected router error occurred.";
+}
+
+function errorDetails(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack ?? error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  try {
+    return JSON.stringify(error, null, 2);
+  } catch {
+    return "No additional error details are available.";
+  }
 }
 
 function AuthenticatedTracingBootstrap() {
@@ -241,7 +331,6 @@ function AuthenticatedTracingBootstrap() {
 }
 
 function EventRouter() {
-  const { t } = useI18n();
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -309,8 +398,8 @@ function EventRouter() {
     if (decision._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: t("root.keybindings.updated"),
-        description: t("root.keybindings.updatedDescription"),
+        title: "Keybindings updated",
+        description: "Keybindings configuration reloaded successfully.",
       });
       return;
     }
@@ -318,11 +407,11 @@ function EventRouter() {
     toastManager.add(
       stackedThreadToast({
         type: "warning",
-        title: t("root.keybindings.invalid"),
+        title: "Invalid keybindings configuration",
         description: decision.message,
         actionVariant: "outline",
         actionProps: {
-          children: t("root.keybindings.open"),
+          children: "Open keybindings.json",
           onClick: () => {
             if (!serverConfig || !primaryEnvironment) {
               return;
@@ -347,9 +436,9 @@ function EventRouter() {
               toastManager.add(
                 stackedThreadToast({
                   type: "error",
-                  title: t("root.keybindings.openFailed"),
+                  title: "Unable to open keybindings file",
                   description:
-                    error instanceof Error ? error.message : t("root.keybindings.openUnknown"),
+                    error instanceof Error ? error.message : "Unknown error opening file.",
                 }),
               );
             })();

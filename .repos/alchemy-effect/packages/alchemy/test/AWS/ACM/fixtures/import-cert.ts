@@ -1,0 +1,57 @@
+/**
+ * Checked-in self-signed RSA-2048 certificate fixture for the
+ * `AWS.ACM.ImportCertificate` binding test (generated once with
+ * `openssl req -x509 -newkey rsa:2048 -days 3650 -nodes` — never regenerate
+ * at test time). Valid until 2036; CN=alchemy-acm-import-fixture.example.com.
+ *
+ * The private key is a throwaway test fixture that secures nothing.
+ */
+export const IMPORT_CERTIFICATE_PEM = `-----BEGIN CERTIFICATE-----
+MIIC3jCCAcYCCQDr1xdWWXWxhTANBgkqhkiG9w0BAQsFADAxMS8wLQYDVQQDDCZh
+bGNoZW15LWFjbS1pbXBvcnQtZml4dHVyZS5leGFtcGxlLmNvbTAeFw0yNjA3MTQy
+MDE0MzJaFw0zNjA3MTEyMDE0MzJaMDExLzAtBgNVBAMMJmFsY2hlbXktYWNtLWlt
+cG9ydC1maXh0dXJlLmV4YW1wbGUuY29tMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A
+MIIBCgKCAQEAstT6u2m58kRVRiTijO/1R11l/SXKgsaGOyb8zA7SXsWodADyNfXR
+Rs+vfPcpjDrfIkgj1hKMRgB3PdKZknwCmvvYCwayDWjxdi7lEpma5KGMFGuI80Ug
+3aCAJtMHmWhae91s+R9W8bNeKnYJjg5fsOERxGSUzXTHnIsqVm1M68HiwU10fqI/
+gpEpkmz1f7cGGsc8i/10acj2rjZcKzu6tvheGNkLHLas0etCCrXIC8CeiuNP1Qm1
+BqBRJRLk1MhQyZbHH2iBQU1CiXFJPDkrsJsuoAnrEP8IZScps6IkHf5QqrmFZT1E
+J2T0xCHPyJkcLuPGbbiDixurcOKhggj8XQIDAQABMA0GCSqGSIb3DQEBCwUAA4IB
+AQASnPTqU/z58LfJOP74XnMY8qBZ2XlOHO+RUhZuXoidaAataR5F3R3nT7VihXm3
+LqnDpEYyeIRxFsyh/ZiIAHmAj7BCjGyqs4G7sD78KzGHCA3tQJ0pMX2K/45oOtsB
+qG8vE0ej9jqVoFD8ciCTD3d77rBkLWR0nygokPNyr1DZ0/aBC343BiyqdT2l02eW
+/iWz9jYivTwHJTozzDHiABmVDL5uUf21o4K5h+0k20OXLgMT6pljhNHE+pCbhNuD
+cyuPfbQcB9BFKHpG4byKpoVlhGcxnRdtcrDg8+fW3IAfdcLue9qSjDrF3Kep3WVV
+GIiK+k3SfcvuqC8mNMUwOy+p
+-----END CERTIFICATE-----
+`;
+
+export const IMPORT_PRIVATE_KEY_PEM = `-----BEGIN PRIVATE KEY-----
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCy1Pq7abnyRFVG
+JOKM7/VHXWX9JcqCxoY7JvzMDtJexah0API19dFGz6989ymMOt8iSCPWEoxGAHc9
+0pmSfAKa+9gLBrINaPF2LuUSmZrkoYwUa4jzRSDdoIAm0weZaFp73Wz5H1bxs14q
+dgmODl+w4RHEZJTNdMeciypWbUzrweLBTXR+oj+CkSmSbPV/twYaxzyL/XRpyPau
+NlwrO7q2+F4Y2QsctqzR60IKtcgLwJ6K40/VCbUGoFElEuTUyFDJlscfaIFBTUKJ
+cUk8OSuwmy6gCesQ/whlJymzoiQd/lCquYVlPUQnZPTEIc/ImRwu48ZtuIOLG6tw
+4qGCCPxdAgMBAAECggEAaXQ6HoXsBrbQ6joZ9i4SH3EuESdV0eQrh3ooHFSpLQW1
+niJosfUw4Wba/v/o2i5lIhwUNcpeOXFQ333u3XiPOMFF1sqt+EZoDN7+agd2VVgF
++IypB3s+NDLPHxXWJ1pn8R7Tgdw/MuwonTVZ0REc0HsINR1yue0hQGi4IJr3fxWr
+uujyOiqCmG6hjNVdBiaMwLpJZHQ3RlaswJhCfaBKJuTQ/2Mmqm0+oxP4o1vt3rR5
+CKOM3pw2ZkFGYQcVRYVKP/hf1kbZBFEfVlZbVElJvlhVtQTU/lXekejGO0j0uc5l
+3m4rB5mv1WNx/ep9s/KZRqrx1JOb2T/DfepM4o2oqQKBgQDYU9se60/ZwmsPCRdI
+G+705xYXt8YKWuP9htaAFw8zzxsOAjHzAajr9Fo17YrCRVcJmvmEn/atXFyuiRia
+qNU664mLQ/o1xAEQpZjHcX9kD+r9uZU/sCPf0VecmsgKtnVNOrvkO6e7cND7ngR5
+leAs5RqX/0DR8V+BD9zLRwQdfwKBgQDToMeo+vx2gO6sFmy7BpFzeHU1ABx3/exp
+YugFKby86W9FmCfKEzYTHBvJfer1RsmpTlFjAdJ2qFhnkngHZTtv0OsYBAhn2MA2
+xN9zjwzwr+WfKH7pEZW3or8AvhQxk+xhCEgTgu1PD+Ceo78dvliOrAxZB0rRgqil
+SX6yfmkMIwKBgFKOtho3rZKqWtczHfp8BpbaNhk5HlBHXakcs3HQ2xFnoaiX994I
+rSHXcDIShJkdg1j8FuuhbK++hvRpB8XGVxIUX7qRZ8TrF4j12beLvhU+6eyIzcev
+fhFlwCzY+Sz1cxDVMG2qwpmLNYZBSO3p39LiYGLPnDpDBrKnjhjZ8l0bAoGASJGE
+haxzMAusTDRwWn25GLiAsIj2OitHiyfQWhzizIDbmCjB1ChcTZdA7AoSrML2Weky
+PVodmnTFw9ZU9GxBQmmIhDa1zy5jUySVXyH5lPssKTSQuElAZrUW/CEx+YI491kI
+pjAqQgc2xg9udLuV0G6s2UaH4GoGfI9EM97nFLMCgYAZkJ98bCgH2OLzGfMmnqZE
+lc1qcadcwuHWS9Io9jAQh6HILrJVjI8RVb2rUeRyRSNm9r0z5MGVM2qkEjsOAyJl
+6oCVVYA0BQnSeRm3g/R36P7VhS9hIjfoesWbvGC3oKqkYMnIMmZsTl2LKzPiJUCo
+B6yIyV81p2cXgJNJK3EQvw==
+-----END PRIVATE KEY-----
+`;

@@ -94,6 +94,158 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
     }),
   );
 
+  it.effect("propagates a project favicon path in project.meta.update", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const readModel = yield* projectEvent(createEmptyReadModel(now), {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-favicon"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-favicon"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create-favicon"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create-favicon"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-favicon"),
+          title: "Favicon",
+          workspaceRoot: "/tmp/favicon",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-project-update-favicon"),
+          projectId: asProjectId("project-favicon"),
+          faviconPath: "brand/icon.svg",
+        },
+        readModel,
+      });
+
+      const event = Array.isArray(result) ? result[0] : result;
+      expect(event.type).toBe("project.meta-updated");
+      expect((event.payload as { faviconPath?: string }).faviconPath).toBe("brand/icon.svg");
+    }),
+  );
+
+  it.effect("rejects project.create for an active workspace root that already exists", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const initial = createEmptyReadModel(now);
+      const readModel = yield* projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-existing"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-existing"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const failure = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "project.create",
+            commandId: CommandId.make("cmd-project-create-duplicate-root"),
+            projectId: asProjectId("project-duplicate-root"),
+            title: "Duplicate Project",
+            workspaceRoot: "/tmp/project/",
+            createdAt: now,
+          },
+          readModel,
+        }),
+      );
+
+      expect(failure.message).toContain(
+        "Active project 'project-existing' already exists for workspace root '/tmp/project'.",
+      );
+    }),
+  );
+
+  it.effect("rejects project.meta.update when moving onto another active workspace root", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const initial = createEmptyReadModel(now);
+      const withFirstProject = yield* projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-first"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-first"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create-first"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create-first"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-first"),
+          title: "First",
+          workspaceRoot: "/tmp/project-first",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const readModel = yield* projectEvent(withFirstProject, {
+        sequence: 2,
+        eventId: asEventId("evt-project-create-second"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-second"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create-second"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create-second"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-second"),
+          title: "Second",
+          workspaceRoot: "/tmp/project-second",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const failure = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "project.meta.update",
+            commandId: CommandId.make("cmd-project-update-duplicate-root"),
+            projectId: asProjectId("project-second"),
+            workspaceRoot: "/tmp/project-first",
+          },
+          readModel,
+        }),
+      );
+
+      expect(failure.message).toContain(
+        "Active project 'project-first' already exists for workspace root '/tmp/project-first'.",
+      );
+    }),
+  );
+
   it.effect("emits user message and turn-start-requested events for thread.turn.start", () =>
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";

@@ -1,6 +1,17 @@
 import { describe, it } from "@effect/vitest"
 import { assertNone, assertSome, deepStrictEqual, strictEqual, throws } from "@effect/vitest/utils"
-import { Array as Arr, Equivalence, Number as Num, Option, Order, type Predicate, Result, String as Str } from "effect"
+import {
+  Array as Arr,
+  Equal,
+  Equivalence,
+  Hash,
+  Number as Num,
+  Option,
+  Order,
+  type Predicate,
+  Result,
+  String as Str
+} from "effect"
 import { identity, pipe } from "effect/Function"
 import { FastCheck as fc } from "effect/testing"
 
@@ -9,6 +20,16 @@ const symB = Symbol.for("b")
 const symC = Symbol.for("c")
 
 const double = (n: number) => n * 2
+
+class HashCollision implements Equal.Equal {
+  constructor(readonly value: number) {}
+  [Hash.symbol](): number {
+    return 0
+  }
+  [Equal.symbol](that: Equal.Equal): boolean {
+    return that instanceof HashCollision && this.value === that.value
+  }
+}
 
 describe("Array", () => {
   it("of", () => {
@@ -587,6 +608,12 @@ describe("Array", () => {
       deepStrictEqual(Arr.rotate(2)(new Set([1, 2, 3, 4, 5])), [4, 5, 1, 2, 3])
       deepStrictEqual(Arr.rotate(-1)(new Set([1, 2, 3, 4, 5])), [2, 3, 4, 5, 1])
       deepStrictEqual(Arr.rotate(-2)(new Set([1, 2, 3, 4, 5])), [3, 4, 5, 1, 2])
+      deepStrictEqual(
+        Arr.rotate(1)((function*() {
+          yield* [1, 2, 3]
+        })()),
+        [3, 1, 2]
+      )
       // out of bounds
       deepStrictEqual(Arr.rotate(7)([1, 2, 3, 4, 5]), [4, 5, 1, 2, 3])
       deepStrictEqual(Arr.rotate(-7)([1, 2, 3, 4, 5]), [3, 4, 5, 1, 2])
@@ -1408,6 +1435,26 @@ describe("Array", () => {
     deepStrictEqual(Arr.dedupe([1, 2, 3]), [1, 2, 3])
     deepStrictEqual(Arr.dedupe([1, 1, 1]), [1])
     deepStrictEqual(Arr.dedupe(["a", "b", "a"]), ["a", "b"])
+    deepStrictEqual(Arr.dedupe([NaN, NaN]), [NaN])
+    deepStrictEqual(Arr.dedupe([0, -0]), [0])
+    deepStrictEqual(
+      Arr.dedupe([new HashCollision(1), new HashCollision(2), new HashCollision(1)]).map((value) => value.value),
+      [1, 2]
+    )
+    const sparse = globalThis.Array<number>(2)
+    sparse[1] = 1
+    deepStrictEqual(Arr.dedupe(sparse), [undefined, 1])
+    deepStrictEqual(Arr.dedupe(globalThis.Array(1)), [undefined])
+  })
+
+  it("dedupe does not hash a single value", () => {
+    let value: unknown = null
+    for (let index = 0; index < 25_000; index++) {
+      value = { value }
+    }
+    const result = Arr.dedupe([value])
+    strictEqual(result.length, 1)
+    strictEqual(result[0], value)
   })
 
   it("dedupeAdjacent", () => {
@@ -1431,6 +1478,13 @@ describe("Array", () => {
     deepStrictEqual(Arr.union([], []), [])
     deepStrictEqual(Arr.union([1, 2], [1, 2]), [1, 2])
     deepStrictEqual(pipe([1, 2], Arr.union([3, 4])), [1, 2, 3, 4])
+    deepStrictEqual(
+      Arr.union(
+        [new HashCollision(1), new HashCollision(2)],
+        [new HashCollision(1), new HashCollision(3)]
+      ).map((value) => value.value),
+      [1, 2, 3]
+    )
   })
 
   it("intersection", () => {
@@ -1440,6 +1494,14 @@ describe("Array", () => {
     deepStrictEqual(Arr.intersection([], [1, 2]), [])
     deepStrictEqual(Arr.intersection([1, 2], []), [])
     deepStrictEqual(pipe([1, 2, 3], Arr.intersection([2, 3, 4])), [2, 3])
+    deepStrictEqual(Arr.intersection([1, 1, 2], [1]), [1, 1])
+    deepStrictEqual(
+      Arr.intersection(
+        [new HashCollision(1), new HashCollision(2)],
+        [new HashCollision(1)]
+      ).map((value) => value.value),
+      [1]
+    )
   })
 
   it("difference", () => {
@@ -1448,6 +1510,16 @@ describe("Array", () => {
     deepStrictEqual(Arr.difference([1, 2], []), [1, 2])
     deepStrictEqual(Arr.difference([], [1, 2]), [])
     deepStrictEqual(pipe([1, 2, 3], Arr.difference([3])), [1, 2])
+    const sparse = globalThis.Array<number>(2)
+    sparse[1] = 1
+    deepStrictEqual(Arr.difference(sparse, []), [1])
+    deepStrictEqual(
+      Arr.difference(
+        [new HashCollision(1), new HashCollision(2)],
+        [new HashCollision(1)]
+      ).map((value) => value.value),
+      [2]
+    )
   })
 
   it("cartesianWith", () => {

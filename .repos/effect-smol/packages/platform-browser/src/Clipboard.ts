@@ -1,35 +1,11 @@
 /**
  * Browser clipboard integration for Effect programs.
  *
- * This module provides a `Clipboard` service backed by `navigator.clipboard`.
- * It keeps copy, paste, clear, and rich clipboard operations inside the Effect
- * environment so browser UI code can require clipboard capability without
- * calling the global API directly. Text helpers cover portable copy and paste
- * flows, while `read`, `write`, and `writeBlob` expose `ClipboardItem` payloads
- * for browsers that support richer MIME types.
- *
- * **Mental model**
- *
- * `Clipboard` is a capability service. Application code depends on the service
- * tag, {@link layer} supplies the live browser implementation, and {@link make}
- * builds custom implementations for tests, unsupported browsers, or constrained
- * capabilities. Browser failures are converted to {@link ClipboardError}.
- *
- * **Common tasks**
- *
- * - Provide {@link layer} near the browser application edge.
- * - Use `writeString` for copy buttons and generated text.
- * - Use `readString` for paste or import workflows.
- * - Use `write` or `writeBlob` for rich clipboard payloads when
- *   `ClipboardItem` is available.
- * - Use `clear` to replace the clipboard with an empty string.
- *
- * **Gotchas**
- *
- * Clipboard access requires a secure context in modern browsers and may also
- * require user activation, permissions, and a focused document. Support differs
- * between reads, writes, text, and custom MIME payloads, so feature detection or
- * graceful fallback is often needed around `ClipboardItem` usage.
+ * This module defines the `Clipboard` service, the `ClipboardError` raised by
+ * failed browser operations, a `make` constructor for custom implementations,
+ * and a browser-backed `layer` that uses `navigator.clipboard`. The service
+ * supports reading and writing text, reading and writing `ClipboardItem`
+ * payloads, writing one `Blob`, and clearing the clipboard.
  *
  * @since 4.0.0
  */
@@ -43,6 +19,11 @@ const ErrorTypeId = "~@effect/platform-browser/Clipboard/ClipboardError"
 
 /**
  * Defines the service interface for reading from, writing to, and clearing the browser clipboard.
+ *
+ * **When to use**
+ *
+ * Use when an application needs clipboard operations through an Effect service
+ * so browser failures stay in the error channel.
  *
  * **Details**
  *
@@ -88,8 +69,8 @@ export class ClipboardError extends Data.TaggedError("ClipboardError")<{
  *
  * **When to use**
  *
- * Use when an Effect needs to require or provide clipboard capabilities through
- * the context.
+ * Use when you need to require or provide clipboard capabilities through
+ * Effect's context.
  *
  * @see {@link make} for building a custom clipboard service
  * @see {@link layer} for providing the browser-backed clipboard service

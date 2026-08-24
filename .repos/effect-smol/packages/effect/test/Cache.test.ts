@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Cache, Context, Data, Deferred, Duration, Effect, Exit, Fiber, Option } from "effect"
+import { Cache, Context, Data, Deferred, Duration, Effect, Exit, Fiber, Latch, MutableHashMap, Option } from "effect"
 import { TestClock } from "effect/testing"
 
 describe("Cache", () => {
@@ -282,6 +282,59 @@ describe("Cache", () => {
           assert.strictEqual(result1, 1)
           assert.strictEqual(result2, 2)
           assert.strictEqual(lookupCount, 2)
+        }))
+
+      it.effect("concurrent access - interrupting the first consumer does not interrupt the second", () =>
+        Effect.gen(function*() {
+          const lookupStarted = yield* Latch.make()
+          const lookupComplete = yield* Latch.make()
+          const cache = yield* Cache.make<string, number>({
+            capacity: 10,
+            lookup: () =>
+              Effect.gen(function*() {
+                yield* lookupStarted.open
+                yield* lookupComplete.await
+                return 42
+              })
+          })
+
+          const first = yield* Cache.get(cache, "K1").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* lookupStarted.await
+          const second = yield* Cache.get(cache, "K1").pipe(Effect.forkChild({ startImmediately: true }))
+          const entry = Option.getOrThrow(MutableHashMap.get(cache.map, "K1"))
+          const third = yield* entry.await().pipe(Effect.forkChild({ startImmediately: true }))
+
+          yield* Fiber.interrupt(first)
+          yield* lookupComplete.open
+
+          assert.deepStrictEqual(yield* Fiber.await(second), Exit.succeed(42))
+          assert.deepStrictEqual(yield* Fiber.await(third), Exit.succeed(42))
+        }))
+
+      it.effect("concurrent access - interrupting the last consumer interrupts the lookup", () =>
+        Effect.gen(function*() {
+          let lookupCount = 0
+          const lookupStarted = yield* Latch.make()
+          const lookupInterrupted = yield* Latch.make()
+          const cache = yield* Cache.make<string, number>({
+            capacity: 10,
+            lookup() {
+              lookupCount++
+              return lookupCount === 1 ?
+                Effect.onInterrupt(
+                  lookupStarted.open.pipe(Effect.andThen(Effect.never)),
+                  () => lookupInterrupted.open
+                ) :
+                Effect.succeed(42)
+            }
+          })
+
+          const fiber = yield* Cache.get(cache, "K1").pipe(Effect.forkChild({ startImmediately: true }))
+          yield* lookupStarted.await
+          yield* Fiber.interrupt(fiber)
+
+          yield* lookupInterrupted.await
+          assert.strictEqual(yield* Cache.get(cache, "K1"), 42)
         }))
     })
 

@@ -1,10 +1,13 @@
 import * as Haptics from "expo-haptics";
-import { SymbolView, type SFSymbol } from "expo-symbols";
-import { LayoutAnimation, Pressable, ScrollView, useColorScheme, View } from "react-native";
+import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
+import { LayoutAnimation, Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
+import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
+import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { useThemeColor } from "../../lib/useThemeColor";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 const WORK_LOG_LAYOUT_ANIMATION = {
@@ -40,32 +43,32 @@ function compactActivityDetail(detail: string | null): string | null {
   return cleaned.length > 0 ? cleaned : null;
 }
 
-function workRowSymbolName(icon: ThreadFeedActivity["icon"]): SFSymbol {
+function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
   switch (icon) {
     case "agent":
-      return "sparkles";
+      return { ios: "sparkles", android: "auto_awesome" };
     case "alert":
-      return "exclamationmark.triangle";
+      return { ios: "exclamationmark.triangle", android: "error" };
     case "check":
-      return "checkmark";
+      return { ios: "checkmark", android: "check" };
     case "command":
-      return "terminal";
+      return { ios: "terminal", android: "terminal" };
     case "edit":
-      return "square.and.pencil";
+      return { ios: "square.and.pencil", android: "edit" };
     case "eye":
-      return "eye";
+      return { ios: "eye", android: "visibility" };
     case "globe":
-      return "globe";
+      return { ios: "globe", android: "public" };
     case "hammer":
-      return "hammer";
+      return { ios: "hammer", android: "construction" };
     case "message":
-      return "bubble.left";
+      return { ios: "bubble.left", android: "chat_bubble" };
     case "warning":
-      return "xmark";
+      return { ios: "xmark", android: "close" };
     case "wrench":
-      return "wrench";
+      return { ios: "wrench", android: "build" };
     case "zap":
-      return "bolt";
+      return { ios: "bolt", android: "bolt" };
   }
 }
 
@@ -77,6 +80,46 @@ function isFreshRow(createdAt: string): boolean {
   return Number.isFinite(timestamp) && Date.now() - timestamp < FRESH_ROW_WINDOW_MS;
 }
 
+// Tool-like activities with a neutral status carry no signal worth a row.
+export function visibleWorkLogActivities(
+  activities: ReadonlyArray<ThreadFeedActivity>,
+): ReadonlyArray<ThreadFeedActivity> {
+  return activities.filter((activity) => !(activity.toolLike && activity.status === "neutral"));
+}
+
+// Pre-measurement heights for the feed's getFixedItemSize. Collapsed work-log
+// rows are single-line (numberOfLines={1}) inside a min-height that stays
+// taller than the text at every supported base font size (text-xs reaches
+// 23px at the 22pt maximum, under the 32px min-h-8), so row height is
+// deterministic. The "work log" label has no such clamp — its height follows
+// the scaled text-2xs line height. Values mirror the classNames below — keep
+// them in sync; a mismatch only costs a one-time correction on measure.
+const WORK_ROW_HEIGHT = 32; // min-h-8
+const WORK_ROW_GAP = 1; // gap-px
+const WORK_LOG_HEADER_PADDING = 2; // pb-0.5 under the "work log" label
+const WORK_LOG_BOTTOM_MARGIN = 4; // mb-1
+
+export const WORK_GROUP_TOGGLE_HEIGHT = 36; // min-h-8 (32) + mb-1 (4)
+
+export function collapsedWorkLogHeight(
+  activities: ReadonlyArray<ThreadFeedActivity>,
+  baseFontSize: number,
+): number {
+  const rows = visibleWorkLogActivities(activities);
+  if (rows.length === 0) {
+    return 0;
+  }
+  const onlyToolRows = rows.every((row) => row.toolLike);
+  const headerHeight =
+    scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.caption, baseFontSize) + WORK_LOG_HEADER_PADDING;
+  return (
+    WORK_LOG_BOTTOM_MARGIN +
+    (onlyToolRows ? 0 : headerHeight) +
+    rows.length * WORK_ROW_HEIGHT +
+    (rows.length - 1) * WORK_ROW_GAP
+  );
+}
+
 export function ThreadWorkLog(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly copiedRowId: string | null;
@@ -85,11 +128,11 @@ export function ThreadWorkLog(props: {
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string) => void;
 }) {
-  const colorScheme = useColorScheme();
-  const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
-  const rows = props.activities
-    .filter((activity) => !(activity.toolLike && activity.status === "neutral"))
-    .map((activity) => ({ ...activity, detail: compactActivityDetail(activity.detail) }));
+  const pressedBackground = useThemeColor("--color-subtle");
+  const rows = visibleWorkLogActivities(props.activities).map((activity) => ({
+    ...activity,
+    detail: compactActivityDetail(activity.detail),
+  }));
 
   if (rows.length === 0) {
     return null;
@@ -108,7 +151,8 @@ export function ThreadWorkLog(props: {
       <View className="gap-px">
         {rows.map((row) => {
           const expanded = props.expandedRows[row.id] ?? false;
-          const canExpand = row.fullDetail !== null;
+          const canExpand = row.canExpand;
+          const fullDetail = expanded ? row.getFullDetail() : null;
           const displayText = row.detail ? `${row.summary} ${row.detail}` : row.summary;
           const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
 
@@ -133,7 +177,7 @@ export function ThreadWorkLog(props: {
                     props.onToggleRow(row.id);
                   }
                 }}
-                onLongPress={() => props.onCopyRow(row.id, row.copyText)}
+                onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
                 style={({ pressed }) => ({
                   backgroundColor: pressed ? pressedBackground : "transparent",
                 })}
@@ -173,7 +217,11 @@ export function ThreadWorkLog(props: {
                     <View className="h-4 w-4 items-center justify-center">
                       {canExpand ? (
                         <SymbolView
-                          name={expanded ? "chevron.up" : "chevron.down"}
+                          name={
+                            expanded
+                              ? { ios: "chevron.up", android: "keyboard_arrow_up" }
+                              : { ios: "chevron.down", android: "keyboard_arrow_down" }
+                          }
                           size={11}
                           tintColor={props.iconSubtleColor}
                           type="monochrome"
@@ -185,10 +233,10 @@ export function ThreadWorkLog(props: {
                         <SymbolView
                           name={
                             row.status === "failure"
-                              ? "xmark"
+                              ? { ios: "xmark", android: "close" }
                               : row.status === "success"
-                                ? "checkmark"
-                                : "minus"
+                                ? { ios: "checkmark", android: "check" }
+                                : { ios: "minus", android: "remove" }
                           }
                           size={11}
                           tintColor={row.status === "failure" ? "#e11d48" : props.iconSubtleColor}
@@ -200,7 +248,7 @@ export function ThreadWorkLog(props: {
                 </View>
               </Pressable>
 
-              {expanded && row.fullDetail ? (
+              {fullDetail ? (
                 <View className="ml-7 border-l border-neutral-300/60 pb-1 pl-3 pt-0.5 dark:border-white/[0.12]">
                   <ScrollView
                     nestedScrollEnabled
@@ -213,7 +261,7 @@ export function ThreadWorkLog(props: {
                       selectable
                       className="font-mono text-2xs leading-normal text-foreground-muted"
                     >
-                      {row.fullDetail}
+                      {fullDetail}
                     </Text>
                   </ScrollView>
                 </View>
@@ -233,8 +281,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly onlyToolActivities: boolean;
   readonly onToggle: () => void;
 }) {
-  const colorScheme = useColorScheme();
-  const pressedBackground = colorScheme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.035)";
+  const pressedBackground = useThemeColor("--color-subtle");
   const noun = props.onlyToolActivities
     ? props.hiddenCount === 1
       ? "tool call"
@@ -265,7 +312,11 @@ export function ThreadWorkGroupToggle(props: {
       >
         <View className="h-[18px] w-5 items-center justify-center">
           <SymbolView
-            name={props.expanded ? "chevron.up" : "chevron.down"}
+            name={
+              props.expanded
+                ? { ios: "chevron.up", android: "keyboard_arrow_up" }
+                : { ios: "chevron.down", android: "keyboard_arrow_down" }
+            }
             size={12}
             tintColor={props.iconSubtleColor}
             type="monochrome"

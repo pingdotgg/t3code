@@ -1,22 +1,41 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import {
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { Thread } from "../types";
-import { createTranslator } from "../i18n";
+import type { Thread, ThreadShell } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
+  buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  dismissBranchMismatchForSession,
+  ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
+  hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
+  isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
-  resolveTimelineLiveFollowAction,
-  resolveVisibleThreadError,
+  resolveBackgroundDraftWorkspaceOptions,
+  resolveDraftPromotionNavigationTarget,
+  resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
+  resolveDraftHeroState,
+  scheduleEnvironmentReconnectWarning,
+  startNewThreadForProject,
+  shouldDockDraftHeroForSubmission,
+  shouldReleaseTimelineAnchorForToolActivity,
+  shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
 
@@ -24,6 +43,184 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("draft hero submission transition", () => {
+  it("does not dock the composer before a background submission", () => {
+    expect(
+      shouldDockDraftHeroForSubmission({
+        isDraftHeroState: true,
+        activeThreadKey: "environment-local:thread-1",
+        submissionIntent: "background",
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the composer in the hero layout until navigation after server promotion", () => {
+    expect(
+      resolveDraftHeroState({
+        isLocalDraftThread: false,
+        hasTimelineEntries: true,
+        isWorking: true,
+        draftHeroDockRequested: false,
+        backgroundSubmissionPending: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not auto-navigate a background submission after server promotion", () => {
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef: { environmentId, threadId },
+        serverThreadStarted: true,
+        backgroundSubmissionPending: true,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("shouldReleaseTimelineAnchorForToolActivity", () => {
+  const activeTurnId = TurnId.make("active-turn");
+  const anchorMessageId = MessageId.make("anchored-message");
+  const activeToolEntry = {
+    id: "tool-entry",
+    kind: "work" as const,
+    createdAt: now,
+    entry: {
+      id: "active-tool",
+      createdAt: now,
+      turnId: activeTurnId,
+      label: "Run command",
+      tone: "tool" as const,
+      command: "git status",
+    },
+  };
+
+  it("releases the send anchor for tool activity in the active turn", () => {
+    expect(
+      shouldReleaseTimelineAnchorForToolActivity({
+        anchorMessageId,
+        liveFollowEnabled: true,
+        runningTurnId: activeTurnId,
+        timelineEntries: [activeToolEntry],
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps the anchor while the user reads history", () => {
+    expect(
+      shouldReleaseTimelineAnchorForToolActivity({
+        anchorMessageId,
+        liveFollowEnabled: false,
+        runningTurnId: activeTurnId,
+        timelineEntries: [activeToolEntry],
+      }),
+    ).toBe(false);
+  });
+
+  it("ignores tool activity from earlier turns", () => {
+    expect(
+      shouldReleaseTimelineAnchorForToolActivity({
+        anchorMessageId,
+        liveFollowEnabled: true,
+        runningTurnId: activeTurnId,
+        timelineEntries: [
+          {
+            ...activeToolEntry,
+            entry: {
+              ...activeToolEntry.entry,
+              turnId: TurnId.make("previous-turn"),
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("ignores thinking and error rows without tool activity", () => {
+    expect(
+      shouldReleaseTimelineAnchorForToolActivity({
+        anchorMessageId,
+        liveFollowEnabled: true,
+        runningTurnId: activeTurnId,
+        timelineEntries: [
+          {
+            ...activeToolEntry,
+            entry: {
+              id: "thinking-entry",
+              createdAt: now,
+              turnId: activeTurnId,
+              label: "Thinking",
+              tone: "thinking",
+            },
+          },
+          {
+            ...activeToolEntry,
+            id: "error-entry",
+            entry: {
+              id: "error-entry",
+              createdAt: now,
+              turnId: activeTurnId,
+              label: "Provider error",
+              tone: "error",
+            },
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("does nothing without an anchor or running turn", () => {
+    const input = {
+      anchorMessageId,
+      liveFollowEnabled: true,
+      runningTurnId: activeTurnId,
+      timelineEntries: [activeToolEntry],
+    };
+
+    expect(shouldReleaseTimelineAnchorForToolActivity({ ...input, anchorMessageId: null })).toBe(
+      false,
+    );
+    expect(shouldReleaseTimelineAnchorForToolActivity({ ...input, runningTurnId: null })).toBe(
+      false,
+    );
+  });
+});
+
+describe("environment reconnect warning grace", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("shows a persistent reconnect after the grace period", () => {
+    vi.useFakeTimers();
+    const showWarning = vi.fn();
+
+    scheduleEnvironmentReconnectWarning(showWarning);
+    vi.advanceTimersByTime(ENVIRONMENT_RECONNECT_WARNING_GRACE_MS - 1);
+    expect(showWarning).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(showWarning).toHaveBeenCalledOnce();
+  });
+
+  it("cancels the warning when the connection recovers during the grace period", () => {
+    vi.useFakeTimers();
+    const showWarning = vi.fn();
+
+    const cancel = scheduleEnvironmentReconnectWarning(showWarning);
+    cancel();
+    vi.advanceTimersByTime(ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
+
+    expect(showWarning).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse elapsed grace from another environment", () => {
+    const anotherEnvironmentId = EnvironmentId.make("environment-remote");
+
+    expect(hasEnvironmentReconnectWarningGraceElapsed(environmentId, environmentId)).toBe(true);
+    expect(hasEnvironmentReconnectWarningGraceElapsed(anotherEnvironmentId, environmentId)).toBe(
+      false,
+    );
+  });
+});
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -45,6 +242,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
     deletedAt: null,
     latestTurn: null,
     branch: null,
@@ -72,6 +271,79 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("buildLoadingThreadFromShell", () => {
+  it("preserves shell metadata and supplies empty detail collections", () => {
+    const shell = {
+      environmentId,
+      id: threadId,
+      projectId,
+      title: "Loading thread",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "main",
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      session: null,
+      latestUserMessageAt: now,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    } satisfies ThreadShell;
+
+    expect(buildLoadingThreadFromShell(shell)).toMatchObject({
+      environmentId,
+      id: threadId,
+      projectId,
+      title: "Loading thread",
+      branch: "main",
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+    });
+  });
+});
+
+describe("resolveThreadMetadataUpdateForNextTurn", () => {
+  const modelSelection = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-5.4",
+  };
+
+  it("updates a stale local thread branch to the active checkout", () => {
+    expect(
+      resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: modelSelection,
+        currentBranch: "feature/thread",
+        nextBranch: "feature/checkout",
+      }),
+    ).toEqual({ branch: "feature/checkout", worktreePath: null });
+  });
+
+  it("does not write metadata when the model and branch are unchanged", () => {
+    expect(
+      resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: modelSelection,
+        nextModelSelection: modelSelection,
+        currentBranch: "feature/current",
+        nextBranch: "feature/current",
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("buildThreadTurnInterruptInput", () => {
   it("targets the session's active running turn", () => {
@@ -170,38 +442,6 @@ describe("deriveComposerSendState", () => {
   });
 });
 
-describe("resolveTimelineLiveFollowAction", () => {
-  it("reveals a backfilled first message when all rows fit in the viewport", () => {
-    expect(
-      resolveTimelineLiveFollowAction({
-        realContentBottom: 180,
-        visibleScrollLength: 720,
-        scrollOffset: 96,
-      }),
-    ).toBe("scroll-to-start");
-  });
-
-  it("does nothing when fitting content is already at the start", () => {
-    expect(
-      resolveTimelineLiveFollowAction({
-        realContentBottom: 180,
-        visibleScrollLength: 720,
-        scrollOffset: 0,
-      }),
-    ).toBe("none");
-  });
-
-  it("follows the end when real content overflows the viewport", () => {
-    expect(
-      resolveTimelineLiveFollowAction({
-        realContentBottom: 900,
-        visibleScrollLength: 720,
-        scrollOffset: 120,
-      }),
-    ).toBe("scroll-to-end");
-  });
-});
-
 describe("buildExpiredTerminalContextToastCopy", () => {
   it("formats empty and omission guidance", () => {
     expect(buildExpiredTerminalContextToastCopy(1, "empty")).toEqual({
@@ -211,15 +451,6 @@ describe("buildExpiredTerminalContextToastCopy", () => {
     expect(buildExpiredTerminalContextToastCopy(2, "omitted")).toEqual({
       title: "Expired terminal contexts omitted from message",
       description: "Re-add it if you want that terminal output included.",
-    });
-  });
-
-  it("formats guidance in the requested locale", () => {
-    const t = createTranslator("zh-CN");
-
-    expect(buildExpiredTerminalContextToastCopy(2, "omitted", t)).toEqual({
-      title: "过期的终端上下文已从消息中省略",
-      description: "如需包含该终端输出，请重新添加。",
     });
   });
 });
@@ -289,37 +520,84 @@ describe("getStartedThreadModelChangeBlockReason", () => {
         "This provider does not allow switching models after a conversation has started.",
     });
   });
-
-  it("localizes the model-change block reason", () => {
-    const t = createTranslator("zh-CN");
-
-    expect(
-      getStartedThreadModelChangeBlockReason(
-        {
-          providers,
-          hasStartedSession: true,
-          currentModelSelection: {
-            instanceId: ProviderInstanceId.make("codex"),
-            model: "gpt-5.4",
-          },
-          nextModelSelection: {
-            instanceId: ProviderInstanceId.make("grok"),
-            model: "grok-build",
-          },
-        },
-        t,
-      ),
-    ).toEqual({
-      title: "请新建对话以更改模型",
-      description: "此供应商不允许在对话开始后切换模型。",
-    });
-  });
 });
 
 describe("resolveSendEnvMode", () => {
   it("keeps worktree mode only for git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: true })).toBe("worktree");
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
+  });
+});
+
+describe("resolveBackgroundDraftWorkspaceOptions", () => {
+  it("keeps New worktree selected without reusing the launched worktree", () => {
+    expect(
+      resolveBackgroundDraftWorkspaceOptions({
+        envMode: "worktree",
+        branch: "main",
+        startFromOrigin: true,
+      }),
+    ).toEqual({
+      envMode: "worktree",
+      branch: "main",
+      worktreePath: null,
+      startFromOrigin: true,
+    });
+  });
+});
+
+describe("branchMismatchKey", () => {
+  it("builds a key from thread id and both branches", () => {
+    expect(branchMismatchKey("thread-1", { threadBranch: "feat/a", currentBranch: "feat/b" })).toBe(
+      "thread-1:feat/a:feat/b",
+    );
+  });
+
+  it("returns null without a thread or mismatch", () => {
+    expect(branchMismatchKey(null, { threadBranch: "a", currentBranch: "b" })).toBeNull();
+    expect(branchMismatchKey("thread-1", null)).toBeNull();
+  });
+});
+
+describe("shouldShowBranchMismatchBanner", () => {
+  const base = {
+    hasMismatch: true,
+    isDismissed: false,
+    composerHasContent: false,
+    wasShownForCurrentMismatch: false,
+  };
+
+  it("stays hidden during passive browsing (even though the composer autofocuses)", () => {
+    expect(shouldShowBranchMismatchBanner(base)).toBe(false);
+  });
+
+  it("shows once the composer has draft content", () => {
+    expect(shouldShowBranchMismatchBanner({ ...base, composerHasContent: true })).toBe(true);
+  });
+
+  it("stays mounted after the draft clears once shown for the current mismatch", () => {
+    expect(shouldShowBranchMismatchBanner({ ...base, wasShownForCurrentMismatch: true })).toBe(
+      true,
+    );
+  });
+
+  it("never shows when dismissed or without a mismatch", () => {
+    expect(
+      shouldShowBranchMismatchBanner({ ...base, composerHasContent: true, isDismissed: true }),
+    ).toBe(false);
+    expect(
+      shouldShowBranchMismatchBanner({ ...base, composerHasContent: true, hasMismatch: false }),
+    ).toBe(false);
+  });
+});
+
+describe("session branch mismatch dismissal", () => {
+  it("tracks dismissed keys and treats other keys as active", () => {
+    expect(isBranchMismatchDismissedForSession("t1:a:b")).toBe(false);
+    dismissBranchMismatchForSession("t1:a:b");
+    expect(isBranchMismatchDismissedForSession("t1:a:b")).toBe(true);
+    expect(isBranchMismatchDismissedForSession("t1:a:c")).toBe(false);
+    expect(isBranchMismatchDismissedForSession(null)).toBe(false);
   });
 });
 
@@ -397,19 +675,24 @@ describe("reconcileRetainedMountedThreadIds", () => {
 });
 
 describe("shouldWriteThreadErrorToCurrentServerThread", () => {
-  it("requires the environment, route thread, and target thread to match", () => {
+  it("writes errors for a shell-derived active server thread", () => {
     const routeThreadRef = { environmentId, threadId };
 
     expect(
       shouldWriteThreadErrorToCurrentServerThread({
-        serverThread: { environmentId, id: threadId },
+        activeServerThread: { environmentId, id: threadId },
         routeThreadRef,
         targetThreadId: threadId,
       }),
     ).toBe(true);
+  });
+
+  it("requires an active server thread matching the environment, route, and target", () => {
+    const routeThreadRef = { environmentId, threadId };
+
     expect(
       shouldWriteThreadErrorToCurrentServerThread({
-        serverThread: null,
+        activeServerThread: null,
         routeThreadRef,
         targetThreadId: threadId,
       }),
@@ -417,32 +700,30 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
   });
 });
 
-describe("resolveVisibleThreadError", () => {
-  it("hides the dismissed error without hiding a different server error", () => {
+describe("startNewThreadForProject", () => {
+  it("starts a thread through the supplied shared handler for the active project", () => {
+    const calls: Array<{ environmentId: EnvironmentId; projectId: ProjectId }> = [];
+    const projectRef = { environmentId, projectId };
+
     expect(
-      resolveVisibleThreadError({
-        localError: null,
-        serverError: "400 Bad Request",
-        dismissedError: "400 Bad Request",
+      startNewThreadForProject(projectRef, (nextProjectRef) => {
+        calls.push(nextProjectRef);
+        return Promise.resolve();
       }),
-    ).toBeNull();
-    expect(
-      resolveVisibleThreadError({
-        localError: null,
-        serverError: "502 Bad Gateway",
-        dismissedError: "400 Bad Request",
-      }),
-    ).toBe("502 Bad Gateway");
+    ).toBe(true);
+    expect(calls).toEqual([projectRef]);
   });
 
-  it("gives a local operation error priority over the server session error", () => {
+  it("does nothing when the active project is unavailable", () => {
+    let called = false;
+
     expect(
-      resolveVisibleThreadError({
-        localError: "Failed to send message",
-        serverError: "400 Bad Request",
-        dismissedError: null,
+      startNewThreadForProject(null, () => {
+        called = true;
+        return Promise.resolve();
       }),
-    ).toBe("Failed to send message");
+    ).toBe(false);
+    expect(called).toBe(false);
   });
 });
 
@@ -457,7 +738,31 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "ready",
         latestTurn: completedTurn,
+        latestUserMessageId: localDispatch.latestUserMessageId,
         session: readySession,
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a follow-up active while its provider session is starting", () => {
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({ latestTurn: completedTurn, session: readySession }),
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "connecting",
+        latestTurn: completedTurn,
+        latestUserMessageId: MessageId.make("message-followup"),
+        session: {
+          ...readySession,
+          status: "starting",
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -482,6 +787,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "ready",
         latestTurn: newerTurn,
+        latestUserMessageId: localDispatch.latestUserMessageId,
         session: { ...readySession, updatedAt: newerTurn.completedAt },
         hasPendingApproval: false,
         hasPendingUserInput: false,
@@ -508,6 +814,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "running",
         latestTurn: runningTurn,
+        latestUserMessageId: localDispatch.latestUserMessageId,
         session: {
           ...readySession,
           status: "running",
@@ -523,11 +830,55 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "running",
         latestTurn: runningTurn,
+        latestUserMessageId: localDispatch.latestUserMessageId,
         session: {
           ...readySession,
           status: "running",
           activeTurnId: runningTurn.turnId,
         },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("acknowledges a steering message projected onto the current running turn", () => {
+    const runningTurn = {
+      ...completedTurn,
+      state: "running" as const,
+      completedAt: null,
+    };
+    const runningSession = {
+      ...readySession,
+      status: "running" as const,
+      activeTurnId: runningTurn.turnId,
+    };
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({
+        latestTurn: runningTurn,
+        session: runningSession,
+        messages: [
+          {
+            id: MessageId.make("message-before-steer"),
+            role: "user",
+            text: "Initial prompt",
+            turnId: runningTurn.turnId,
+            createdAt: runningTurn.requestedAt,
+            updatedAt: runningTurn.requestedAt,
+            streaming: false,
+          },
+        ],
+      }),
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: runningTurn,
+        latestUserMessageId: MessageId.make("message-steer"),
+        session: runningSession,
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -541,6 +892,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       localDispatch,
       phase: "ready" as const,
       latestTurn: null,
+      latestUserMessageId: localDispatch.latestUserMessageId,
       session: null,
       hasPendingApproval: false,
       hasPendingUserInput: false,

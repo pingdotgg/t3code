@@ -2,6 +2,7 @@ import * as eks from "@distilled.cloud/aws/eks";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import { Unowned } from "../../AdoptPolicy.ts";
 import { deepEqual, isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
@@ -58,18 +59,31 @@ export interface Addon extends Resource<
   "AWS.EKS.Addon",
   AddonProps,
   {
+    /** The ARN of the add-on. */
     addonArn: string;
+    /** The name of the add-on (e.g. `vpc-cni`, `coredns`). */
     addonName: string;
+    /** The name of the EKS cluster the add-on is installed on. */
     clusterName: string;
+    /** The add-on status (e.g. `ACTIVE`, `DEGRADED`). */
     status: eks.AddonStatus;
+    /** The installed version of the add-on. */
     addonVersion: string | undefined;
+    /** The IAM role ARN bound to the add-on's service account, if any. */
     serviceAccountRoleArn: string | undefined;
+    /** The add-on's configuration values (JSON or YAML). */
     configurationValues: string | undefined;
+    /** The ARNs of the pod identity associations owned by the add-on. */
     podIdentityAssociations: string[];
+    /** The Kubernetes namespace the add-on is installed in. */
     namespace: string | undefined;
+    /** The publisher of the add-on. */
     publisher: string | undefined;
+    /** The owner of the add-on. */
     owner: string | undefined;
+    /** The tags applied to the add-on. */
     tags: Record<string, string>;
+    /** Health issues currently reported for the add-on. */
     healthIssues: eks.AddonIssue[];
   },
   never,
@@ -82,7 +96,7 @@ export interface Addon extends Resource<
  * `Addon` is intended for optional managed add-ons. On Auto Mode clusters, many
  * core components are already provided by AWS and do not need to be modeled as
  * explicit add-on resources.
- *
+ * @resource
  * @section Managing Add-ons
  * @example Install Metrics Server
  * ```typescript
@@ -147,7 +161,11 @@ class AddonNotReady extends Data.TaggedError("AddonNotReady")<{
   readonly clusterName: string;
   readonly addonName: string;
   readonly status: string | undefined;
-}> {}
+}> {
+  override get message(): string {
+    return `addon '${this.clusterName}/${this.addonName}' is not ACTIVE (status: ${this.status ?? "absent"})`;
+  }
+}
 
 class AddonStillExists extends Data.TaggedError("AddonStillExists")<{
   readonly clusterName: string;
@@ -166,6 +184,44 @@ export const AddonProvider = () =>
 
       return {
         stables: ["addonArn"],
+        // Add-ons are keyed by (clusterName, addonName) and `listAddons`
+        // requires a cluster. Enumerate every cluster, list its add-ons,
+        // then hydrate each via `describeAddon` to produce full Attributes.
+        list: () =>
+          Effect.gen(function* () {
+            const clusterNames = yield* eks.listClusters.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) => page.clusters ?? []),
+              ),
+            );
+
+            const perCluster = yield* Effect.forEach(
+              clusterNames,
+              (clusterName) =>
+                eks.listAddons.pages({ clusterName }).pipe(
+                  Stream.runCollect,
+                  Effect.map((chunk) =>
+                    Array.from(chunk).flatMap((page) => page.addons ?? []),
+                  ),
+                  Effect.flatMap((addonNames) =>
+                    Effect.forEach(
+                      addonNames,
+                      (addonName) => readAddon({ clusterName, addonName }),
+                      { concurrency: 5 },
+                    ),
+                  ),
+                ),
+              { concurrency: 5 },
+            );
+
+            return perCluster
+              .flat()
+              .filter(
+                (addon): addon is NonNullable<typeof addon> =>
+                  addon !== undefined,
+              );
+          }),
         diff: Effect.fn(function* ({ olds, news }) {
           if (!isResolved(news)) return;
           if (olds.clusterName !== news.clusterName) {
@@ -181,8 +237,14 @@ export const AddonProvider = () =>
           }
         }),
         read: Effect.fn(function* ({ id, olds }) {
+          const clusterName = olds.clusterName as string | undefined;
+          // A crashed prior run can persist a row before its unresolved
+          // inputs were stripped — nothing observable yet.
+          if (clusterName === undefined || olds.addonName === undefined) {
+            return undefined;
+          }
           const state = yield* readAddon({
-            clusterName: olds.clusterName as string,
+            clusterName,
             addonName: olds.addonName,
           });
           if (!state) return undefined;
@@ -352,9 +414,15 @@ const waitForAddonActive = Effect.fn(function* ({
     }),
     Effect.retry({
       while: (error) => error instanceof AddonNotReady,
-      schedule: Schedule.exponential("1 second").pipe(
-        Schedule.both(Schedule.recurs(120)),
-      ),
+      // Flat 5s polls, ~20 min budget (uncapped exponential sleeps for
+      // multi-minute stretches late in the wait — looks like a deadlock).
+      // Node-bound addons (e.g. HyperPod task governance) stay DEGRADED
+      // until nodes join and pull images, which can take most of the
+      // budget when the addon installs alongside its node group.
+      schedule: Schedule.max([
+        Schedule.spaced("5 seconds"),
+        Schedule.recurs(240),
+      ]),
     }),
   );
 });
@@ -377,9 +445,12 @@ const waitForAddonDeleted = Effect.fn(function* ({
     ),
     Effect.retry({
       while: (error) => error instanceof AddonStillExists,
-      schedule: Schedule.exponential("1 second").pipe(
-        Schedule.both(Schedule.recurs(120)),
-      ),
+      // Flat 5s polls, ~10 min budget (uncapped exponential sleeps for
+      // multi-minute stretches late in the wait — looks like a deadlock).
+      schedule: Schedule.max([
+        Schedule.spaced("5 seconds"),
+        Schedule.recurs(120),
+      ]),
     }),
   );
 });

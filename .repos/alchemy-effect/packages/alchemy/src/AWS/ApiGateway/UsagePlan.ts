@@ -1,13 +1,14 @@
-import { Region } from "@distilled.cloud/aws/Region";
 import * as ag from "@distilled.cloud/aws/api-gateway";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { deepEqual, isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
-import type { Providers } from "../Providers.ts";
 import { createInternalTags, tagRecord } from "../../Tags.ts";
+import type { Providers } from "../Providers.ts";
 
+import { AWSEnvironment } from "../Environment.ts";
 import { syncTags, usagePlanArn } from "./common.ts";
 
 export interface UsagePlanProps {
@@ -39,6 +40,7 @@ export interface UsagePlanProps {
   tags?: Record<string, string>;
 }
 
+/** @resource */
 export interface UsagePlan extends Resource<
   "AWS.ApiGateway.UsagePlan",
   UsagePlanProps,
@@ -63,6 +65,23 @@ export interface UsagePlan extends Resource<
  * ```typescript
  * const plan = yield* ApiGateway.UsagePlan("Standard", {
  *   apiStages: [{ apiId: api.restApiId, stage: stage.stageName }],
+ * });
+ * ```
+ *
+ * @example Throttled plan with a quota and an enrolled API key
+ * ```typescript
+ * const plan = yield* ApiGateway.UsagePlan("Partner", {
+ *   throttle: { rateLimit: 10, burstLimit: 20 },
+ *   quota: { limit: 10_000, period: "MONTH" },
+ * });
+ *
+ * const key = yield* ApiGateway.ApiKey("PartnerKey", {
+ *   generateDistinctId: true,
+ * });
+ *
+ * yield* ApiGateway.UsagePlanKey("PartnerLink", {
+ *   usagePlanId: plan.id,
+ *   keyId: key.id,
  * });
  * ```
  */
@@ -234,8 +253,6 @@ export const UsagePlanProvider = () =>
   Provider.effect(
     UsagePlanResource,
     Effect.gen(function* () {
-      const awsRegion = yield* Region;
-
       return {
         stables: ["id"] as const,
         diff: Effect.fn(function* ({ news: newsIn, olds }) {
@@ -265,7 +282,29 @@ export const UsagePlanProvider = () =>
             tags: tagRecord(p.tags),
           };
         }),
+        list: () =>
+          ag.getUsagePlans.pages({}).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.items ?? [])
+                  .filter(
+                    (p): p is ag.UsagePlan & { id: string } => p.id != null,
+                  )
+                  .map((p) => ({
+                    id: p.id,
+                    name: p.name,
+                    description: p.description,
+                    apiStages: p.apiStages,
+                    throttle: p.throttle,
+                    quota: p.quota,
+                    tags: tagRecord(p.tags),
+                  })),
+              ),
+            ),
+          ),
         reconcile: Effect.fn(function* ({ id, news: newsIn, output, session }) {
+          const { region } = yield* AWSEnvironment.current;
           if (!isResolved(newsIn)) {
             return yield* Effect.die("UsagePlan props were not resolved");
           }
@@ -333,7 +372,7 @@ export const UsagePlanProvider = () =>
           const observedTags = tagRecord(observed.tags);
           if (!deepEqual(observedTags, desiredTags)) {
             yield* syncTags({
-              resourceArn: usagePlanArn(awsRegion, planId),
+              resourceArn: usagePlanArn(region, planId),
               oldTags: observedTags,
               newTags: desiredTags,
             });

@@ -5,11 +5,12 @@ import {
   SSHPublicKey,
   User,
 } from "@/AWS/IAM";
-import * as Test from "@/Test/Vitest";
+import * as Test from "@/Test/Alchemy";
 import * as IAM from "@distilled.cloud/aws/iam";
-import { describe, expect } from "@effect/vitest";
+import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { testCertificateBody, testSshPublicKey } from "./fixtures.ts";
+import { withSigningCertificateFixture } from "./SigningCertificateTestLease.ts";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
@@ -91,98 +92,101 @@ describe("AWS.IAM credential resources", () => {
   test.provider(
     "create, update, and delete SSH and signing credentials for a user",
     (stack) =>
-      Effect.gen(function* () {
-        yield* stack.destroy();
+      withSigningCertificateFixture(
+        Effect.gen(function* () {
+          yield* stack.destroy();
 
-        const deployed = yield* stack.deploy(
-          Effect.gen(function* () {
-            const user = yield* User("CredentialUser", {});
-            const sshKey = yield* SSHPublicKey("UserSshKey", {
-              userName: user.userName,
-              sshPublicKeyBody: testSshPublicKey,
-              status: "Active",
-            });
-            const signingCertificate = yield* SigningCertificate(
-              "UserSigningCertificate",
-              {
+          const deployed = yield* stack.deploy(
+            Effect.gen(function* () {
+              const user = yield* User("CredentialUser", {});
+              const sshKey = yield* SSHPublicKey("UserSshKey", {
                 userName: user.userName,
-                certificateBody: testCertificateBody,
+                sshPublicKeyBody: testSshPublicKey,
                 status: "Active",
-              },
-            );
-            return { user, sshKey, signingCertificate };
-          }),
-        );
+              });
+              const signingCertificate = yield* SigningCertificate(
+                "UserSigningCertificate",
+                {
+                  userName: user.userName,
+                  certificateBody: testCertificateBody,
+                  status: "Active",
+                },
+              );
+              return { user, sshKey, signingCertificate };
+            }),
+          );
 
-        const createdKey = yield* IAM.getSSHPublicKey({
-          UserName: deployed.user.userName,
-          SSHPublicKeyId: deployed.sshKey.sshPublicKeyId,
-          Encoding: "SSH",
-        });
-        expect(createdKey.SSHPublicKey?.Status).toBe("Active");
+          const createdKey = yield* IAM.getSSHPublicKey({
+            UserName: deployed.user.userName,
+            SSHPublicKeyId: deployed.sshKey.sshPublicKeyId,
+            Encoding: "SSH",
+          });
+          expect(createdKey.SSHPublicKey?.Status).toBe("Active");
 
-        const createdCerts = yield* IAM.listSigningCertificates({
-          UserName: deployed.user.userName,
-        });
-        expect(
-          createdCerts.Certificates.some(
-            (entry) =>
-              entry.CertificateId === deployed.signingCertificate.certificateId,
-          ),
-        ).toBe(true);
-
-        yield* stack.deploy(
-          Effect.gen(function* () {
-            const user = yield* User("CredentialUser", {});
-            yield* SSHPublicKey("UserSshKey", {
-              userName: user.userName,
-              sshPublicKeyBody: testSshPublicKey,
-              status: "Inactive",
-            });
-            yield* SigningCertificate("UserSigningCertificate", {
-              userName: user.userName,
-              certificateBody: testCertificateBody,
-              status: "Inactive",
-            });
-          }),
-        );
-
-        const updatedKey = yield* IAM.getSSHPublicKey({
-          UserName: deployed.user.userName,
-          SSHPublicKeyId: deployed.sshKey.sshPublicKeyId,
-          Encoding: "SSH",
-        });
-        expect(updatedKey.SSHPublicKey?.Status).toBe("Inactive");
-
-        const updatedCerts = yield* IAM.listSigningCertificates({
-          UserName: deployed.user.userName,
-        });
-        const updatedCert = updatedCerts.Certificates.find(
-          (entry) =>
-            entry.CertificateId === deployed.signingCertificate.certificateId,
-        );
-        expect(updatedCert?.Status).toBe("Inactive");
-
-        yield* stack.destroy();
-
-        const deletedKey = yield* IAM.getSSHPublicKey({
-          UserName: deployed.user.userName,
-          SSHPublicKeyId: deployed.sshKey.sshPublicKeyId,
-          Encoding: "SSH",
-        }).pipe(Effect.option);
-        expect(deletedKey._tag).toBe("None");
-
-        const deletedCerts = yield* IAM.listSigningCertificates({
-          UserName: deployed.user.userName,
-        }).pipe(Effect.option);
-        expect(
-          deletedCerts._tag === "None" ||
-            !deletedCerts.value.Certificates.some(
+          const createdCerts = yield* IAM.listSigningCertificates({
+            UserName: deployed.user.userName,
+          });
+          expect(
+            createdCerts.Certificates.some(
               (entry) =>
                 entry.CertificateId ===
                 deployed.signingCertificate.certificateId,
             ),
-        ).toBe(true);
-      }),
+          ).toBe(true);
+
+          yield* stack.deploy(
+            Effect.gen(function* () {
+              const user = yield* User("CredentialUser", {});
+              yield* SSHPublicKey("UserSshKey", {
+                userName: user.userName,
+                sshPublicKeyBody: testSshPublicKey,
+                status: "Inactive",
+              });
+              yield* SigningCertificate("UserSigningCertificate", {
+                userName: user.userName,
+                certificateBody: testCertificateBody,
+                status: "Inactive",
+              });
+            }),
+          );
+
+          const updatedKey = yield* IAM.getSSHPublicKey({
+            UserName: deployed.user.userName,
+            SSHPublicKeyId: deployed.sshKey.sshPublicKeyId,
+            Encoding: "SSH",
+          });
+          expect(updatedKey.SSHPublicKey?.Status).toBe("Inactive");
+
+          const updatedCerts = yield* IAM.listSigningCertificates({
+            UserName: deployed.user.userName,
+          });
+          const updatedCert = updatedCerts.Certificates.find(
+            (entry) =>
+              entry.CertificateId === deployed.signingCertificate.certificateId,
+          );
+          expect(updatedCert?.Status).toBe("Inactive");
+
+          yield* stack.destroy();
+
+          const deletedKey = yield* IAM.getSSHPublicKey({
+            UserName: deployed.user.userName,
+            SSHPublicKeyId: deployed.sshKey.sshPublicKeyId,
+            Encoding: "SSH",
+          }).pipe(Effect.option);
+          expect(deletedKey._tag).toBe("None");
+
+          const deletedCerts = yield* IAM.listSigningCertificates({
+            UserName: deployed.user.userName,
+          }).pipe(Effect.option);
+          expect(
+            deletedCerts._tag === "None" ||
+              !deletedCerts.value.Certificates.some(
+                (entry) =>
+                  entry.CertificateId ===
+                  deployed.signingCertificate.certificateId,
+              ),
+          ).toBe(true);
+        }),
+      ),
   );
 });

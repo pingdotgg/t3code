@@ -30,7 +30,7 @@ jobs:
   check_changes:
     name: Check for changes since last nightly
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     outputs:
       has_changes: ${{ steps.check.outputs.has_changes }}
     steps:
@@ -38,6 +38,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - id: check
         name: Compare HEAD to last nightly tag
@@ -66,7 +70,7 @@ jobs:
     if: |
       !failure() && !cancelled() &&
       (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       release_channel: ${{ steps.release_meta.outputs.release_channel }}
@@ -75,6 +79,7 @@ jobs:
       release_name: ${{ steps.release_meta.outputs.name }}
       short_sha: ${{ steps.release_meta.outputs.short_sha }}
       previous_tag: ${{ steps.previous_tag.outputs.previous_tag }}
+      cli_dist_tag: ${{ steps.release_meta.outputs.cli_dist_tag }}
       is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
       make_latest: ${{ steps.release_meta.outputs.make_latest }}
       ref: ${{ github.sha }}
@@ -83,6 +88,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
@@ -90,9 +99,6 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
-
-      - name: Ensure Electron runtime is installed
-        run: vp run --filter @t3tools/desktop ensure:electron
 
       - id: release_meta
         name: Resolve release version
@@ -114,6 +120,7 @@ jobs:
               --github-output
 
             echo "release_channel=nightly" >> "$GITHUB_OUTPUT"
+            echo "cli_dist_tag=nightly" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           else
@@ -137,6 +144,7 @@ jobs:
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "tag=v$version" >> "$GITHUB_OUTPUT"
             echo "name=T3 Code v$version" >> "$GITHUB_OUTPUT"
+            echo "cli_dist_tag=latest" >> "$GITHUB_OUTPUT"
             if [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
               echo "make_latest=true" >> "$GITHUB_OUTPUT"
@@ -145,6 +153,40 @@ jobs:
               echo "make_latest=false" >> "$GITHUB_OUTPUT"
             fi
           fi
+
+      - id: previous_tag
+        name: Resolve previous release tag
+        run: |
+          node scripts/resolve-previous-release-tag.ts \
+            --channel "${{ steps.release_meta.outputs.release_channel }}" \
+            --current-tag "${{ steps.release_meta.outputs.tag }}" \
+            --github-output
+
+  quality:
+    name: Release quality checks
+    needs: [preflight]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
 
       - name: Check
         run: vp check
@@ -155,13 +197,95 @@ jobs:
       - name: Test
         run: vp run test
 
-      - id: previous_tag
-        name: Resolve previous release tag
+  relay_public_config:
+    name: Resolve T3 Connect public config
+    needs: preflight
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 5
+    environment:
+      name: production
+    outputs:
+      clerk_publishable_key: ${{ steps.public_config.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ steps.public_config.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ steps.public_config.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ steps.public_config.outputs.relay_url }}
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      RELAY_DOMAIN: ${{ vars.RELAY_DOMAIN }}
+      RELAY_API_ZONE_NAME: ${{ vars.RELAY_API_ZONE_NAME }}
+      CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+      CLERK_JWT_TEMPLATE: ${{ vars.CLERK_JWT_TEMPLATE }}
+      CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.CLERK_CLI_OAUTH_CLIENT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3code-relay...
+
+      - id: relay_state
+        name: Read production relay tracing config
+        shell: bash
         run: |
-          node scripts/resolve-previous-release-tag.ts \
-            --channel "${{ steps.release_meta.outputs.release_channel }}" \
-            --current-tag "${{ steps.release_meta.outputs.tag }}" \
-            --github-output
+          vp run --filter t3code-relay deploy \
+            --stage prod \
+            --read-state \
+            --github-output \
+            --github-env-file "$RUNNER_TEMP/relay-client-tracing.env"
+
+      - name: Upload relay client tracing config
+        uses: actions/upload-artifact@v7
+        with:
+          name: relay-client-tracing-config
+          path: ${{ runner.temp }}/relay-client-tracing.env
+          if-no-files-found: error
+          retention-days: 1
+
+      - id: public_config
+        name: Resolve production relay public config
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          relay_domain="${RELAY_DOMAIN:-}"
+          if [[ -z "$relay_domain" && -n "${RELAY_API_ZONE_NAME:-}" ]]; then
+            relay_domain="relay.$RELAY_API_ZONE_NAME"
+          fi
+          required=(
+            relay_domain
+            CLERK_PUBLISHABLE_KEY
+            CLERK_JWT_TEMPLATE
+            CLERK_CLI_OAUTH_CLIENT_ID
+          )
+          missing=()
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing required relay deployment configuration: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+          echo "clerk_publishable_key=$CLERK_PUBLISHABLE_KEY" >> "$GITHUB_OUTPUT"
+          echo "clerk_jwt_template=$CLERK_JWT_TEMPLATE" >> "$GITHUB_OUTPUT"
+          echo "clerk_cli_oauth_client_id=$CLERK_CLI_OAUTH_CLIENT_ID" >> "$GITHUB_OUTPUT"
+          echo "relay_url=https://$relay_domain" >> "$GITHUB_OUTPUT"
 
   # node-pty publishes no Linux prebuilt and the WSL backend runs under the
   # distro's own (Linux) Node, which can't load the Windows/Electron binary. We
@@ -173,21 +297,26 @@ jobs:
     name: Build WSL node-pty (linux-x64)
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.preflight.outputs.ref }}
-          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
           cache: true
-          run-install: true
+          run-install: |
+            args:
+              - --filter=t3...
 
       - name: Build node-pty linux-x64 prebuild
         shell: bash
@@ -219,34 +348,47 @@ jobs:
     # builds. `!cancelled()` (not `!failure()`) lets the job run even when
     # build_wsl_node_pty failed; the Windows-only download step below then fails
     # that single platform if the prebuild is missing.
-    needs: [preflight, build_wsl_node_pty]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
+    needs: [preflight, relay_public_config, build_wsl_node_pty]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - label: macOS arm64
-            runner: macos-15
+            runner: blacksmith-12vcpu-macos-26
             platform: mac
             target: dmg
             arch: arm64
+            rust_target: aarch64-apple-darwin
+            resource_key: darwin-arm64
           - label: macOS x64
-            runner: macos-15
+            runner: blacksmith-12vcpu-macos-26
             platform: mac
             target: dmg
             arch: x64
+            rust_target: x86_64-apple-darwin
+            resource_key: darwin-x64
           - label: Linux x64
-            runner: ubuntu-24.04
+            runner: blacksmith-32vcpu-ubuntu-2404
             platform: linux
             target: AppImage
             arch: x64
+            rust_target: x86_64-unknown-linux-gnu
+            resource_key: linux-x64
           - label: Windows x64
-            runner: windows-2022
+            runner: blacksmith-32vcpu-windows-2025
             platform: win
             target: nsis
             arch: x64
+            rust_target: x86_64-pc-windows-msvc
+            resource_key: win32-x64
           # - label: Windows arm64
           #   runner: windows-11-arm
           #   platform: win
@@ -257,14 +399,60 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.preflight.outputs.ref }}
-          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          cache: true
-          run-install: true
+          cache: ${{ matrix.platform != 'win' }}
+          run-install: false
+
+      - name: Resolve Windows package cache path
+        if: matrix.platform == 'win'
+        id: package_cache_path
+        shell: pwsh
+        run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
+
+      - name: Cache Windows packages
+        if: matrix.platform == 'win'
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.package_cache_path.outputs.path }}
+          key: windows-release-packages-v1-${{ matrix.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@v6
+        with:
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor${{ matrix.platform == 'win' && '.exe' || '' }}
+          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Download relay client tracing config
+        uses: actions/download-artifact@v8
+        with:
+          name: relay-client-tracing-config
+          path: ${{ runner.temp }}/relay-client-tracing
+
+      - name: Load relay client tracing config
+        shell: bash
+        run: |
+          config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
+          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
+          echo "::add-mask::$tracing_token"
+          cat "$config_path" >> "$GITHUB_ENV"
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -373,6 +561,7 @@ jobs:
       - name: Build desktop artifact
         shell: bash
         env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
@@ -490,6 +679,19 @@ jobs:
           #   done
           # fi
 
+      - name: Collect resource monitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary_name="t3-resource-monitor"
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+            binary_name="${binary_name}.exe"
+          fi
+          source_path="native/resource-monitor/target/${{ matrix.rust_target }}/release/${binary_name}"
+          target_dir="resource-monitor-publish/${{ matrix.resource_key }}"
+          mkdir -p "$target_dir"
+          cp "$source_path" "$target_dir/$binary_name"
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -497,12 +699,98 @@ jobs:
           path: release-publish/*
           if-no-files-found: error
 
+      - name: Upload resource monitor
+        uses: actions/upload-artifact@v7
+        with:
+          name: resource-monitor-${{ matrix.resource_key }}
+          path: resource-monitor-publish/${{ matrix.resource_key }}/*
+          if-no-files-found: error
+
+  publish_cli:
+    name: Publish CLI to npm
+    needs: [preflight, relay_public_config, quality, build]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+              - --filter=@t3tools/web...
+              - --filter=@t3tools/scripts...
+
+      - name: Download relay client tracing config
+        uses: actions/download-artifact@v8
+        with:
+          name: relay-client-tracing-config
+          path: ${{ runner.temp }}/relay-client-tracing
+
+      - name: Load relay client tracing config
+        shell: bash
+        run: |
+          config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
+          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
+          echo "::add-mask::$tracing_token"
+          cat "$config_path" >> "$GITHUB_ENV"
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      - name: Build web package
+        run: vp run --filter @t3tools/web build
+
+      - name: Build CLI package
+        run: vp run --filter t3 build
+
+      - name: Download resource monitors
+        uses: actions/download-artifact@v8
+        with:
+          pattern: resource-monitor-*
+          path: ${{ runner.temp }}/resource-monitors
+
+      - name: Bundle resource monitors into CLI package
+        shell: bash
+        run: |
+          set -euo pipefail
+          for artifact_dir in "$RUNNER_TEMP"/resource-monitors/resource-monitor-*; do
+            resource_key="${artifact_dir##*/resource-monitor-}"
+            target_dir="apps/server/dist/resource-monitor/${resource_key}"
+            mkdir -p "$target_dir"
+            cp "$artifact_dir"/t3-resource-monitor* "$target_dir/"
+            chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
+          done
+
+      - name: Publish CLI package
+        run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --verbose
+
   release:
     name: Publish GitHub Release
-    needs: [preflight, build]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    needs: [preflight, build, publish_cli]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -510,6 +798,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
@@ -569,7 +861,7 @@ jobs:
 
       - name: Publish release
         if: needs.preflight.outputs.previous_tag != ''
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
@@ -590,7 +882,7 @@ jobs:
 
       - name: Publish first release
         if: needs.preflight.outputs.previous_tag == ''
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
@@ -607,3 +899,270 @@ jobs:
             release-assets/*.yml
           fail_on_unmatched_files: true
           token: ${{ github.token }}
+
+  publish_aur:
+    name: Publish AUR package
+    needs: [preflight, release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    uses: ./.github/workflows/publish-aur.yml
+    with:
+      release_tag: ${{ needs.preflight.outputs.tag }}
+    secrets:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+
+  deploy_web:
+    name: Deploy hosted web app
+    needs: [preflight, relay_public_config, release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.release.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    env:
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      T3CODE_WEB_ROUTER_URL: ${{ vars.T3CODE_WEB_ROUTER_URL }}
+      T3CODE_WEB_LATEST_DOMAIN: ${{ vars.T3CODE_WEB_LATEST_DOMAIN }}
+      T3CODE_WEB_NIGHTLY_DOMAIN: ${{ vars.T3CODE_WEB_NIGHTLY_DOMAIN }}
+      VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+              - --filter=@t3tools/web...
+
+      - name: Download relay client tracing config
+        uses: actions/download-artifact@v8
+        with:
+          name: relay-client-tracing-config
+          path: ${{ runner.temp }}/relay-client-tracing
+
+      - name: Load relay client tracing config
+        shell: bash
+        run: |
+          config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
+          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
+          echo "::add-mask::$tracing_token"
+          cat "$config_path" >> "$GITHUB_ENV"
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      - name: Refresh release lockfile
+        run: vp install --lockfile-only --ignore-scripts
+
+      - name: Deploy and alias channel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${VERCEL_TOKEN:-}" || -z "${VERCEL_ORG_ID:-}" || -z "${VERCEL_PROJECT_ID:-}" ]]; then
+            echo "Missing one or more required Vercel secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID." >&2
+            exit 1
+          fi
+
+          router_url="${T3CODE_WEB_ROUTER_URL:-https://app.t3.codes}"
+          latest_domain="${T3CODE_WEB_LATEST_DOMAIN:-latest.app.t3.codes}"
+          nightly_domain="${T3CODE_WEB_NIGHTLY_DOMAIN:-nightly.app.t3.codes}"
+          router_domain="${router_url#http://}"
+          router_domain="${router_domain#https://}"
+          router_domain="${router_domain%%/*}"
+
+          if [[ "${{ needs.preflight.outputs.release_channel }}" == "stable" ]]; then
+            channel_domain="$latest_domain"
+            channel_name="latest"
+          else
+            channel_domain="$nightly_domain"
+            channel_name="nightly"
+          fi
+
+          vercel_scope="${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
+          vercel_scope_args=(--scope "$vercel_scope")
+
+          echo "Deploying hosted web app for $channel_name channel."
+          deployment_url="$(
+            vp dlx vercel@53.1.1 deploy \
+              --archive=tgz \
+              --prod \
+              --skip-domain \
+              --yes \
+              --token "$VERCEL_TOKEN" \
+              "${vercel_scope_args[@]}" \
+              --build-env "APP_VERSION=${{ needs.preflight.outputs.version }}" \
+              --build-env "T3CODE_CLERK_PUBLISHABLE_KEY=${T3CODE_CLERK_PUBLISHABLE_KEY:-}" \
+              --build-env "T3CODE_CLERK_JWT_TEMPLATE=${T3CODE_CLERK_JWT_TEMPLATE:-}" \
+              --build-env "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID=${T3CODE_CLERK_CLI_OAUTH_CLIENT_ID:-}" \
+              --build-env "T3CODE_RELAY_URL=${T3CODE_RELAY_URL:-}" \
+              --build-env "T3CODE_RELAY_CLIENT_OTLP_TRACES_URL=${T3CODE_RELAY_CLIENT_OTLP_TRACES_URL:-}" \
+              --build-env "T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET=${T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET:-}" \
+              --build-env "T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=${T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN:-}" \
+              --build-env "VITE_HOSTED_APP_URL=$router_url" \
+              --build-env "VITE_HOSTED_APP_CHANNEL=$channel_name"
+          )"
+
+          echo "Aliasing $deployment_url to $channel_domain."
+          vp dlx vercel@53.1.1 alias set "$deployment_url" "$channel_domain" \
+            --token "$VERCEL_TOKEN" \
+            "${vercel_scope_args[@]}"
+
+          if [[ "$channel_name" == "latest" && -n "$router_domain" && "$router_domain" != "$channel_domain" ]]; then
+            echo "Aliasing $deployment_url to router domain $router_domain."
+            vp dlx vercel@53.1.1 alias set "$deployment_url" "$router_domain" \
+              --token "$VERCEL_TOKEN" \
+              "${vercel_scope_args[@]}"
+          fi
+
+  finalize:
+    name: Finalize release
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
+    needs: [preflight, release]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - id: app_token
+        name: Mint release app token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+          persist-credentials: true
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - id: app_bot
+        name: Resolve GitHub App bot identity
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          APP_SLUG: ${{ steps.app_token.outputs.app-slug }}
+        run: |
+          user_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+              - --filter=@t3tools/oxlint-plugin-t3code...
+
+      - id: update_versions
+        name: Update version strings
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: node scripts/update-release-package-versions.ts "$RELEASE_VERSION" --github-output
+
+      - name: Format package.json files
+        if: steps.update_versions.outputs.changed == 'true'
+        run: vp fmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
+
+      - name: Refresh lockfile
+        if: steps.update_versions.outputs.changed == 'true'
+        run: vp install --lockfile-only --ignore-scripts
+
+      - name: Commit and push version bump
+        if: steps.update_versions.outputs.changed == 'true'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml; then
+            echo "No version changes to commit."
+            exit 0
+          fi
+
+          git config user.name "${{ steps.app_bot.outputs.name }}"
+          git config user.email "${{ steps.app_bot.outputs.email }}"
+
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml
+          git commit -m "chore(release): prepare $RELEASE_TAG"
+          git push origin HEAD:main
+
+  announce_discord:
+    name: Announce release on Discord
+    if: |
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.relay_public_config.result == 'success' &&
+      needs.release.result == 'success' &&
+      needs.deploy_web.result == 'success' &&
+      (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
+    needs: [preflight, relay_public_config, release, deploy_web, finalize]
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Announce prerelease on Discord
+        if: needs.preflight.outputs.is_prerelease == 'true'
+        continue-on-error: true
+        env:
+          DISCORD_MENTION_ROLE_ID: ${{ secrets.DISCORD_RELEASE_NIGHTLY_ROLE_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+        run: |
+          node scripts/notify-discord-release.ts prerelease \
+            --role-id "$DISCORD_MENTION_ROLE_ID" \
+            --release-name "${{ needs.preflight.outputs.release_name }}" \
+            --release-version "${{ needs.preflight.outputs.version }}" \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --release-url "https://github.com/${{ github.repository }}/releases/tag/${{ needs.preflight.outputs.tag }}"
+
+      - name: Announce latest release on Discord
+        if: needs.preflight.outputs.make_latest == 'true'
+        continue-on-error: true
+        env:
+          DISCORD_MENTION_ROLE_ID: ${{ secrets.DISCORD_RELEASE_LATEST_ROLE_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+        run: |
+          node scripts/notify-discord-release.ts latest \
+            --role-id "$DISCORD_MENTION_ROLE_ID" \
+            --release-name "${{ needs.preflight.outputs.release_name }}" \
+            --release-version "${{ needs.preflight.outputs.version }}" \
+            --tag "${{ needs.preflight.outputs.tag }}" \
+            --release-url "https://github.com/${{ github.repository }}/releases/tag/${{ needs.preflight.outputs.tag }}"

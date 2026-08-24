@@ -22,6 +22,10 @@ import {
 // this seems important for handling S.Struct.Fields https://effect.website/docs/schema/classes/#recursive-types-with-different-encoded-and-type
 // interface CategoryEncoded extends Schema.Struct.Encoded<typeof fields> { .. }
 
+/**
+ * Raised when a JavaScript value cannot be marshalled to a DynamoDB
+ * `AttributeValue` (e.g. a function or symbol).
+ */
 export class InvalidAttributeValue extends Data.TaggedError(
   "InvalidAttributeValue",
 )<{
@@ -29,6 +33,15 @@ export class InvalidAttributeValue extends Data.TaggedError(
   value: any;
 }> {}
 
+/**
+ * Marshal a plain JavaScript value into a DynamoDB `AttributeValue`.
+ *
+ * @example Marshal a nested object
+ * ```typescript
+ * const item = yield* toAttributeValue({ name: "Alice", scores: [1, 2, 3] });
+ * // { M: { name: { S: "Alice" }, scores: { L: [{ N: "1" }, ...] } } }
+ * ```
+ */
 export const toAttributeValue: (
   value: any,
 ) => Effect.Effect<AttributeValue, InvalidAttributeValue, never> = Effect.fn(
@@ -123,6 +136,10 @@ export const toAttributeValue: (
   },
 );
 
+/**
+ * Unmarshal a DynamoDB `AttributeValue` back into a plain JavaScript value
+ * (inverse of {@link toAttributeValue}).
+ */
 export const fromAttributeValue = (value: AttributeValue): any => {
   if (value.NULL) {
     return null;

@@ -2,31 +2,9 @@
  * Node-compatible process runner for Effect programs.
  *
  * This module provides the shared `runMain` implementation used by
- * Node-compatible platform packages. Use it at the outer edge of a CLI, script,
- * worker, server, or test harness when a single Effect should become the main
- * fiber for the process while still following Node signal and exit-code
- * conventions.
- *
- * **Mental model**
- *
- * `runMain` starts the supplied Effect as the process root. While that fiber is
- * running, `SIGINT` and `SIGTERM` are translated into fiber interruption so
- * scoped resources and finalizers get a chance to run. After the fiber exits,
- * the signal listeners are removed and the configured teardown decides the
- * process exit code.
- *
- * **Common tasks**
- *
- * - Launch a command-line program or long-running service from an Effect.
- * - Share the same main-runner behavior across Node-compatible packages.
- * - Customize teardown or runtime error reporting with the `runMain` options.
- *
- * **Gotchas**
- *
- * Clean success lets the Node event loop drain naturally instead of forcing
- * `process.exit(0)`. Signal-triggered interruption or a non-zero teardown code
- * calls `process.exit`, so long-lived handles should be acquired in Effect
- * scopes and released by finalizers.
+ * Node-compatible platform packages. It runs one Effect as the main process
+ * fiber, interrupts that fiber on `SIGINT` or `SIGTERM`, and delegates final
+ * exit-code handling to the configured teardown.
  *
  * @since 4.0.0
  */

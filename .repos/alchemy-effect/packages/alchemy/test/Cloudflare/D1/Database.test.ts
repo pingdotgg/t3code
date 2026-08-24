@@ -1,9 +1,9 @@
 import * as Cloudflare from "@/Cloudflare";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import { State } from "@/State";
-import * as Test from "@/Test/Vitest";
+import * as Test from "@/Test/Alchemy";
 import * as d1 from "@distilled.cloud/cloudflare/d1";
-import { expect } from "@effect/vitest";
+import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -21,13 +21,13 @@ const logLevel = Effect.provideService(
 
 test.provider("create and delete database with default props", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
 
     yield* stack.destroy();
 
     const database = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.D1Database("DefaultDatabase");
+        return yield* Cloudflare.D1.Database("DefaultDatabase");
       }),
     );
 
@@ -48,13 +48,13 @@ test.provider("create and delete database with default props", (stack) =>
 
 test.provider("create, update, delete database", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
 
     yield* stack.destroy();
 
     const database = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.D1Database("TestDatabase", {
+        return yield* Cloudflare.D1.Database("TestDatabase", {
           readReplication: { mode: "disabled" },
         });
       }),
@@ -68,7 +68,7 @@ test.provider("create, update, delete database", (stack) =>
 
     const updatedDatabase = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.D1Database("TestDatabase", {
+        return yield* Cloudflare.D1.Database("TestDatabase", {
           readReplication: { mode: "auto" },
         });
       }),
@@ -90,7 +90,7 @@ test.provider("create, update, delete database", (stack) =>
 
 test.provider("applies migrations from migrationsDir", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const migrationsDir = yield* fs.makeTempDirectory({
@@ -110,7 +110,7 @@ test.provider("applies migrations from migrationsDir", (stack) =>
 
     const database = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.D1Database("MigrationDatabase", {
+        return yield* Cloudflare.D1.Database("MigrationDatabase", {
           migrationsDir,
         });
       }),
@@ -150,7 +150,7 @@ test.provider("applies migrations from migrationsDir", (stack) =>
 
     const updated = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.D1Database("MigrationDatabase", {
+        return yield* Cloudflare.D1.Database("MigrationDatabase", {
           migrationsDir,
         });
       }),
@@ -178,7 +178,7 @@ test.provider("applies migrations from migrationsDir", (stack) =>
 
 test.provider("applies migrations using a custom migrationsTable", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const migrationsDir = yield* fs.makeTempDirectory({
@@ -193,7 +193,7 @@ test.provider("applies migrations using a custom migrationsTable", (stack) =>
 
     const database = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.D1Database("CustomMigrationsTableDb", {
+        return yield* Cloudflare.D1.Database("CustomMigrationsTableDb", {
           migrationsDir,
           migrationsTable: "custom_migration_tracking",
         });
@@ -217,7 +217,7 @@ test.provider(
   "migrates legacy 2-column migration table to wrangler schema",
   (stack) =>
     Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
+      const { accountId } = yield* yield* CloudflareEnvironment;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const migrationsDir = yield* fs.makeTempDirectory({
@@ -239,7 +239,7 @@ test.provider(
       // migrationsDir.
       const seeded = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.D1Database("LegacyMigrationDb");
+          return yield* Cloudflare.D1.Database("LegacyMigrationDb");
         }),
       );
 
@@ -264,7 +264,7 @@ test.provider(
       // the new migrations on top.
       const upgraded = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.D1Database("LegacyMigrationDb", {
+          return yield* Cloudflare.D1.Database("LegacyMigrationDb", {
             migrationsDir,
           });
         }),
@@ -306,7 +306,7 @@ test.provider(
 
 test.provider("imports SQL files via importFiles", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const dir = yield* fs.makeTempDirectory({
@@ -327,7 +327,7 @@ test.provider("imports SQL files via importFiles", (stack) =>
 
     const database = yield* stack.deploy(
       Effect.gen(function* () {
-        return yield* Cloudflare.D1Database("ImportDatabase", {
+        return yield* Cloudflare.D1.Database("ImportDatabase", {
           importFiles: [importPath],
         });
       }),
@@ -352,7 +352,7 @@ test.provider("imports SQL files via importFiles", (stack) =>
 
 test.provider("clones a database by databaseId", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const dir = yield* fs.makeTempDirectory({
@@ -372,10 +372,10 @@ test.provider("clones a database by databaseId", (stack) =>
 
     const { source, target } = yield* stack.deploy(
       Effect.gen(function* () {
-        const source = yield* Cloudflare.D1Database("CloneByIdSource", {
+        const source = yield* Cloudflare.D1.Database("CloneByIdSource", {
           importFiles: [seedPath],
         });
-        const target = yield* Cloudflare.D1Database("CloneByIdTarget", {
+        const target = yield* Cloudflare.D1.Database("CloneByIdTarget", {
           clone: { databaseId: source.databaseId },
         });
         return { source, target };
@@ -403,7 +403,7 @@ test.provider("clones a database by databaseId", (stack) =>
 
 test.provider("clones a database by name lookup", (stack) =>
   Effect.gen(function* () {
-    const { accountId } = yield* CloudflareEnvironment;
+    const { accountId } = yield* yield* CloudflareEnvironment;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const dir = yield* fs.makeTempDirectory({
@@ -423,10 +423,10 @@ test.provider("clones a database by name lookup", (stack) =>
 
     const { source, target } = yield* stack.deploy(
       Effect.gen(function* () {
-        const source = yield* Cloudflare.D1Database("CloneByNameSource", {
+        const source = yield* Cloudflare.D1.Database("CloneByNameSource", {
           importFiles: [seedPath],
         });
-        const target = yield* Cloudflare.D1Database("CloneByNameTarget", {
+        const target = yield* Cloudflare.D1.Database("CloneByNameTarget", {
           clone: { name: source.databaseName },
         });
         return { source, target };
@@ -455,7 +455,7 @@ test.provider(
   "clones a database by passing the source resource directly",
   (stack) =>
     Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
+      const { accountId } = yield* yield* CloudflareEnvironment;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const dir = yield* fs.makeTempDirectory({
@@ -475,10 +475,10 @@ test.provider(
 
       const { source, target } = yield* stack.deploy(
         Effect.gen(function* () {
-          const source = yield* Cloudflare.D1Database("CloneDirectSource", {
+          const source = yield* Cloudflare.D1.Database("CloneDirectSource", {
             importFiles: [seedPath],
           });
-          const target = yield* Cloudflare.D1Database("CloneDirectTarget", {
+          const target = yield* Cloudflare.D1.Database("CloneDirectTarget", {
             clone: source,
           });
           return { source, target };
@@ -542,10 +542,10 @@ const getResults = Effect.fn(function* <T>(
     ),
     Effect.retry({
       while: (e) => e instanceof EmptyResults,
-      schedule: Schedule.both(
+      schedule: Schedule.max([
         Schedule.spaced(Duration.seconds(1)),
         Schedule.recurs(10),
-      ),
+      ]),
     }),
     Effect.orDie,
   );
@@ -558,23 +558,21 @@ test.provider(
   "existing database (matching name) is silently adopted without --adopt",
   (stack) =>
     Effect.gen(function* () {
-      const { accountId } = yield* CloudflareEnvironment;
+      const { accountId } = yield* yield* CloudflareEnvironment;
 
       yield* stack.destroy();
 
-      const databaseName = `alchemy-test-d1-adopt-${Math.random()
-        .toString(36)
-        .slice(2, 8)}`;
-
-      // Phase 1: deploy normally so a real D1 database exists.
+      // Phase 1: deploy normally so a real D1 database exists. No explicit
+      // `name` — the engine generates a random-suffixed physical name
+      // (collision-free across concurrent runs); the deploy output hands
+      // back the real name, which pins the database's identity for the
+      // adoption phase below.
       const initial = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.D1Database("AdoptableDatabase", {
-            name: databaseName,
-          });
+          return yield* Cloudflare.D1.Database("AdoptableDatabase");
         }),
       );
-      expect(initial.databaseName).toEqual(databaseName);
+      const databaseName = initial.databaseName;
       const initialId = initial.databaseId;
 
       // Phase 2: wipe local state — the database stays on Cloudflare.
@@ -592,7 +590,7 @@ test.provider(
       // attrs — silent adoption.
       const adopted = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Cloudflare.D1Database("AdoptableDatabase", {
+          return yield* Cloudflare.D1.Database("AdoptableDatabase", {
             name: databaseName,
           });
         }),

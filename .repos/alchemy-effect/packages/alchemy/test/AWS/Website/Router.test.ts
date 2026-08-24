@@ -1,14 +1,20 @@
 import * as AWS from "@/AWS";
-import * as Test from "@/Test/Vitest";
+import * as Test from "@/Test/Alchemy";
 import * as cloudfront from "@distilled.cloud/aws/cloudfront";
-import { describe, expect } from "@effect/vitest";
+import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-// slow AF
-describe.skip("AWS.Website.Router", () => {
+// Gated: CloudFront Distribution create blocks on Status === "Deployed"
+// (~5-15 min) and destroy requires disable -> wait -> delete (another
+// ~5-15 min), so the full Router lifecycle exceeds any sane test budget.
+// Run with ALCHEMY_RUN_LIVE_AWS_WEBSITE_TESTS=true (same gate as the
+// AWS.CloudFront suites).
+const runLive = process.env.ALCHEMY_RUN_LIVE_AWS_WEBSITE_TESTS === "true";
+
+describe.skipIf(!runLive)("AWS.Website.Router", () => {
   test.provider(
     "create router with static-site attached via KV routing",
     (stack) =>
@@ -71,8 +77,9 @@ const assertDistributionDeleted = (distributionId: string) =>
     Effect.retry({
       while: (error) =>
         error instanceof Error && error.message === "DistributionStillExists",
-      schedule: Schedule.fixed("10 seconds").pipe(
-        Schedule.both(Schedule.recurs(60)),
-      ),
+      schedule: Schedule.max([
+        Schedule.fixed("10 seconds"),
+        Schedule.recurs(60),
+      ]),
     }),
   );

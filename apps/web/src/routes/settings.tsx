@@ -10,32 +10,29 @@ import {
 import { useCallback, useEffect, useState } from "react";
 
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
+import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
-import { cn } from "~/lib/utils";
-import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
-import { useI18n } from "../i18n/I18nProvider";
 
 function RestoreDefaultsButton({ onRestored }: { onRestored: () => void }) {
-  const { t } = useI18n();
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
 
   return (
     <Button
       size="xs"
-      variant="outline"
+      variant="ghost"
       disabled={changedSettingLabels.length === 0}
       onClick={() => void restoreDefaults()}
     >
       <RotateCcwIcon className="mx-1 size-3.5" />
-      {t("settings.restore.button")}
+      Restore defaults
     </Button>
   );
 }
 
 function SettingsContentLayout() {
-  const { t } = useI18n();
   const location = useLocation();
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
@@ -55,6 +52,12 @@ function SettingsContentLayout() {
       if (event.defaultPrevented) return;
       if (event.key === "Escape") {
         event.preventDefault();
+
+        const activeElement = document.activeElement;
+        if (activeElement instanceof HTMLElement) {
+          activeElement.blur();
+        }
+
         navigateBackWithinApp();
       }
     };
@@ -68,41 +71,16 @@ function SettingsContentLayout() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        {!isElectron && (
-          <header
-            className={cn(
-              "border-b border-border px-3 py-2 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
-              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-            )}
-          >
-            <div className="flex min-h-7 items-center gap-2 sm:min-h-6">
-              <span className="text-sm font-medium text-foreground">{t("settings.title")}</span>
-              {showRestoreDefaults ? (
-                <div className="ms-auto flex items-center gap-2">
-                  <RestoreDefaultsButton onRestored={handleRestored} />
-                </div>
-              ) : null}
-            </div>
-          </header>
-        )}
-
-        {isElectron && (
-          <div
-            className={cn(
-              "drag-region flex h-[52px] shrink-0 items-center border-b border-border px-5 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
-              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
-            )}
-          >
-            <span className="text-xs font-medium tracking-wide text-muted-foreground/70">
-              {t("settings.title")}
-            </span>
+        <WorkspacePageHeader electron={isElectron}>
+          <div className="flex w-full items-center gap-3">
+            <SettingsBreadcrumb pathname={location.pathname} />
             {showRestoreDefaults ? (
               <div className="ms-auto flex items-center gap-2">
                 <RestoreDefaultsButton onRestored={handleRestored} />
               </div>
             ) : null}
           </div>
-        )}
+        </WorkspacePageHeader>
 
         <div key={restoreSignal} className="min-h-0 flex flex-1 flex-col">
           <Outlet />

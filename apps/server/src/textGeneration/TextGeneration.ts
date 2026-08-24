@@ -6,6 +6,7 @@ import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 
 export type TextGenerationProvider =
   | "codex"
@@ -22,6 +23,7 @@ export interface CommitMessageGenerationInput {
   stagedPatch: string;
   /** When true, the model also returns a semantic branch name for the change. */
   includeBranch?: boolean;
+  policy?: TextGenerationPolicy | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }
@@ -40,6 +42,8 @@ export interface PrContentGenerationInput {
   commitSummary: string;
   diffSummary: string;
   diffPatch: string;
+  changeRequestTemplate?: string | undefined;
+  policy?: TextGenerationPolicy | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }
@@ -64,6 +68,8 @@ export interface BranchNameGenerationResult {
 export interface ThreadTitleGenerationInput {
   cwd: string;
   message: string;
+  /** Present when replacing an existing title from the current thread history. */
+  previousTitle?: string | undefined;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
@@ -83,7 +89,7 @@ export interface TextGenerationService {
 }
 
 /**
- * TextGeneration - Service tag for commit and PR text generation.
+ * TextGeneration - Service tag for commit and change request text generation.
  */
 export class TextGeneration extends Context.Service<
   TextGeneration,
@@ -96,7 +102,7 @@ export class TextGeneration extends Context.Service<
     ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;
 
     /**
-     * Generate pull request title/body from branch and diff context.
+     * Generate change request title/body from branch and diff context.
      */
     readonly generatePrContent: (
       input: PrContentGenerationInput,
@@ -109,9 +115,7 @@ export class TextGeneration extends Context.Service<
       input: BranchNameGenerationInput,
     ) => Effect.Effect<BranchNameGenerationResult, TextGenerationError>;
 
-    /**
-     * Generate a concise thread title from a user's first message.
-     */
+    /** Generate a concise thread title from a first message or thread history. */
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;

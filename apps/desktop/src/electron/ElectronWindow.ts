@@ -1,6 +1,8 @@
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -22,6 +24,7 @@ const ElectronWindowCreateOptions = Schema.Struct({
   webPreferences: Schema.Struct({
     preload: Schema.NullOr(Schema.String),
     partition: Schema.NullOr(Schema.String),
+    backgroundThrottling: Schema.NullOr(Schema.Boolean),
     sandbox: Schema.NullOr(Schema.Boolean),
     contextIsolation: Schema.NullOr(Schema.Boolean),
     nodeIntegration: Schema.NullOr(Schema.Boolean),
@@ -179,6 +182,7 @@ export const make = Effect.gen(function* () {
         webPreferences: {
           preload: webPreferences?.preload ?? null,
           partition: webPreferences?.partition ?? null,
+          backgroundThrottling: webPreferences?.backgroundThrottling ?? null,
           sandbox: webPreferences?.sandbox ?? null,
           contextIsolation: webPreferences?.contextIsolation ?? null,
           nodeIntegration: webPreferences?.nodeIntegration ?? null,
@@ -255,18 +259,27 @@ export const make = Effect.gen(function* () {
         }
       }),
     destroyAll: Effect.gen(function* () {
+      let firstFailure: Cause.Cause<never> | undefined;
       for (const window of yield* listWindows) {
-        yield* Effect.try({
-          try: () => window.destroy(),
-          catch: (cause) =>
-            new ElectronWindowOperationError({
-              operation: "destroy-window",
-              platform,
-              windowId: window.id,
-              channel: null,
-              cause,
-            }),
-        }).pipe(Effect.orDie);
+        const exit = yield* Effect.exit(
+          Effect.try({
+            try: () => window.destroy(),
+            catch: (cause) =>
+              new ElectronWindowOperationError({
+                operation: "destroy-window",
+                platform,
+                windowId: window.id,
+                channel: null,
+                cause,
+              }),
+          }).pipe(Effect.orDie),
+        );
+        if (Exit.isFailure(exit)) {
+          firstFailure ??= exit.cause;
+        }
+      }
+      if (firstFailure !== undefined) {
+        return yield* Effect.failCause(firstFailure);
       }
     }),
     syncAllAppearance: Effect.fn("desktop.electron.window.syncAllAppearance")(function* <E, R>(

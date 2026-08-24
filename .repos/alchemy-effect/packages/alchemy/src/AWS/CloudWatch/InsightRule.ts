@@ -1,4 +1,3 @@
-import { Region } from "@distilled.cloud/aws/Region";
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -9,8 +8,8 @@ import type { Input } from "../../Input.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
 import { hasAlchemyTags } from "../../Tags.ts";
-import type { Providers } from "../Providers.ts";
 import { AWSEnvironment, type AccountID } from "../Environment.ts";
+import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 import {
   createName,
@@ -67,10 +66,15 @@ export interface InsightRule extends Resource<
   "AWS.CloudWatch.InsightRule",
   InsightRuleProps,
   {
+    /** Physical name of the insight rule. */
     ruleName: InsightRuleName;
+    /** ARN of the insight rule. */
     ruleArn: InsightRuleArn;
+    /** Current state of the rule (`ENABLED` or `DISABLED`). */
     state: string | undefined;
+    /** The full InsightRule description as last read from CloudWatch. */
     insightRule: cloudwatch.InsightRule;
+    /** Tags on the insight rule, including the internal Alchemy ownership tags. */
     tags: Record<string, string>;
   },
   never,
@@ -78,8 +82,10 @@ export interface InsightRule extends Resource<
 > {}
 
 /**
- * A CloudWatch Contributor Insights rule.
- *
+ * A CloudWatch Contributor Insights rule — analyzes log group entries to
+ * surface the top-N contributors (IPs, user IDs, …) to a metric derived
+ * from structured logs.
+ * @resource
  * @section Creating Insight Rules
  * @example Rule Definition
  * ```typescript
@@ -90,12 +96,28 @@ export interface InsightRule extends Resource<
  *       Name: "CloudWatchLogRule",
  *       Version: 1,
  *     },
+ *     LogGroupNames: ["/my-app/access-logs"],
  *     LogFormat: "JSON",
  *     Contribution: {
  *       Keys: ["$.ip"],
  *     },
  *     AggregateOn: "Count",
  *   },
+ * });
+ * ```
+ *
+ * @section Reading Reports at Runtime
+ * @example Fetch the Rule's Top Contributors from a Function
+ * ```typescript
+ * // init — bind the rule to the function (see GetInsightRuleReport)
+ * const getInsightRuleReport = yield* AWS.CloudWatch.GetInsightRuleReport(rule);
+ *
+ * // runtime
+ * const now = yield* Effect.sync(() => Date.now());
+ * const report = yield* getInsightRuleReport({
+ *   StartTime: new Date(now - 3_600_000),
+ *   EndTime: new Date(now),
+ *   Period: 300,
  * });
  * ```
  */
@@ -121,14 +143,16 @@ export const InsightRuleProvider = () =>
   Provider.effect(
     InsightRule,
     Effect.gen(function* () {
-      const region = yield* Region;
-      const { accountId } = yield* AWSEnvironment;
-
       const createRuleName = (id: string, props: { name?: string } = {}) =>
         createName(id, props.name, 255);
 
       const ruleArn = (name: string) =>
-        `arn:aws:cloudwatch:${region}:${accountId}:insight-rule/${name}` as InsightRuleArn;
+        AWSEnvironment.current.pipe(
+          Effect.map(
+            (env) =>
+              `arn:aws:cloudwatch:${env.region}:${env.accountId}:insight-rule/${name}` as InsightRuleArn,
+          ),
+        );
 
       const readInsightRule = Effect.fn(function* (name: string) {
         const insightRule = yield* cloudwatch.describeInsightRules
@@ -150,7 +174,7 @@ export const InsightRuleProvider = () =>
           return undefined;
         }
 
-        const arn = ruleArn(insightRule.Name);
+        const arn = yield* ruleArn(insightRule.Name);
         const tags = yield* readResourceTags(arn).pipe(
           Effect.catchTag("ResourceNotFoundException", () =>
             Effect.succeed({}),
@@ -211,12 +235,12 @@ export const InsightRuleProvider = () =>
           // the latter path.
           const tags = yield* updateResourceTags({
             id,
-            resourceArn: ruleArn(name),
+            resourceArn: yield* ruleArn(name),
             olds: olds?.tags ?? existing?.tags,
             news: news.tags,
           });
 
-          yield* session.note(ruleArn(name));
+          yield* session.note(yield* ruleArn(name));
 
           const state = yield* readInsightRule(name);
           if (!state) {
@@ -230,6 +254,63 @@ export const InsightRuleProvider = () =>
             tags,
           };
         }),
+        list: () =>
+          Effect.gen(function* () {
+            // Enumerate every Contributor Insights rule in the account/region
+            // by exhaustively paginating `describeInsightRules` (items live
+            // under the `InsightRules` field). ARNs are reconstructed from the
+            // ambient region/account since the API returns names only.
+            const { accountId, region } = yield* AWSEnvironment.current;
+            const rules = yield* cloudwatch.describeInsightRules.pages({}).pipe(
+              Stream.runCollect,
+              Effect.map((chunk) =>
+                Array.from(chunk).flatMap((page) =>
+                  (page.InsightRules ?? []).filter(
+                    (
+                      candidate,
+                    ): candidate is typeof candidate & {
+                      Name: string;
+                    } =>
+                      candidate.Name != null &&
+                      // Rules owned by another service reject
+                      // DeleteInsightRules with AccessDenied. DynamoDB
+                      // Contributor Insights rules are the pathological case:
+                      // they report `ManagedRule: false` yet still can only
+                      // be removed through DynamoDB (verified live), so match
+                      // both the flag and the documented name prefix. Keep
+                      // them out of enumeration for account-wide teardown
+                      // (nuke).
+                      candidate.ManagedRule !== true &&
+                      !candidate.Name.startsWith(
+                        "DynamoDBContributorInsights-",
+                      ),
+                  ),
+                ),
+              ),
+            );
+
+            const attrs: InsightRule["Attributes"][] = yield* Effect.forEach(
+              rules,
+              (insightRule) => {
+                const arn =
+                  `arn:aws:cloudwatch:${region}:${accountId}:insight-rule/${insightRule.Name}` as InsightRuleArn;
+                return readResourceTags(arn).pipe(
+                  Effect.catchTag("ResourceNotFoundException", () =>
+                    Effect.succeed({}),
+                  ),
+                  Effect.map((tags) => ({
+                    ruleName: insightRule.Name,
+                    ruleArn: arn,
+                    state: insightRule.State,
+                    insightRule,
+                    tags,
+                  })),
+                );
+              },
+              { concurrency: 10 },
+            );
+            return attrs;
+          }),
         delete: Effect.fn(function* ({ output }) {
           const existing = yield* readInsightRule(output.ruleName);
           if (!existing) {

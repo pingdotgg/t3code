@@ -28917,7 +28917,7 @@ export const CreateConversationItemsRequestJson = Schema.StructWithRest(
       "description": "The items to add to the conversation. You may add up to 20 items at a time.\n"
     }).check(Schema.isMaxLength(20))
   }),
-  [Schema.Record(Schema.String, Schema.Json)]
+  [Schema.Record(Schema.String, Schema.Unknown)]
 )
 export type CreateConversationItems200 = ConversationItemList
 export const CreateConversationItems200 = ConversationItemList
@@ -30435,7 +30435,7 @@ export const make = (
     Type,
     DecodingServices
   >(
-    schema: Schema.Decoder<Type, DecodingServices>
+    schema: Schema.ConstraintDecoder<Type, DecodingServices>
   ) =>
   (
     request: HttpClientRequest.HttpClientRequest
@@ -30458,10 +30458,10 @@ export const make = (
       Stream.unwrap
     )
   const decodeSuccess =
-    <Schema extends Schema.Top>(schema: Schema) => (response: HttpClientResponse.HttpClientResponse) =>
+    <Schema extends Schema.Constraint>(schema: Schema) => (response: HttpClientResponse.HttpClientResponse) =>
       HttpClientResponse.schemaBodyJson(schema)(response)
   const decodeError =
-    <const Tag extends string, Schema extends Schema.Top>(tag: Tag, schema: Schema) =>
+    <const Tag extends string, Schema extends Schema.Constraint>(tag: Tag, schema: Schema) =>
     (response: HttpClientResponse.HttpClientResponse) =>
       Effect.flatMap(
         HttpClientResponse.schemaBodyJson(schema)(response),

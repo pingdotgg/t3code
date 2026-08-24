@@ -59,10 +59,15 @@ export const checkHttpStateStoreAuth = ({
       Effect.retry({
         while: (error) =>
           error._tag === "HttpClientError" &&
-          !!error.response &&
-          // worker can 404 for a bit on first deploy
-          (error.response.status === 404 || error.response.status >= 500),
-        schedule: Schedule.fixed(200),
+          // transport-level failures (no response — DNS, TCP reset, TLS,
+          // "fetch failed") are as transient as the post-deploy 404s
+          (!error.response ||
+            // worker can 404 for a bit on first deploy
+            error.response.status === 404 ||
+            error.response.status >= 500),
+        // Bounded: a store that 404s/500s forever is a hard failure, not
+        // something to spin on until the process is killed.
+        schedule: Schedule.max([Schedule.fixed(200), Schedule.recurs(75)]),
       }),
     );
   });
@@ -220,11 +225,48 @@ const retryTransient = <A, Err, Req>(eff: Effect.Effect<A, Err, Req>) =>
     // Exponential backoff capped at 2s, max 5 attempts. Beyond that
     // the issue isn't transient and we'd rather surface a hard
     // failure than block the deploy indefinitely.
-    schedule: Schedule.exponential(100).pipe(
-      Schedule.either(Schedule.spaced("2 seconds")),
-      Schedule.both(Schedule.recurs(5)),
-    ),
+    schedule: Schedule.max([
+      Schedule.min([Schedule.exponential(100), Schedule.spaced("2 seconds")]),
+      Schedule.recurs(5),
+    ]),
   });
+
+/**
+ * Human-readable description of a state-store client failure.
+ *
+ * Several of the errors the HTTP client can raise carry an empty
+ * `message` (e.g. the no-content `Unauthorized` the store returns on a
+ * bad bearer token), which used to surface as a blank
+ * `StateStoreError` with nothing to act on. Always produce a
+ * non-empty message: prefer the error's own message, fall back to its
+ * `_tag`/name, and append the HTTP status and any distinct `cause`
+ * message when available.
+ */
+export const describeStateStoreFailure = (e: unknown): string => {
+  if (!(e instanceof Error)) return String(e);
+  const tag = (e as { _tag?: unknown })._tag;
+  let message =
+    e.message.trim() ||
+    (typeof tag === "string" ? tag : undefined) ||
+    e.name ||
+    "Unknown error";
+  if (typeof tag === "string" && tag.startsWith("Unauthorized")) {
+    message =
+      "State store rejected the request as unauthorized. " +
+      "The stored state-store credentials may be stale — run 'alchemy login' to refresh them.";
+  }
+  const status = (e as { response?: { status?: unknown } }).response?.status;
+  if (typeof status === "number" && !message.includes(String(status))) {
+    message += ` (HTTP ${status})`;
+  }
+  if (e.cause instanceof Error) {
+    const causeMessage = e.cause.message.trim();
+    if (causeMessage && !message.includes(causeMessage)) {
+      message += ` — caused by: ${causeMessage}`;
+    }
+  }
+  return message;
+};
 
 /** Collapse any client failure into a {@link StateStoreError}. */
 const mapStateStoreError = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
@@ -234,7 +276,7 @@ const mapStateStoreError = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
     Effect.catch((e: E) =>
       Effect.fail(
         new StateStoreError({
-          message: e instanceof Error ? e.message : String(e),
+          message: describeStateStoreFailure(e),
           cause: e instanceof Error ? e : undefined,
         }),
       ),

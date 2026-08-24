@@ -5,8 +5,10 @@
  * exposes the workflows used when maintaining fixture bundle sizes. `compare`
  * builds the package's local fixtures and compares them with matching fixture
  * files from another checkout, `report` bundles an explicit list of entrypoints
- * and prints a Markdown table, and `visualize` prompts for local fixtures before
- * producing visualization output for inspection.
+ * and prints a Markdown table, `compare-selected` compares explicit entrypoints
+ * against a base checkout, `visualize-selected` analyzes explicit entrypoints,
+ * and `visualize` prompts for local fixtures before producing visualization
+ * output for inspection.
  *
  * Command output is intentionally split by workflow. `compare` requires an
  * existing `--base-dir` (`-b`) and writes its Markdown report to `--output-path`
@@ -76,7 +78,8 @@ const visualize = Command.make("visualize", { outputDirectory }).pipe(
       }))
     })
 
-    yield* reporter.visualize({ paths, outputDirectory })
+    const report = yield* reporter.visualize({ paths, outputDirectory })
+    yield* Console.log(report)
   }))
 )
 
@@ -93,6 +96,22 @@ const report = Command.make("report", { paths: reportPaths }).pipe(
   }))
 )
 
+const compareSelected = Command.make("compare-selected", { baseDirectory, paths: reportPaths }).pipe(
+  Command.withHandler(Effect.fnUntraced(function*({ baseDirectory, paths }) {
+    const reporter = yield* Reporter
+    const report = yield* reporter.reportSelectedComparison({ baseDirectory, paths })
+    yield* Console.log(report)
+  }))
+)
+
+const visualizeSelected = Command.make("visualize-selected", { outputDirectory, paths: reportPaths }).pipe(
+  Command.withHandler(Effect.fnUntraced(function*({ outputDirectory, paths }) {
+    const reporter = yield* Reporter
+    const report = yield* reporter.visualize({ outputDirectory, paths })
+    yield* Console.log(report)
+  }))
+)
+
 /**
  * Bundle analysis CLI command with subcommands for comparing fixture bundle sizes, reporting selected fixtures, and generating visualizations.
  *
@@ -100,5 +119,5 @@ const report = Command.make("report", { paths: reportPaths }).pipe(
  * @since 4.0.0
  */
 export const cli = Command.make("bundle").pipe(
-  Command.withSubcommands([compare, report, visualize])
+  Command.withSubcommands([compare, compareSelected, report, visualize, visualizeSelected])
 )

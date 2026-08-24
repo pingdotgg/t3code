@@ -1,14 +1,7 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  ActivityIndicator,
-  Platform,
-  Pressable,
-  ScrollView,
-  useColorScheme,
-  View,
-} from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import {
@@ -18,10 +11,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { AppText as Text } from "../../components/AppText";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
-import { cn } from "../../lib/cn";
 import { resolveFileSelectionNavigationAction } from "../../lib/adaptive-navigation";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
@@ -35,9 +29,13 @@ import {
   useAdaptiveWorkspacePaneRole,
   useRegisterWorkspaceInspector,
 } from "../layout/AdaptiveWorkspaceLayout";
-import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
+import {
+  createNativeMailSearchToolbarItem,
+  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
+} from "../layout/native-mail-search-toolbar";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { ReviewHighlighterProvider } from "../review/ReviewHighlighterProvider";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
@@ -48,7 +46,6 @@ import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 import {
   basename,
-  fileBreadcrumbs,
   isBrowserPreviewFile,
   isImagePreviewFile,
   isMarkdownPreviewFile,
@@ -246,8 +243,10 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector, layout, panes, showAuxiliaryPane, togglePrimarySidebar } =
     useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
-  const colorScheme = useColorScheme();
-  const highlightTheme = colorScheme === "dark" ? "dark" : "light";
+  const isAndroid = Platform.OS === "android";
+  const { themeAppearance: highlightTheme } = useAppearancePreferences();
+  const iconColor = String(useThemeColor("--color-icon-muted"));
+  const sheetSurfaceColor = String(useThemeColor("--color-sheet-solid"));
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
   );
@@ -359,14 +358,18 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     );
   }
 
-  const usesCompactMailToolbar = Platform.OS === "ios" && !layout.usesSplitView;
+  const usesCompactMailToolbar =
+    Platform.OS === "ios" && !layout.usesSplitView && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
 
   return (
     <>
-      {/* Static header config (glass preset, title, contentStyle) lives in Stack.tsx.
-          Only genuinely dynamic options are set here. */}
+      {/* Static header config (glass preset and title) lives in Stack.tsx. The
+          live sheet color stays dynamic here so the FlatList can remain the
+          direct scene child for native scroll-edge sampling. */}
       <NativeStackScreenOptions
         options={{
+          contentStyle: { backgroundColor: sheetSurfaceColor },
+          headerShown: !isAndroid,
           unstable_headerSubtitle:
             Platform.OS === "ios" && projectName.length > 0 ? projectName : undefined,
           // No refresh button: the list already supports pull-to-refresh.
@@ -395,22 +398,55 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
               },
         }}
       />
-      {layout.usesSplitView ? (
-        <NativeHeaderToolbar placement="left">
-          <NativeHeaderToolbar.Button
-            accessibilityLabel={panes.primarySidebarVisible ? "Maximize files" : "Show threads"}
-            icon={
-              panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"
-            }
-            onPress={togglePrimarySidebar}
-            separateBackground
+      {isAndroid ? (
+        <>
+          <AndroidScreenHeader
+            title="Files"
+            subtitle={projectName}
+            onBack={handleReturnToThread}
+            actions={[
+              {
+                accessibilityLabel: "Refresh files",
+                icon: "arrow.clockwise",
+                onPress: entriesQuery.refresh,
+              },
+            ]}
           />
-        </NativeHeaderToolbar>
-      ) : null}
-      {usesCompactMailToolbar ? null : (
-        <NativeHeaderToolbar placement="bottom">
-          <NativeHeaderToolbar.SearchBarSlot />
-        </NativeHeaderToolbar>
+          <View className="flex-row items-center gap-2 border-b border-border px-3 py-2">
+            <SymbolView name="magnifyingglass" size={17} tintColor={iconColor} type="monochrome" />
+            <TextInput
+              accessibilityLabel="Search files"
+              autoCapitalize="none"
+              autoCorrect={false}
+              className="min-h-10 flex-1 rounded-xl py-2 text-sm"
+              placeholder="Search files"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+          </View>
+        </>
+      ) : (
+        <>
+          {layout.usesSplitView ? (
+            <NativeHeaderToolbar placement="left">
+              <NativeHeaderToolbar.Button
+                accessibilityLabel={panes.primarySidebarVisible ? "Maximize files" : "Show threads"}
+                icon={
+                  panes.primarySidebarVisible
+                    ? "arrow.up.left.and.arrow.down.right"
+                    : "sidebar.left"
+                }
+                onPress={togglePrimarySidebar}
+                separateBackground
+              />
+            </NativeHeaderToolbar>
+          ) : null}
+          {usesCompactMailToolbar ? null : (
+            <NativeHeaderToolbar placement="bottom">
+              <NativeHeaderToolbar.SearchBarSlot />
+            </NativeHeaderToolbar>
+          )}
+        </>
       )}
       <FileTreeBrowser
         entries={entriesData?.entries ?? []}

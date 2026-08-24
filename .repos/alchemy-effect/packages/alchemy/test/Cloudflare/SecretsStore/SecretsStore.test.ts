@@ -1,14 +1,19 @@
+import * as Cloudflare from "@/Cloudflare";
+import * as Provider from "@/Provider";
+import * as Test from "@/Test/Alchemy";
 import {
   Credentials,
   apiTokenCredentials,
 } from "@distilled.cloud/cloudflare/Credentials";
 import * as secretsStore from "@distilled.cloud/cloudflare/secrets-store";
-import { expect, it } from "@effect/vitest";
+import { expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+
+const { test } = Test.make({ providers: Cloudflare.providers() });
 
 /**
  * Test harness that captures the outbound `HttpClientRequest` and lets
@@ -131,9 +136,41 @@ it.live(
         );
       }).pipe(Effect.provide(layer));
 
-      expect(result).toBeInstanceOf(secretsStore.MaximumStoresExceeded);
+      // Assert on the tag, not `instanceof`: distilled errors are defined as
+      // `class X extends applyErrorMatchers(Schema.TaggedErrorClass(...))`, so
+      // the decoder constructs instances of the inner schema class — they
+      // carry the right `_tag` but are not `instanceof` the exported subclass.
       const err = result as secretsStore.MaximumStoresExceeded;
       expect(err._tag).toBe("MaximumStoresExceeded");
+      expect(err.code).toBe(1003);
       expect(err.message).toBe("maximum_stores_exceeded");
     }),
+);
+
+// Canonical `list()` test (account-scoped collection). Deploy/adopt the
+// account's Secrets Store, then enumerate via the provider's `list()` and
+// assert the deployed store's id is present in the exhaustively-paginated
+// result. Bracketed with `stack.destroy()` at start and end; note the
+// SecretsStore provider's `delete` is an intentional no-op (account-level
+// infra), so destroy never tears down the shared store.
+test.provider("list enumerates the deployed secrets store", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const deployed = yield* stack.deploy(
+      Effect.gen(function* () {
+        return yield* Cloudflare.SecretsStore.Store("ListStore");
+      }),
+    );
+
+    const provider = yield* Provider.findProvider(
+      Cloudflare.SecretsStore.Store,
+    );
+    const all = yield* provider.list();
+
+    expect(all.length).toBeGreaterThan(0);
+    expect(all.some((s) => s.storeId === deployed.storeId)).toBe(true);
+
+    yield* stack.destroy();
+  }),
 );

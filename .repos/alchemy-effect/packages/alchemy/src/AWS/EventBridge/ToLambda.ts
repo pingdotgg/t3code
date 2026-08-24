@@ -1,6 +1,5 @@
 import * as Effect from "effect/Effect";
 import { createHash } from "node:crypto";
-import * as Binding from "../../Binding.ts";
 import type { Function as LambdaFunction } from "../Lambda/Function.ts";
 import { Permission as LambdaPermission } from "../Lambda/Permission.ts";
 import type { EventBus } from "./EventBus.ts";
@@ -22,26 +21,28 @@ export interface LambdaRouteTargetProps extends Pick<
   | "DeadLetterConfig"
 > {}
 
-export class ToLambdaPolicy extends Binding.Policy<
-  ToLambdaPolicy,
-  (
-    routeId: string,
-    rule: { ruleArn: unknown },
-    fn: LambdaFunction,
-  ) => Effect.Effect<void>
->()("AWS.EventBridge.ToLambda") {}
-
-export const ToLambdaPolicyLive = ToLambdaPolicy.layer.succeed(
-  Effect.fn(function* (_host, routeId, rule, fn) {
-    yield* LambdaPermission(`${routeId}${fn.LogicalId}InvokePermission`, {
-      action: "lambda:InvokeFunction",
-      functionName: fn.functionName,
-      principal: "events.amazonaws.com",
-      sourceArn: rule.ruleArn as any,
-    }).pipe(Effect.asVoid);
-  }) as any,
-);
-
+/**
+ * Routes matching events from an EventBridge bus to a Lambda function.
+ *
+ * Creates a {@link Rule} targeting the function and a Lambda permission
+ * allowing `events.amazonaws.com` to invoke it. Usually reached through the
+ * `events(...)` builder rather than called directly.
+ * @binding
+ * @example Route Matching Events to a Lambda Function
+ * ```typescript
+ * yield* AWS.EventBridge.events(bus, { source: ["my.app"] }).toLambda(fn);
+ * ```
+ *
+ * @example Transform the Event Payload Before Invoking
+ * ```typescript
+ * yield* AWS.EventBridge.events(bus, { source: ["my.app"] }).toLambda(fn, {
+ *   InputTransformer: {
+ *     InputPathsMap: { orderId: "$.detail.orderId" },
+ *     InputTemplate: '{"orderId": <orderId>}',
+ *   },
+ * });
+ * ```
+ */
 export const toLambda = (
   descriptor: EventDescriptor,
   fn: LambdaFunction,
@@ -69,7 +70,17 @@ export const toLambda = (
       ],
     });
 
-    yield* ToLambdaPolicy.bind(routeId, rule, fn);
+    // Deploy-time: grant EventBridge permission to invoke the Lambda. Skipped
+    // once running inside the deployed Function by the global guard. The
+    // permission is explicitly named, so no Namespace.push is required.
+    if (!globalThis.__ALCHEMY_RUNTIME__) {
+      yield* LambdaPermission(`${routeId}${fn.LogicalId}InvokePermission`, {
+        action: "lambda:InvokeFunction",
+        functionName: fn.functionName,
+        principal: "events.amazonaws.com",
+        sourceArn: rule.ruleArn as any,
+      }).pipe(Effect.asVoid);
+    }
 
     return rule;
   });

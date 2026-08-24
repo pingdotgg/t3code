@@ -22,11 +22,11 @@ import type {
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
-import { ServerSettingsError } from "@t3tools/contracts";
+import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { initializeCodexAppServerWithBundledSkills } from "../../bundledSkills.ts";
+import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -62,6 +62,17 @@ const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
 };
 
 const DEFAULT_SERVICE_TIER_ID = "default";
+const CURRENT_CODEX_MODELS = new Set([
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "gpt-daybreak-blue-latest",
+  "gpt-daybreak-red-latest",
+]);
+
+export function isLegacyCodexModel(model: string): boolean {
+  return !CURRENT_CODEX_MODELS.has(model);
+}
 
 function reasoningEffortLabel(reasoningEffort: string): string {
   return REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort;
@@ -189,8 +200,35 @@ function parseCodexModelListResponse(
     slug: model.model,
     name: toDisplayName(model),
     isCustom: false,
+    ...(model.isDefault ? { isDefault: true } : {}),
+    ...(isLegacyCodexModel(model.model) ? { isLegacy: true } : {}),
     capabilities: mapCodexModelCapabilities(model),
   }));
+}
+
+/**
+ * Prefer our own default-model ranking when one of the preferred slugs is in
+ * the live catalog; otherwise keep whatever Codex itself flagged as default.
+ */
+export function applyPreferredCodexDefaultModel(
+  models: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  const preferredSlug = PREFERRED_DEFAULT_CODEX_MODELS.find((slug) =>
+    models.some((model) => model.slug === slug && !model.isCustom),
+  );
+  if (!preferredSlug) {
+    return models;
+  }
+  return models.map((model) => {
+    if (model.slug === preferredSlug) {
+      return model.isDefault ? model : { ...model, isDefault: true };
+    }
+    if (!model.isDefault) {
+      return model;
+    }
+    const { isDefault: _isDefault, ...rest } = model;
+    return rest;
+  });
 }
 
 function appendCustomCodexModels(
@@ -290,6 +328,7 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
+  readonly launchArgs?: string;
   readonly cwd: string;
   readonly customModels?: ReadonlyArray<string>;
   readonly environment?: NodeJS.ProcessEnv;
@@ -304,10 +343,14 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     ...input.environment,
     ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
   };
-  const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, ["app-server"], {
-    env: environment,
-    extendEnv: true,
-  });
+  const spawnCommand = yield* resolveSpawnCommand(
+    input.binaryPath,
+    codexAppServerArgs(input.launchArgs),
+    {
+      env: environment,
+      extendEnv: true,
+    },
+  );
   const child = yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -332,7 +375,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     Effect.provide(clientContext),
   );
 
-  const initialize = yield* initializeCodexAppServerWithBundledSkills(client, {
+  const initialize = yield* client.request("initialize", {
     clientInfo: {
       name: "t3code_desktop",
       title: "T3 Code Desktop",
@@ -342,6 +385,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       experimentalApi: true,
     },
   });
+  yield* client.notify("initialized", undefined);
 
   // Extract the version string after the first '/' in userAgent, up to the next space or the end
   const versionMatch = initialize.userAgent.match(/\/([^\s]+)/);
@@ -370,7 +414,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   return {
     account: accountResponse,
     version,
-    models: appendCustomCodexModels(models, input.customModels ?? []),
+    models: applyPreferredCodexDefaultModel(
+      appendCustomCodexModels(models, input.customModels ?? []),
+    ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
 });
@@ -465,6 +511,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   probe: (input: {
     readonly binaryPath: string;
     readonly homePath?: string;
+    readonly launchArgs?: string;
     readonly cwd: string;
     readonly customModels: ReadonlyArray<string>;
     readonly environment?: NodeJS.ProcessEnv;
@@ -503,6 +550,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const probeResult = yield* probe({
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
+    launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
     environment: resolvedEnvironment,
@@ -528,7 +576,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         auth: { status: "unknown" },
         message: installed
           ? `Codex app-server provider probe failed: ${error.message}.`
-          : "Codex CLI (`codex`) is not installed or not on PATH.",
+          : "Codex CLI (`codex`) was not found on PATH.",
       },
     });
   }
@@ -559,6 +607,13 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     checkedAt,
     models: snapshot.models,
     skills: snapshot.skills,
+    slashCommands: [
+      {
+        name: "feedback",
+        description: "Send this thread and Codex logs to OpenAI",
+        input: { hint: "Describe the issue (optional)" },
+      },
+    ],
     probe: {
       installed: true,
       version: snapshot.version ?? null,

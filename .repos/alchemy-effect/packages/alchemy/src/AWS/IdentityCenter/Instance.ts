@@ -41,13 +41,21 @@ export interface Instance extends Resource<
   "AWS.IdentityCenter.Instance",
   InstanceProps,
   {
+    /** The ARN of the Identity Center instance. */
     instanceArn: string;
+    /** The identity store backing the instance. */
     identityStoreId: string;
+    /** The AWS account that owns the instance. */
     ownerAccountId: string | undefined;
+    /** The friendly name of the instance, if set. */
     name: string | undefined;
+    /** The current status of the instance (`ACTIVE`, ...). */
     status: string | undefined;
+    /** Details when the instance is in a failed state. */
     statusReason: string | undefined;
+    /** When the instance was created. */
     createdDate: Date | undefined;
+    /** How the resource was satisfied: `existing` (adopted) or `account` (created). */
     mode: "existing" | "account";
   },
   never,
@@ -59,7 +67,7 @@ export interface Instance extends Resource<
  *
  * Use `mode: "existing"` to adopt a pre-enabled organization instance. Use
  * `mode: "account"` only for standalone or member-account account instances.
- *
+ * @resource
  * @section Discovering Existing Instances
  * @example Adopt An Existing Instance
  * ```typescript
@@ -85,6 +93,32 @@ export const InstanceProvider = () =>
     Effect.gen(function* () {
       return {
         stables: ["instanceArn", "identityStoreId", "ownerAccountId", "mode"],
+        // Enumerate every Identity Center instance visible to the calling
+        // account (organization + account instances). `ListInstances` is
+        // paginated and fully hydrates each `InstanceMetadata`, so no
+        // per-item read is needed. Accounts with no SSO enabled return an
+        // empty list (not an error). Each item is mapped to the exact `read`
+        // Attributes shape; `mode` defaults to "existing" since enumeration
+        // only observes pre-existing instances.
+        list: () =>
+          Effect.gen(function* () {
+            const instances = yield* listInstances();
+            return instances
+              .filter(
+                (
+                  instance,
+                ): instance is ssoAdmin.InstanceMetadata & {
+                  InstanceArn: string;
+                  IdentityStoreId: string;
+                } =>
+                  instance.InstanceArn != null &&
+                  instance.IdentityStoreId != null,
+              )
+              .map((instance) => ({
+                ...toInstanceAttributes(instance),
+                mode: "existing" as const,
+              }));
+          }),
         diff: Effect.fn(function* ({ olds, news }) {
           if (!isResolved(news)) return;
           if (

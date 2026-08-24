@@ -53,15 +53,19 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.isDevelopment, true);
       assert.equal(environment.appDataDirectory, "/Users/alice/Library/Application Support");
       assert.equal(environment.baseDir, "/tmp/t3");
-      assert.equal(environment.stateDir, "/tmp/t3/dev");
-      assert.equal(environment.desktopSettingsPath, "/tmp/t3/dev/desktop-settings.json");
-      assert.equal(environment.clientSettingsPath, "/tmp/t3/dev/client-settings.json");
-      assert.equal(environment.savedEnvironmentRegistryPath, "/tmp/t3/dev/saved-environments.json");
-      assert.equal(environment.serverSettingsPath, "/tmp/t3/dev/settings.json");
-      assert.equal(environment.logDir, "/tmp/t3/dev/logs");
-      assert.equal(environment.browserArtifactsDir, "/tmp/t3/dev/browser-artifacts");
+      assert.equal(environment.stateDir, "/tmp/t3/userdata");
+      assert.equal(environment.desktopSettingsPath, "/tmp/t3/userdata/desktop-settings.json");
+      assert.equal(environment.clientSettingsPath, "/tmp/t3/userdata/client-settings.json");
+      assert.equal(
+        environment.savedEnvironmentRegistryPath,
+        "/tmp/t3/userdata/saved-environments.json",
+      );
+      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
+      assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
       assert.equal(environment.rootDir, "/repo");
       assert.equal(environment.appRoot, "/repo");
+      assert.equal(environment.serverRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
       assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev");
@@ -78,7 +82,7 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
-  it.effect("derives production state paths under userdata", () =>
+  it.effect("stores production state under userdata in an explicit home", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
         {},
@@ -92,6 +96,37 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
       assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
       assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+    }),
+  );
+
+  it.effect("uses the packaged Windows server sidecar as the backend root", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        platform: "win32",
+        isPackaged: true,
+        appPath: "/install/resources/app.asar",
+        resourcesPath: "/install/resources",
+      });
+
+      assert.equal(environment.appRoot, "/install/resources/app.asar");
+      assert.equal(environment.serverRoot, "/install/resources/server.asar");
+      assert.equal(
+        environment.backendEntryPath,
+        "/install/resources/server.asar/apps/server/dist/bin.mjs",
+      );
+    }),
+  );
+
+  it.effect("keeps implicit development state separate from production state", () =>
+    Effect.gen(function* () {
+      const development = yield* makeEnvironment(
+        {},
+        { VITE_DEV_SERVER_URL: "http://localhost:5173" },
+      );
+      const production = yield* makeEnvironment();
+
+      assert.equal(development.stateDir, "/Users/alice/.t3/dev");
+      assert.equal(production.stateDir, "/Users/alice/.t3/userdata");
     }),
   );
 

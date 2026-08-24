@@ -1,6 +1,17 @@
-import { BigDecimal, DateTime, Duration, Equivalence, HashMap, Option, Redacted, Result, Schema } from "effect"
+import {
+  BigDecimal,
+  DateTime,
+  Duration,
+  Equivalence,
+  HashMap,
+  Option,
+  Redacted,
+  Result,
+  Schema,
+  SchemaGetter
+} from "effect"
 import { describe, it } from "vitest"
-import { assertFalse, assertTrue, throws } from "../utils/assert.ts"
+import { assertFalse, assertTrue, strictEqual } from "../utils/assert.ts"
 
 const Modulo2 = Schema.Number.annotate({
   toEquivalence: (): Equivalence.Equivalence<number> => Equivalence.make((a, b) => a % 2 === b % 2)
@@ -12,22 +23,11 @@ const Modulo3 = Schema.Number.annotate({
 
 describe("toEquivalence", () => {
   it("Never", () => {
-    throws(
-      () =>
-        Schema.toEquivalence(Schema.Struct({
-          a: Schema.Never
-        })),
-      `Unsupported AST Never
-  at ["a"]`
-    )
-    throws(
-      () =>
-        Schema.toEquivalence(Schema.Tuple([
-          Schema.Never
-        ])),
-      `Unsupported AST Never
-  at [0]`
-    )
+    const equivalence = Schema.toEquivalence(Schema.Never)
+    const value = {} as never
+
+    assertTrue(equivalence(value, value))
+    assertFalse(equivalence({} as never, {} as never))
   })
 
   it("String", () => {
@@ -99,6 +99,18 @@ describe("toEquivalence", () => {
     assertFalse(equivalence(["a", 1, "b", 2], ["a", 1, "c", 2]))
     assertFalse(equivalence(["a", 1, "b", 2], ["a", 2, "b", 2]))
     assertFalse(equivalence(["a", 1, "b", 2], ["a", 1, "b", 3]))
+  })
+
+  it("TupleWithRest with multiple post-rest elements", () => {
+    const schema = Schema.TupleWithRest(Schema.Tuple([Schema.String]), [
+      Schema.String,
+      Schema.Number,
+      Schema.Boolean,
+      Schema.String
+    ])
+    const equivalence = Schema.toEquivalence(schema)
+    assertTrue(equivalence(["head", "tail", 1, true, "last"], ["head", "tail", 1, true, "last"]))
+    assertFalse(equivalence(["head", "tail", 1, true, "A"], ["head", "tail", 1, true, "B"]))
   })
 
   describe("Struct", () => {
@@ -192,6 +204,13 @@ describe("toEquivalence", () => {
       assertTrue(equivalence({ a: 1, b: undefined }, { a: 1, b: undefined }))
       assertFalse(equivalence({ a: 1, b: undefined }, { a: 1 }))
       assertFalse(equivalence({ a: 1 }, { a: 1, b: undefined }))
+    })
+
+    it("Record(String.check, Number) should use the key checks to select keys", () => {
+      const schema = Schema.Record(Schema.String.check(Schema.isPattern(/^a/)), Schema.Number)
+      const equivalence = Schema.toEquivalence(schema)
+      assertTrue(equivalence({ a: 1, b: 1 }, { a: 1, b: 2 }))
+      assertFalse(equivalence({ a: 1 }, { a: 2 }))
     })
 
     it("Record(Symbol, Number)", () => {
@@ -322,6 +341,54 @@ describe("toEquivalence", () => {
         })
       )
     })
+  })
+
+  it("precompiles Union members", () => {
+    let derivations = 0
+    const member = Schema.Struct({
+      tag: Schema.Literal("a"),
+      value: Schema.String
+    }).pipe(
+      Schema.overrideToEquivalence(() => {
+        derivations++
+        return Equivalence.make((a, b) => a.value === b.value)
+      })
+    )
+    const equivalence = Schema.toEquivalence(Schema.Union([member, Schema.Never]))
+
+    strictEqual(derivations, 1)
+    assertTrue(equivalence({ tag: "a", value: "a" }, { tag: "a", value: "a" }))
+    assertFalse(equivalence({ tag: "a", value: "a" }, { tag: "a", value: "b" }))
+    strictEqual(derivations, 1)
+  })
+
+  it("selects transformed Union members on the Type side", () => {
+    const Target = Schema.Struct({ value: Schema.String }).pipe(
+      Schema.overrideToEquivalence(() => Equivalence.make((a, b) => a.value === b.value))
+    )
+    const Transformed = Schema.String.pipe(
+      Schema.decodeTo(Target, {
+        decode: SchemaGetter.transform((s) => ({ value: s })),
+        encode: SchemaGetter.transform((a) => a.value)
+      })
+    )
+    const equivalence = Schema.toEquivalence(Schema.Union([Transformed, Schema.Boolean]))
+
+    assertTrue(equivalence({ value: "a" }, { value: "a" }))
+    assertFalse(equivalence({ value: "a" }, { value: "b" }))
+  })
+
+  it("preserves Union member equivalence annotations", () => {
+    const member = Schema.String.pipe(
+      Schema.flip,
+      Schema.check(Schema.makeFilter(() => true)),
+      Schema.flip,
+      Schema.overrideToEquivalence(() => Equivalence.make((a, b) => a[0] === b[0]))
+    )
+    const equivalence = Schema.toEquivalence(Schema.Union([member, Schema.Number]))
+
+    assertTrue(equivalence("ab", "ac"))
+    assertFalse(equivalence("ab", "bc"))
   })
 
   it("Date", () => {

@@ -1,10 +1,20 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { vi } from "vite-plus/test";
+
+import type * as Electron from "electron";
 
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
-import { getLocalEnvironmentBootstraps } from "./window.ts";
+import * as ElectronDialog from "../../electron/ElectronDialog.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import {
+  getLocalEnvironmentBootstraps,
+  getWindowFullscreenState,
+  pickProjectFavicon,
+} from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -125,4 +135,55 @@ describe("getLocalEnvironmentBootstraps", () => {
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(DesktopBackendPool.layerTest([stoppedInstance])));
   });
+});
+
+describe("getWindowFullscreenState", () => {
+  it.effect("reads the current native window state", () => {
+    const window = { isFullScreen: () => true } as Electron.BrowserWindow;
+
+    return Effect.gen(function* () {
+      assert.isTrue(yield* getWindowFullscreenState.handler());
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          currentMainOrFirst: Effect.succeed(Option.some(window)),
+        }),
+      ),
+    );
+  });
+});
+
+describe("pickProjectFavicon", () => {
+  it.effect("opens a single-image picker from the project directory", () =>
+    Effect.gen(function* () {
+      const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
+      const result = yield* pickProjectFavicon.handler("/project").pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ElectronDialog.ElectronDialog)({ pickFiles }),
+            Layer.mock(ElectronWindow.ElectronWindow)({
+              focusedMainOrFirst: Effect.succeed(Option.none()),
+            }),
+          ),
+        ),
+      );
+
+      assert.strictEqual(result, "/pictures/icon.png");
+      assert.deepEqual(pickFiles.mock.calls, [
+        [
+          {
+            owner: Option.none(),
+            defaultPath: Option.some("/project"),
+            multiple: false,
+            filters: [
+              {
+                name: "Images",
+                extensions: ["avif", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"],
+              },
+            ],
+          },
+        ],
+      ]);
+    }),
+  );
 });

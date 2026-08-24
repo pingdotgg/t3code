@@ -1,61 +1,57 @@
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Sink from "effect/Sink";
+import type * as sns from "@distilled.cloud/aws/sns";
+import type * as Effect from "effect/Effect";
+import type * as Sink from "effect/Sink";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
-import { PublishBatch } from "./PublishBatch.ts";
+import type { BatchRetryExhaustedError } from "../internal/BatchedSink.ts";
 import type { Topic } from "./Topic.ts";
 
-export class TopicSink extends Binding.Service<
+/**
+ * A raw `PublishBatchRequestEntry` minus the batch-correlation `Id`, which
+ * the sink assigns per API call. Callers stay in control of `Message`,
+ * `Subject`, `MessageGroupId`, `MessageDeduplicationId`, attributes, etc.
+ */
+export interface TopicSinkEntry extends Omit<
+  sns.PublishBatchRequestEntry,
+  "Id"
+> {}
+
+export type TopicSinkError =
+  | sns.PublishBatchError
+  | BatchRetryExhaustedError<TopicSinkEntry>;
+
+/**
+ * A batching sink over SNS `PublishBatch` (10 entries / 256 KiB per call).
+ * Per-entry failures with `SenderFault: false` (throttling, internal errors)
+ * are retried on a bounded schedule; `SenderFault: true` failures are
+ * permanent and dropped. Exhausting retries fails the sink with a typed
+ * `BatchRetryExhaustedError` carrying the stranded entries.
+ *
+ * The binding grants the host function `sns:Publish` on the topic. Provide
+ * the `TopicSinkHttp` layer (which itself needs `PublishBatchHttp`) on the
+ * Function to implement the binding.
+ * @binding
+ * @section Streaming Messages into a Topic
+ * @example Run a Stream into a Topic
+ * ```typescript
+ * // init (provide SNS.TopicSinkHttp + SNS.PublishBatchHttp on the Function)
+ * const sink = yield* SNS.TopicSink(topic);
+ *
+ * // runtime: batching, size limits, and transient-failure retry are handled
+ * // by the sink — each element is a PublishBatchRequestEntry minus `Id`.
+ * yield* Stream.fromIterable(messages).pipe(
+ *   Stream.map((message) => ({ Message: message })),
+ *   Stream.run(sink),
+ * );
+ * ```
+ */
+export interface TopicSink extends Binding.Service<
   TopicSink,
+  "AWS.SNS.TopicSink",
   (
     topic: Topic,
-  ) => Effect.Effect<Sink.Sink<void, string, readonly string[], never>>
->()("AWS.SNS.TopicSink") {}
+  ) => Effect.Effect<
+    Sink.Sink<void, TopicSinkEntry, readonly TopicSinkEntry[], TopicSinkError>
+  >
+> {}
 
-export const TopicSinkLive = Layer.effect(
-  TopicSink,
-  Effect.gen(function* () {
-    const Policy = yield* TopicSinkPolicy;
-    const publishBatch = yield* PublishBatch;
-
-    return Effect.fn(function* (topic: Topic) {
-      yield* Policy(topic);
-      const publish = yield* publishBatch(topic);
-
-      return Sink.forEachArray((messages: readonly string[]) =>
-        publish({
-          PublishBatchRequestEntries: messages.map((message, index) => ({
-            Id: `${index}`,
-            Message: message,
-          })),
-        }).pipe(Effect.orDie, Effect.asVoid),
-      );
-    });
-  }),
-);
-
-export class TopicSinkPolicy extends Binding.Policy<
-  TopicSinkPolicy,
-  (topic: Topic) => Effect.Effect<void>
->()("AWS.SNS.TopicSink") {}
-
-export const TopicSinkPolicyLive = TopicSinkPolicy.layer.succeed(
-  Effect.fn(function* (host, topic) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.SNS.TopicSink(${topic}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["sns:Publish"],
-            Resource: [topic.topicArn],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `TopicSinkPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
-);
+export const TopicSink = Binding.Service<TopicSink>("AWS.SNS.TopicSink");

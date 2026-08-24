@@ -1,0 +1,185 @@
+---
+title: Build a release-automation agent
+description: Case study of the cloudflare-agent example — GitHub push events routed through a Worker to a per-release Durable Object that drives an AI agent with container-backed tools.
+sidebar:
+  order: 27
+---
+
+The [`cloudflare-agent` example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-agent)
+is an autonomous release pipeline: a push lands on `main`, a Worker
+filters for release commits, and each one is handed to a Durable
+Object that drives an AI agent to write the release blog post — with
+file, shell, and SQL tools that execute inside a Cloudflare
+Container. This guide walks the architecture; the example source is
+the full listing.
+
+The pipeline is four pieces, each one file:
+
+- `src/ReleaseService.ts` — the Worker that consumes push events
+- `src/ReleaseVersion.ts` — a Durable Object per release commit
+- `src/ReleaseBlogger.ts` — the agent: a prompt that references its tools
+- `src/DevBox.ts` — the container the tools execute in
+
+## The front door: push events
+
+`ReleaseService` subscribes to the repository's `push` webhook with
+[`GitHub.consumeRepositoryEvents`](/cloudflare/messaging/github-events)
+and filters for release commits on `main` in ordinary handler code:
+
+```typescript
+// src/ReleaseService.ts
+yield* Github.consumeRepositoryEvents(
+  { owner: "alchemy-run", repository: "alchemy", events: ["push"] },
+  (event) => {
+    const title = event.payload.head_commit?.message.split("\n")[0] ?? "";
+    const isRelease =
+      event.payload.ref === "refs/heads/main" &&
+      title.startsWith("chore(release):");
+
+    return isRelease
+      ? versions.getByName(event.payload.head_commit!.id).generateBlog({
+          input: event.payload,
+        })
+      : Effect.log(`Skipping "${event.payload.head_commit?.message}"`);
+  },
+);
+```
+
+At deploy time alchemy provisions the webhook on the repo pointing at
+this Worker and binds the signing secret; at runtime it verifies each
+delivery and hands the handler a typed `push` payload — the filter is
+just a string check on the commit title.
+
+## One Durable Object per release
+
+`versions.getByName(commitId)` routes each release to a
+[Durable Object](/cloudflare/compute/durable-objects) keyed by the commit
+hash, so webhook redeliveries for the same commit land on the same
+instance instead of kicking off duplicate work:
+
+```typescript
+// src/ReleaseVersion.ts
+export class ReleaseVersion extends Cloudflare.DurableObject<ReleaseVersion>()(
+  "ReleaseBlogger",
+  Effect.gen(function* () {
+    const blogger = yield* ReleaseBlogger;
+    return Effect.gen(function* () {
+      return {
+        generateBlog: Effect.fn(function* (request: { input: any }) {
+          yield* blogger.send(request);
+        }),
+      };
+    });
+  }).pipe(Effect.provide(/* tool + container layers, below */)),
+) {}
+```
+
+The object body is tiny — resolve the agent, forward the payload. All
+the capability wiring lives in the layer stack it's provided with.
+
+## The agent: a prompt that references its tools
+
+`ReleaseBlogger` is an `Alchemy.Agent` — a tagged-template prompt
+that interpolates the tool classes it may call. Referencing a tool in
+the template adds it to the agent's inferred requirements, so the
+type system knows exactly which layers the host must provide:
+
+```typescript
+// src/ReleaseBlogger.ts
+export class ReleaseBlogger extends Alchemy.Agent<ReleaseBlogger>()("Blogger")`
+You are the Release Blogger. Your job is to turn a merged pull request into a
+release blog post under website/src/content/docs/blog/.
+
+1. Use the ${Grep} tool to find the most recent post...
+2. Use the ${ReadFile} tool to read that post and the PR diff...
+4. Use the ${WriteFile} tool to create the new post...
+` {}
+```
+
+Each tool is an `AI.Tool` — an Effect service with schema-typed
+parameters (`AI.Parameter`) — so implementations are swappable
+layers. `src/tools/Fs.ts` ships two `WriteFile` implementations:
+`WriteFileR2` puts files in an R2 bucket, `WriteFileDevBox` writes to
+the container's filesystem. The DO picks one at layer-composition
+time; the prompt doesn't change.
+
+:::note
+`Alchemy.Agent` is the newest surface in this example — the
+declarative API (prompt + tool refs + inferred requirements) is what
+the example demonstrates, and its runtime is still landing. Treat the
+example as the reference for the architecture, not a turnkey deploy.
+:::
+
+## The DevBox: a container as tool backend
+
+Shell and filesystem tools need a real machine. `DevBox` is a
+[Cloudflare Container](/cloudflare/compute/run-a-container) with a typed
+RPC interface, implemented with Effect's `FileSystem` and
+`ChildProcessSpawner` running inside the container:
+
+```typescript
+// src/DevBox.ts
+export class DevBox extends Cloudflare.Container<
+  DevBox,
+  {
+    readFile: (path: string) => Effect.Effect<string>;
+    writeFile: (path: string, contents: string) => Effect.Effect<void>;
+    exec: (command: string) => Effect.Effect<{
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+    }>;
+  }
+>()("DevBox") {}
+
+export default DevBox.make(
+  { main: import.meta.url, image: "oven/bun:1.3" },
+  Effect.gen(function* () {
+    /* FileSystem + ChildProcessSpawner impl */
+  }),
+);
+```
+
+The `ReleaseVersion` DO provides
+`Cloudflare.Containers.layer(DevBox, { enableInternet: true })`, so
+tool layers like `WriteFileDevBox` resolve the container and call its
+typed methods directly. The other tools follow the same pattern with
+different backends: `Sql` runs against the DO's own SQLite storage,
+and `Eval` sandboxes generated JavaScript in a dynamically loaded
+Worker via `Cloudflare.WorkerLoader`.
+
+## The Stack
+
+`alchemy.run.ts` ties it together — GitHub providers for the webhook,
+Cloudflare providers for everything else, and the DevBox layer
+provided at the top:
+
+```typescript
+// alchemy.run.ts
+export default Alchemy.Stack(
+  "Stack",
+  {
+    providers: Layer.mergeAll(Cloudflare.providers(), GitHub.providers()),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const releaseService = yield* ReleaseService;
+    return { releaseService: releaseService.url.as<string>() };
+  }).pipe(Effect.provide(DevBoxLive)),
+);
+```
+
+One `bun alchemy deploy` provisions the Worker, the Durable Object,
+the container image, and the GitHub webhook — the whole pipeline is a
+single typed program.
+
+## Where next
+
+- [React to GitHub events](/cloudflare/messaging/github-events) — the
+  event source in depth: provisioning, signatures, typed payloads.
+- [Workflows](/cloudflare/compute/workflows) — durable multi-step
+  execution if a release pipeline outgrows a single DO method.
+- [Containers](/cloudflare/compute/run-a-container) — the DevBox pattern:
+  typed RPC into a Docker image.
+- [GitHub provider](/github) — repositories, Actions config, and the
+  rest of the CI/CD glue.

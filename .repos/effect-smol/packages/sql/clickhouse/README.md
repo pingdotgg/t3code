@@ -1,6 +1,6 @@
 # `@effect/sql-clickhouse`
 
-An `@effect/sql` implementation for [ClickHouse](https://clickhouse.com/).
+An Effect SQL implementation for [ClickHouse](https://clickhouse.com/).
 
 ## Documentation
 

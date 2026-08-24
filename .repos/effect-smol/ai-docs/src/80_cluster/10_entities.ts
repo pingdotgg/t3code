@@ -10,12 +10,12 @@ import { Rpc } from "effect/unstable/rpc"
 import type { SqlClient } from "effect/unstable/sql"
 
 export const Increment = Rpc.make("Increment", {
-  payload: { amount: Schema.Number },
-  success: Schema.Number
+  payload: { amount: Schema.Int },
+  success: Schema.Int
 })
 
 export const GetCount = Rpc.make("GetCount", {
-  success: Schema.Number
+  success: Schema.Int
 })
   // If you want GetCount messages to be persisted, you can annotate the RPC
   // schema with `ClusterSchema.Persisted`.

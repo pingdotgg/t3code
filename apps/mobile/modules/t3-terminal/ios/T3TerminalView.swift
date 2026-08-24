@@ -119,6 +119,21 @@ private enum TerminalHardwareKeyEncoder {
   }
 }
 
+private enum TerminalInputSequence {
+  /// Terminal Enter is carriage return. Sending line feed instead is Ctrl+J,
+  /// which raw-mode TUIs may interpret as the literal J key.
+  static let carriageReturn = "\r"
+
+  static func normalizingReturn(_ input: String) -> String {
+    switch input {
+    case "\n", "\r\n":
+      return carriageReturn
+    default:
+      return input
+    }
+  }
+}
+
 private final class TerminalInputField: UITextField {
   var onDeleteBackward: (() -> Void)?
   var onInsert: ((String) -> Void)?
@@ -229,6 +244,17 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       guard oldValue != focusRequest else { return }
       DispatchQueue.main.async { [weak self] in
         self?.requestKeyboardFocus()
+      }
+    }
+  }
+
+  var autoFocus = true {
+    didSet {
+      guard oldValue != autoFocus else { return }
+      if autoFocus {
+        requestKeyboardFocus()
+      } else {
+        inputField.resignFirstResponder()
       }
     }
   }
@@ -344,7 +370,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   public override func didMoveToWindow() {
     super.didMoveToWindow()
 
-    guard window != nil else { return }
+    guard window != nil, autoFocus else { return }
     DispatchQueue.main.async { [weak self] in
       self?.requestKeyboardFocus()
     }
@@ -352,7 +378,9 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
 
   public func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
     if !string.isEmpty {
-      emitInput(string)
+      // Some software keyboards deliver Return through this delegate instead of
+      // textFieldShouldReturn, so normalize that path too.
+      emitInput(TerminalInputSequence.normalizingReturn(string))
       return false
     }
 
@@ -360,7 +388,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   }
 
   public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-    emitInput("\n")
+    emitInput(TerminalInputSequence.carriageReturn)
     textField.text = ""
     return false
   }
@@ -504,6 +532,12 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private func applyRemoteBuffer(_ buffer: String) {
     guard surface != nil else {
       createSurfaceIfPossible()
+      return
+    }
+
+    if buffer.isEmpty {
+      feedData(Data("\u{1B}[3J\u{1B}[H\u{1B}[2J".utf8))
+      lastAppliedBuffer = ""
       return
     }
 

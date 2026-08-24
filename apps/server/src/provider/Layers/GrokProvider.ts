@@ -1,12 +1,12 @@
 import {
   type GrokSettings,
   type ModelCapabilities,
-  ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -37,7 +37,6 @@ const GROK_PRESENTATION = {
   showInteractionModeToggle: false,
   requiresNewThreadForModelChange: true,
 } as const;
-const PROVIDER = ProviderDriverKind.make("grok");
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
@@ -97,12 +96,7 @@ function grokModelsFromSettings(
   customModels: ReadonlyArray<string> | undefined,
   builtInModels: ReadonlyArray<ServerProviderModel> = GROK_BUILT_IN_MODELS,
 ): ReadonlyArray<ServerProviderModel> {
-  return providerModelsFromSettings(
-    builtInModels,
-    PROVIDER,
-    customModels ?? [],
-    EMPTY_CAPABILITIES,
-  );
+  return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
 function buildGrokDiscoveredModelsFromSessionModelState(
@@ -167,7 +161,11 @@ const runGrokVersionCommand = (
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
-): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
 

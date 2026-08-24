@@ -2,14 +2,13 @@ import { useAuth, useUser } from "@clerk/expo";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
-import * as Updates from "expo-updates";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Alert, Linking, Platform, ScrollView, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Alert, Linking, Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -19,7 +18,9 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
+import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
 import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
@@ -28,17 +29,24 @@ import {
   subscribeAgentAwarenessRegistrationStatus,
 } from "../agent-awareness/remoteRegistration";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
-import { useClerkSettingsSheetDetent } from "../cloud/ClerkSettingsSheetDetent";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
+import {
+  type AppUpdateCheckState,
+  isAppUpdateCheckAvailable,
+  registerHiddenUpdateTap,
+  runAppUpdateCheck,
+} from "../updates/app-updates";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
@@ -62,23 +70,31 @@ export function SettingsRouteScreen() {
   return (
     <>
       <WorkspaceSidebarToolbar />
-      <NativeStackScreenOptions
-        options={{
-          unstable_headerRightItems:
-            Platform.OS === "ios"
-              ? () => [
-                  withNativeGlassHeaderItem({
-                    accessibilityLabel: "Close settings",
-                    icon: { name: "xmark", type: "sfSymbol" } as const,
-                    identifier: "settings-close",
-                    label: "",
-                    onPress: () => navigation.goBack(),
-                    type: "button",
-                  }),
-                ]
-              : undefined,
-        }}
-      />
+      {Platform.OS === "android" ? (
+        <>
+          {/* Android renders its own in-screen header instead of the native bar. */}
+          <NativeStackScreenOptions options={{ headerShown: false }} />
+          <AndroidScreenHeader title="Settings" onBack={() => navigation.goBack()} />
+        </>
+      ) : (
+        <NativeStackScreenOptions
+          options={{
+            unstable_headerRightItems:
+              Platform.OS === "ios"
+                ? () => [
+                    withNativeGlassHeaderItem({
+                      accessibilityLabel: "Close settings",
+                      icon: { name: "xmark", type: "sfSymbol" } as const,
+                      identifier: "settings-close",
+                      label: "",
+                      onPress: () => navigation.goBack(),
+                      type: "button",
+                    }),
+                  ]
+                : undefined,
+          }}
+        />
+      )}
       {hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />}
     </>
   );
@@ -109,9 +125,13 @@ function LocalSettingsRouteScreen() {
           />
         </SettingsSection>
 
+        <GeneralSettingsSection />
+
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
+
+        <LegacySettingsSection />
 
         <ArchivedThreadsSettingsSection />
 
@@ -124,9 +144,10 @@ function LocalSettingsRouteScreen() {
 function ConfiguredSettingsRouteScreen() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const agentAwarenessPushAvailable = supportsAgentAwarenessPush();
+  const agentAwarenessPlatform = resolveAgentAwarenessPlatformPresentation(Platform.OS);
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-  const { expand: expandClerkSheet } = useClerkSettingsSheetDetent();
   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { user } = useUser();
   const { savedConnectionsById } = useSavedRemoteConnections();
@@ -141,7 +162,7 @@ function ConfiguredSettingsRouteScreen() {
   const environmentCount = connections.length;
   const accountLabel = useMemo(() => {
     if (!isLoaded) return "Checking";
-    if (!isSignedIn) return "Request access";
+    if (!isSignedIn) return "Sign in";
     return user?.primaryEmailAddress?.emailAddress ?? "Signed in";
   }, [isLoaded, isSignedIn, user?.primaryEmailAddress?.emailAddress]);
 
@@ -248,13 +269,13 @@ function ConfiguredSettingsRouteScreen() {
 
   const promptSignIn = useCallback(() => {
     Alert.alert(
-      "Request T3 Connect access",
-      "Live Activity updates require approved T3 Connect access so relay can deliver updates to this device.",
+      "Sign in to T3 Connect",
+      "Live Activity updates require T3 Connect so relay can deliver updates to this device.",
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Continue",
-          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsWaitlist" }),
+          onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
         },
       ],
     );
@@ -415,13 +436,8 @@ function ConfiguredSettingsRouteScreen() {
 
   const openAccount = useCallback(() => {
     if (!isLoaded) return;
-    if (!isSignedIn) {
-      navigation.navigate("SettingsSheet", { screen: "SettingsWaitlist" });
-      return;
-    }
-    expandClerkSheet();
     navigation.navigate("SettingsSheet", { screen: "SettingsAuth" });
-  }, [expandClerkSheet, isLoaded, isSignedIn, navigation]);
+  }, [isLoaded, navigation]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -458,22 +474,36 @@ function ConfiguredSettingsRouteScreen() {
           <SettingsSwitchRow
             icon="bell.badge"
             label="Device Notifications"
-            disabled={notificationStatus === "checking" || notificationStatus === "unsupported"}
+            disabled={
+              !agentAwarenessPlatform.supported ||
+              !agentAwarenessPushAvailable ||
+              notificationStatus === "checking" ||
+              notificationStatus === "unsupported"
+            }
+            subtitle={agentAwarenessPlatform.subtitle}
             // Only reads as on when this device is actually registered with the
             // relay; otherwise notifications cannot be delivered regardless of
             // the local iOS permission.
-            value={notificationStatus === "enabled" && deviceRegistered}
+            value={
+              agentAwarenessPushAvailable && notificationStatus === "enabled" && deviceRegistered
+            }
             onValueChange={handleDeviceNotificationsChange}
           />
           <SettingsSwitchRow
             disabled={
-              !isLoaded || liveActivityStatus === "checking" || liveActivityStatus === "linking"
+              !agentAwarenessPlatform.supported ||
+              !agentAwarenessPushAvailable ||
+              !isLoaded ||
+              liveActivityStatus === "checking" ||
+              liveActivityStatus === "linking"
             }
             icon="bolt.circle"
             label="Live Activity Updates"
+            subtitle={agentAwarenessPlatform.subtitle}
             // Same gate: a saved preference is meaningless until the device
             // registration the relay needs to push updates has succeeded.
             value={
+              agentAwarenessPushAvailable &&
               (liveActivityStatus === "enabled" || liveActivityStatus === "linking") &&
               deviceRegistered
             }
@@ -481,9 +511,13 @@ function ConfiguredSettingsRouteScreen() {
           />
         </SettingsSection>
 
+        <GeneralSettingsSection />
+
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
+
+        <LegacySettingsSection />
 
         <ArchivedThreadsSettingsSection />
 
@@ -493,8 +527,68 @@ function ConfiguredSettingsRouteScreen() {
   );
 }
 
+function GeneralSettingsSection() {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const autoSettleOnMerge =
+    !AsyncResult.isSuccess(preferencesResult) ||
+    preferencesResult.value.autoSettleOnMerge !== false;
+
+  return (
+    <SettingsSection title="General">
+      <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
+      <SettingsSwitchRow
+        icon="arrow.triangle.branch"
+        label="Auto-settle merged threads"
+        value={autoSettleOnMerge}
+        onValueChange={(value) => savePreferences({ autoSettleOnMerge: value })}
+      />
+      <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
+    </SettingsSection>
+  );
+}
+
+/**
+ * Device-local legacy toggles. Mobile has no client-settings sync, so this is
+ * the counterpart of web's Settings → General → Legacy features backed by
+ * mobile preferences.
+ */
+function LegacySettingsSection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const threadListV2Enabled = useThreadListV2Enabled();
+  const planModeEnabled =
+    AsyncResult.isSuccess(preferences) && preferences.value.planModeEnabled === true;
+
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Legacy">
+        <SettingsSwitchRow
+          icon="sidebar.left"
+          label="Legacy Thread List"
+          value={!threadListV2Enabled}
+          onValueChange={(value) => savePreferences({ legacyThreadListEnabled: value })}
+        />
+        <SettingsSwitchRow
+          icon="hammer"
+          label="Plan Mode"
+          value={planModeEnabled}
+          onValueChange={(value) => savePreferences({ planModeEnabled: value })}
+        />
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan
+        control; otherwise every task runs in Build mode.
+      </Text>
+    </View>
+  );
+}
+
 function AppSettingsSection() {
   const icon = useThemeColor("--color-icon");
+  const [updateState, setUpdateState] = useState<AppUpdateCheckState>("idle");
+  const updateInFlight = useRef(false);
+  const hiddenUpdateTapCount = useRef(0);
 
   const version = Constants.expoConfig?.version ?? "0.0.0";
   // Fall back to "production" to match resolveAppVariant in app.config.ts, so a
@@ -502,36 +596,95 @@ function AppSettingsSection() {
   const variant = (Constants.expoConfig?.extra?.appVariant as string | undefined) ?? "production";
   const variantLabel = variant === "production" ? "" : capitalize(variant);
   const versionLabel = variantLabel ? `${version} · ${variantLabel}` : version;
-  // Which JS is actually running: the bundle shipped in the binary, or an OTA
-  // update downloaded on top of it. Surfacing this makes "am I even on the
-  // right build?" answerable at a glance.
-  const bundleLabel = Updates.isEnabled
-    ? Updates.isEmbeddedLaunch
-      ? "Embedded"
-      : Updates.updateId
-        ? `OTA ${Updates.updateId.slice(0, 7)}`
-        : null
-    : null;
+  const updateCheckAvailable = isAppUpdateCheckAvailable();
+  const busy =
+    updateState === "checking" || updateState === "downloading" || updateState === "restarting";
+
+  // "Up to date" is a transient acknowledgement, not a state worth persisting —
+  // return the version row to its normal, deliberately quiet state.
+  useEffect(() => {
+    if (updateState !== "current") return;
+    const timer = setTimeout(() => setUpdateState("idle"), 3000);
+    return () => clearTimeout(timer);
+  }, [updateState]);
+
+  const checkForUpdate = useCallback(async () => {
+    // `disabled={busy}` only takes effect on the next render, so two taps in the
+    // same frame would both get through. The ref closes that window.
+    if (updateInFlight.current) return;
+    updateInFlight.current = true;
+    try {
+      // The user asked for this restart by tapping the version row, so it may
+      // apply immediately instead of prompting.
+      await runAppUpdateCheck({
+        applyMode: "immediate",
+        onFailure: (message) => Alert.alert("Update failed", message),
+        onStateChange: setUpdateState,
+      });
+    } finally {
+      updateInFlight.current = false;
+    }
+  }, []);
+
+  const handleVersionPress = useCallback(() => {
+    if (!updateCheckAvailable || updateInFlight.current) return;
+    const tap = registerHiddenUpdateTap(hiddenUpdateTapCount.current);
+    hiddenUpdateTapCount.current = tap.nextCount;
+    if (tap.shouldCheck) {
+      void checkForUpdate();
+    }
+  }, [checkForUpdate, updateCheckAvailable]);
+
+  const statusLabel =
+    updateState === "checking"
+      ? "Checking…"
+      : updateState === "downloading"
+        ? "Downloading…"
+        : // "ready" appears only when this check joined an in-flight background-mode
+          // check; that download installs at the next backgrounding.
+          updateState === "ready"
+          ? "Update ready"
+          : updateState === "restarting"
+            ? "Restarting…"
+            : updateState === "current"
+              ? "Up to date"
+              : null;
+
+  const versionRow = (
+    <View className="flex-row items-center gap-4 p-4">
+      <SymbolView
+        name="info.circle"
+        size={22}
+        tintColor={icon}
+        type="monochrome"
+        weight="regular"
+      />
+      <Text className="flex-1 text-lg text-foreground">Version</Text>
+      <View className="items-end">
+        <Text className="text-lg text-foreground-muted">{versionLabel}</Text>
+        {statusLabel ? (
+          <Text className="text-xs text-foreground-muted/70">{statusLabel}</Text>
+        ) : null}
+      </View>
+    </View>
+  );
 
   return (
     <SettingsSection title="App">
       <SettingsRow icon="internaldrive" label="Client Storage" target="SettingsClientStorage" />
-      <View className="flex-row items-center gap-4 p-4">
-        <SymbolView
-          name="info.circle"
-          size={22}
-          tintColor={icon}
-          type="monochrome"
-          weight="regular"
-        />
-        <Text className="flex-1 text-lg text-foreground">Version</Text>
-        <View className="items-end">
-          <Text className="text-lg text-foreground-muted">{versionLabel}</Text>
-          {bundleLabel ? (
-            <Text className="text-xs text-foreground-muted/70">{bundleLabel}</Text>
-          ) : null}
-        </View>
-      </View>
+      <SettingsRow icon="doc.text" label="Legal" fullScreenTarget="SettingsLegal" />
+      {updateCheckAvailable ? (
+        <Pressable
+          accessibilityLabel={`Version ${versionLabel}`}
+          accessibilityRole="text"
+          disabled={busy}
+          onPress={handleVersionPress}
+        >
+          {versionRow}
+        </Pressable>
+      ) : (
+        versionRow
+      )}
     </SettingsSection>
   );
 }

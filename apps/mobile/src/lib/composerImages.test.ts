@@ -36,7 +36,37 @@ vi.mock("./uuid", () => ({
   uuidv4: () => "attachment-id",
 }));
 
-import { convertPastedImagesToAttachments, isOwnedPastedImageUri } from "./composerImages";
+import {
+  convertPastedImagesToAttachments,
+  isOwnedPastedImageUri,
+  toUploadChatImageAttachments,
+} from "./composerImages";
+
+describe("toUploadChatImageAttachments", () => {
+  it("strips client draft id and previewUri for the startTurn wire shape", () => {
+    expect(
+      toUploadChatImageAttachments([
+        {
+          id: "client-draft-id",
+          type: "image",
+          name: "pasted-image.png",
+          mimeType: "image/png",
+          sizeBytes: 12,
+          dataUrl: "data:image/png;base64,AA==",
+          previewUri: "file:///tmp/preview.png",
+        },
+      ]),
+    ).toEqual([
+      {
+        type: "image",
+        name: "pasted-image.png",
+        mimeType: "image/png",
+        sizeBytes: 12,
+        dataUrl: "data:image/png;base64,AA==",
+      },
+    ]);
+  });
+});
 
 describe("native pasted image cleanup", () => {
   beforeEach(() => {

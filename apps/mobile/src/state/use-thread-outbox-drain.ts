@@ -17,10 +17,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
+import { toUploadChatImageAttachments } from "../lib/composerImages";
 import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { useProjects, useThreadShells } from "./entities";
-import { ensureThreadOutboxLoaded, removeThreadOutboxMessage } from "./thread-outbox";
+import {
+  confirmThreadOutboxMessageQueued,
+  ensureThreadOutboxLoaded,
+  removeThreadOutboxMessage,
+} from "./thread-outbox";
 import {
   isQueuedThreadCreationSendable,
   modelSelectionsEqual,
@@ -221,7 +226,7 @@ export function useThreadOutboxDrain(): void {
             messageId: queuedMessage.messageId,
             role: "user",
             text: queuedMessage.text,
-            attachments: queuedMessage.attachments,
+            attachments: toUploadChatImageAttachments(queuedMessage.attachments),
           },
           modelSelection: settings.modelSelection,
           runtimeMode: settings.runtimeMode,
@@ -348,8 +353,22 @@ export function useThreadOutboxDrain(): void {
             return false;
           },
         );
-      const delivery =
-        deliveryAction === "remove"
+      // Enqueues publish optimistically before their durable write settles.
+      // Confirm the write landed (and the message wasn't rolled back) before
+      // sending, so a failed write can never chase an already-delivered turn.
+      const delivery = confirmThreadOutboxMessageQueued(nextQueuedMessage).then((queued) => {
+        if (!queued) {
+          // Rolled back by a failed write; nothing to deliver or retry.
+          return true;
+        }
+        // The guards evaluated before the confirmation await are stale by now:
+        // the user may have opened this message in the editor. Re-read that
+        // guard and defer to the next drain pass (returning true skips the
+        // failure/backoff path) rather than sending a payload being edited.
+        if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[nextQueuedMessage.messageId]) {
+          return true;
+        }
+        return deliveryAction === "remove"
           ? removeQueuedMessage("[thread-outbox] failed to remove message for a missing thread")
           : creation !== undefined
             ? creationProjectCwd !== null
@@ -358,6 +377,7 @@ export function useThreadOutboxDrain(): void {
             : thread !== undefined
               ? sendQueuedMessage(nextQueuedMessage, thread)
               : Promise.resolve(false);
+      });
       void delivery
         .then((sent) => {
           if (sent) {

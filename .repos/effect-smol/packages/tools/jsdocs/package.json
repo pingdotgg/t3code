@@ -8,7 +8,7 @@
   "homepage": "https://effect.website",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Effect-TS/effect-smol.git",
+    "url": "https://github.com/Effect-TS/effect.git",
     "directory": "packages/tools/jsdocs"
   },
   "sideEffects": [],
@@ -42,7 +42,6 @@
   },
   "scripts": {
     "build": "tsc -b tsconfig.json && pnpm babel",
-    "build:tsgo": "tsgo -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
     "check": "tsc -b tsconfig.json",
     "test": "vitest",
@@ -57,8 +56,8 @@
   },
   "devDependencies": {
     "@effect/vitest": "workspace:^",
-    "@types/node": "^25.7.0",
+    "@types/node": "^26.1.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.10"
   }
 }

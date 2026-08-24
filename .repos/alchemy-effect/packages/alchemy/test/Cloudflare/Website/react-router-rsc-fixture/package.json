@@ -1,0 +1,25 @@
+{
+  "name": "alchemy-react-router-rsc-fixture",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router": "7.16.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "catalog:",
+    "@vitejs/plugin-rsc": "catalog:",
+    "vite": "catalog:"
+  }
+}

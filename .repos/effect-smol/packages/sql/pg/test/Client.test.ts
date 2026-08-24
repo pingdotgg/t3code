@@ -252,6 +252,15 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
     }))
 })
 
+it.layer(PgContainer.layerMakeClient, { timeout: "30 seconds" })("PgClient.makeClient", (it) => {
+  it.effect("connects before executing queries", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      const rows = yield* sql<{ value: number }>`SELECT 1 AS value`
+      assert.deepStrictEqual(rows, [{ value: 1 }])
+    }))
+})
+
 it.layer(PgContainer.layerClientWithTransforms, { timeout: "30 seconds" })("PgClient transforms", (it) => {
   it.effect("insert helper", () =>
     Effect.gen(function*() {

@@ -7,18 +7,18 @@ import {
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
   type ViewProps,
-  useColorScheme,
 } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   getNativeTerminalHardwareKeyRevision,
   resolveNativeTerminalSurfaceView,
 } from "./nativeTerminalModule";
 import {
   buildGhosttyThemeConfig,
-  getPierreTerminalTheme,
+  getMobileTerminalTheme,
   type TerminalTheme,
 } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
@@ -37,6 +37,7 @@ interface TerminalSurfaceProps extends ViewProps {
   readonly buffer: string;
   readonly fontSize?: number;
   readonly isRunning: boolean;
+  readonly autoFocus?: boolean;
   readonly keyboardFocusRequest?: number;
   readonly theme?: TerminalTheme;
   readonly onInput: (data: string) => void;
@@ -59,8 +60,8 @@ function estimateGridSize(input: {
 const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: TerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
   const inputRef = useRef<TextInput>(null);
-  const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
-  const theme = props.theme ?? getPierreTerminalTheme(appearanceScheme);
+  const { themeAppearance, themeId } = useAppearancePreferences();
+  const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const statusLabel = props.isRunning
     ? "Native terminal unavailable. Using text fallback."
     : "Open terminal to start a shell.";
@@ -145,7 +146,8 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
           onSubmitEditing={(event) => {
             const text = event.nativeEvent.text;
             if (text.length > 0) {
-              props.onInput(`${text}\n`);
+              // Terminal Enter is CR. LF is Ctrl+J and raw-mode TUIs can treat it as J.
+              props.onInput(`${text}\r`);
             }
           }}
         />
@@ -171,8 +173,8 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
 
 export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
-  const appearanceScheme = useColorScheme() === "light" ? "light" : "dark";
-  const theme = props.theme ?? getPierreTerminalTheme(appearanceScheme);
+  const { themeAppearance, themeId } = useAppearancePreferences();
+  const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
   const hasNativeSurface = Boolean(NativeTerminalSurfaceView);
@@ -213,7 +215,8 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
     return (
       <View style={props.style}>
         <NativeTerminalSurfaceView
-          appearanceScheme={appearanceScheme}
+          appearanceScheme={themeAppearance}
+          autoFocus={props.autoFocus ?? true}
           backgroundColor={theme.background}
           focusRequest={props.isRunning ? (props.keyboardFocusRequest ?? 0) : 0}
           foregroundColor={theme.foreground}

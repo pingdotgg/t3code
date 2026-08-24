@@ -3,7 +3,6 @@ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import { CredentialsStoreLive } from "../Auth/Credentials.ts";
 import { ProfileLive } from "../Auth/Profile.ts";
 import * as Provider from "../Provider.ts";
-import type { StackServices } from "../Stack.ts";
 import { PlanetscaleAuth } from "./AuthProvider.ts";
 import * as Credentials from "./Credentials.ts";
 import { MySQLBranch, MySQLBranchProvider } from "./MySQL/MySQLBranch.ts";
@@ -43,11 +42,7 @@ export type ProviderRequirements = Layer.Services<ReturnType<typeof providers>>;
  * Effect.provide(Planetscale.providers())
  * ```
  */
-export const providers = (): Layer.Layer<
-  Providers | Credentials.Credentials,
-  never,
-  StackServices
-> =>
+export const providers = () =>
   Layer.effect(
     Providers,
     Provider.collection([
@@ -77,4 +72,4 @@ export const providers = (): Layer.Layer<
     Layer.provideMerge(ProfileLive),
     Layer.provideMerge(CredentialsStoreLive),
     Layer.orDie,
-  ) as Layer.Layer<Providers | Credentials.Credentials, never, StackServices>;
+  );

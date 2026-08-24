@@ -12,6 +12,7 @@ import type * as FileSystem from "effect/FileSystem"
 import type * as JsonSchema from "effect/JsonSchema"
 import * as Layer from "effect/Layer"
 import * as Path_ from "effect/Path"
+import * as Predicate from "effect/Predicate"
 import type * as Schema from "effect/Schema"
 import type { DiscoveredProvider } from "./Discovery.ts"
 
@@ -75,12 +76,52 @@ export interface CodeGenerator {
 /**
  * Service tag for generating Effect client code from OpenAPI specifications.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const CodeGenerator: Context.Service<CodeGenerator, CodeGenerator> = Context.Service(
   "@effect/ai-codegen/CodeGenerator"
 )
+
+const isRecord = (u: unknown): u is { readonly [x: string]: unknown } =>
+  Predicate.isObjectOrArray(u) && !Array.isArray(u)
+
+/** A bare `{ "type": "string" }` branch - the open half of an open enum. */
+const isOpenStringBranch = (branch: unknown): boolean =>
+  isRecord(branch) && branch.type === "string" && Object.keys(branch).length === 1
+
+/** The value of a `{ "const": "..." }` branch, when it is a string const. */
+const constBranchValue = (branch: unknown): string | undefined =>
+  isRecord(branch) && Predicate.isString(branch.const) ? branch.const : undefined
+
+/**
+ * Collapse an open enum's const branches into a single `enum` branch.
+ *
+ * Stainless-generated specs encode an open enum as
+ * `anyOf: [{ type: "string" }, { const: "a" }, { const: "b" }]` - "any string is valid, and these are
+ * the known values". Left as-is, each const becomes its own `Schema.Literal` member, so consumers
+ * cannot recover the literal union from the generated schema (the union's `Type` is just `string`).
+ *
+ * Rewriting the const branches to `anyOf: [{ type: "string" }, { enum: ["a", "b"] }]` emits
+ * `Schema.Union([Schema.String, Schema.Literals(["a", "b"])])` instead, which decodes any string while
+ * still exposing the known values as `members[1]` for autocomplete.
+ */
+const normalizeOpenEnum = (js: JsonSchema.JsonSchema): JsonSchema.JsonSchema => {
+  const anyOf = js.anyOf
+  if (!Array.isArray(anyOf) || anyOf.length < 2) return js
+
+  const [head, ...tail] = anyOf
+  if (!isOpenStringBranch(head)) return js
+
+  const literals: Array<string> = []
+  for (const branch of tail) {
+    const value = constBranchValue(branch)
+    if (value === undefined) return js
+    literals.push(value)
+  }
+
+  return { ...js, anyOf: [head, { enum: literals }] }
+}
 
 /**
  * Layer providing the CodeGenerator service.
@@ -135,18 +176,16 @@ export const layer: Layer.Layer<
     const disableAdditionalProperties = provider.config.shouldDisableAdditionalProperties
 
     const exclude = excludeAnnotations ? new Set(excludeAnnotations) : undefined
-    const onEnter = (exclude || disableAdditionalProperties)
-      ? (js: JsonSchema.JsonSchema): JsonSchema.JsonSchema => {
-        const out = { ...js }
-        if (exclude) {
-          for (const key of exclude) delete out[key]
-        }
-        if (disableAdditionalProperties && out.type === "object") {
-          out.additionalProperties = false
-        }
-        return out
+    const onEnter = (js: JsonSchema.JsonSchema): JsonSchema.JsonSchema => {
+      const out = { ...normalizeOpenEnum(js) }
+      if (exclude) {
+        for (const key of exclude) delete out[key]
       }
-      : undefined
+      if (disableAdditionalProperties && out.type === "object") {
+        out.additionalProperties = false
+      }
+      return out
+    }
 
     return yield* openApiGen
       .generate(patchedSpec as unknown as Parameters<typeof openApiGen.generate>[0], {

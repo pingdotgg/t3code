@@ -305,6 +305,33 @@ describe("Semaphore", () => {
       assert.isTrue(Option.isSome(result))
     }))
 
+  it.effect("withPermits interruption does not leak permits", () =>
+    Effect.gen(function*() {
+      const sem = yield* Semaphore.make(1)
+      let acquired = false
+      const waiter = yield* sem.withPermits(2)(
+        Effect.sync(() => {
+          acquired = true
+        })
+      ).pipe(Effect.forkChild)
+
+      yield* Effect.yieldNow
+      assert.isUndefined(waiter.pollUnsafe())
+
+      yield* Fiber.interrupt(waiter)
+      assert.isFalse(acquired)
+
+      const result = yield* sem.withPermitsIfAvailable(1)(Effect.void)
+      assert.isTrue(Option.isSome(result))
+
+      yield* sem.withPermits(1)(
+        Effect.sync(() => {
+          acquired = true
+        })
+      )
+      assert.isTrue(acquired)
+    }))
+
   it.effect("module-level combinators delegate to the instance api", () =>
     Effect.gen(function*() {
       const sem = yield* Semaphore.make(1)

@@ -9,9 +9,10 @@
  *
  * When adding or renaming fixtures, keep in mind that comparison reports match
  * files by basename between the current fixtures directory and the provided
- * base directory. Each fixture is bundled as its own Rollup entrypoint, so it
- * should represent the import shape being measured and avoid depending on
- * incidental fixture discovery order.
+ * base directory. New fixtures without a matching base file are reported as
+ * unchanged. Each fixture is bundled as its own Rollup entrypoint, so it should
+ * represent the import shape being measured and avoid depending on incidental
+ * fixture discovery order.
  *
  * @since 4.0.0
  */

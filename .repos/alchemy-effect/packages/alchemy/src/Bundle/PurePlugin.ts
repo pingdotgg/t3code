@@ -9,11 +9,11 @@ import type {
   Statement,
   VariableDeclaration,
 } from "@oxc-project/types";
-import MagicString from "magic-string";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import picomatch from "picomatch";
 import type * as rolldown from "rolldown";
+import { RolldownMagicString } from "rolldown";
 import { parseAst } from "rolldown/parseAst";
 
 /**
@@ -62,10 +62,11 @@ export interface PurePluginOptions {
    * too. This makes the user's own source tree-shakeable without any
    * configuration.
    *
-   * The package's `sideEffects` field is NOT consulted for this gate —
-   * if your entry's package has init-time side effects you wish to
-   * preserve, declare them in `package.json` (`"sideEffects": ["./foo.ts"]`)
-   * or set this option to `false`.
+   * Only calls whose result is used (variable initializers, exports) are
+   * annotated in the auto-detected package. Top-level calls whose result
+   * is discarded (e.g. Hono/Express-style `app.get("/", handler)` route
+   * registrations) are preserved unless the package explicitly declares
+   * `"sideEffects": false` (or `[]`) in its `package.json`.
    *
    * @default true
    */
@@ -105,42 +106,79 @@ export const purePlugin = (
   return {
     name: "alchemy:annotate-pure",
     async options(opts) {
-      collectEntryPaths(opts, entryPaths);
+      const inputs = inputFilePaths(opts);
+      for (const input of inputs) entryPaths.add(input);
       if (!autoDetect) return null;
-      const detected = await detectEntryPackage(opts);
-      if (detected === null) return null;
-      if (patterns.includes(detected)) return null;
-      patterns.push(detected);
-      isMatch = picomatch(patterns);
+      const candidates = [
+        ...inputs.map((input) => path.dirname(input)),
+        opts.cwd ?? process.cwd(),
+      ];
+      for (const dir of candidates) {
+        const info = await resolvePackageInfo(dir, pkgInfoCache);
+        if (info === null || info.name === null) continue;
+        if (!patterns.includes(info.name)) {
+          patterns.push(info.name);
+          isMatch = picomatch(patterns);
+        }
+        break;
+      }
       return null;
     },
     transform: {
       filter: { id: SUPPORTED_FILE_RE },
-      async handler(code, id) {
-        const info = await resolvePackageInfo(id, pkgInfoCache);
-        if (info === null || info.name === null || !isMatch(info.name)) {
-          return null;
-        }
-        const cleanId = id.replace(/[?#].*$/, "");
-        const isEntry = entryPaths.has(cleanId);
+      async handler(code, id, meta) {
+        const cleanId = stripIdSuffix(id);
+        const info = await resolvePackageInfo(
+          path.dirname(cleanId),
+          pkgInfoCache,
+        );
+        // A nameless package.json (e.g. a nested `dist/package.json`
+        // holding only `{"type": "module"}`) can't be matched against the
+        // configured patterns — fall back to the path-derived
+        // `node_modules/<pkg>` name when one exists.
+        const name = info?.name ?? packageNameFromId(cleanId);
+        if (name === null || !isMatch(name)) return null;
+
         // Only override `moduleSideEffects` when the owning package
-        // explicitly opts in via `sideEffects: false` / `[]`. Pure
-        // annotations themselves are always safe to add (they only mean
-        // "if the result is unused, the call may be dropped"), but
-        // marking arbitrary modules side-effect-free could erase
-        // intentional registrations / mutations the author made at the
-        // top level of files in packages that did not declare so.
+        // explicitly opts in via `sideEffects: false` / `[]`. Marking
+        // arbitrary modules side-effect-free could erase intentional
+        // registrations / mutations the author made at the top level of
+        // files in packages that did not declare so.
+        const isEntry = entryPaths.has(cleanId);
+        const sideEffectFreePkg = isSideEffectFree(info?.sideEffects);
         const markSideEffectFree =
-          markSideEffectFreeOpt &&
-          !isEntry &&
-          isSideEffectFree(info.sideEffects);
-        const annotated = annotateModule(code, id);
-        if (annotated === null) {
-          return markSideEffectFree ? { code, moduleSideEffects: false } : null;
+          markSideEffectFreeOpt && !isEntry && sideEffectFreePkg;
+
+        const anchors = collectPureAnchorsCached(code, cleanId);
+        // Annotating a call whose result is BOUND (variable initializer,
+        // export) only lets the minifier drop it when the binding itself
+        // is unused — safe everywhere. Annotating a call whose result is
+        // DISCARDED (a bare expression statement like `app.get("/", h)`)
+        // is an instruction to delete the call under minification, so it
+        // is only applied when the owning package explicitly declared
+        // itself side-effect free, and never to entry modules, whose side
+        // effects we always preserve (#949).
+        const annotateDiscarded = !isEntry && sideEffectFreePkg;
+        const positions =
+          anchors === null
+            ? []
+            : annotateDiscarded
+              ? [...anchors.bound, ...anchors.discarded]
+              : anchors.bound;
+        if (positions.length === 0) {
+          // Metadata-only result: omitting `code` tells rolldown the
+          // source was NOT transformed, so no sourcemap is expected and
+          // no SOURCEMAP_BROKEN warning is emitted.
+          return markSideEffectFree ? { moduleSideEffects: false } : null;
         }
+        // `meta.magicString` is rolldown's native (Rust) MagicString over
+        // `code`. Returning it as `code` hands sourcemap generation to
+        // rolldown's native side (computed on a background thread). The
+        // fallback covers direct hook invocations (unit tests).
+        const s = meta.magicString ?? new RolldownMagicString(code);
+        for (const anchor of positions) s.appendLeft(anchor, PURE_COMMENT);
         return {
-          code: annotated.code,
-          map: annotated.map,
+          code: s,
           moduleSideEffects: markSideEffectFree ? false : null,
         };
       },
@@ -148,52 +186,31 @@ export const purePlugin = (
   };
 };
 
+/** Strips rolldown's `?query` / `#hash` suffixes from a module id. */
+const stripIdSuffix = (id: string): string => id.replace(/[?#].*$/, "");
+
 /**
- * Captures the absolute paths of every entry module declared on the
- * rolldown input options into `out`. Handles all three input shapes:
- * string, array of strings, and `{ name -> path }` record.
+ * Returns the absolute paths of every real entry module declared on the
+ * rolldown input options. Handles all three input shapes (string, array,
+ * `{ name -> path }` record) and skips `\0`-prefixed virtual ids (e.g.
+ * the ones `virtualEntryPlugin` substitutes in its `pre` options hook).
  */
-function collectEntryPaths(
-  opts: rolldown.InputOptions,
-  out: Set<string>,
-): void {
+function inputFilePaths(opts: rolldown.InputOptions): string[] {
+  const raw: unknown[] =
+    typeof opts.input === "string"
+      ? [opts.input]
+      : Array.isArray(opts.input)
+        ? opts.input
+        : opts.input && typeof opts.input === "object"
+          ? Object.values(opts.input)
+          : [];
   const cwd = opts.cwd ?? process.cwd();
-  const add = (entry: unknown) => {
-    if (typeof entry !== "string") return;
-    out.add(path.resolve(cwd, entry));
-  };
-  if (typeof opts.input === "string") add(opts.input);
-  else if (Array.isArray(opts.input)) for (const e of opts.input) add(e);
-  else if (opts.input && typeof opts.input === "object") {
-    for (const e of Object.values(opts.input)) add(e);
-  }
-}
-
-/**
- * Walks up from each entry path (and `cwd`) to find the nearest
- * `package.json`, and returns its `name` if the package is safely
- * annotatable — i.e. it declares `sideEffects: false` or `[]`. Returns
- * `null` if no entry package can be found, the entry has no name, or the
- * package opts out of side-effect-free treatment.
- */
-async function detectEntryPackage(
-  opts: rolldown.InputOptions,
-): Promise<string | null> {
-  const inputs: string[] = [];
-  if (typeof opts.input === "string") inputs.push(opts.input);
-  else if (Array.isArray(opts.input)) inputs.push(...opts.input);
-  else if (opts.input && typeof opts.input === "object") {
-    inputs.push(...(Object.values(opts.input) as string[]));
-  }
-  if (opts.cwd) inputs.push(opts.cwd);
-  if (inputs.length === 0) inputs.push(process.cwd());
-
-  for (const candidate of inputs) {
-    const meta = await findOwningPackageMeta(candidate);
-    if (meta === null || meta.name === null) continue;
-    return meta.name;
-  }
-  return null;
+  return raw
+    .filter(
+      (entry): entry is string =>
+        typeof entry === "string" && !entry.startsWith("\0"),
+    )
+    .map((entry) => path.resolve(cwd, entry));
 }
 
 /**
@@ -206,40 +223,67 @@ export interface PackageInfo {
   readonly sideEffects: unknown;
 }
 
-async function findOwningPackageMeta(
-  start: string,
+/**
+ * Resolves the owning {@link PackageInfo} for a directory by walking up
+ * to the nearest `package.json`. This is what makes the plugin work for
+ * workspace-linked sources (e.g. our own `packages/alchemy/src/**` when
+ * consumers import via the `worker`/`bun` conditions which resolve to
+ * `.ts`).
+ *
+ * Caches both positive and negative results per directory. Every visited
+ * directory is a descendant-or-self of the directory where the walk
+ * stops (found `package.json`, cache hit, `node_modules` boundary, or
+ * filesystem root), so backfilling all of them with the result never
+ * poisons sibling packages.
+ */
+export async function resolvePackageInfo(
+  startDir: string,
+  cache: Map<string, PackageInfo | null>,
 ): Promise<PackageInfo | null> {
-  // Resolve to absolute and start from the directory containing `start`
-  // (or `start` itself if it is already a directory).
-  let dir = path.resolve(start);
-  try {
-    if ((await fs.stat(dir)).isFile()) dir = path.dirname(dir);
-  } catch {
-    dir = path.dirname(dir);
-  }
+  let dir = path.resolve(startDir);
+  const visited: string[] = [];
+  let result: PackageInfo | null = null;
+  // Hard ceiling to prevent runaway walks on weird paths.
   for (let i = 0; i < 64; i++) {
-    const pj = path.join(dir, "package.json");
-    try {
-      const stat = await fs.stat(pj);
-      if (stat.isFile()) {
-        const contents = await fs.readFile(pj, "utf8");
-        const json = JSON.parse(contents) as {
-          name?: unknown;
-          sideEffects?: unknown;
-        };
-        return {
-          name: typeof json.name === "string" ? json.name : null,
-          sideEffects: json.sideEffects,
-        };
-      }
-    } catch {
-      // keep climbing
+    // Never walk above a `node_modules` boundary: the owning package of a
+    // `node_modules/<pkg>/...` id lives at or below `<pkg>`. Climbing past
+    // it can latch onto an unrelated package.json higher up (e.g. a stray
+    // one at the filesystem root).
+    if (path.basename(dir) === "node_modules") break;
+    const cached = cache.get(dir);
+    if (cached !== undefined) {
+      result = cached;
+      break;
+    }
+    visited.push(dir);
+    const info = await readPackageJson(path.join(dir, "package.json"));
+    if (info !== null) {
+      result = info;
+      break;
     }
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return null;
+  for (const v of visited) cache.set(v, result);
+  return result;
+}
+
+async function readPackageJson(file: string): Promise<PackageInfo | null> {
+  try {
+    const contents = await fs.readFile(file, "utf8");
+    const json = JSON.parse(contents) as {
+      name?: unknown;
+      sideEffects?: unknown;
+    };
+    return {
+      name: typeof json.name === "string" ? json.name : null,
+      sideEffects: json.sideEffects,
+    };
+  } catch {
+    // package.json missing or unreadable.
+    return null;
+  }
 }
 
 /**
@@ -282,153 +326,70 @@ export function packageNameFromId(id: string): string | null {
 }
 
 /**
- * Resolves the owning {@link PackageInfo} for a module id by walking up
- * the directory tree to the nearest `package.json`. This is what makes
- * the plugin work for workspace-linked sources (e.g. our own
- * `packages/alchemy/src/**` when consumers import via the `worker`/`bun`
- * conditions which resolve to `.ts`).
+ * Process-wide memo of {@link collectPureAnchors} results keyed by module id.
  *
- * Caches both positive and negative results per directory to keep the
- * filesystem walk bounded across an entire bundle pass.
+ * Parsing with oxc dominates the plugin's main-thread CPU (it showed up as
+ * ~60% of the profile of a test run), and the same modules — effect/alchemy
+ * dist files — are re-scanned for EVERY bundle built in the process. The
+ * single-process test runner builds dozens of worker bundles per run, so
+ * this cache eliminates all repeat parses. The stored `code` is compared on
+ * lookup, so a changed file (e.g. dev watch mode) never serves a stale
+ * result.
  */
-export async function resolvePackageInfo(
-  id: string,
-  cache: Map<string, PackageInfo | null>,
-): Promise<PackageInfo | null> {
-  // Strip rolldown's `?query` / `#hash` suffixes if present.
-  const cleanId = id.replace(/[?#].*$/, "");
+const anchorsCache = new Map<
+  string,
+  { readonly code: string; readonly anchors: PureAnchors | null }
+>();
+const ANCHORS_CACHE_MAX = 10_000;
 
-  // Fast path: id matches `node_modules/<pkg>/...`. We still try to read
-  // the package's `package.json` to learn its `sideEffects` field, but if
-  // the file is unreadable (or this is a virtual id from a test) we fall
-  // back to a minimal record using the path-derived name.
-  const fastName = packageNameFromId(cleanId);
-
-  let dir = path.dirname(cleanId);
-  // Remember dirs we visited for this lookup so we can backfill their
-  // cache entries — but ONLY descendants of the resolved package root.
-  // Caching shared ancestors like `/proj/node_modules` would poison
-  // sibling packages (e.g. effect and lodash both live under it).
-  const visited: string[] = [];
-  let foundRoot: string | null = null;
-  let foundInfo: PackageInfo | null = null;
-  // Hard ceiling to prevent runaway walks on weird ids.
-  for (let i = 0; i < 64; i++) {
-    const cached = cache.get(dir);
-    if (cached !== undefined) {
-      cacheDescendants(cache, visited, dir, cached);
-      return cached;
-    }
-    visited.push(dir);
-    const pkgJsonPath = path.join(dir, "package.json");
-    let info: PackageInfo | null = null;
-    try {
-      const stat = await fs.stat(pkgJsonPath);
-      if (stat.isFile()) {
-        const contents = await fs.readFile(pkgJsonPath, "utf8");
-        const json = JSON.parse(contents) as {
-          name?: unknown;
-          sideEffects?: unknown;
-        };
-        info = {
-          name: typeof json.name === "string" ? json.name : null,
-          sideEffects: json.sideEffects,
-        };
-      }
-    } catch {
-      // package.json missing or unreadable — keep climbing.
-    }
-    if (info !== null) {
-      foundRoot = dir;
-      foundInfo = info;
-      break;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  if (foundInfo !== null && foundRoot !== null) {
-    cacheDescendants(cache, visited, foundRoot, foundInfo);
-    return foundInfo;
-  }
-  // No `package.json` found on disk. If we have a path-derived name
-  // (from a `node_modules/<pkg>/...` segment), use it with no
-  // `sideEffects` info — annotation can still happen, the override is
-  // gated separately. Cache only the directly-owning dir so we don't
-  // poison sibling lookups under the same `node_modules`.
-  if (fastName !== null) {
-    const fallback: PackageInfo = { name: fastName, sideEffects: undefined };
-    if (visited[0]) cache.set(visited[0], fallback);
-    return fallback;
-  }
-  if (visited[0]) cache.set(visited[0], null);
-  return null;
-}
-
-/**
- * Caches `info` only at directories that are at or below `root` — i.e.
- * directories that genuinely belong to the same package. Dirs above the
- * package root are shared with siblings (e.g. `node_modules`) and must
- * not be tagged.
- */
-function cacheDescendants(
-  cache: Map<string, PackageInfo | null>,
-  visited: string[],
-  root: string,
-  info: PackageInfo | null,
-): void {
-  for (const v of visited) {
-    if (v === root || isPathInside(v, root)) cache.set(v, info);
-  }
-}
-
-/**
- * `true` if `child` is `parent` or a directory contained beneath it.
- * Path-only check; does not touch the filesystem.
- */
-function isPathInside(child: string, parent: string): boolean {
-  if (child === parent) return true;
-  const rel = path.relative(parent, child);
-  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
-}
-
-/**
- * Convenience wrapper that returns just the package name. Equivalent to
- * `resolvePackageInfo(...)?.name ?? packageNameFromId(id)`.
- */
-export async function resolvePackageName(
-  id: string,
-  cache: Map<string, string | null>,
-): Promise<string | null> {
-  const cleanId = id.replace(/[?#].*$/, "");
-  const fast = packageNameFromId(cleanId);
-  if (fast !== null) return fast;
-  // Adapter cache so callers can keep a single-value cache shape.
-  const adapter = new Map<string, PackageInfo | null>();
-  for (const [k, v] of cache) {
-    adapter.set(k, v === null ? null : { name: v, sideEffects: undefined });
-  }
-  const info = await resolvePackageInfo(cleanId, adapter);
-  for (const [k, v] of adapter) {
-    cache.set(k, v?.name ?? null);
-  }
-  return info?.name ?? null;
-}
-
-interface AnnotatedModule {
-  readonly code: string;
-  readonly map: ReturnType<MagicString["generateMap"]>;
-}
-
-/**
- * Parses `code` and inserts `/*#__PURE__*\/` before every top-level
- * `CallExpression` / `NewExpression` callee. Returns `null` if the file
- * does not need to be modified (parse failure or no annotations added).
- */
-export function annotateModule(
+const collectPureAnchorsCached = (
   code: string,
   filename: string,
-): AnnotatedModule | null {
+): PureAnchors | null => {
+  const cached = anchorsCache.get(filename);
+  if (cached !== undefined && cached.code === code) {
+    return cached.anchors;
+  }
+  const anchors = collectPureAnchors(code, filename);
+  if (anchorsCache.size >= ANCHORS_CACHE_MAX) {
+    anchorsCache.clear();
+  }
+  anchorsCache.set(filename, { code, anchors });
+  return anchors;
+};
+
+/**
+ * Offsets at which `/*#__PURE__*\/` may be inserted, split by whether the
+ * call's result is consumed.
+ */
+export interface PureAnchors {
+  /**
+   * Calls whose result is bound — variable initializers, exports,
+   * assignment right-hand sides. Annotating these only lets the minifier
+   * drop the call when the binding itself is unused, so it is safe for
+   * any module.
+   */
+  readonly bound: number[];
+  /**
+   * Top-level calls whose result is discarded (bare expression
+   * statements such as `app.get("/", handler)`). Annotating these tells
+   * the minifier the whole statement is deletable, so they are only safe
+   * in packages that explicitly declare `sideEffects: false` / `[]`.
+   */
+  readonly discarded: number[];
+}
+
+/**
+ * Parses `code` and returns the offsets at which `/*#__PURE__*\/` must be
+ * inserted — before every top-level `CallExpression` callee / `new`
+ * keyword — classified by whether the call result is bound or discarded.
+ * Returns `null` if the file does not need to be modified (parse failure
+ * or no annotations needed).
+ */
+export function collectPureAnchors(
+  code: string,
+  filename: string,
+): PureAnchors | null {
   let program: Program;
   try {
     // Use TS lang so the parser tolerates TS syntax (`as`, `satisfies`,
@@ -439,53 +400,66 @@ export function annotateModule(
     return null;
   }
 
-  const s = new MagicString(code);
-  let mutated = false;
+  const bound: number[] = [];
+  const discarded: number[] = [];
 
-  const annotateCall = (call: CallExpression | NewExpression) => {
+  const visitCall = (
+    call: CallExpression | NewExpression,
+    isDiscarded: boolean,
+  ) => {
     if (isIIFE(call)) return;
     // For `new X()`, anchor BEFORE the `new` keyword so we get
     // `/*#__PURE__*/ new X()` (matches babel-plugin-annotate-pure-calls).
     const anchor =
       call.type === "NewExpression" ? call.start : call.callee.start;
     if (alreadyAnnotated(code, anchor)) return;
-    s.appendLeft(anchor, PURE_COMMENT);
-    mutated = true;
+    (isDiscarded ? discarded : bound).push(anchor);
   };
 
-  const annotateExpression = (expr: Expression | null | undefined) => {
+  const visitExpression = (
+    expr: Expression | null | undefined,
+    isDiscarded: boolean,
+  ) => {
     if (!expr) return;
     switch (expr.type) {
       case "CallExpression":
       case "NewExpression":
-        annotateCall(expr);
+        visitCall(expr, isDiscarded);
         return;
-      case "SequenceExpression":
-        for (const inner of expr.expressions) annotateExpression(inner);
+      case "SequenceExpression": {
+        // All but the last expression's results are always discarded;
+        // the last one takes the surrounding context.
+        const exprs = expr.expressions;
+        for (let i = 0; i < exprs.length; i++) {
+          visitExpression(exprs[i], i < exprs.length - 1 ? true : isDiscarded);
+        }
         return;
+      }
       case "ParenthesizedExpression":
-        annotateExpression(expr.expression);
+        visitExpression(expr.expression, isDiscarded);
         return;
       case "LogicalExpression":
-        annotateExpression(expr.left);
-        annotateExpression(expr.right);
+        visitExpression(expr.left, isDiscarded);
+        visitExpression(expr.right, isDiscarded);
         return;
       case "ConditionalExpression":
-        annotateExpression(expr.consequent);
-        annotateExpression(expr.alternate);
+        visitExpression(expr.consequent, isDiscarded);
+        visitExpression(expr.alternate, isDiscarded);
         return;
       case "AssignmentExpression":
-        annotateExpression(expr.right);
+        // The right-hand side's result is stored in the target, so it is
+        // bound even when the assignment appears in statement position.
+        visitExpression(expr.right, false);
         return;
       case "TSAsExpression":
       case "TSSatisfiesExpression":
       case "TSNonNullExpression":
       case "TSTypeAssertion":
-        annotateExpression(expr.expression);
+        visitExpression(expr.expression, isDiscarded);
         return;
       case "ChainExpression": {
         const inner = expr.expression;
-        if (inner.type === "CallExpression") annotateCall(inner);
+        if (inner.type === "CallExpression") visitCall(inner, isDiscarded);
         return;
       }
       default:
@@ -496,11 +470,11 @@ export function annotateModule(
   const visitTopLevel = (node: Statement) => {
     switch (node.type) {
       case "ExpressionStatement":
-        annotateExpression((node as ExpressionStatement).expression);
+        visitExpression((node as ExpressionStatement).expression, true);
         return;
       case "VariableDeclaration":
         for (const decl of (node as VariableDeclaration).declarations) {
-          annotateExpression(decl.init);
+          visitExpression(decl.init, false);
         }
         return;
       case "ExportNamedDeclaration": {
@@ -516,7 +490,7 @@ export function annotateModule(
           decl.type !== "ClassDeclaration" &&
           decl.type !== "TSInterfaceDeclaration"
         ) {
-          annotateExpression(decl as Expression);
+          visitExpression(decl as Expression, false);
         }
         return;
       }
@@ -532,11 +506,9 @@ export function annotateModule(
     visitTopLevel(node as Statement);
   }
 
-  if (!mutated) return null;
-  return {
-    code: s.toString(),
-    map: s.generateMap({ source: filename, hires: true, includeContent: true }),
-  };
+  return bound.length === 0 && discarded.length === 0
+    ? null
+    : { bound, discarded };
 }
 
 function isIIFE(node: CallExpression | NewExpression): boolean {

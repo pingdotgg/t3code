@@ -12,7 +12,7 @@ export class AccessError extends Schema.TaggedErrorClass<AccessError>()(
   "AccessError",
   {
     message: Schema.String,
-    cause: Schema.optional(Schema.Defect),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}
 

@@ -10,7 +10,7 @@ import { BackendApi, Greeting } from "./Spec.ts";
 export default class Service extends Cloudflare.Worker<Service>()(
   "Service",
   {
-    main: import.meta.filename,
+    main: import.meta.url,
   },
   Effect.gen(function* () {
     const helloGroup = HttpApiBuilder.group(BackendApi, "Hello", (handlers) =>

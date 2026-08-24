@@ -1,31 +1,12 @@
 /**
- * The `McpSchema` module defines Effect Schema and RPC models for the Model
- * Context Protocol (MCP). It provides the shared protocol vocabulary used by
- * MCP clients and servers, including JSON-RPC request identifiers, metadata,
- * capabilities, errors, resources, prompts, tools, logging, sampling,
- * completions, roots, and elicitation.
+ * Defines schemas for Model Context Protocol messages.
  *
- * **Common tasks**
- *
- * - Describe MCP payloads with schemas such as {@link Resource}, {@link Tool},
- *   {@link Prompt}, and {@link ContentBlock}
- * - Build typed protocol handlers with request RPCs such as {@link Initialize},
- *   {@link ListResources}, {@link ReadResource}, {@link ListTools}, and
- *   {@link CallTool}
- * - Work with protocol notifications such as
- *   {@link ProgressNotification}, {@link ResourceUpdatedNotification}, and
- *   {@link LoggingMessageNotification}
- * - Use {@link ClientRpcs} and server RPC groups to derive encoded request,
- *   notification, success, and failure message types
- *
- * **Gotchas**
- *
- * - MCP distinguishes absent fields from present fields whose value is
- *   `undefined`; use {@link optional} and {@link optionalWithDefault} for
- *   protocol fields so encoding omits undefined values consistently.
- * - Capability objects are extensible. Known fields are modeled here, but
- *   `experimental` and `extensions` allow implementations to advertise
- *   additional protocol features.
+ * MCP clients and servers use these schemas to describe the JSON-RPC requests,
+ * notifications, results, and errors that can cross the protocol boundary. This
+ * module focuses on message shapes: it defines the shared protocol data model,
+ * groups related messages for the RPC layer, and provides helpers for optional
+ * fields and parameter metadata. Transport and server behavior live in other
+ * modules.
  *
  * @since 4.0.0
  */
@@ -35,7 +16,7 @@ import { constFalse, constTrue } from "../../Function.ts"
 import * as Option from "../../Option.ts"
 import * as Predicate from "../../Predicate.ts"
 import * as Schema from "../../Schema.ts"
-import * as Getter from "../../SchemaGetter.ts"
+import * as SchemaGetter from "../../SchemaGetter.ts"
 import type * as Scope from "../../Scope.ts"
 import * as Rpc from "../rpc/Rpc.ts"
 import type * as RpcClient from "../rpc/RpcClient.ts"
@@ -54,7 +35,7 @@ import * as RpcMiddleware from "../rpc/RpcMiddleware.ts"
  * @category models
  * @since 4.0.0
  */
-export interface optionalWithDefault<S extends Schema.Top & Schema.WithoutConstructorDefault>
+export interface optionalWithDefault<S extends Schema.Constraint & Schema.WithoutConstructorDefault>
   extends Schema.withConstructorDefault<Schema.decodeTo<Schema.toType<Schema.optionalKey<S>>, Schema.optionalKey<S>>>
 {}
 
@@ -70,15 +51,15 @@ export interface optionalWithDefault<S extends Schema.Top & Schema.WithoutConstr
  * @category schemas
  * @since 4.0.0
  */
-export const optionalWithDefault = <S extends Schema.Top & Schema.WithoutConstructorDefault>(
+export const optionalWithDefault = <S extends Schema.Constraint & Schema.WithoutConstructorDefault>(
   schema: S,
   defaultValue: () => Schema.optionalKey<S>["Type"]
 ): optionalWithDefault<S> => {
   const effect = Effect.sync(defaultValue)
   return Schema.optionalKey(schema).pipe(
     Schema.decode<Schema.optionalKey<S>>({
-      decode: Getter.withDefault(effect),
-      encode: Getter.passthrough()
+      decode: SchemaGetter.withDefault(effect),
+      encode: SchemaGetter.passthrough()
     }),
     Schema.withConstructorDefault<
       Schema.decodeTo<Schema.toType<Schema.optionalKey<S>>, Schema.optionalKey<S>>
@@ -97,11 +78,13 @@ export const optionalWithDefault = <S extends Schema.Top & Schema.WithoutConstru
  * @category schemas
  * @since 4.0.0
  */
-export const optional = <S extends Schema.Top>(schema: S): Schema.decodeTo<Schema.optional<S>, Schema.optionalKey<S>> =>
+export const optional = <S extends Schema.Constraint>(
+  schema: S
+): Schema.decodeTo<Schema.optional<S>, Schema.optionalKey<S>> =>
   Schema.optionalKey(schema).pipe(
     Schema.decodeTo(Schema.optional(schema), {
-      decode: Getter.passthrough() as any,
-      encode: Getter.transformOptional(Option.flatMap(Option.fromUndefinedOr))
+      decode: SchemaGetter.passthrough() as any,
+      encode: SchemaGetter.transformOptional(Option.flatMap(Option.fromUndefinedOr))
     })
   )
 
@@ -117,8 +100,8 @@ export const optional = <S extends Schema.Top>(schema: S): Schema.decodeTo<Schem
  */
 export const RequestId: Schema.Union<[
   typeof Schema.String,
-  typeof Schema.Number
-]> = Schema.Union([Schema.String, Schema.Number])
+  typeof Schema.Finite
+]> = Schema.Union([Schema.String, Schema.Finite])
 
 /**
  * Type represented by the JSON-RPC request identifier schema.
@@ -137,8 +120,8 @@ export type RequestId = typeof RequestId.Type
  */
 export const ProgressToken: Schema.Union<[
   typeof Schema.String,
-  typeof Schema.Number
-]> = Schema.Union([Schema.String, Schema.Number])
+  typeof Schema.Finite
+]> = Schema.Union([Schema.String, Schema.Finite])
 
 /**
  * Type represented by the MCP progress token schema.
@@ -316,7 +299,7 @@ export class Annotations extends Schema.Opaque<Annotations>()(Schema.Struct({
    * effectively required, while 0 means "least important," and indicates that
    * the data is entirely optional.
    */
-  priority: optional(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })))
+  priority: optional(Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })))
 })) {}
 
 /**
@@ -466,7 +449,7 @@ export class McpErrorBase extends Schema.Class<McpErrorBase>(
   /**
    * The error type that occurred.
    */
-  code: Schema.Number,
+  code: Schema.Int,
   /**
    * A short description of the error. The message SHOULD be limited to a
    * concise single sentence.
@@ -484,8 +467,8 @@ export class McpErrorBase extends Schema.Class<McpErrorBase>(
  *
  * **When to use**
  *
- * Use when you need the JSON-RPC error code for requests that are not valid
- * request objects.
+ * Use when building an MCP/JSON-RPC error response for a syntactically parsed
+ * request object that fails request-shape validation.
  *
  * @category constants
  * @since 4.0.0
@@ -497,8 +480,8 @@ export const INVALID_REQUEST_ERROR_CODE = -32600 as const
  *
  * **When to use**
  *
- * Use when you need the JSON-RPC error code for requests whose method does not
- * exist or is not available.
+ * Use when building an MCP/JSON-RPC error response for a request whose
+ * `method` is unknown or unavailable.
  *
  * @category constants
  * @since 4.0.0
@@ -509,7 +492,8 @@ export const METHOD_NOT_FOUND_ERROR_CODE = -32601 as const
  *
  * **When to use**
  *
- * Use when you need the JSON-RPC error code for invalid method parameters.
+ * Use when building an MCP/JSON-RPC error response for decoded request
+ * parameters that fail method-specific validation.
  *
  * @category constants
  * @since 4.0.0
@@ -520,7 +504,8 @@ export const INVALID_PARAMS_ERROR_CODE = -32602 as const
  *
  * **When to use**
  *
- * Use when you need the JSON-RPC error code for internal server errors.
+ * Use when building an MCP/JSON-RPC error response for an unexpected
+ * server-side failure.
  *
  * @category constants
  * @since 4.0.0
@@ -531,8 +516,8 @@ export const INTERNAL_ERROR_CODE = -32603 as const
  *
  * **When to use**
  *
- * Use when you need the JSON-RPC error code for invalid JSON that could not be
- * parsed.
+ * Use when building an MCP/JSON-RPC error response before a request object is
+ * available because the JSON payload could not be parsed.
  *
  * @category constants
  * @since 4.0.0
@@ -812,11 +797,11 @@ export class ProgressNotification extends Rpc.make("notifications/progress", {
      * The progress thus far. This should increase every time progress is made,
      * even if the total is unknown.
      */
-    progress: optional(Schema.Number),
+    progress: optional(Schema.Finite),
     /**
      * Total number of items to process (or total progress required), if known.
      */
-    total: optional(Schema.Number),
+    total: optional(Schema.Finite),
     /**
      * An optional message describing the current progress.
      */
@@ -870,7 +855,7 @@ export class Resource extends Schema.Class<Resource>(
    * This can be used by Hosts to display file sizes and estimate context
    * window usage.
    */
-  size: optional(Schema.Number),
+  size: optional(Schema.Int),
   /**
    * Optional additional metadata for the client.
    *
@@ -1555,8 +1540,8 @@ export class CallToolResult extends Schema.Class<CallToolResult>("@effect/ai/Mcp
  *
  * **When to use**
  *
- * Use when a client already knows the tool name and wants the server to execute
- * it with argument values.
+ * Use when you need to represent a client request that already knows the tool
+ * name and asks the server to execute it with argument values.
  *
  * @see {@link ListTools} for discovering available tools before calling one
  * @see {@link CallToolResult} for the successful tool-call result shape
@@ -1767,19 +1752,19 @@ export class ModelPreferences extends Schema.Class<ModelPreferences>(
    * is not important, while a value of 1 means cost is the most important
    * factor.
    */
-  costPriority: optional(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
+  costPriority: optional(Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
   /**
    * How much to prioritize sampling speed (latency) when selecting a model. A
    * value of 0 means speed is not important, while a value of 1 means speed is
    * the most important factor.
    */
-  speedPriority: optional(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
+  speedPriority: optional(Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
   /**
    * How much to prioritize intelligence and capabilities when selecting a
    * model. A value of 0 means intelligence is not important, while a value of 1
    * means intelligence is the most important factor.
    */
-  intelligencePriority: optional(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })))
+  intelligencePriority: optional(Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 })))
 }) {}
 
 /**
@@ -1815,8 +1800,8 @@ export class CreateMessageResult extends Schema.Class<CreateMessageResult>(
  *
  * **When to use**
  *
- * Use when an MCP server needs the client to perform model sampling on its
- * behalf.
+ * Use when you need to request model sampling from an MCP client on behalf of a
+ * server.
  *
  * **Details**
  *
@@ -1846,12 +1831,12 @@ export class CreateMessage extends Rpc.make("sampling/createMessage", {
      * caller), to be attached to the prompt. The client MAY ignore this request.
      */
     includeContext: optional(Schema.Literals(["none", "thisServer", "allServers"])),
-    temperature: optional(Schema.Number),
+    temperature: optional(Schema.Finite),
     /**
      * The maximum number of tokens to sample, as requested by the server. The
      * client MAY choose to sample fewer tokens than requested.
      */
-    maxTokens: Schema.Number,
+    maxTokens: Schema.Int,
     stopSequences: optional(Schema.Array(Schema.String)),
     /**
      * Optional metadata to pass through to the LLM provider. The format of
@@ -1910,7 +1895,7 @@ export class CompleteResult extends Schema.Opaque<CompleteResult>()(Schema.Struc
      * The total number of completion options available. This can exceed the
      * number of values actually sent in the response.
      */
-    total: optional(Schema.Number),
+    total: optional(Schema.Int),
     /**
      * Indicates whether there are additional completion options beyond those
      * provided in the current response, even if the exact total is unknown.
@@ -2159,7 +2144,7 @@ export class ElicitationDeclined
   extends Schema.ErrorClass<ElicitationDeclined>("@effect/ai/McpSchema/ElicitationDeclined")({
     _tag: Schema.tag("ElicitationDeclined"),
     request: Elicit.payloadSchema,
-    cause: optional(Schema.Defect)
+    cause: optional(Schema.Defect())
   })
 {}
 
@@ -2477,7 +2462,7 @@ const ParamSchemaTypeId = "~effect/ai/McpSchema/ParamSchema"
  * @category parameters
  * @since 4.0.0
  */
-export function isParam(schema: Schema.Top): schema is Param<string, Schema.Top> {
+export function isParam(schema: Schema.Constraint): schema is Param<string, Schema.Top> {
   return Predicate.hasProperty(schema, ParamSchemaTypeId)
 }
 
@@ -2492,18 +2477,11 @@ export function isParam(schema: Schema.Top): schema is Param<string, Schema.Top>
  * @category parameters
  * @since 4.0.0
  */
-export interface Param<Name extends string, S extends Schema.Top> extends
-  Schema.Bottom<
-    S["Type"],
-    S["Encoded"],
-    S["DecodingServices"],
-    S["EncodingServices"],
+export interface Param<Name extends string, S extends Schema.Constraint> extends
+  Schema.BottomLazy<
     S["ast"],
     Param<Name, S>,
-    S["~type.make.in"],
-    S["Iso"],
     S["~type.parameters"],
-    S["~type.make"],
     S["~type.mutability"],
     S["~type.optionality"],
     S["~type.constructor.default"],
@@ -2511,7 +2489,14 @@ export interface Param<Name extends string, S extends Schema.Top> extends
     S["~encoded.optionality"]
   >
 {
+  readonly "Type": S["Type"]
+  readonly "Encoded": S["Encoded"]
+  readonly "DecodingServices": S["DecodingServices"]
+  readonly "EncodingServices": S["EncodingServices"]
   readonly "Rebuild": Param<Name, S>
+  readonly "~type.make.in": S["~type.make.in"]
+  readonly "~type.make": S["~type.make"]
+  readonly "Iso": S["Iso"]
   readonly [ParamSchemaTypeId]: typeof ParamSchemaTypeId
   readonly name: Name
   readonly schema: S
@@ -2523,7 +2508,7 @@ export interface Param<Name extends string, S extends Schema.Top> extends
  * @category parameters
  * @since 4.0.0
  */
-export function param<const Name extends string, S extends Schema.Top>(
+export function param<const Name extends string, S extends Schema.Constraint>(
   name: Name,
   schema: S
 ): Param<Name, S> {

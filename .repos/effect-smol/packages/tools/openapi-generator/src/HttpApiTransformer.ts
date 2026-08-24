@@ -294,6 +294,20 @@ const joinSchemas = (schemas: ReadonlyArray<string>): string =>
   schemas.length === 1 ? schemas[0] : `[${schemas.join(", ")}]`
 
 const renderMediaSchema = (media: ParsedOperationMediaTypeSchema): string => {
+  if (media.effectStream === "sse") {
+    const options = media.contentType === "text/event-stream"
+      ? `{ events: ${media.schema}, error: ${media.errorSchema} }`
+      : `{ contentType: ${JSON.stringify(media.contentType)}, events: ${media.schema}, error: ${media.errorSchema} }`
+    return `HttpApiSchema.StreamSse(${options})`
+  }
+
+  if (media.effectStream === "uint8array") {
+    if (media.contentType === "application/octet-stream") {
+      return "HttpApiSchema.StreamUint8Array()"
+    }
+    return `HttpApiSchema.StreamUint8Array({ contentType: ${JSON.stringify(media.contentType)} })`
+  }
+
   switch (media.encoding) {
     case "json": {
       if (media.contentType === "application/json") {

@@ -246,23 +246,6 @@ describe("toStandardSchemaV1", () => {
     ])
   })
 
-  describe("Structural checks", () => {
-    it("Array + isMinLength", () => {
-      const schema = Schema.Struct({
-        tags: Schema.Array(Schema.NonEmptyString).check(Schema.isMinLength(3))
-      })
-
-      const standardSchema = Schema.toStandardSchemaV1(schema)
-      expectSyncFailure(standardSchema, { tags: ["a", ""] }, [{
-        message: `Expected a value with a length of at least 1, got ""`,
-        path: ["tags", 1]
-      }, {
-        message: `Expected a value with a length of at least 3, got ["a",""]`,
-        path: ["tags"]
-      }])
-    })
-  })
-
   describe("should respect the `message` annotation", () => {
     describe("String", () => {
       it("String & annotation", () => {

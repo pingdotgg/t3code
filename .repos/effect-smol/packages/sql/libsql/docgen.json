@@ -2,7 +2,6 @@
   "$schema": "../../node_modules/@effect/docgen/schema.json",
   "srcLink": "https://github.com/Effect-TS/effect/tree/main/packages/sql/libsql/src/",
   "exclude": ["src/internal/**/*.ts"],
-  "tscExecutable": "tsgo",
   "examplesCompilerOptions": {
     "noEmit": true,
     "strict": true,

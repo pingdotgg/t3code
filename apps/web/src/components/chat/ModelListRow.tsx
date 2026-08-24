@@ -1,6 +1,6 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { memo } from "react";
-import { CheckIcon, StarIcon } from "lucide-react";
+import { StarIcon } from "lucide-react";
 import {
   getDisplayModelName,
   getTriggerDisplayModelLabel,
@@ -12,7 +12,7 @@ import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
-import { useI18n } from "../../i18n";
+import { modelPickerModelKey } from "./modelPickerKeys";
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
@@ -38,7 +38,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   disabledReason?: string | null;
   onToggleFavorite: () => void;
 }) {
-  const { t } = useI18n();
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
   const providerLabel = props.model.subProvider
     ? `${props.providerDisplayName} · ${props.model.subProvider}`
@@ -48,12 +47,12 @@ export const ModelListRow = memo(function ModelListRow(props: {
     <ComboboxItem
       hideIndicator
       index={props.index}
-      value={`${props.instanceId}:${props.model.slug}`}
+      value={modelPickerModelKey(props.instanceId, props.model.slug)}
       disabled={Boolean(props.disabledReason)}
       contentClassName="flex w-full items-center gap-3"
       className={cn(
-        "group relative w-full !min-w-0 max-w-full cursor-pointer rounded-md px-2 py-2.5 transition-[background-color,box-shadow,color]",
-        "data-highlighted:bg-muted/56 data-selected:bg-transparent data-selected:text-foreground data-selected:ring-0",
+        "group relative w-full !min-w-0 max-w-full cursor-pointer rounded-md px-2 py-2 transition-[background-color,box-shadow,color]",
+        "hover:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] data-highlighted:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))] data-selected:bg-foreground/[0.08] data-selected:text-foreground data-selected:ring-0 [&[data-highlighted][data-selected]]:bg-[color-mix(in_srgb,var(--popover)_90%,var(--contrast-foreground))]",
         props.disabledReason &&
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed data-disabled:hover:bg-transparent",
       )}
@@ -68,13 +67,12 @@ export const ModelListRow = memo(function ModelListRow(props: {
                   props.preferShortName ? { preferShortName: true } : undefined,
                 )}
           </div>
-          {props.isSelected ? <CheckIcon className="size-3.5 shrink-0 text-blue-400" /> : null}
           {props.showNewBadge ? (
             <span
-              className="shrink-0 rounded border border-amber-500/35 bg-amber-500/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-amber-800 dark:border-amber-400/30 dark:bg-amber-400/12 dark:text-amber-200"
-              aria-label={t("chat.model.new")}
+              className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-[10px] font-bold uppercase leading-none tracking-wide text-update-foreground"
+              aria-label="New model"
             >
-              {t("chat.model.new")}
+              New
             </span>
           ) : null}
         </div>
@@ -110,11 +108,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                   event.stopPropagation();
                 }}
                 disabled={Boolean(props.disabledReason)}
-                aria-label={
-                  props.isFavorite
-                    ? t("providers.modelRemoveFavorite")
-                    : t("providers.modelAddFavorite")
-                }
+                aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
               >
                 <StarIcon
                   className={cn(
@@ -126,9 +120,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
             }
           />
           <TooltipPopup side="top" align="center">
-            {props.isFavorite
-              ? t("providers.modelRemoveFavorite")
-              : t("providers.modelAddFavorite")}
+            {props.isFavorite ? "Remove from favorites" : "Add to favorites"}
           </TooltipPopup>
         </Tooltip>
       </div>

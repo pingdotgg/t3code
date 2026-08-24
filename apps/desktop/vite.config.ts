@@ -74,5 +74,12 @@ export default defineConfig({
         alwaysBundle: (id) => id === "react-grab" || id.startsWith("react-grab/"),
       },
     },
+    {
+      format: "cjs",
+      outDir: "dist-electron",
+      sourcemap: true,
+      outExtensions: () => ({ js: ".cjs" }),
+      entry: ["src/preview-pip-preload.ts"],
+    },
   ],
 });

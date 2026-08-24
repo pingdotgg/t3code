@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
-import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
+import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
 import { relayResourceNameForStage } from "./deploymentConfig.ts";
 
@@ -234,4 +234,4 @@ export const makeRelayTraceLayer = (input: {
       },
       exportInterval: "1 second",
     }).pipe(Effect.map(withSchemaErrorAttributes)),
-  ).pipe(Layer.provide(OtlpSerialization.layerJson));
+  ).pipe(Layer.provideMerge(OtlpExporter.layerFlusher), Layer.provide(OtlpSerialization.layerJson));

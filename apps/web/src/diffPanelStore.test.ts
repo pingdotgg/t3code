@@ -7,11 +7,51 @@ import { selectThreadDiffPanelSelection, useDiffPanelStore } from "./diffPanelSt
 const THREAD_REF = scopeThreadRef(EnvironmentId.make("environment-1"), ThreadId.make("thread-1"));
 
 describe("diffPanelStore", () => {
-  beforeEach(() => useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} }));
+  beforeEach(() =>
+    useDiffPanelStore.setState({
+      byThreadKey: {},
+      branchBaseRefByThreadKey: {},
+      diffRenderMode: "stacked",
+    }),
+  );
 
-  it("defaults each thread to branch changes with automatic base selection", () => {
+  it("keeps the selected render mode in panel and persisted state", async () => {
+    useDiffPanelStore.getState().setDiffRenderMode("split");
+
+    expect(useDiffPanelStore.getState().diffRenderMode).toBe("split");
+    expect(
+      useDiffPanelStore.persist.getOptions().partialize?.(useDiffPanelStore.getState()),
+    ).toMatchObject({ diffRenderMode: "split" });
+
+    const { name, storage } = useDiffPanelStore.persist.getOptions();
+    if (!name) throw new Error("Expected diff panel persistence to have a storage name");
+    const persisted = await storage?.getItem(name);
+    expect(persisted?.state).toMatchObject({ diffRenderMode: "split" });
+
+    useDiffPanelStore.setState({ diffRenderMode: "stacked" });
+    if (persisted) await storage?.setItem(name, persisted);
+    await useDiffPanelStore.persist.rehydrate();
+
+    expect(useDiffPanelStore.getState().diffRenderMode).toBe("split");
+  });
+
+  it("defaults each thread to branch changes when the working tree is clean", () => {
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "branch", baseRef: null });
+  });
+
+  it("defaults each thread to working changes when the working tree is dirty", () => {
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF, true),
+    ).toEqual({ kind: "unstaged" });
+  });
+
+  it("preserves an explicit scope selection when the working tree state changes", () => {
+    useDiffPanelStore.getState().selectGitScope(THREAD_REF, "branch");
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF, true),
     ).toEqual({ kind: "branch", baseRef: null });
   });
 

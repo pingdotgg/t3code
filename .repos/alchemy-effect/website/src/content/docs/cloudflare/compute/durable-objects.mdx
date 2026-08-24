@@ -1,0 +1,485 @@
+---
+title: Durable Objects
+description: Durable Objects are globally-unique stateful instances with transactional storage — define one as an Effect, persist state per key, expose typed RPC methods, and stream values back to the caller.
+---
+
+A Durable Object (DO) is a globally-unique stateful instance
+addressed by name: every request for `"user-123"` — from any Worker,
+anywhere in the world — lands on the *same* instance, with its own
+transactional SQLite-backed storage. That combination of identity +
+storage + single-threaded execution makes DOs the right tool for
+per-entity state: counters, chat rooms, game sessions, WebSocket
+hubs, rate limiters, collaborative documents.
+
+In alchemy a DO is a class with the same two-phase Effect pattern as
+a [Worker](/cloudflare/compute/workers), and every method you return becomes
+a typed RPC method — no schemas, no serialization boilerplate. This
+page builds one from scratch: a `Counter` that keeps a per-key count
+in transactional storage, exposes RPC methods, and streams a
+sequence of numbers back to the caller.
+
+## Create the Counter file
+
+Like Workers, a DO has two `Effect.gen` blocks: the outer one
+resolves the instance's `state` and any shared dependencies, and
+the inner one returns the public API.
+
+Create `src/counter.ts` with the smallest possible DO — empty
+public API, no state yet:
+
+```typescript
+// src/counter.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default class Counter extends Cloudflare.DurableObject<Counter>()(
+  "Counter",
+  Effect.gen(function* () {
+    // Outer (init): resolve the instance state and shared
+    // dependencies here.
+    return Effect.gen(function* () {
+      // Inner: return the public API for this instance.
+      return {};
+    });
+  }),
+) {}
+```
+
+:::tip[Why `Counter<Counter>()(...)` ?]
+The empty `()` after `Counter<Counter>` lets TypeScript capture the
+class identity for the typed RPC stub. It's a one-time bit of
+ceremony — the rest of your DO code looks completely normal.
+:::
+
+## Persist the count
+
+Each DO instance has its own key/value storage, backed by SQLite.
+Resolve `Cloudflare.DurableObjectState` in the **outer** Effect,
+then pull the current count out of storage in the inner init so it
+survives restarts and hibernation:
+
+```diff lang="typescript"
+Effect.gen(function* () {
++  const state = yield* Cloudflare.DurableObjectState;
+  return Effect.gen(function* () {
++    let count = (yield* state.storage.get<number>("count")) ?? 0;
+    return {};
+  });
+});
+```
+
+`Cloudflare.DurableObjectState` is the same per-instance handle
+Cloudflare exposes for `storage`, `setAlarm`, `acceptWebSocket`,
+and friends. We'll use it more in the next part for WebSockets.
+
+:::note
+You resolve the *reference* to `state` in the outer (init) Effect,
+but its methods — like `storage.get` — are
+[colored with `RuntimeContext`](/infrastructure-as-effects/layers#runtime-as-a-colored-function),
+so you can only *use* them in the inner (runtime) Effect. That's why
+`state` is yielded above but `state.storage.get(...)` lives below.
+:::
+
+## Add `increment` and `get`
+
+Any function you return from the inner Effect that produces an
+`Effect` becomes a typed RPC method. Add one to mutate the count
+and one to read it:
+
+```diff lang="typescript"
+Effect.gen(function* () {
+  const state = yield* Cloudflare.DurableObjectState;
+  return Effect.gen(function* () {
+    let count = (yield* state.storage.get<number>("count")) ?? 0;
+-    return {};
++    return {
++      increment: () =>
++        Effect.gen(function* () {
++          count += 1;
++          yield* state.storage.put("count", count);
++          return count;
++        }),
++      get: () => Effect.succeed(count),
++    };
+  });
+});
+```
+
+Workers will see `counter.increment()` returning
+`Effect<number>` and `counter.get()` returning `Effect<number>`,
+fully type-checked through the Cloudflare RPC machinery.
+
+## Bind the DO to the Worker
+
+Yield the `Counter` class in your Worker's init phase to get a
+namespace handle:
+
+```diff lang="typescript"
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++import Counter from "./counter.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
++    const counters = yield* Counter;
+
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("Hello from my Worker!");
+      }),
+    };
+  }),
+);
+```
+
+`yield* Counter` in init registers the DO with the Worker
+(binding + class-migration metadata) and hands you the namespace.
+
+## Call the DO from `fetch`
+
+Inside the `fetch` handler, route `POST /counter/:name` to the DO
+by calling `getByName(...)` to obtain a typed stub, then invoking
+`increment()`:
+
+```diff lang="typescript"
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
++import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import Counter from "./counter.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const counters = yield* Counter;
+
+    return {
+      fetch: Effect.gen(function* () {
++        const request = yield* HttpServerRequest;
++
++        if (request.url.startsWith("/counter/") && request.method === "POST") {
++          const name = request.url.split("/").pop()!;
++          const next = yield* counters.getByName(name).increment();
++          return HttpServerResponse.text(String(next));
++        }
++
+        return HttpServerResponse.text("Hello from my Worker!");
+      }),
+    };
+  }),
+);
+```
+
+`counters.getByName(name)` returns a typed stub: the Worker sees
+`increment(): Effect<number>` and `get(): Effect<number>` exactly as
+you defined them. Calling `.increment()` round-trips through
+Cloudflare's RPC machinery to the durable instance.
+
+## Deploy and verify
+
+Re-deploy. Alchemy plans a Worker update and a new `Counter`
+namespace:
+
+```sh
+bun alchemy deploy
+```
+
+Add a test that hits `/counter/foo` twice (expecting `1` then `2`)
+and `/counter/bar` once (expecting `1`) — each name addresses its
+own stateful instance:
+
+```diff lang="typescript"
+// test/integ.test.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, deploy } = Test.make({
+  providers: Cloudflare.providers(),
+  state: Cloudflare.state(),
+});
+
+const stack = beforeAll(deploy(Stack));
+
++test(
++    "Counter persists per key",
++    Effect.gen(function* () {
++      const { url } = yield* stack;
++
++      const a1 = yield* HttpClient.post(`${url}/counter/foo`);
++      expect(yield* a1.text).toBe("1");
++
++      const a2 = yield* HttpClient.post(`${url}/counter/foo`);
++      expect(yield* a2.text).toBe("2");
++
++      const b1 = yield* HttpClient.post(`${url}/counter/bar`);
++      expect(yield* b1.text).toBe("1");
++    }),
++);
+```
+
+```sh
+bun test test/integ.test.ts
+```
+
+## Stream RPC return values
+
+RPC isn't limited to single values — any `Effect` (or `Stream`) you
+return becomes a typed RPC method. Let's add a `tick(n)` method that
+emits a sequence of numbers `100ms` apart, then expose an HTTP route
+that streams them back to the client.
+
+Add `tick` to `src/counter.ts`:
+
+```diff lang="typescript"
+// src/counter.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
++import * as Schedule from "effect/Schedule";
++import * as Stream from "effect/Stream";
+
+export default class Counter extends Cloudflare.DurableObject<Counter>()(
+  "Counter",
+  Effect.gen(function* () {
+    const state = yield* Cloudflare.DurableObjectState;
+    return Effect.gen(function* () {
+      let count = (yield* state.storage.get<number>("count")) ?? 0;
+
+      return {
+        increment: () =>
+          Effect.gen(function* () {
+            count += 1;
+            yield* state.storage.put("count", count);
+            return count;
+          }),
+        get: () => Effect.succeed(count),
++        tick: (n: number) =>
++          Stream.iterate(0, (i) => i + 1).pipe(
++            Stream.take(n),
++            Stream.schedule(Schedule.spaced("100 millis")),
++          ),
+      };
+    });
+  }),
+) {}
+```
+
+Forward the stream from the Worker's `fetch` handler. Use
+`HttpServerResponse.stream` to flush each chunk as it arrives:
+
+```diff lang="typescript"
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
++import * as Stream from "effect/Stream";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import Counter from "./counter.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const counters = yield* Counter;
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+
+        if (request.url.startsWith("/counter/") && request.method === "POST") {
+          const name = request.url.split("/").pop()!;
+          const next = yield* counters.getByName(name).increment();
+          return HttpServerResponse.text(String(next));
+        }
+
++        if (request.url.startsWith("/tick/") && request.method === "GET") {
++          const n = Number(request.url.split("/").pop()!);
++          const stream = counters.getByName("tick").tick(n).pipe(
++            Stream.map((i) => `${i}\n`),
++            Stream.encodeText,
++          );
++          return HttpServerResponse.stream(stream, {
++            headers: { "content-type": "text/plain" },
++          });
++        }
++
+        return HttpServerResponse.text("Hello from my Worker!");
+      }),
+    };
+  }),
+);
+```
+
+Add the test:
+
+```diff lang="typescript"
+// test/integ.test.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Test from "alchemy/Test/Bun";
+import { expect } from "bun:test";
+import * as Effect from "effect/Effect";
++import * as Stream from "effect/Stream";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, deploy } = Test.make({
+  providers: Cloudflare.providers(),
+  state: Cloudflare.state(),
+});
+
+const stack = beforeAll(deploy(Stack));
+
++test(
++    "tick streams 5 sequential values",
++    Effect.gen(function* () {
++      const { url } = yield* stack;
++
++      const response = yield* HttpClient.get(`${url}/tick/5`);
++      const lines = yield* response.stream.pipe(
++        Stream.decodeText,
++        Stream.splitLines,
++        Stream.runCollect,
++      );
++      expect([...lines]).toEqual(["0", "1", "2", "3", "4"]);
++    }),
++);
+```
+
+The DO produces values lazily, the runtime ferries each chunk back
+to the Worker, and the Worker pipes them straight onto the HTTP
+response — all type-checked end-to-end.
+
+## Schemaless RPC
+
+Everything you just built *is* RPC — and you never declared a
+schema. Any function returning an `Effect` (or a `Stream`) from the
+inner block becomes a typed method, and `getByName(name)` hands
+callers a stub that mirrors those signatures exactly:
+
+```typescript
+const counters = yield* Counter;
+
+const counter = counters.getByName("user-123");
+const value = yield* counter.increment(); // Effect<number>
+```
+
+This schemaless, typed-stub pattern — the DO shape of
+[Schemaless RPC](/apis/schemaless) — is the recommended way to talk
+to a Durable Object. The types flow from the implementation — add a
+method, and every caller sees it immediately; change a return type,
+and every caller that mismatches fails to compile. The same
+mechanism works across Workers: one Worker can host the DO while
+others bind to it by class — see
+[Bind to another Worker's Durable Object](/cloudflare/compute/cross-worker-durable-object).
+
+Alchemy also ships a schema-based `RpcDurableObject` that serves an
+Effect RPC group on the DO's `fetch`. It is no longer the suggested
+path for DO method calls — the schemaless bridge covers typed
+methods and streaming without the ceremony. Its one remaining niche
+is when return values are `Schema.Class` instances whose identity
+must survive the boundary — the schemaless bridge serializes return
+values and strips class identity — see
+[`Cloudflare.RpcDurableObject`](/cloudflare/apis/effect-rpc#sugar-cloudflarerpcdurableobject).
+If you want schema-*validated* procedures (payload validation,
+tagged error schemas shared with external clients), reach for
+[Effect RPC](/cloudflare/apis/effect-rpc) on a Worker instead.
+
+## Place an instance in a region
+
+A Durable Object is created wherever its **first-ever** request came
+from, and it lives there for good. That is the right default when an
+instance's traffic all comes from whoever created it — `getByName(userId)`
+lands next to that user by construction.
+
+It is the wrong default as soon as the name stops tracking geography. A
+pool sharded by hash (`pool:7`), a fixed roster, a shard index — any of
+these can be created by whichever request happened to arrive first, and
+every later caller pays for that accident. A Sydney user hashed onto an
+instance a Frankfurt request created is making a cross-planet round trip
+on every call, forever.
+
+Pass a `locationHint` to say where a **new** instance should be created:
+
+```typescript
+const shard = shards.getByName("pool:apac:3", { locationHint: "apac" });
+```
+
+Hints only apply at creation, so this is safe to add to an existing call
+site: instances that already exist stay where they are, and nothing you
+pass can move them.
+
+Derive the name and the hint from the same region, so each region
+addresses its own shards:
+
+```typescript
+// in a Worker fetch handler
+const region = hintFor(request.cf?.continent); // your own mapping
+const shard = shards.getByName(`pool:${region}:${index}`, {
+  locationHint: region,
+});
+```
+
+:::caution
+Hint the region you name. If two regions can address one name, they race
+to create the single instance behind it and the loser is stuck talking
+across the planet — the hint cannot fix it afterwards.
+:::
+
+Available hints are `wnam`, `enam`, `sam`, `weur`, `eeur`, `apac`, `oc`,
+`afr`, and `me`. Each is best-effort:
+Cloudflare places the instance in the nearest location it can to the
+hinted region, which may not be inside it. Under `alchemy dev` there is
+only one location to place anything in, so hints are accepted and
+ignored — placement is only observable once deployed.
+
+## Call scope vs isolate scope
+
+A Durable Object shares its isolate's layer build with the Worker
+that hosts it — the entrypoint's init runs **once per isolate**, and
+every DO activation (including hibernatable-WebSocket wakes, which
+re-run the constructor) reuses it. Each method call, `fetch`,
+`alarm`, or WebSocket event then runs with a **fresh `Scope`**,
+closed via `state.waitUntil` after the call settles — so
+`Effect.addFinalizer` inside a method runs after the RPC response is
+returned, and a returned `Stream` keeps the scope alive until it
+finishes draining.
+
+As everywhere on workerd, there is no isolate-teardown hook: cleanup
+belongs in methods (call scope), not in the constructor or init.
+Per-call resources like `Drizzle.Postgres` pools open lazily inside
+the method and close with its scope (see the
+[SQL connection lifecycle](/sql/effect-sql/lifecycle)). See
+[Instance scope vs request scope](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope)
+for the model across all runtimes.
+
+## Where next
+
+Guides that build on Durable Objects:
+
+- [Accept WebSockets](/cloudflare/compute/hibernatable-websockets) —
+  WebSocket connections that survive hibernation.
+- [Bind to another Worker's Durable Object](/cloudflare/compute/cross-worker-durable-object)
+  — one Worker hosts the DO, others get a typed stub; also covers
+  moving the host to a different Worker with the data intact.
+- [Run a Container](/cloudflare/compute/run-a-container) — a long-lived
+  container managed by a DO.
+- [Workflows](/cloudflare/compute/workflows) — durable multi-step
+  orchestration.
+
+Related:
+
+- [Workers](/cloudflare/compute/workers) — the runtime every DO is reached
+  through.
+
+Reference:
+
+- [DurableObject API reference](/providers/cloudflare/workers/durableobject)

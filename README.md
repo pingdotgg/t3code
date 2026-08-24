@@ -1,72 +1,97 @@
 # T3 Code
 
-[简体中文](./README.md) | [English](./README.en.md)
+T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
 
-T3 Code 是一个供编程智能体使用的简洁 Web 图形界面，目前支持 Codex、Claude、Cursor、OpenCode 和 Pi，后续还会支持更多智能体。
+Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, and OpenCode. If they're set up on your computer, T3 Code can control them.
 
-## 安装
+## "Wait, what are you selling me?"
+
+Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
+
+We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
+
+## Installation
 
 > [!WARNING]
-> T3 Code 目前支持 Codex、Claude、Cursor、OpenCode 和 Pi。
-> 使用前，请至少安装并登录一个供应商：
+> T3 Code currently supports Codex, Claude, Cursor, Grok Build and OpenCode. Install and authenticate at least one provider before use:
 >
-> - Codex：安装 [Codex CLI](https://developers.openai.com/codex/cli)，然后运行 `codex login`
-> - Claude：安装 [Claude Code](https://claude.com/product/claude-code)，然后运行 `claude auth login`
-> - Cursor：安装 [Cursor CLI](https://cursor.com/cli)，然后运行 `cursor-agent login`
-> - OpenCode：安装 [OpenCode](https://opencode.ai)，然后运行 `opencode auth login`
-> - Pi：运行 `npm install -g @earendil-works/pi-coding-agent`，然后按 [Pi 供应商指南](./docs/zh-CN/providers/pi.md) 配置模型和认证
+> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
+> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
+> - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `agent login`
+> - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
+> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 
-### 无需安装直接运行
+### Try it out (install-free)
+
+The easiest way to test T3 Code is to run the server in your terminal (requires Node.js 22.16+, 23.11+, or 24.10+):
 
 ```bash
 npx t3@latest
 ```
 
-提示：运行 `npx t3@latest --help` 可查看完整 CLI 参考。
+This will launch T3 Code's backend on your machine as well as the local web app to control your agents.
 
-### 桌面应用
+Tip: Use `npx t3@latest --help` for the full CLI reference.
 
-从 [GitHub Releases](https://github.com/nolaurence/t3code-chinese/releases) 安装最新桌面应用，也可以使用常用的软件包管理器：
+### Desktop app
 
-#### Windows（`winget`）
+Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
+
+#### Windows (`winget`)
 
 ```bash
 winget install T3Tools.T3Code
 ```
 
-#### macOS（Homebrew）
+#### macOS (Homebrew)
 
 ```bash
 brew install --cask t3-code
 ```
 
-#### Arch Linux（AUR）
+#### Arch Linux (AUR)
+
+Stable:
 
 ```bash
 yay -S t3code-bin
 ```
 
-## 说明
+Nightly:
 
-本项目仍处于非常早期的开发阶段，使用时可能遇到问题。
+```bash
+yay -S t3code-nightly-bin
+```
 
-目前暂不接受外部贡献。
+The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
 
-公开文档站点尚未上线，请查看 [docs/zh-CN](./docs/zh-CN/) 中的 Markdown 文档。
+## Some notes
 
-## 文档
+We are very very early in this project. Expect bugs.
 
-- [快速开始](./docs/zh-CN/getting-started/quick-start.md)
-- [架构概览](./docs/zh-CN/architecture/overview.md)
-- 供应商指南：[Codex](./docs/zh-CN/providers/codex.md)、[Claude](./docs/zh-CN/providers/claude.md)、[Pi](./docs/zh-CN/providers/pi.md)
-- [运维](./docs/zh-CN/operations/ci.md)
-- [参考手册](./docs/zh-CN/reference/encyclopedia.md)
+We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
 
-## 仍然希望参与贡献时，请先阅读以下内容
+## Documentation
 
-### 安装 `vp`
+Full docs live in [docs/](./docs). There's no docs site yet.
 
-T3 Code 使用 Vite+，因此需要安装全局 `vp` 命令行工具。
+- [Install and first run](./docs/user/install.md)
+- [Permission modes](./docs/user/permission-modes.md)
+- [Keyboard shortcuts](./docs/user/keybindings.md)
+- [Customize a project icon](./docs/user/project-settings.md)
+- [Remote access from a phone or another machine](./docs/user/remote-access.md)
+- [Keeping app and server in sync](./docs/user/updating.md)
+- [Source control integrations](./docs/user/source-control.md)
+- Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
+- Linux: [run T3 Code as a background service](./docs/user/background-service.md)
+
+Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
+
+## If you REALLY want to contribute still.... read this first
+
+### Install `vp`
+
+T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
 
 #### macOS / Linux
 
@@ -80,45 +105,16 @@ curl -fsSL https://vite.plus | bash
 irm https://vite.plus/ps1 | iex
 ```
 
-更多信息请查看 Vite+ 的入门指南：https://viteplus.dev/guide/
+Checkout their getting started guide for more information: https://viteplus.dev/guide/
 
-### 安装依赖
+### Install dependencies
 
 ```bash
 vp i
 ```
 
-### 打包桌面应用
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
 
-请在仓库根目录中运行目标平台对应的命令。打包产物会输出到 `./release` 目录。
+Have a feature request? Start an [Ideas discussion](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
 
-#### macOS
-
-```bash
-# Apple Silicon
-vp run dist:desktop:dmg:arm64
-
-# Intel
-vp run dist:desktop:dmg:x64
-```
-
-#### Linux
-
-```bash
-# x64 AppImage
-vp run dist:desktop:linux
-```
-
-#### Windows
-
-```bash
-# x64 NSIS 安装包
-vp run dist:desktop:win:x64
-
-# ARM64 NSIS 安装包
-vp run dist:desktop:win:arm64
-```
-
-提交 Issue 或 PR 前，请阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)。
-
-需要支持时，可以加入 [Discord](https://discord.gg/jn4EGJjrvv)。
+Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).

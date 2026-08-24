@@ -1,11 +1,11 @@
 import { UserButton, useAuth } from "@clerk/react";
-import { LogInIcon, SmartphoneIcon } from "lucide-react";
+import { LogInIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { MobileClientsUserProfilePage } from "./MobileClientsUserProfilePage";
+import { T3ConnectUserProfilePage } from "./T3ConnectUserProfilePage";
 import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
-import { useI18n } from "../../i18n";
 
 export function T3ConnectSidebarSignIn() {
   if (!hasCloudPublicConfig()) return null;
@@ -20,7 +20,6 @@ export function T3ConnectSidebarAvatar() {
 }
 
 function ConfiguredT3ConnectSidebarAvatar() {
-  const { t } = useI18n();
   const { isLoaded, isSignedIn } = useAuth();
 
   if (!isLoaded || !isSignedIn) return null;
@@ -30,23 +29,29 @@ function ConfiguredT3ConnectSidebarAvatar() {
       appearance={{
         elements: {
           avatarBox: "size-7",
-          userButtonTrigger: "rounded-lg p-1 hover:bg-sidebar-accent",
+          userButtonTrigger: "rounded-lg p-1 hover:bg-sidebar-row-hover",
         },
       }}
     >
       <UserButton.UserProfilePage
-        label={t("auth.mobileClients")}
+        label="Mobile clients"
         labelIcon={<SmartphoneIcon className="size-4" />}
         url="mobile-clients"
       >
         <MobileClientsUserProfilePage />
+      </UserButton.UserProfilePage>
+      <UserButton.UserProfilePage
+        label="T3 Connect"
+        labelIcon={<ServerIcon className="size-4" />}
+        url="t3-connect"
+      >
+        <T3ConnectUserProfilePage />
       </UserButton.UserProfilePage>
     </UserButton>
   );
 }
 
 function ConfiguredT3ConnectSidebarSignIn() {
-  const { t } = useI18n();
   const { isLoaded, isSignedIn } = useAuth();
   const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
 
@@ -56,13 +61,9 @@ function ConfiguredT3ConnectSidebarSignIn() {
     <>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton
-            size="sm"
-            className="gap-2 px-2 py-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={openAuthPrompt}
-          >
-            <LogInIcon className="size-4" />
-            <span>{t("auth.signInConnect")}</span>
+          <SidebarMenuButton onClick={openAuthPrompt}>
+            <LogInIcon />
+            <span>Sign in to T3 Connect</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>

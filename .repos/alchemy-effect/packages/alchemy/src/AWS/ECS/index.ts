@@ -1,32 +1,43 @@
-export {
-  CapacityProvider,
-  CapacityProviderProvider,
-} from "./CapacityProvider.ts";
-export { Cluster, ClusterProvider } from "./Cluster.ts";
-export {
-  DescribeTasks,
-  DescribeTasksLive,
-  DescribeTasksPolicy,
-  DescribeTasksPolicyLive,
-} from "./DescribeTasks.ts";
-export {
-  ListTasks,
-  ListTasksLive,
-  ListTasksPolicy,
-  ListTasksPolicyLive,
-} from "./ListTasks.ts";
-export {
-  RunTask,
-  RunTaskLive,
-  RunTaskPolicy,
-  RunTaskPolicyLive,
-} from "./RunTask.ts";
-export { every } from "./Schedule.ts";
-export { Service, ServiceProvider } from "./Service.ts";
-export {
-  StopTask,
-  StopTaskLive,
-  StopTaskPolicy,
-  StopTaskPolicyLive,
-} from "./StopTask.ts";
-export { isTask, Task, TaskProvider } from "./Task.ts";
+export * from "./CapacityProvider.ts";
+export * from "./Cluster.ts";
+export * from "./ClusterEventSource.ts";
+export * from "./ContinueServiceDeployment.ts";
+export * from "./ContinueServiceDeploymentHttp.ts";
+export * from "./DescribeContainerInstances.ts";
+export * from "./DescribeContainerInstancesHttp.ts";
+export * from "./DescribeServiceDeployments.ts";
+export * from "./DescribeServiceDeploymentsHttp.ts";
+export * from "./DescribeServiceRevisions.ts";
+export * from "./DescribeServiceRevisionsHttp.ts";
+export * from "./DescribeServices.ts";
+export * from "./DescribeServicesHttp.ts";
+export * from "./DescribeTasks.ts";
+export * from "./DescribeTasksHttp.ts";
+export * from "./ExecuteCommand.ts";
+export * from "./ExecuteCommandHttp.ts";
+export * from "./GetTaskProtection.ts";
+export * from "./GetTaskProtectionHttp.ts";
+export * from "./ListContainerInstances.ts";
+export * from "./ListContainerInstancesHttp.ts";
+export * from "./ListServiceDeployments.ts";
+export * from "./ListServiceDeploymentsHttp.ts";
+export * from "./ListServices.ts";
+export * from "./ListServicesHttp.ts";
+export * from "./ListTasks.ts";
+export * from "./ListTasksHttp.ts";
+export * from "./RunTask.ts";
+export * from "./RunTaskHttp.ts";
+export * from "./Schedule.ts";
+export * from "./Service.ts";
+export * from "./StartTask.ts";
+export * from "./StartTaskHttp.ts";
+export * from "./StopServiceDeployment.ts";
+export * from "./StopServiceDeploymentHttp.ts";
+export * from "./StopTask.ts";
+export * from "./StopTaskHttp.ts";
+export * from "./Task.ts";
+export * from "./TaskDefinition.ts";
+export * from "./UpdateContainerInstancesState.ts";
+export * from "./UpdateContainerInstancesStateHttp.ts";
+export * from "./UpdateTaskProtection.ts";
+export * from "./UpdateTaskProtectionHttp.ts";

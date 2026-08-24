@@ -7,7 +7,7 @@ public class T3TerminalModule: Module {
     // Bumped when native hardware-keyboard handling changes; surfaced in the JS debug
     // logs so a stale native binary is distinguishable from a broken key pipeline.
     Constants([
-      "hardwareKeyRevision": 2,
+      "hardwareKeyRevision": 3,
     ])
 
     View(T3TerminalView.self) {
@@ -25,6 +25,10 @@ public class T3TerminalModule: Module {
 
       Prop("focusRequest") { (view: T3TerminalView, focusRequest: Double) in
         view.focusRequest = focusRequest
+      }
+
+      Prop("autoFocus") { (view: T3TerminalView, autoFocus: Bool) in
+        view.autoFocus = autoFocus
       }
 
       Prop("appearanceScheme") { (view: T3TerminalView, appearanceScheme: String) in

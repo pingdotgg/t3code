@@ -20,6 +20,13 @@ export class AlchemyContext extends EffectContext.Service<
      * overrides via the `adopt(enabled)` combinator still take precedence.
      */
     adopt: boolean;
+    /**
+     * When `true`, an out-of-date Cloudflare state store is upgraded
+     * automatically instead of prompting for confirmation (and the upgrade
+     * proceeds even in CI). The CLI's `--yes` flag flows in through this field.
+     * @default false
+     */
+    updateStateStore?: boolean;
   }
 >()("alchemy/Context") {}
 

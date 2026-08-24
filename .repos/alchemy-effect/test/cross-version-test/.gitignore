@@ -1,0 +1,9 @@
+# Per-stage isolated installs (recreated by run.ts)
+**/node_modules/
+bun.lock
+bun.lockb
+
+# Alchemy build/run artifacts
+**/.alchemy/
+**/dist/
+*.tgz
