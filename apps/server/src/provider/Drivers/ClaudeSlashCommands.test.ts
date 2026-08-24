@@ -1,9 +1,18 @@
+import type { ServerProviderSlashCommand } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 
-import { retainClaudeSlashCommands } from "./ClaudeSlashCommands.ts";
+import { rememberClaudeSlashCommands, retainClaudeSlashCommands } from "./ClaudeSlashCommands.ts";
 
-const review = { name: "review", description: "Review the diff" };
-const commit = { name: "commit", description: "Commit changes" };
+const review: ServerProviderSlashCommand = {
+  name: "review",
+  description: "Review the diff",
+};
+const commit: ServerProviderSlashCommand = {
+  name: "commit",
+  description: "Commit changes",
+};
 
 describe("retainClaudeSlashCommands", () => {
   it("keeps a populated probe result", () => {
@@ -20,5 +29,31 @@ describe("retainClaudeSlashCommands", () => {
 
   it("passes through empty when there is no previous list", () => {
     expect(retainClaudeSlashCommands([], [], true)).toEqual([]);
+  });
+});
+
+describe("rememberClaudeSlashCommands", () => {
+  it("keeps the snapshot empty after a successful empty probe then a failed probe", () => {
+    const snapshot = Effect.runSync(
+      Effect.gen(function* () {
+        const lastGoodSlashCommands = yield* Ref.make<ReadonlyArray<ServerProviderSlashCommand>>(
+          [],
+        );
+        yield* rememberClaudeSlashCommands(lastGoodSlashCommands, {
+          status: "ready",
+          slashCommands: [review, commit],
+        });
+        yield* rememberClaudeSlashCommands(lastGoodSlashCommands, {
+          status: "ready",
+          slashCommands: [],
+        });
+        return yield* rememberClaudeSlashCommands(lastGoodSlashCommands, {
+          status: "error",
+          slashCommands: [],
+        });
+      }),
+    );
+
+    expect(snapshot.slashCommands).toEqual([]);
   });
 });
