@@ -3139,9 +3139,9 @@ export function ConnectionsSettings() {
                         ? "Running-server attachment is disabled in Desktop development so development state stays isolated."
                         : existingLocalBackendState.attached
                           ? existingLocalBackendState.origin
-                            ? `Connected to the T3 Code server already running at ${existingLocalBackendState.origin}. Network exposure is managed where that server was launched.`
-                            : "Connected to the T3 Code server already running on this machine. Network exposure is managed where that server was launched."
-                          : "Connect to a T3 Code server already running on this machine instead of starting another one."
+                            ? `Connected to the T3 Code server already running at ${existingLocalBackendState.origin}. Network exposure is managed where that server was launched. T3 Code restarts when you change this.`
+                            : "Connected to the T3 Code server already running on this machine. Network exposure is managed where that server was launched. T3 Code restarts when you change this."
+                          : "Connect to a T3 Code server already running on this machine instead of starting another one. T3 Code restarts when you change this."
                     }
                     control={
                       <Switch
