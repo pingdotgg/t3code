@@ -557,11 +557,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedProvider = props.serverConfig?.providers.find(
     (provider) => provider.instanceId === selectedInstanceId,
   );
-  const hasCodexGoalSession =
-    selectedProvider?.driver === "codex" && props.selectedThread.session !== null;
+  const hasActiveCodexGoalSession =
+    selectedProvider?.driver === "codex" &&
+    props.selectedThread.session !== null &&
+    props.selectedThread.session.status !== "stopped";
   const codexGoal = useCodexGoal(
-    hasCodexGoalSession ? props.environmentId : null,
-    hasCodexGoalSession ? props.selectedThread.id : null,
+    hasActiveCodexGoalSession ? props.environmentId : null,
+    hasActiveCodexGoalSession ? props.selectedThread.id : null,
   );
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
   const selectedProviderSkills = useMemo(() => {
