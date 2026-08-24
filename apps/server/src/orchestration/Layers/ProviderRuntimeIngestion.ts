@@ -1854,7 +1854,10 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (event.type === "turn.completed") {
+      if (
+        event.type === "turn.completed" ||
+        (event.type === "turn.aborted" && shouldApplyThreadLifecycle)
+      ) {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
