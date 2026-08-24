@@ -18,6 +18,7 @@ import {
   parseThreadSegmentFromAttachmentId,
   PENDING_ATTACHMENT_THREAD_SEGMENT,
   resolveAttachmentPathById,
+  sweepStalePendingAttachments,
 } from "../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import {
@@ -32,7 +33,10 @@ import { inferImageExtension } from "../imageMime.ts";
 
 export const ATTACHMENT_UPLOAD_ROUTE_PREFIX = "/api/attachments/upload";
 
+// Asset download tokens share this key, but their signed claim kind is different.
 const SIGNING_SECRET_NAME = "asset-access-signing-key";
+const PENDING_ATTACHMENT_SWEEP_INTERVAL_MS = 15 * 60_000;
+const lastPendingSweepByDirectory = new Map<string, number>();
 
 const AttachmentUploadClaims = Schema.Struct({
   version: Schema.Literal(1),
@@ -68,8 +72,25 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
   const secret = yield* loadSigningSecret.pipe(
     Effect.mapError((cause) => new AttachmentUploadSigningKeyError({ cause })),
   );
+  const config = yield* ServerConfig.ServerConfig;
+  const nowMs = yield* Clock.currentTimeMillis;
+  const previousSweep = lastPendingSweepByDirectory.get(config.attachmentsDir);
+  if (
+    previousSweep === undefined ||
+    nowMs - previousSweep >= PENDING_ATTACHMENT_SWEEP_INTERVAL_MS
+  ) {
+    lastPendingSweepByDirectory.set(config.attachmentsDir, nowMs);
+    const swept = sweepStalePendingAttachments({
+      attachmentsDir: config.attachmentsDir,
+      nowMs,
+    });
+    if (swept.deleted > 0) {
+      yield* Effect.logInfo("Removed expired attachment uploads.", { deleted: swept.deleted });
+    }
+  }
+
   const attachmentId = createPendingAttachmentId();
-  const expiresAt = (yield* Clock.currentTimeMillis) + ATTACHMENT_UPLOAD_URL_TTL_MS;
+  const expiresAt = nowMs + ATTACHMENT_UPLOAD_URL_TTL_MS;
   const encodedPayload = base64UrlEncode(
     encodeAttachmentUploadClaims({
       version: 1,

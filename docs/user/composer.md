@@ -4,8 +4,8 @@ Messages can contain up to 120,000 characters. If a draft is longer, T3 Code kee
 composer and shows how many characters need to be removed. Shorten the draft or split it into
 multiple messages, then send again in the same thread.
 
-Image attachments upload as soon as you add them when your server supports direct uploads. Wait for
-each upload to finish before you send the message. If an upload fails, retry it or remove the image.
+On servers that support direct uploads, images upload as soon as you add them. The send button
+becomes available after every upload finishes. Failed uploads can be retried or removed.
 
 ## Commands and skills
 

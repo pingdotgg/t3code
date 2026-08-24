@@ -211,6 +211,50 @@ describe("attachmentUploadQueue", () => {
     expect(readAttachmentUpload(image.id)).toMatchObject({ status: "ready" });
   });
 
+  it("releases an upload URL that resolves after its image was removed", async () => {
+    const image = makeImage("image-cancelled");
+    const minted = {
+      _tag: "Success" as const,
+      value: {
+        attachmentId: "pending-environment-1-image-cancelled.png",
+        relativeUrl: "/api/attachments/upload/cancelled",
+        expiresAt: 1,
+      },
+    };
+    let resolveMint: (result: typeof minted) => void = () => {};
+    const pendingMint = new Promise<typeof minted>((resolve) => {
+      resolveMint = resolve;
+    });
+    let resolveDelete: () => void = () => {};
+    const deleted = new Promise<void>((resolve) => {
+      resolveDelete = resolve;
+    });
+    mocks.runAtomCommand.mockImplementation((_registry: unknown, command: unknown) => {
+      if (command === mocks.createUploadUrl) {
+        return pendingMint;
+      }
+      resolveDelete();
+      return Promise.resolve({ _tag: "Success", value: undefined });
+    });
+
+    startAttachmentUpload({ environmentId: firstEnvironment, image });
+    releaseAttachmentUpload(image.id);
+    resolveMint(minted);
+    await deleted;
+
+    expect(TestXmlHttpRequest.requests).toEqual([]);
+    expect(readAttachmentUpload(image.id)).toBeUndefined();
+    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      mocks.removeUpload,
+      {
+        environmentId: firstEnvironment,
+        input: { attachmentId: minted.value.attachmentId },
+      },
+      expect.anything(),
+    );
+  });
+
   it("restores the previous environment after a replacement upload fails", async () => {
     const image = makeImage("image-move");
     startAttachmentUpload({ environmentId: firstEnvironment, image });

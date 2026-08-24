@@ -128,6 +128,9 @@ async function runUpload(job: UploadJob): Promise<void> {
     { reportFailure: false },
   );
   if (job.cancelled) {
+    if (minted._tag === "Success") {
+      deletePendingUpload(job.environmentId, minted.value.attachmentId);
+    }
     return;
   }
   if (minted._tag !== "Success") {

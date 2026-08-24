@@ -190,6 +190,31 @@ describe("normalizeDispatchCommand attachments", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("removes a failed claimed copy after its pending original was removed", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const pendingPath = NodePath.join(config.attachmentsDir, `pending-${attachmentUuid}.png`);
+      NodeFS.writeFileSync(pendingPath, Buffer.from("pixels"));
+      const command = turnStartCommand({
+        attachments: [{ id: `pending-${attachmentUuid}`, sizeBytes: 6 }],
+      });
+      const normalized = yield* normalizeDispatchCommand(command);
+      if (normalized.type !== "thread.turn.start") {
+        throw new Error("Expected a thread.turn.start command.");
+      }
+
+      const claimedPath = NodePath.join(
+        config.attachmentsDir,
+        `${normalized.message.attachments[0]!.id}.png`,
+      );
+      NodeFS.rmSync(pendingPath);
+
+      yield* cleanupFailedUploadedAttachments(command, normalized);
+
+      expect(NodeFS.existsSync(claimedPath)).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("keeps concurrent claims independent when one dispatch fails", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

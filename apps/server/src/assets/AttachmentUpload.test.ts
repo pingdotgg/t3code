@@ -69,6 +69,21 @@ describe("AttachmentUpload", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("removes expired pending uploads while issuing a new upload URL", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const staleId = "pending-00000000-0000-4000-8000-0000000000cc";
+      const stalePath = NodePath.join(config.attachmentsDir, `${staleId}.png`);
+      NodeFS.writeFileSync(stalePath, Buffer.from("pixels"));
+      NodeFS.utimesSync(stalePath, 0, 0);
+
+      yield* TestClock.adjust("25 hours");
+      yield* issueAttachmentUploadUrl(uploadInput);
+
+      expect(NodeFS.existsSync(stalePath)).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("stores the expected bytes without leaving temporary files", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

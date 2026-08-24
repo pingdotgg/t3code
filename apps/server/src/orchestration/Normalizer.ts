@@ -16,7 +16,6 @@ import {
   PENDING_ATTACHMENT_THREAD_SEGMENT,
   parseThreadSegmentFromAttachmentId,
   resolveAttachmentPath,
-  resolveAttachmentPathById,
 } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
@@ -286,15 +285,11 @@ export const cleanupFailedUploadedAttachments = Effect.fn(
       continue;
     }
 
-    const pendingPath = resolveAttachmentPathById({
-      attachmentsDir: serverConfig.attachmentsDir,
-      attachmentId: original.id,
-    });
     const claimedPath = resolveAttachmentPath({
       attachmentsDir: serverConfig.attachmentsDir,
       attachment,
     });
-    if (pendingPath && claimedPath && pendingPath !== claimedPath) {
+    if (claimedPath) {
       claimedPaths.push(claimedPath);
     }
   }

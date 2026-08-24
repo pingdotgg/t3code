@@ -544,6 +544,7 @@ export interface ChatComposerHandle {
 export interface ChatComposerProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
+  attachmentUploadsCapabilityKnown: boolean;
   supportsAttachmentUploads: boolean;
   routeKind: "server" | "draft";
   routeThreadRef: ScopedThreadRef;
@@ -659,6 +660,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const {
     composerDraftTarget,
     environmentId,
+    attachmentUploadsCapabilityKnown,
     supportsAttachmentUploads,
     routeKind,
     routeThreadRef,
@@ -781,6 +783,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
 
   useEffect(() => {
+    if (!attachmentUploadsCapabilityKnown) {
+      return;
+    }
     if (!supportsAttachmentUploads) {
       for (const image of composerImages) {
         releaseAttachmentUpload(image.id);
@@ -790,7 +795,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     for (const image of composerImages) {
       startAttachmentUpload({ environmentId, image });
     }
-  }, [composerImages, environmentId, supportsAttachmentUploads]);
+  }, [attachmentUploadsCapabilityKnown, composerImages, environmentId, supportsAttachmentUploads]);
 
   // ------------------------------------------------------------------
   // Model state
