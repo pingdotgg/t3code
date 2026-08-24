@@ -16,6 +16,26 @@ const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
+const emitThoughtChunks = process.env.T3_ACP_EMIT_THOUGHT_CHUNKS === "1";
+const emitUsageUpdate = process.env.T3_ACP_EMIT_USAGE_UPDATE === "1";
+const emitSessionInfoUpdate = process.env.T3_ACP_EMIT_SESSION_INFO_UPDATE === "1";
+const emitConfigOptionUpdate = process.env.T3_ACP_EMIT_CONFIG_OPTION_UPDATE === "1";
+const emitPromptUsage = process.env.T3_ACP_EMIT_PROMPT_USAGE === "1";
+const emitXAiPromptMetadata = process.env.T3_ACP_EMIT_XAI_PROMPT_METADATA === "1";
+const emitXAiModelChanged = process.env.T3_ACP_EMIT_XAI_MODEL_CHANGED === "1";
+const emitXAiModelChangedOnSetModel =
+  process.env.T3_ACP_EMIT_XAI_MODEL_CHANGED_ON_SET_MODEL === "1";
+const effectiveReasoningOnSetModel = process.env.T3_ACP_EFFECTIVE_REASONING_ON_SET_MODEL?.trim();
+const padGrokModelIds = process.env.T3_ACP_PAD_GROK_MODEL_IDS === "1";
+const requestedGrokMockAltContextTokens = Number(
+  process.env.T3_ACP_GROK_MOCK_ALT_CONTEXT_TOKENS ?? "262144",
+);
+const grokMockAltContextTokens =
+  Number.isSafeInteger(requestedGrokMockAltContextTokens) && requestedGrokMockAltContextTokens > 0
+    ? requestedGrokMockAltContextTokens
+    : 262_144;
+const supportsImages = process.env.T3_ACP_SUPPORTS_IMAGES === "1";
+const failAuthentication = process.env.T3_ACP_FAIL_AUTHENTICATION === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
@@ -40,6 +60,7 @@ const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
+const promptMetadataModelId = process.env.T3_ACP_PROMPT_METADATA_MODEL_ID?.trim();
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
@@ -278,18 +299,36 @@ function modeState(): AcpSchema.SessionModeState {
   };
 }
 
-const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
-  { modelId: "grok-build", name: "Grok Build" },
-  { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
-];
+const grokReasoningEfforts = [
+  { id: "low", value: "low", label: "Low", default: false },
+  { id: "medium", value: "medium", label: "Medium", default: true },
+  { id: "high", value: "high", label: "High", default: false },
+] as const;
+
+function grokAcpModels(): ReadonlyArray<AcpSchema.ModelInfo> {
+  return ["grok-build", "grok-mock-alt"].map((modelId) => {
+    const catalogModelId = padGrokModelIds ? ` ${modelId} ` : modelId;
+    return {
+      modelId: catalogModelId,
+      name: modelId === "grok-build" ? "Grok Build" : "Grok Mock Alt",
+      _meta: {
+        supportsReasoningEffort: true,
+        reasoningEffort: currentReasoning,
+        reasoningEfforts: grokReasoningEfforts,
+        totalContextTokens: modelId === "grok-mock-alt" ? grokMockAltContextTokens : 262_144,
+      },
+    };
+  });
+}
 
 function modelState(): AcpSchema.SessionModelState {
-  const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
+  const models = grokAcpModels();
+  const modelId = models.some((model) => model.modelId === currentModelId)
     ? currentModelId
     : "grok-build";
   return {
     currentModelId: modelId,
-    availableModels: grokAcpModels,
+    availableModels: models,
   };
 }
 
@@ -302,12 +341,19 @@ const program = Effect.gen(function* () {
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
       return {
         protocolVersion: 1,
-        agentCapabilities: { loadSession: true },
+        agentCapabilities: {
+          loadSession: true,
+          ...(supportsImages ? { promptCapabilities: { image: true } } : {}),
+        },
       };
     }),
   );
 
-  yield* agent.handleAuthenticate(() => Effect.succeed({}));
+  yield* agent.handleAuthenticate(() =>
+    failAuthentication
+      ? Effect.fail(AcpError.AcpRequestError.authRequired("Mock authentication required"))
+      : Effect.succeed({}),
+  );
 
   yield* agent.handleCreateSession(() =>
     Effect.succeed({
@@ -382,7 +428,10 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
+      const catalogModel = grokAcpModels().find(
+        (model) => model.modelId.trim() === request.modelId.trim(),
+      );
+      if (!catalogModel) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {
@@ -391,7 +440,28 @@ const program = Effect.gen(function* () {
           },
         );
       }
-      currentModelId = request.modelId;
+      currentModelId = catalogModel.modelId;
+      if (
+        request._meta &&
+        typeof request._meta.reasoningEffort === "string" &&
+        request._meta.reasoningEffort.trim()
+      ) {
+        currentReasoning = request._meta.reasoningEffort.trim();
+      }
+      if (emitXAiModelChangedOnSetModel) {
+        currentReasoning = effectiveReasoningOnSetModel || currentReasoning;
+        writeJsonRpcNotification("_x.ai/session_notification", {
+          method: "x.ai/session_notification",
+          params: {
+            sessionId: String(request.sessionId ?? sessionId),
+            update: {
+              sessionUpdate: "model_changed",
+              model_id: currentModelId,
+              reasoning_effort: currentReasoning,
+            },
+          },
+        });
+      }
       return {};
     }),
   );
@@ -846,6 +916,56 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
+      if (emitXAiModelChanged) {
+        currentModelId = "grok-mock-alt";
+        currentReasoning = "high";
+        writeJsonRpcNotification("_x.ai/session_notification", {
+          method: "x.ai/session_notification",
+          params: {
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "model_changed",
+              model_id: currentModelId,
+              reasoning_effort: currentReasoning,
+            },
+          },
+        });
+      }
+
+      if (emitConfigOptionUpdate) {
+        currentReasoning = "high";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "config_option_update",
+            configOptions: configOptions(),
+          },
+        });
+      }
+
+      if (emitSessionInfoUpdate) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "session_info_update",
+            title: "Grok investigated the workspace",
+            updatedAt: "2026-08-23T12:00:00.000Z",
+          },
+        });
+      }
+
+      if (emitUsageUpdate) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            used: 1_024,
+            size: 262_144,
+            cost: { amount: 0.02, currency: "USD" },
+          },
+        });
+      }
+
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,
         update: {
@@ -865,6 +985,16 @@ const program = Effect.gen(function* () {
         },
       });
 
+      if (emitThoughtChunks) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "checking the workspace" },
+          },
+        });
+      }
+
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,
         update: {
@@ -873,7 +1003,60 @@ const program = Effect.gen(function* () {
         },
       });
 
-      return { stopReason: "end_turn" };
+      return {
+        stopReason: "end_turn",
+        ...(emitPromptUsage
+          ? {
+              usage: {
+                inputTokens: 900,
+                outputTokens: 124,
+                totalTokens: 1_024,
+                cachedReadTokens: 300,
+                thoughtTokens: 24,
+              },
+            }
+          : {}),
+        ...(emitXAiPromptMetadata
+          ? {
+              _meta: {
+                sessionId: requestedSessionId,
+                requestId: promptIdFromRequestMeta(request) ?? "mock-prompt-1",
+                promptId: promptIdFromRequestMeta(request) ?? "mock-prompt-1",
+                totalTokens: 2_048,
+                modelId: promptMetadataModelId || currentModelId,
+                inputTokens: 900,
+                outputTokens: 124,
+                cachedReadTokens: 300,
+                reasoningTokens: 24,
+                usage: {
+                  inputTokens: 1_900,
+                  outputTokens: 148,
+                  totalTokens: 2_048,
+                  cachedReadTokens: 600,
+                  cacheCreationTokens: 50,
+                  reasoningTokens: 48,
+                  modelCalls: 2,
+                  apiDurationMs: 800,
+                  costUsdTicks: 125_000_000,
+                  modelUsage: {
+                    [promptMetadataModelId || currentModelId]: {
+                      inputTokens: 1_900,
+                      outputTokens: 148,
+                      totalTokens: 2_048,
+                      cachedReadTokens: 600,
+                      cacheCreationTokens: 50,
+                      reasoningTokens: 48,
+                      modelCalls: 2,
+                      apiDurationMs: 800,
+                      costUsdTicks: 125_000_000,
+                    },
+                  },
+                  numTurns: 2,
+                },
+              },
+            }
+          : {}),
+      };
     }),
   );
 

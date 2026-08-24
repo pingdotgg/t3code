@@ -5,7 +5,15 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
-import type { ToolLifecycleItemType } from "@t3tools/contracts";
+import type {
+  ProviderInteractionMode,
+  RuntimeMode,
+  ToolLifecycleItemType,
+} from "@t3tools/contracts";
+
+const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
+const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
+const ACP_APPROVAL_MODE_ALIASES = ["ask"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -56,6 +64,74 @@ export interface AcpSessionModeState {
   readonly availableModes: ReadonlyArray<AcpSessionMode>;
 }
 
+function normalizeModeSearchText(mode: AcpSessionMode): string {
+  return [mode.id, mode.name, mode.description]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function findModeByAliases(
+  modes: ReadonlyArray<AcpSessionMode>,
+  aliases: ReadonlyArray<string>,
+): AcpSessionMode | undefined {
+  const normalizedAliases = aliases.map((alias) => alias.toLowerCase());
+  for (const alias of normalizedAliases) {
+    const exact = modes.find((mode) => {
+      const id = mode.id.toLowerCase();
+      const name = mode.name.toLowerCase();
+      return id === alias || name === alias;
+    });
+    if (exact) {
+      return exact;
+    }
+  }
+  for (const alias of normalizedAliases) {
+    const partial = modes.find((mode) => normalizeModeSearchText(mode).includes(alias));
+    if (partial) {
+      return partial;
+    }
+  }
+  return undefined;
+}
+
+function isPlanMode(mode: AcpSessionMode): boolean {
+  return findModeByAliases([mode], ACP_PLAN_MODE_ALIASES) !== undefined;
+}
+
+export function resolveAcpSessionModeId(input: {
+  readonly interactionMode: ProviderInteractionMode | undefined;
+  readonly runtimeMode: RuntimeMode;
+  readonly modeState: AcpSessionModeState | undefined;
+}): string | undefined {
+  const modeState = input.modeState;
+  if (!modeState) {
+    return undefined;
+  }
+
+  if (input.interactionMode === "plan") {
+    return findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
+  }
+
+  if (input.runtimeMode === "approval-required") {
+    return (
+      findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
+      findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
+      modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
+      modeState.currentModeId
+    );
+  }
+
+  return (
+    findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
+    findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
+    modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
+    modeState.currentModeId
+  );
+}
+
 export interface AcpToolCallState {
   readonly toolCallId: string;
   readonly kind?: string;
@@ -80,6 +156,9 @@ export interface AcpPermissionRequest {
   readonly toolCall?: AcpToolCallState;
 }
 
+export type AcpTextItemType = "assistant_message" | "reasoning";
+export type AcpTextStreamKind = "assistant_text" | "reasoning_text";
+
 export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ModeChanged";
@@ -88,10 +167,12 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "AssistantItemStarted";
       readonly itemId: string;
+      readonly itemType: AcpTextItemType;
     }
   | {
       readonly _tag: "AssistantItemCompleted";
       readonly itemId: string;
+      readonly itemType: AcpTextItemType;
     }
   | {
       readonly _tag: "PlanUpdated";
@@ -106,7 +187,21 @@ export type AcpParsedSessionEvent =
   | {
       readonly _tag: "ContentDelta";
       readonly itemId?: string;
+      readonly itemType: AcpTextItemType;
+      readonly streamKind: AcpTextStreamKind;
       readonly text: string;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "SessionInfoUpdated";
+      readonly title: string;
+      readonly updatedAt?: string;
+      readonly rawPayload: unknown;
+    }
+  | {
+      readonly _tag: "UsageUpdated";
+      readonly usedTokens: number;
+      readonly maxTokens?: number;
       readonly rawPayload: unknown;
     };
 
@@ -507,11 +602,13 @@ export function syntheticLoadSessionResponseFromInitialize(
 
 export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotification): {
   readonly modeId?: string;
+  readonly configOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
   readonly events: ReadonlyArray<AcpParsedSessionEvent>;
 } {
   const upd = params.update;
   const events: Array<AcpParsedSessionEvent> = [];
   let modeId: string | undefined;
+  let configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined;
 
   switch (upd.sessionUpdate) {
     case "current_mode_update": {
@@ -522,6 +619,32 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           modeId,
         });
       }
+      break;
+    }
+    case "config_option_update": {
+      configOptions = upd.configOptions;
+      break;
+    }
+    case "session_info_update": {
+      const title = upd.title?.trim();
+      if (title) {
+        const updatedAt = upd.updatedAt?.trim();
+        events.push({
+          _tag: "SessionInfoUpdated",
+          title,
+          ...(updatedAt ? { updatedAt } : {}),
+          rawPayload: params,
+        });
+      }
+      break;
+    }
+    case "usage_update": {
+      events.push({
+        _tag: "UsageUpdated",
+        usedTokens: upd.used,
+        ...(upd.size > 0 ? { maxTokens: upd.size } : {}),
+        rawPayload: params,
+      });
       break;
     }
     case "plan": {
@@ -564,10 +687,14 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       }
       break;
     }
-    case "agent_message_chunk": {
+    case "agent_message_chunk":
+    case "agent_thought_chunk": {
       if (upd.content.type === "text" && upd.content.text.length > 0) {
+        const isReasoning = upd.sessionUpdate === "agent_thought_chunk";
         events.push({
           _tag: "ContentDelta",
+          itemType: isReasoning ? "reasoning" : "assistant_message",
+          streamKind: isReasoning ? "reasoning_text" : "assistant_text",
           text: upd.content.text,
           rawPayload: params,
         });
@@ -578,5 +705,9 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       break;
   }
 
-  return { ...(modeId !== undefined ? { modeId } : {}), events };
+  return {
+    ...(modeId !== undefined ? { modeId } : {}),
+    ...(configOptions !== undefined ? { configOptions } : {}),
+    events,
+  };
 }

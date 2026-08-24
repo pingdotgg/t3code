@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo } from "react";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   CommandId,
@@ -40,7 +41,10 @@ import { setPendingConnectionError } from "../state/use-remote-environment-regis
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
+import { resolveMobileThreadInteractionMode } from "./thread-interaction-mode";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
+import { useEnvironmentServerConfig } from "./entities";
+import { mobilePreferencesAtom } from "./preferences";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -78,6 +82,12 @@ export function useThreadComposerState() {
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const planModePreferenceLoaded = AsyncResult.isSuccess(preferences);
+  const planModeEnabled = planModePreferenceLoaded && preferences.value.planModeEnabled === true;
+  const selectedThreadServerConfig = useEnvironmentServerConfig(
+    selectedThreadShell?.environmentId ?? null,
+  );
 
   useEffect(() => {
     ensureComposerDraftsLoaded();
@@ -102,7 +112,16 @@ export function useThreadComposerState() {
   const selectedThread = selectedThreadDetail ?? selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
-  const interactionMode = selectedDraft?.interactionMode ?? selectedThread?.interactionMode ?? null;
+  const interactionMode = selectedThread
+    ? resolveMobileThreadInteractionMode({
+        preferenceLoaded: planModePreferenceLoaded,
+        planModeEnabled,
+        providers: selectedThreadServerConfig?.providers ?? [],
+        modelSelection,
+        preferredMode: selectedDraft?.interactionMode,
+        fallbackMode: selectedThread.interactionMode,
+      })
+    : null;
 
   const selectedThreadSessionActivity = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
@@ -148,6 +167,7 @@ export function useThreadComposerState() {
 
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
+    const modelSelection = draft.modelSelection ?? thread.modelSelection;
     // Enqueue publishes the queued atom synchronously (the durable write
     // happens behind it), so clearing the draft here gives send feedback on
     // the tap frame instead of after file I/O. If the write fails the message
@@ -160,9 +180,16 @@ export function useThreadComposerState() {
       commandId: CommandId.make(metadata.commandId),
       text,
       attachments,
-      modelSelection: draft.modelSelection ?? thread.modelSelection,
+      modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      interactionMode: draft.interactionMode ?? thread.interactionMode,
+      interactionMode: resolveMobileThreadInteractionMode({
+        preferenceLoaded: planModePreferenceLoaded,
+        planModeEnabled,
+        providers: selectedThreadServerConfig?.providers ?? [],
+        modelSelection,
+        preferredMode: draft.interactionMode,
+        fallbackMode: thread.interactionMode,
+      }),
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey);
@@ -178,7 +205,13 @@ export function useThreadComposerState() {
       );
     });
     return messageId;
-  }, [selectedThreadDetail, selectedThreadShell]);
+  }, [
+    planModeEnabled,
+    planModePreferenceLoaded,
+    selectedThreadDetail,
+    selectedThreadServerConfig,
+    selectedThreadShell,
+  ]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {

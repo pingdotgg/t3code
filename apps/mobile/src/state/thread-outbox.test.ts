@@ -10,6 +10,7 @@ import {
 import { AtomRegistry } from "effect/unstable/reactivity";
 
 import {
+  completeThreadOutboxDelivery,
   decodeQueuedThreadMessage,
   encodeQueuedThreadMessage,
   groupQueuedThreadMessages,
@@ -124,6 +125,89 @@ describe("thread outbox", () => {
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       }),
     ).toBe(false);
+  });
+
+  it("acknowledges a successful draft selection before removing its outbox row", async () => {
+    const order: string[] = [];
+
+    await expect(
+      completeThreadOutboxDelivery({
+        deliverySucceeded: true,
+        retry: false,
+        acknowledgeDraftSelection: async () => {
+          order.push("acknowledge");
+        },
+        onAcknowledgeError: () => {
+          order.push("acknowledge-error");
+        },
+        removeMessage: async () => {
+          order.push("remove");
+        },
+      }),
+    ).resolves.toBe(true);
+    expect(order).toEqual(["acknowledge", "remove"]);
+  });
+
+  it("keeps a delivered outbox row when draft acknowledgement fails", async () => {
+    const order: string[] = [];
+    const error = new Error("draft storage unavailable");
+
+    await expect(
+      completeThreadOutboxDelivery({
+        deliverySucceeded: true,
+        retry: false,
+        acknowledgeDraftSelection: async () => {
+          order.push("acknowledge");
+          throw error;
+        },
+        onAcknowledgeError: (received) => {
+          expect(received).toBe(error);
+          order.push("acknowledge-error");
+        },
+        removeMessage: async () => {
+          order.push("remove");
+        },
+      }),
+    ).resolves.toBe(false);
+    expect(order).toEqual(["acknowledge", "acknowledge-error"]);
+  });
+
+  it("does not acknowledge discarded or retryable delivery failures", async () => {
+    const discardedOrder: string[] = [];
+    await expect(
+      completeThreadOutboxDelivery({
+        deliverySucceeded: false,
+        retry: false,
+        acknowledgeDraftSelection: async () => {
+          discardedOrder.push("acknowledge");
+        },
+        onAcknowledgeError: () => {
+          discardedOrder.push("acknowledge-error");
+        },
+        removeMessage: async () => {
+          discardedOrder.push("remove");
+        },
+      }),
+    ).resolves.toBe(true);
+    expect(discardedOrder).toEqual(["remove"]);
+
+    const retryOrder: string[] = [];
+    await expect(
+      completeThreadOutboxDelivery({
+        deliverySucceeded: false,
+        retry: true,
+        acknowledgeDraftSelection: async () => {
+          retryOrder.push("acknowledge");
+        },
+        onAcknowledgeError: () => {
+          retryOrder.push("acknowledge-error");
+        },
+        removeMessage: async () => {
+          retryOrder.push("remove");
+        },
+      }),
+    ).resolves.toBe(false);
+    expect(retryOrder).toEqual([]);
   });
 
   it("backs off queued delivery retries and caps them at sixteen seconds", () => {

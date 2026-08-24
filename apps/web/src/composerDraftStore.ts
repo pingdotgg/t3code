@@ -442,6 +442,11 @@ interface ComposerDraftStoreState {
       replaceOptions?: boolean;
     },
   ) => void;
+  /** Removes the exact per-thread selection accepted by a successful turn. */
+  acknowledgeModelSelection: (
+    threadRef: ComposerThreadTarget,
+    modelSelection: ModelSelection,
+  ) => void;
   /** Replace the model options for one or more providers in the draft. */
   setModelOptions: (
     threadRef: ComposerThreadTarget,
@@ -562,14 +567,21 @@ function providerSelectionsFromModelSelection(
   return { [modelSelection.instanceId]: options };
 }
 
-function modelSelectionByProviderToOptions(
-  map: Partial<Record<string, ModelSelection>> | null | undefined,
-): ProviderOptionSelectionsByProvider | null {
-  if (!map) return null;
-  const result: ProviderOptionSelectionsByProvider = {};
-  for (const [provider, selection] of Object.entries(map)) {
-    if (selection?.options && selection.options.length > 0) {
-      result[provider] = selection.options;
+function mergeComposerModelOptions(input: {
+  draftSelections: Partial<Record<ProviderInstanceId, ModelSelection>> | null | undefined;
+  threadSelection: ModelSelection | null | undefined;
+  projectSelection: ModelSelection | null | undefined;
+}): ProviderOptionSelectionsByProvider | null {
+  const result: ProviderOptionSelectionsByProvider = {
+    ...(providerSelectionsFromModelSelection(input.projectSelection) ?? {}),
+    ...(providerSelectionsFromModelSelection(input.threadSelection) ?? {}),
+  };
+  for (const [instanceId, selection] of Object.entries(input.draftSelections ?? {})) {
+    const options = selection?.options;
+    if (options && options.length > 0) {
+      result[instanceId] = options;
+    } else {
+      delete result[instanceId];
     }
   }
   return Object.keys(result).length > 0 ? result : null;
@@ -1057,11 +1069,11 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
       ))
     : baseModel;
-  const modelOptions =
-    modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
-    providerSelectionsFromModelSelection(input.threadModelSelection) ??
-    providerSelectionsFromModelSelection(input.projectModelSelection) ??
-    null;
+  const modelOptions = mergeComposerModelOptions({
+    draftSelections: input.draft?.modelSelectionByProvider,
+    threadSelection: input.threadModelSelection,
+    projectSelection: input.projectModelSelection,
+  });
 
   return {
     selectedModel,
@@ -2751,6 +2763,41 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...base,
               modelSelectionByProvider: nextMap,
               activeProvider: nextActiveProvider,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        acknowledgeModelSelection: (threadRef, modelSelection) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (
+              !current ||
+              !Equal.equals(
+                current.modelSelectionByProvider[modelSelection.instanceId],
+                modelSelection,
+              )
+            ) {
+              return state;
+            }
+            const nextMap = { ...current.modelSelectionByProvider };
+            delete nextMap[modelSelection.instanceId];
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              modelSelectionByProvider: nextMap,
+              activeProvider:
+                current.activeProvider === modelSelection.instanceId
+                  ? null
+                  : current.activeProvider,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {

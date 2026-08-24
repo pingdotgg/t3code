@@ -65,6 +65,45 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  it.effect("forwards metadata with session model changes", () => {
+    const requestEvents: Array<AcpSessionRuntime.AcpSessionRequestLogEvent> = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.setSessionModel("grok-mock-alt", {
+        reasoningEffort: "low",
+      });
+
+      const setModelStarted = requestEvents.find(
+        (event) => event.method === "session/set_model" && event.status === "started",
+      );
+      expect(setModelStarted?.payload).toEqual({
+        sessionId: "mock-session-1",
+        modelId: "grok-mock-alt",
+        _meta: { reasoningEffort: "low" },
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              requestEvents.push(event);
+            }),
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    );
+  });
+
   it.effect("starts a session, prompts, and emits normalized events against the mock agent", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
@@ -321,6 +360,122 @@ describe("AcpSessionRuntime", () => {
             },
           },
           cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect("segments ACP thought chunks separately from assistant messages", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+
+      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 7)));
+      expect(notes.map((note) => note._tag)).toEqual([
+        "PlanUpdated",
+        "AssistantItemStarted",
+        "ContentDelta",
+        "AssistantItemCompleted",
+        "AssistantItemStarted",
+        "ContentDelta",
+        "AssistantItemCompleted",
+      ]);
+      expect(notes[1]).toMatchObject({
+        _tag: "AssistantItemStarted",
+        itemType: "reasoning",
+      });
+      expect(notes[2]).toMatchObject({
+        _tag: "ContentDelta",
+        itemType: "reasoning",
+        streamKind: "reasoning_text",
+      });
+      expect(notes[4]).toMatchObject({
+        _tag: "AssistantItemStarted",
+        itemType: "assistant_message",
+      });
+      expect(notes[5]).toMatchObject({
+        _tag: "ContentDelta",
+        itemType: "assistant_message",
+        streamKind: "assistant_text",
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: { T3_ACP_EMIT_THOUGHT_CHUNKS: "1" },
+          },
+          cwd: process.cwd(),
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+          authMethodId: "test",
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect("refreshes config and emits standard ACP metadata and usage updates", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+      yield* runtime.setConfigOption("model", "gpt-5.4");
+      yield* runtime.setConfigOption("reasoning", "low");
+
+      yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+
+      expect(yield* runtime.getConfigOptions).toMatchObject([
+        { id: "mode", currentValue: "ask" },
+        { id: "model", currentValue: "gpt-5.4" },
+        { id: "reasoning", currentValue: "high" },
+        { id: "context", currentValue: "272k" },
+        { id: "fast", currentValue: "false" },
+      ]);
+      const notes = Array.from(yield* Stream.runCollect(Stream.take(runtime.getEvents(), 6)));
+      expect(notes.map((note) => note._tag)).toEqual([
+        "SessionInfoUpdated",
+        "UsageUpdated",
+        "PlanUpdated",
+        "AssistantItemStarted",
+        "ContentDelta",
+        "AssistantItemCompleted",
+      ]);
+      expect(notes[0]).toMatchObject({
+        _tag: "SessionInfoUpdated",
+        title: "Grok investigated the workspace",
+      });
+      expect(notes[1]).toMatchObject({
+        _tag: "UsageUpdated",
+        usedTokens: 1_024,
+        maxTokens: 262_144,
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_EMIT_CONFIG_OPTION_UPDATE: "1",
+              T3_ACP_EMIT_SESSION_INFO_UPDATE: "1",
+              T3_ACP_EMIT_USAGE_UPDATE: "1",
+            },
+          },
+          cwd: process.cwd(),
+          clientCapabilities: {
+            _meta: { parameterizedModelPicker: true },
+          },
           clientInfo: { name: "t3-test", version: "0.0.0" },
           authMethodId: "test",
         }),

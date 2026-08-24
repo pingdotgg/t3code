@@ -10,9 +10,102 @@ import {
   getProviderOptionDescriptors,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
+  modelChangeRequiresNewThread,
   normalizeCustomModelSlug,
   normalizeModelSlug,
+  providerInteractionModeControlsEnabled,
 } from "./model.ts";
+
+describe("provider interaction mode controls", () => {
+  it("requires both the preference and the selected provider capability", () => {
+    const grokInstanceId = ProviderInstanceId.make("grok");
+    const providers = [
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        showInteractionModeToggle: true,
+      },
+      { instanceId: grokInstanceId, showInteractionModeToggle: false },
+    ];
+
+    expect(
+      providerInteractionModeControlsEnabled({
+        planModeEnabled: true,
+        providers,
+        modelSelection: { instanceId: grokInstanceId },
+      }),
+    ).toBe(false);
+    expect(
+      providerInteractionModeControlsEnabled({
+        planModeEnabled: false,
+        providers: [],
+        modelSelection: { instanceId: ProviderInstanceId.make("codex") },
+      }),
+    ).toBe(false);
+    expect(
+      providerInteractionModeControlsEnabled({
+        planModeEnabled: true,
+        providers: [],
+        modelSelection: { instanceId: ProviderInstanceId.make("codex") },
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("model session compatibility", () => {
+  const instanceId = ProviderInstanceId.make("grok");
+  const providers = [
+    {
+      instanceId,
+      models: [
+        {
+          slug: "grok-build",
+          name: "Grok Build",
+          isCustom: false,
+          sessionCompatibilityGroup: "grok-stock",
+          capabilities: null,
+        },
+        {
+          slug: "grok-build-plan",
+          name: "Grok Build Plan",
+          isCustom: false,
+          sessionCompatibilityGroup: "grok-stock",
+          capabilities: null,
+        },
+        {
+          slug: "grok-codex",
+          name: "Grok Codex",
+          isCustom: false,
+          sessionCompatibilityGroup: "grok-strict:codex",
+          capabilities: null,
+        },
+      ],
+    },
+  ];
+
+  const requiresNewThread = (nextModel: string, hasConversationHistory: boolean) =>
+    modelChangeRequiresNewThread({
+      providers,
+      currentModelSelection: { instanceId, model: "grok-build" },
+      nextModelSelection: { instanceId, model: nextModel },
+      hasConversationHistory,
+    });
+
+  it("allows stock Grok harness changes after conversation history", () => {
+    expect(requiresNewThread("grok-build-plan", true)).toBe(false);
+  });
+
+  it("requires a new thread when changing to a strict harness after conversation history", () => {
+    expect(requiresNewThread("grok-codex", true)).toBe(true);
+  });
+
+  it("allows strict harness changes before the first turn", () => {
+    expect(requiresNewThread("grok-codex", false)).toBe(false);
+  });
+
+  it("allows changes when either model has unknown compatibility metadata", () => {
+    expect(requiresNewThread("custom-grok-model", true)).toBe(false);
+  });
+});
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [

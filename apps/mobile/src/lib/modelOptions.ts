@@ -1,11 +1,14 @@
 import type {
   ModelCapabilities,
   ModelSelection,
+  OrchestrationThreadShell,
+  ServerProvider,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  modelChangeRequiresNewThread,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -19,6 +22,7 @@ export type ModelOption = {
   readonly isLegacy: boolean;
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
+  readonly disabledReason?: string;
 };
 
 export type ProviderGroup = {
@@ -26,6 +30,32 @@ export type ProviderGroup = {
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
 };
+
+export function threadShellHasConversationHistory(
+  thread: Pick<OrchestrationThreadShell, "latestTurn" | "latestUserMessageAt">,
+): boolean {
+  return thread.latestTurn !== null || thread.latestUserMessageAt !== null;
+}
+
+export function markModelOptionsRequiringNewThread(input: {
+  readonly options: ReadonlyArray<ModelOption>;
+  readonly providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "models" | "requiresNewThreadForModelChange">
+  >;
+  readonly currentModelSelection: ModelSelection;
+  readonly hasConversationHistory: boolean;
+}): ReadonlyArray<ModelOption> {
+  return input.options.map((option) =>
+    modelChangeRequiresNewThread({
+      providers: input.providers,
+      currentModelSelection: input.currentModelSelection,
+      nextModelSelection: option.selection,
+      hasConversationHistory: input.hasConversationHistory,
+    })
+      ? { ...option, disabledReason: "Start a new thread to use this model." }
+      : option,
+  );
+}
 
 function providerDisplayLabel(provider: {
   readonly displayName?: string | undefined;

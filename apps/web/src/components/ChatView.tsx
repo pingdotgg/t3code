@@ -41,6 +41,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
+  providerInteractionModeControlsEnabled,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
@@ -332,9 +333,12 @@ import {
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveThreadMetadataUpdateForNextTurn,
+  resolveProviderInteractionModeForDispatch,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  snapshotDraftModelSelectionForSend,
+  shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
   waitForStartedServerThread,
@@ -1347,6 +1351,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const acknowledgeComposerDraftModelSelection = useComposerDraftStore(
+    (store) => store.acknowledgeModelSelection,
+  );
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
@@ -2260,6 +2267,15 @@ function ChatViewContent(props: ChatViewProps) {
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const selectedProviderInstanceId =
+    providerStatuses.find((status) => status.instanceId === selectedProviderByThreadId)
+      ?.instanceId ?? null;
+  const activeProviderInstanceId =
+    selectedProviderInstanceId ??
+    activeThread?.session?.providerInstanceId ??
+    activeThread?.modelSelection.instanceId ??
+    activeProject?.defaultModelSelection?.instanceId ??
+    null;
   const unlockedSelectedProvider = resolveSelectableProvider(
     providerStatuses,
     selectedProviderByThreadId ?? threadProvider,
@@ -2356,11 +2372,15 @@ function ChatViewContent(props: ChatViewProps) {
       null
     );
   }, [activeLatestTurn?.turnId, activePlan]);
-  const showPlanFollowUpPrompt =
-    pendingUserInputs.length === 0 &&
-    interactionMode === "plan" &&
-    latestTurnSettled &&
-    hasActionableProposedPlan(activeProposedPlan);
+  const showPlanFollowUpPrompt = shouldShowPlanFollowUpPrompt({
+    pendingUserInputCount: pendingUserInputs.length,
+    interactionMode,
+    latestTurnSettled,
+    hasActionablePlan: hasActionableProposedPlan(activeProposedPlan),
+    planModeEnabled: settings.planModeEnabled,
+    providers: providerStatuses,
+    modelSelection: activeProviderInstanceId ? { instanceId: activeProviderInstanceId } : null,
+  });
   const activePendingApproval = pendingApprovals[0] ?? null;
   const {
     beginLocalDispatch,
@@ -2710,15 +2730,6 @@ function ChatViewContent(props: ChatViewProps) {
   // `codex_personal`) surfaces its own status/message in the banner rather
   // than the default Codex's. Falls back to first-match-by-kind when no
   // saved instance id is available or the instance no longer exists.
-  const selectedProviderInstanceId =
-    providerStatuses.find((status) => status.instanceId === selectedProviderByThreadId)
-      ?.instanceId ?? null;
-  const activeProviderInstanceId =
-    selectedProviderInstanceId ??
-    activeThread?.session?.providerInstanceId ??
-    activeThread?.modelSelection.instanceId ??
-    activeProject?.defaultModelSelection?.instanceId ??
-    null;
   const activeProviderStatus = useMemo(() => {
     if (activeProviderInstanceId) {
       return (
@@ -5168,6 +5179,18 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
+    const draftModelSelectionForSend = snapshotDraftModelSelectionForSend(
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+      ctxSelectedModelSelection,
+    );
+    const selectedProviderSupportsInteractionMode = providerInteractionModeControlsEnabled({
+      planModeEnabled: settings.planModeEnabled,
+      providers: providerStatuses,
+      modelSelection: ctxSelectedModelSelection,
+    });
+    const interactionModeForSend = selectedProviderSupportsInteractionMode
+      ? interactionMode
+      : DEFAULT_INTERACTION_MODE;
     const composerImages =
       directAnnotation?.image &&
       !sendContextImages.some((image) => image.id === directAnnotation.image?.id)
@@ -5224,13 +5247,14 @@ function ChatViewContent(props: ChatViewProps) {
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
+        draftModelSelectionForSend,
       });
       return;
     }
-    // Legacy plan mode: /plan and /default only act when the beta flag is on;
-    // otherwise they send as plain text like any other message.
+    // Legacy plan mode: /plan and /default only act when the preference and
+    // selected provider support it. Otherwise they send as plain text.
     const standaloneSlashCommand =
-      settings.planModeEnabled &&
+      selectedProviderSupportsInteractionMode &&
       composerImages.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
@@ -5448,7 +5472,7 @@ function ChatViewContent(props: ChatViewProps) {
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
         runtimeMode,
-        interactionMode,
+        interactionMode: interactionModeForSend,
       });
       if (settingsResult._tag === "Failure") {
         failure = settingsResult;
@@ -5472,7 +5496,7 @@ function ChatViewContent(props: ChatViewProps) {
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
-                      interactionMode,
+                      interactionMode: interactionModeForSend,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
@@ -5506,7 +5530,7 @@ function ChatViewContent(props: ChatViewProps) {
           modelSelection: ctxSelectedModelSelection,
           titleSeed: title,
           runtimeMode,
-          interactionMode,
+          interactionMode: interactionModeForSend,
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },
@@ -5515,6 +5539,7 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        acknowledgeComposerDraftModelSelection(composerDraftTarget, draftModelSelectionForSend);
         acknowledgeActiveThreadWoke();
       }
     }
@@ -5753,9 +5778,11 @@ function ChatViewContent(props: ChatViewProps) {
     async ({
       text,
       interactionMode: nextInteractionMode,
+      draftModelSelectionForSend,
     }: {
       text: string;
       interactionMode: "default" | "plan";
+      draftModelSelectionForSend: ModelSelection;
     }) => {
       if (
         !activeThread ||
@@ -5783,6 +5810,12 @@ function ChatViewContent(props: ChatViewProps) {
         selectedPromptEffort: ctxSelectedPromptEffort,
         selectedModelSelection: ctxSelectedModelSelection,
       } = sendCtx;
+      const interactionModeForDispatch = resolveProviderInteractionModeForDispatch({
+        interactionMode: nextInteractionMode,
+        planModeEnabled: settings.planModeEnabled,
+        providers: providerStatuses,
+        modelSelection: ctxSelectedModelSelection,
+      });
 
       const threadIdForSend = activeThread.id;
       const messageIdForSend = newMessageId();
@@ -5834,7 +5867,7 @@ function ChatViewContent(props: ChatViewProps) {
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
         runtimeMode,
-        interactionMode: nextInteractionMode,
+        interactionMode: interactionModeForDispatch,
       });
       let failure: AtomCommandResult<unknown, unknown> | null =
         settingsResult._tag === "Failure" ? settingsResult : null;
@@ -5844,7 +5877,7 @@ function ChatViewContent(props: ChatViewProps) {
         // while the same-thread implementation turn is starting.
         setComposerDraftInteractionMode(
           scopeThreadRef(activeThread.environmentId, threadIdForSend),
-          nextInteractionMode,
+          interactionModeForDispatch,
         );
 
         const startResult = await startThreadTurn({
@@ -5860,8 +5893,8 @@ function ChatViewContent(props: ChatViewProps) {
             modelSelection: ctxSelectedModelSelection,
             titleSeed: activeThread.title,
             runtimeMode,
-            interactionMode: nextInteractionMode,
-            ...(nextInteractionMode === "default" && activeProposedPlan
+            interactionMode: interactionModeForDispatch,
+            ...(interactionModeForDispatch === "default" && activeProposedPlan
               ? {
                   sourceProposedPlan: {
                     threadId: activeThread.id,
@@ -5876,6 +5909,10 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       if (failure === null) {
+        acknowledgeComposerDraftModelSelection(
+          scopeThreadRef(activeThread.environmentId, threadIdForSend),
+          draftModelSelectionForSend,
+        );
         acknowledgeActiveThreadWoke();
         sendInFlightRef.current = false;
         return;
@@ -5897,6 +5934,7 @@ function ChatViewContent(props: ChatViewProps) {
     [
       activeThread,
       activeProposedPlan,
+      acknowledgeComposerDraftModelSelection,
       acknowledgeActiveThreadWoke,
       beginLocalDispatch,
       isConnecting,
@@ -5906,11 +5944,13 @@ function ChatViewContent(props: ChatViewProps) {
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       runtimeMode,
+      settings.planModeEnabled,
       setComposerDraftInteractionMode,
       setThreadError,
       startThreadTurn,
       environmentId,
       composerRef,
+      providerStatuses,
     ],
   );
 
@@ -6082,6 +6122,8 @@ function ChatViewContent(props: ChatViewProps) {
       const reason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeThread.session !== null,
+        hasConversationHistory:
+          activeThread.latestTurn !== null || activeThread.messages.length > 0,
         currentModelSelection: activeThread.modelSelection,
         currentProviderInstanceId: activeThread.session?.providerInstanceId ?? null,
         nextModelSelection: { instanceId, model },
@@ -6137,6 +6179,8 @@ function ChatViewContent(props: ChatViewProps) {
       const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
         providers: providerStatuses,
         hasStartedSession: activeThread.session !== null,
+        hasConversationHistory:
+          activeThread.latestTurn !== null || activeThread.messages.length > 0,
         currentModelSelection: activeThread.modelSelection,
         currentProviderInstanceId: activeThread.session?.providerInstanceId ?? null,
         nextModelSelection,

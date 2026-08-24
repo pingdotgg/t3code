@@ -225,6 +225,9 @@ describe("ProviderRuntimeIngestion", () => {
   async function createHarness(options?: {
     serverSettings?: Partial<ServerSettings>;
     threadTitle?: string;
+    threadModelSelection?: ProviderRuntimeTestThread["modelSelection"];
+    provider?: ProviderRuntimeEvent["provider"];
+    providerInstanceId?: ProviderRuntimeEvent["providerInstanceId"];
   }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
@@ -264,16 +267,18 @@ describe("ProviderRuntimeIngestion", () => {
     const dispatch = (command: OrchestrationCommand) => Effect.runPromise(engine.dispatch(command));
 
     const createdAt = "2026-01-01T00:00:00.000Z";
+    const threadModelSelection = options?.threadModelSelection ?? {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5-codex",
+    };
+    const providerDriver = options?.provider ?? ProviderDriverKind.make("codex");
     await dispatch({
       type: "project.create",
       commandId: CommandId.make("cmd-provider-project-create"),
       projectId: asProjectId("project-1"),
       title: "Provider Project",
       workspaceRoot,
-      defaultModelSelection: {
-        instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5-codex",
-      },
+      defaultModelSelection: threadModelSelection,
       createdAt,
     });
     await dispatch({
@@ -282,10 +287,7 @@ describe("ProviderRuntimeIngestion", () => {
       threadId: ThreadId.make("thread-1"),
       projectId: asProjectId("project-1"),
       title: options?.threadTitle ?? "Thread",
-      modelSelection: {
-        instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5-codex",
-      },
+      modelSelection: threadModelSelection,
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
       runtimeMode: "approval-required",
       branch: null,
@@ -299,7 +301,10 @@ describe("ProviderRuntimeIngestion", () => {
       session: {
         threadId: ThreadId.make("thread-1"),
         status: "ready",
-        providerName: "codex",
+        providerName: providerDriver,
+        ...(options?.providerInstanceId !== undefined
+          ? { providerInstanceId: options.providerInstanceId }
+          : {}),
         runtimeMode: "approval-required",
         activeTurnId: null,
         updatedAt: createdAt,
@@ -308,7 +313,10 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt,
     });
     provider.setSession({
-      provider: ProviderDriverKind.make("codex"),
+      provider: providerDriver,
+      ...(options?.providerInstanceId !== undefined
+        ? { providerInstanceId: options.providerInstanceId }
+        : {}),
       status: "ready",
       runtimeMode: "approval-required",
       threadId: ThreadId.make("thread-1"),
@@ -366,6 +374,120 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("turn failed");
+  });
+
+  it("persists provider-confirmed model selections from session configuration", async () => {
+    const grokInstanceId = ProviderInstanceId.make("grok");
+    const harness = await createHarness({
+      threadModelSelection: {
+        instanceId: grokInstanceId,
+        model: "grok-4.5",
+        options: [{ id: "reasoningEffort", value: "medium" }],
+      },
+      provider: ProviderDriverKind.make("grok"),
+      providerInstanceId: grokInstanceId,
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "session.configured",
+      eventId: asEventId("evt-session-configured-model"),
+      provider: ProviderDriverKind.make("grok"),
+      providerInstanceId: grokInstanceId,
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        config: {
+          model: "grok-4.6",
+          effort: "high",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("grok"),
+            model: "grok-4.6",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        },
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.modelSelection.model === "grok-4.6",
+    );
+    expect(thread.modelSelection).toEqual({
+      instanceId: "grok",
+      model: "grok-4.6",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
+  });
+
+  it("ignores session configuration without ownership of the thread's provider instance", async () => {
+    const currentInstanceId = ProviderInstanceId.make("grok_primary");
+    const retiredInstanceId = ProviderInstanceId.make("grok_retired");
+    const originalSelection = {
+      instanceId: currentInstanceId,
+      model: "grok-4.5",
+      options: [{ id: "reasoningEffort", value: "medium" }],
+    } as const;
+    const harness = await createHarness({
+      threadModelSelection: originalSelection,
+      provider: ProviderDriverKind.make("grok"),
+      providerInstanceId: currentInstanceId,
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "session.configured",
+      eventId: asEventId("evt-session-configured-wrong-emitter"),
+      provider: ProviderDriverKind.make("grok"),
+      providerInstanceId: retiredInstanceId,
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        config: {
+          modelSelection: {
+            instanceId: currentInstanceId,
+            model: "grok-4.6",
+          },
+        },
+      },
+    });
+    harness.emit({
+      type: "session.configured",
+      eventId: asEventId("evt-session-configured-retired-instance"),
+      provider: ProviderDriverKind.make("grok"),
+      providerInstanceId: retiredInstanceId,
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        config: {
+          modelSelection: {
+            instanceId: retiredInstanceId,
+            model: "grok-4.7",
+          },
+        },
+      },
+    });
+    harness.emit({
+      type: "session.configured",
+      eventId: asEventId("evt-session-configured-missing-instance"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        config: {
+          modelSelection: {
+            instanceId: currentInstanceId,
+            model: "grok-4.8",
+          },
+        },
+      },
+    });
+
+    await harness.drain();
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    );
+    expect(thread?.modelSelection).toEqual(originalSelection);
   });
 
   it("persists a usage-limit wait with provider reset grace", async () => {

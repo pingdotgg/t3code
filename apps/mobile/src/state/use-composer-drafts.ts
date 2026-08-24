@@ -18,6 +18,7 @@ import { DraftComposerImageAttachmentSchema } from "../lib/composer-image-schema
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
+import { modelSelectionsEqual } from "./thread-outbox-model";
 
 const COMPOSER_DRAFTS_SCHEMA_VERSION = 1;
 const COMPOSER_DRAFTS_DIRECTORY = "composer-drafts";
@@ -420,6 +421,27 @@ export function clearComposerDraftContentState(
   };
 }
 
+export function acknowledgeComposerDraftModelSelectionState(
+  current: Record<string, ComposerDraft>,
+  draftKey: string,
+  expected: ModelSelection,
+): Record<string, ComposerDraft> {
+  const existing = current[draftKey];
+  if (!existing?.modelSelection || !modelSelectionsEqual(existing.modelSelection, expected)) {
+    return current;
+  }
+  const { modelSelection: _modelSelection, ...draft } = existing;
+  if (isEmptyDraft(draft)) {
+    const next = { ...current };
+    delete next[draftKey];
+    return next;
+  }
+  return {
+    ...current,
+    [draftKey]: draft,
+  };
+}
+
 export function restoreComposerDraftSnapshotState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
@@ -593,6 +615,27 @@ export async function restoreComposerDraftSnapshot(
     draftKey,
     snapshot,
   );
+  appAtomRegistry.set(composerDraftsAtom, next);
+  await persistenceQueue.run(() => writePersistedComposerDrafts(next));
+}
+
+export async function acknowledgeComposerDraftModelSelection(
+  draftKey: string,
+  expected: ModelSelection,
+): Promise<void> {
+  ensureComposerDraftsLoaded();
+  if (loadPromise !== null) {
+    await loadPromise;
+  }
+  const current = appAtomRegistry.get(composerDraftsAtom);
+  const next = acknowledgeComposerDraftModelSelectionState(current, draftKey, expected);
+  if (next === current) {
+    return;
+  }
+  if (persistTimer !== null) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
   appAtomRegistry.set(composerDraftsAtom, next);
   await persistenceQueue.run(() => writePersistedComposerDrafts(next));
 }

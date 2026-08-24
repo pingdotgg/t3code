@@ -2,6 +2,7 @@ import { type GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -9,6 +10,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import { trimmedUnknownString } from "./AcpUnknownPayload.ts";
 import { makeXAiPromptCompletionRuntime } from "./XAiAcpExtension.ts";
 
 const GROK_API_KEY_ENV = "XAI_API_KEY";
@@ -17,6 +19,9 @@ const T3_CODE_OAUTH_REFERRER = "t3code";
 const GROK_AUTH_METHOD_API_KEY = "xai.api_key";
 const GROK_AUTH_METHOD_CACHED_TOKEN = "cached_token";
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
+const GROK_LEGACY_DEFAULT_MODEL_ID = "grok-build";
+const GROK_STOCK_SESSION_COMPATIBILITY_GROUP = "grok-stock";
+const GROK_STRICT_AGENT_TYPES = new Set(["codex", "grok-build-orchestrator"]);
 
 type GrokAcpRuntimeGrokSettings = Pick<GrokSettings, "binaryPath">;
 
@@ -78,31 +83,154 @@ export const makeGrokAcpRuntime = (
 
 export function resolveGrokAcpBaseModelId(model: string | null | undefined): string {
   const trimmed = model?.trim();
-  const base = trimmed && trimmed.length > 0 ? trimmed : "grok-build";
-  return normalizeModelSlug(base, GROK_DRIVER_KIND) ?? "grok-build";
+  const base = trimmed && trimmed.length > 0 ? trimmed : GROK_LEGACY_DEFAULT_MODEL_ID;
+  return normalizeModelSlug(base, GROK_DRIVER_KIND) ?? GROK_LEGACY_DEFAULT_MODEL_ID;
 }
 
-export function currentGrokModelIdFromSessionSetup(
+export function grokAcpSessionCompatibilityGroup(
+  agentType: string | undefined,
+): string | undefined {
+  if (!agentType) {
+    return undefined;
+  }
+  // Grok Build treats every non-strict harness, including custom names, as
+  // interchangeable. Strict harnesses can only switch to the same identity.
+  return GROK_STRICT_AGENT_TYPES.has(agentType)
+    ? `grok-strict:${agentType}`
+    : GROK_STOCK_SESSION_COMPATIBILITY_GROUP;
+}
+
+export interface GrokAcpReasoningEffortOption {
+  readonly value: string;
+  readonly label: string;
+  readonly description?: string;
+  readonly isDefault: boolean;
+}
+
+export interface GrokAcpModelMetadata {
+  readonly agentType: string | undefined;
+  readonly supportsReasoningEffort: boolean | undefined;
+  readonly reasoningEffort: string | undefined;
+  readonly reasoningEfforts: ReadonlyArray<GrokAcpReasoningEffortOption>;
+  readonly totalContextTokens: number | undefined;
+}
+
+export function parseGrokAcpModelMetadata(meta: unknown): GrokAcpModelMetadata {
+  if (!Predicate.isObject(meta)) {
+    return {
+      agentType: undefined,
+      supportsReasoningEffort: undefined,
+      reasoningEffort: undefined,
+      reasoningEfforts: [],
+      totalContextTokens: undefined,
+    };
+  }
+
+  const seen = new Set<string>();
+  const reasoningEfforts = Array.isArray(meta.reasoningEfforts)
+    ? meta.reasoningEfforts.flatMap((raw) => {
+        if (!Predicate.isObject(raw)) {
+          return [];
+        }
+        const value = trimmedUnknownString(raw.value);
+        if (!value || seen.has(value)) {
+          return [];
+        }
+        seen.add(value);
+        const description = trimmedUnknownString(raw.description);
+        return [
+          {
+            value,
+            label: trimmedUnknownString(raw.label) ?? value,
+            ...(description ? { description } : {}),
+            isDefault: raw.default === true,
+          } satisfies GrokAcpReasoningEffortOption,
+        ];
+      })
+    : [];
+  const totalContextTokens = meta.totalContextTokens;
+
+  return {
+    agentType: trimmedUnknownString(meta.agentType),
+    supportsReasoningEffort:
+      typeof meta.supportsReasoningEffort === "boolean" ? meta.supportsReasoningEffort : undefined,
+    reasoningEffort: trimmedUnknownString(meta.reasoningEffort),
+    reasoningEfforts,
+    totalContextTokens:
+      typeof totalContextTokens === "number" &&
+      Number.isSafeInteger(totalContextTokens) &&
+      totalContextTokens > 0
+        ? totalContextTokens
+        : undefined,
+  };
+}
+
+export interface GrokAcpModelSelectionState {
+  readonly modelId: string | undefined;
+  readonly reasoningEffort: string | undefined;
+}
+
+export interface GrokAcpSessionModelState extends GrokAcpModelSelectionState {
+  readonly totalContextTokens: number | undefined;
+}
+
+export function currentGrokModelSelectionFromSessionSetup(
   sessionSetupResult:
     | EffectAcpSchema.LoadSessionResponse
     | EffectAcpSchema.NewSessionResponse
     | EffectAcpSchema.ResumeSessionResponse,
-): string | undefined {
-  return sessionSetupResult.models?.currentModelId?.trim() || undefined;
+): GrokAcpSessionModelState {
+  const modelId = sessionSetupResult.models?.currentModelId?.trim() || undefined;
+  const currentModel = sessionSetupResult.models?.availableModels.find(
+    (model) => model.modelId.trim() === modelId,
+  );
+  const metadata = parseGrokAcpModelMetadata(currentModel?._meta);
+  return {
+    modelId,
+    reasoningEffort: metadata.reasoningEffort,
+    totalContextTokens: metadata.totalContextTokens,
+  };
 }
 
 export function applyGrokAcpModelSelection<E>(input: {
   readonly runtime: Pick<AcpSessionRuntime.AcpSessionRuntime["Service"], "setSessionModel">;
   readonly currentModelId: string | undefined;
+  readonly currentReasoningEffort: string | undefined;
   readonly requestedModelId: string | undefined;
+  readonly requestedReasoningEffort: string | undefined;
   readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
-}): Effect.Effect<string | undefined, E> {
-  const shouldSwitchModel =
-    input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
-  if (!shouldSwitchModel) {
-    return Effect.succeed(input.currentModelId);
+}): Effect.Effect<GrokAcpModelSelectionState, E> {
+  const requestedModelId = input.requestedModelId?.trim() || undefined;
+  const requestedReasoningEffort = input.requestedReasoningEffort?.trim() || undefined;
+  const targetModelId =
+    requestedModelId === GROK_LEGACY_DEFAULT_MODEL_ID
+      ? input.currentModelId
+      : (requestedModelId ?? input.currentModelId);
+  const modelChanged =
+    requestedModelId !== undefined &&
+    requestedModelId !== GROK_LEGACY_DEFAULT_MODEL_ID &&
+    requestedModelId !== input.currentModelId;
+  const effortChanged =
+    requestedReasoningEffort !== undefined &&
+    requestedReasoningEffort !== input.currentReasoningEffort;
+
+  if ((!modelChanged && !effortChanged) || targetModelId === undefined) {
+    return Effect.succeed({
+      modelId: input.currentModelId,
+      reasoningEffort: input.currentReasoningEffort,
+    });
   }
   return input.runtime
-    .setSessionModel(input.requestedModelId)
-    .pipe(Effect.mapError(input.mapError), Effect.as(input.requestedModelId));
+    .setSessionModel(
+      targetModelId,
+      requestedReasoningEffort ? { reasoningEffort: requestedReasoningEffort } : undefined,
+    )
+    .pipe(
+      Effect.mapError(input.mapError),
+      Effect.as({
+        modelId: targetModelId,
+        reasoningEffort:
+          requestedReasoningEffort ?? (modelChanged ? undefined : input.currentReasoningEffort),
+      }),
+    );
 }

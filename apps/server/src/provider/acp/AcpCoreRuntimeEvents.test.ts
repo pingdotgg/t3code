@@ -7,6 +7,8 @@ import {
   makeAcpPlanUpdatedEvent,
   makeAcpRequestOpenedEvent,
   makeAcpRequestResolvedEvent,
+  makeAcpThreadMetadataUpdatedEvent,
+  makeAcpThreadTokenUsageUpdatedEvent,
   makeAcpToolCallEvent,
 } from "./AcpCoreRuntimeEvents.ts";
 
@@ -163,6 +165,7 @@ describe("AcpCoreRuntimeEvents", () => {
         threadId: "thread-1" as never,
         turnId,
         itemId: "assistant:session-1:segment:0",
+        streamKind: "assistant_text",
         text: "hello",
         rawPayload: { sessionId: "session-1" },
       }),
@@ -181,6 +184,7 @@ describe("AcpCoreRuntimeEvents", () => {
         threadId: "thread-1" as never,
         turnId,
         itemId: "assistant:session-1:segment:0",
+        itemType: "assistant_message",
         lifecycle: "item.started",
       }),
     ).toMatchObject({
@@ -190,6 +194,55 @@ describe("AcpCoreRuntimeEvents", () => {
         itemType: "assistant_message",
         status: "inProgress",
       },
+    });
+
+    expect(
+      makeAcpContentDeltaEvent({
+        stamp,
+        provider: ProviderDriverKind.make("grok"),
+        threadId: "thread-1" as never,
+        turnId,
+        itemId: "reasoning:session-1:segment:1",
+        streamKind: "reasoning_text",
+        text: "thinking",
+        rawPayload: { sessionId: "session-1" },
+      }),
+    ).toMatchObject({
+      type: "content.delta",
+      payload: { streamKind: "reasoning_text", delta: "thinking" },
+    });
+
+    expect(
+      makeAcpThreadMetadataUpdatedEvent({
+        stamp,
+        provider: ProviderDriverKind.make("grok"),
+        threadId: "thread-1" as never,
+        turnId,
+        title: "Updated title",
+        updatedAt: "2026-08-23T12:00:00.000Z",
+        rawPayload: { sessionId: "session-1" },
+      }),
+    ).toMatchObject({
+      type: "thread.metadata.updated",
+      payload: {
+        name: "Updated title",
+        metadata: { updatedAt: "2026-08-23T12:00:00.000Z" },
+      },
+    });
+
+    expect(
+      makeAcpThreadTokenUsageUpdatedEvent({
+        stamp,
+        provider: ProviderDriverKind.make("grok"),
+        threadId: "thread-1" as never,
+        turnId,
+        usedTokens: 1_024,
+        maxTokens: 262_144,
+        rawPayload: { sessionId: "session-1" },
+      }),
+    ).toMatchObject({
+      type: "thread.token-usage.updated",
+      payload: { usage: { usedTokens: 1_024, maxTokens: 262_144 } },
     });
   });
 });

@@ -3,6 +3,7 @@ import {
   isProviderDriverKind,
   ProjectId,
   type ModelSelection,
+  type ProviderInteractionMode,
   type ProviderDriverKind,
   type ServerProvider,
   type ScopedProjectRef,
@@ -11,7 +12,11 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import {
+  type ComposerImageAttachment,
+  type ComposerThreadDraftState,
+  type DraftThreadState,
+} from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
@@ -21,11 +26,52 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
+import {
+  modelChangeRequiresNewThread,
+  providerInteractionModeControlsEnabled,
+} from "@t3tools/shared/model";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
+
+export function snapshotDraftModelSelectionForSend(
+  draft: ComposerThreadDraftState | null,
+  dispatchedSelection: ModelSelection,
+): ModelSelection {
+  return draft?.modelSelectionByProvider[dispatchedSelection.instanceId] ?? dispatchedSelection;
+}
+
+export function resolveProviderInteractionModeForDispatch(input: {
+  readonly interactionMode: ProviderInteractionMode;
+  readonly planModeEnabled: boolean;
+  readonly providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "showInteractionModeToggle">
+  >;
+  readonly modelSelection: Pick<ModelSelection, "instanceId"> | null | undefined;
+}): ProviderInteractionMode {
+  return providerInteractionModeControlsEnabled(input) ? input.interactionMode : "default";
+}
+
+export function shouldShowPlanFollowUpPrompt(input: {
+  readonly pendingUserInputCount: number;
+  readonly interactionMode: ProviderInteractionMode;
+  readonly latestTurnSettled: boolean;
+  readonly hasActionablePlan: boolean;
+  readonly planModeEnabled: boolean;
+  readonly providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "showInteractionModeToggle">
+  >;
+  readonly modelSelection: Pick<ModelSelection, "instanceId"> | null | undefined;
+}): boolean {
+  return (
+    input.pendingUserInputCount === 0 &&
+    resolveProviderInteractionModeForDispatch(input) === "plan" &&
+    input.latestTurnSettled &&
+    input.hasActionablePlan
+  );
+}
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -406,8 +452,11 @@ export function deriveLockedProvider(input: {
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {
-  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
+  providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "models" | "requiresNewThreadForModelChange">
+  >;
   hasStartedSession: boolean;
+  hasConversationHistory: boolean;
   currentModelSelection: ModelSelection;
   currentProviderInstanceId?: ModelSelection["instanceId"] | null | undefined;
   nextModelSelection: ModelSelection;
@@ -425,15 +474,13 @@ export function getStartedThreadModelChangeBlockReason(input: {
   ) {
     return null;
   }
-  const currentProvider = input.providers.find(
-    (snapshot) => snapshot.instanceId === currentModelSelection.instanceId,
-  );
-  const nextProvider = input.providers.find(
-    (snapshot) => snapshot.instanceId === input.nextModelSelection.instanceId,
-  );
   if (
-    currentProvider?.requiresNewThreadForModelChange !== true &&
-    nextProvider?.requiresNewThreadForModelChange !== true
+    !modelChangeRequiresNewThread({
+      providers: input.providers,
+      currentModelSelection,
+      nextModelSelection: input.nextModelSelection,
+      hasConversationHistory: input.hasConversationHistory,
+    })
   ) {
     return null;
   }

@@ -9,6 +9,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type MessageId,
+  type ServerConfig,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
@@ -20,13 +21,14 @@ import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn"
 import { toUploadChatImageAttachments } from "../lib/composerImages";
 import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
-import { useProjects, useThreadShells } from "./entities";
+import { useProjects, useServerConfigs, useThreadShells } from "./entities";
 import {
   confirmThreadOutboxMessageQueued,
   ensureThreadOutboxLoaded,
   removeThreadOutboxMessage,
 } from "./thread-outbox";
 import {
+  completeThreadOutboxDelivery,
   isQueuedThreadCreationSendable,
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
@@ -37,6 +39,9 @@ import {
   type QueuedThreadMessage,
   type ThreadOutboxCommandStage,
 } from "./thread-outbox-model";
+import { resolveMobileThreadInteractionMode } from "./thread-interaction-mode";
+import { acknowledgeComposerDraftModelSelection } from "./use-composer-drafts";
+import { mobilePreferencesAtom } from "./preferences";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 import {
@@ -102,6 +107,10 @@ export function useThreadOutboxDrain(): void {
   const shellStatuses = useThreadOutboxShellStatuses();
   const threads = useThreadShells();
   const projects = useProjects();
+  const serverConfigs = useServerConfigs();
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const planModePreferenceLoaded = AsyncResult.isSuccess(preferences);
+  const planModeEnabled = planModePreferenceLoaded && preferences.value.planModeEnabled === true;
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const [retryTick, setRetryTick] = useState(0);
   const retryAttemptRef = useRef(new Map<MessageId, number>());
@@ -145,15 +154,33 @@ export function useThreadOutboxDrain(): void {
     const completeDelivery = async (
       deliveryResult: AtomCommandResult<unknown, unknown>,
     ): Promise<boolean> => {
-      if (reportFailure(deliveryResult, "start-turn")) {
-        return false;
-      }
+      const retry = reportFailure(deliveryResult, "start-turn");
 
       try {
-        await removeThreadOutboxMessage(queuedMessage);
-        return true;
+        return await completeThreadOutboxDelivery({
+          deliverySucceeded: AsyncResult.isSuccess(deliveryResult),
+          retry,
+          acknowledgeDraftSelection: async () => {
+            if (queuedMessage.modelSelection === undefined) {
+              return;
+            }
+            await acknowledgeComposerDraftModelSelection(
+              scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
+              queuedMessage.modelSelection,
+            );
+          },
+          onAcknowledgeError: (error) => {
+            console.warn("[thread-outbox] failed to persist delivered model selection", {
+              environmentId: queuedMessage.environmentId,
+              threadId: queuedMessage.threadId,
+              messageId: queuedMessage.messageId,
+              error,
+            });
+          },
+          removeMessage: () => removeThreadOutboxMessage(queuedMessage),
+        });
       } catch (error) {
-        console.warn("[thread-outbox] failed to remove delivered queued message", {
+        console.warn("[thread-outbox] failed to finalize delivered queued message", {
           environmentId: queuedMessage.environmentId,
           threadId: queuedMessage.threadId,
           messageId: queuedMessage.messageId,
@@ -166,8 +193,20 @@ export function useThreadOutboxDrain(): void {
   }, []);
 
   const sendQueuedMessage = useCallback(
-    async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
+    async (
+      queuedMessage: QueuedThreadMessage,
+      thread: EnvironmentThreadShell,
+      providers: ServerConfig["providers"],
+    ) => {
       const settings = resolveQueuedThreadSettings(queuedMessage, thread);
+      const interactionMode = resolveMobileThreadInteractionMode({
+        preferenceLoaded: planModePreferenceLoaded,
+        planModeEnabled,
+        providers,
+        modelSelection: settings.modelSelection,
+        preferredMode: settings.interactionMode,
+        fallbackMode: thread.interactionMode,
+      });
       const { reportFailure, completeDelivery } = makeDeliveryHelpers(queuedMessage);
 
       if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
@@ -201,13 +240,13 @@ export function useThreadOutboxDrain(): void {
         }
       }
 
-      if (settings.interactionMode !== thread.interactionMode) {
+      if (interactionMode !== thread.interactionMode) {
         const interactionResult = await setThreadInteractionMode({
           environmentId: queuedMessage.environmentId,
           input: {
             commandId: settingsCommandId(queuedMessage, "interaction-mode"),
             threadId: queuedMessage.threadId,
-            interactionMode: settings.interactionMode,
+            interactionMode,
             createdAt: queuedMessage.createdAt,
           },
         });
@@ -230,7 +269,7 @@ export function useThreadOutboxDrain(): void {
           },
           modelSelection: settings.modelSelection,
           runtimeMode: settings.runtimeMode,
-          interactionMode: settings.interactionMode,
+          interactionMode,
           createdAt: queuedMessage.createdAt,
         },
       });
@@ -238,6 +277,8 @@ export function useThreadOutboxDrain(): void {
     },
     [
       makeDeliveryHelpers,
+      planModeEnabled,
+      planModePreferenceLoaded,
       setThreadInteractionMode,
       setThreadRuntimeMode,
       startTurn,
@@ -250,6 +291,7 @@ export function useThreadOutboxDrain(): void {
       queuedMessage: QueuedThreadMessage,
       creation: QueuedThreadCreation,
       projectCwd: string,
+      providers: ServerConfig["providers"],
     ) => {
       const modelSelection = queuedMessage.modelSelection;
       if (modelSelection === undefined) {
@@ -269,7 +311,14 @@ export function useThreadOutboxDrain(): void {
           attachments: queuedMessage.attachments,
           modelSelection,
           runtimeMode: queuedMessage.runtimeMode ?? DEFAULT_RUNTIME_MODE,
-          interactionMode: queuedMessage.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+          interactionMode: resolveMobileThreadInteractionMode({
+            preferenceLoaded: planModePreferenceLoaded,
+            planModeEnabled,
+            providers,
+            modelSelection,
+            preferredMode: queuedMessage.interactionMode,
+            fallbackMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          }),
           workspaceMode: creation.workspaceMode,
           branch: creation.branch,
           worktreePath: creation.worktreePath,
@@ -279,7 +328,7 @@ export function useThreadOutboxDrain(): void {
       });
       return completeDelivery(deliveryResult);
     },
-    [makeDeliveryHelpers, startTurn],
+    [makeDeliveryHelpers, planModeEnabled, planModePreferenceLoaded, startTurn],
   );
 
   useEffect(() => {
@@ -309,6 +358,7 @@ export function useThreadOutboxDrain(): void {
         (candidate) => candidate.environmentId === nextQueuedMessage.environmentId,
       );
       const shellStatus = shellStatuses.get(nextQueuedMessage.environmentId) ?? "empty";
+      const serverConfig = serverConfigs.get(nextQueuedMessage.environmentId);
       const deliveryAction = resolveThreadOutboxDeliveryAction({
         isCreation: creation !== undefined,
         threadExists: thread !== undefined,
@@ -317,6 +367,9 @@ export function useThreadOutboxDrain(): void {
         threadBusy: thread?.session?.status === "running" || thread?.session?.status === "starting",
       });
       if (deliveryAction === "wait") {
+        continue;
+      }
+      if (deliveryAction === "send" && serverConfig === undefined) {
         continue;
       }
       // The live project shell is preferred for the workspace path, with the
@@ -372,10 +425,15 @@ export function useThreadOutboxDrain(): void {
           ? removeQueuedMessage("[thread-outbox] failed to remove message for a missing thread")
           : creation !== undefined
             ? creationProjectCwd !== null
-              ? sendQueuedCreation(nextQueuedMessage, creation, creationProjectCwd)
+              ? sendQueuedCreation(
+                  nextQueuedMessage,
+                  creation,
+                  creationProjectCwd,
+                  serverConfig?.providers ?? [],
+                )
               : removeQueuedMessage("[thread-outbox] dropped pending task for a missing project")
             : thread !== undefined
-              ? sendQueuedMessage(nextQueuedMessage, thread)
+              ? sendQueuedMessage(nextQueuedMessage, thread, serverConfig?.providers ?? [])
               : Promise.resolve(false);
       });
       void delivery
@@ -417,6 +475,7 @@ export function useThreadOutboxDrain(): void {
     projects,
     queuedMessagesByThreadKey,
     retryTick,
+    serverConfigs,
     sendQueuedCreation,
     sendQueuedMessage,
     shellStatuses,

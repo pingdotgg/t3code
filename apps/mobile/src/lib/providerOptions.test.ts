@@ -34,6 +34,31 @@ const CODEX_CAPABILITIES: ModelCapabilities = {
 };
 
 describe("mobile provider options", () => {
+  it("resolves Grok reasoning choices for the mobile composer settings", () => {
+    const descriptors = resolveProviderOptionDescriptors({
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            options: [
+              { id: "medium", label: "Medium", isDefault: true },
+              { id: "high", label: "High" },
+            ],
+            currentValue: "medium",
+          },
+        ],
+      },
+      selections: undefined,
+    });
+
+    expect(providerOptionValueLabels(descriptors)).toEqual(["Medium"]);
+    expect(
+      applyProviderOptionSelection(descriptors, { id: "reasoningEffort", value: "high" }),
+    ).toEqual([{ id: "reasoningEffort", value: "high" }]);
+  });
+
   it("summarizes the option values currently in effect", () => {
     const descriptors = resolveProviderOptionDescriptors({
       capabilities: CODEX_CAPABILITIES,

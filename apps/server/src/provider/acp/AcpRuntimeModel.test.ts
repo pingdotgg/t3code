@@ -8,11 +8,45 @@ import {
   parsePermissionRequest,
   parseSessionModeState,
   parseSessionUpdateEvent,
+  resolveAcpSessionModeId,
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
 } from "./AcpRuntimeModel.ts";
 
 describe("AcpRuntimeModel", () => {
+  it("maps T3 interaction and permission modes onto negotiated ACP modes", () => {
+    const modeState = {
+      currentModeId: "ask",
+      availableModes: [
+        { id: "ask", name: "Ask" },
+        { id: "architect", name: "Architect" },
+        { id: "code", name: "Code" },
+      ],
+    };
+
+    expect(
+      resolveAcpSessionModeId({
+        interactionMode: "plan",
+        runtimeMode: "full-access",
+        modeState,
+      }),
+    ).toBe("architect");
+    expect(
+      resolveAcpSessionModeId({
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        modeState,
+      }),
+    ).toBe("code");
+    expect(
+      resolveAcpSessionModeId({
+        interactionMode: "default",
+        runtimeMode: "approval-required",
+        modeState,
+      }),
+    ).toBe("ask");
+  });
+
   it("parses session mode state from typed ACP session setup responses", () => {
     const modeState = parseSessionModeState({
       sessionId: "session-1",
@@ -321,6 +355,8 @@ describe("AcpRuntimeModel", () => {
     expect(contentResult.events).toEqual([
       {
         _tag: "ContentDelta",
+        itemType: "assistant_message",
+        streamKind: "assistant_text",
         text: "hello from acp",
         rawPayload: {
           sessionId: "session-1",
@@ -334,6 +370,68 @@ describe("AcpRuntimeModel", () => {
         },
       },
     ]);
+
+    const thoughtResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "considering options" },
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    expect(thoughtResult.events).toMatchObject([
+      {
+        _tag: "ContentDelta",
+        itemType: "reasoning",
+        streamKind: "reasoning_text",
+        text: "considering options",
+      },
+    ]);
+
+    const metadataResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "session_info_update",
+        title: " Updated title ",
+        updatedAt: " 2026-08-23T12:00:00.000Z ",
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(metadataResult.events).toMatchObject([
+      {
+        _tag: "SessionInfoUpdated",
+        title: "Updated title",
+        updatedAt: "2026-08-23T12:00:00.000Z",
+      },
+    ]);
+
+    const usageResult = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        used: 1_024,
+        size: 262_144,
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+    expect(usageResult.events).toMatchObject([
+      { _tag: "UsageUpdated", usedTokens: 1_024, maxTokens: 262_144 },
+    ]);
+
+    const configOptions = [
+      {
+        id: "reasoning",
+        name: "Reasoning",
+        category: "thought_level" as const,
+        type: "select" as const,
+        currentValue: "high",
+        options: [{ value: "high", name: "High" }],
+      },
+    ];
+    expect(
+      parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: { sessionUpdate: "config_option_update", configOptions },
+      } satisfies EffectAcpSchema.SessionNotification).configOptions,
+    ).toEqual(configOptions);
   });
 
   it("keeps permission request parsing compatible with loose extension payloads", () => {

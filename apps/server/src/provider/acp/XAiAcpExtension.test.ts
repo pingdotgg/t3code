@@ -10,6 +10,8 @@ import { describe, expect } from "vite-plus/test";
 
 import {
   extractXAiAskUserQuestions,
+  extractXAiModelChangedNotification,
+  extractXAiPromptResponseMetadata,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
@@ -38,6 +40,146 @@ const makePromptCompletionRuntime = (env: NodeJS.ProcessEnv) =>
 const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
 
 describe("XAiAcpExtension", () => {
+  it("extracts Grok Build prompt metadata and trustworthy billing", () => {
+    expect(
+      extractXAiPromptResponseMetadata({
+        stopReason: "end_turn",
+        _meta: {
+          sessionId: "session-1",
+          modelId: "grok-4",
+          totalTokens: 2_048,
+          inputTokens: 900,
+          outputTokens: 124,
+          cachedReadTokens: 300,
+          reasoningTokens: 24,
+          usage: {
+            inputTokens: 1_900,
+            outputTokens: 148,
+            totalTokens: 2_048,
+            cachedReadTokens: 600,
+            reasoningTokens: 48,
+            modelCalls: 2,
+            costUsdTicks: 125_000_000,
+            modelUsage: {
+              "grok-4": {
+                inputTokens: 1_900,
+                outputTokens: 148,
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      sessionId: "session-1",
+      modelId: "grok-4",
+      totalTokens: 2_048,
+      inputTokens: 900,
+      outputTokens: 124,
+      cachedReadTokens: 300,
+      reasoningTokens: 24,
+      usage: {
+        inputTokens: 1_900,
+        outputTokens: 148,
+        totalTokens: 2_048,
+        cachedReadTokens: 600,
+        reasoningTokens: 48,
+        modelCalls: 2,
+        costUsdTicks: 125_000_000,
+        modelUsage: {
+          "grok-4": {
+            inputTokens: 1_900,
+            outputTokens: 148,
+          },
+        },
+      },
+      modelUsage: {
+        "grok-4": {
+          inputTokens: 1_900,
+          outputTokens: 148,
+        },
+      },
+      totalCostUsd: 0.0125,
+    });
+  });
+
+  it("does not trust partial or incomplete Grok Build costs", () => {
+    for (const usageFlag of [{ costIsPartial: true }, { usageIsIncomplete: true }]) {
+      const metadata = extractXAiPromptResponseMetadata({
+        stopReason: "end_turn",
+        _meta: {
+          usage: {
+            costUsdTicks: 10_000_000_000,
+            ...usageFlag,
+          },
+        },
+      });
+      expect(metadata.totalCostUsd).toBeUndefined();
+    }
+  });
+
+  it("extracts direct and wrapped Grok Build model changes", () => {
+    const notification = {
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "model_changed",
+        model_id: "grok-4",
+        reasoning_effort: "high",
+      },
+    };
+
+    expect(extractXAiModelChangedNotification("x.ai/session_notification", notification)).toEqual({
+      sessionId: "session-1",
+      modelId: "grok-4",
+      reasoningEffort: "high",
+    });
+    expect(
+      extractXAiModelChangedNotification("_x.ai/session_notification", {
+        method: "x.ai/session_notification",
+        params: notification,
+      }),
+    ).toEqual({
+      sessionId: "session-1",
+      modelId: "grok-4",
+      reasoningEffort: "high",
+    });
+    expect(
+      extractXAiModelChangedNotification("_x.ai/session_notification", {
+        method: "x.ai/session_notification",
+        params: {
+          sessionId: "session-1",
+          update: { sessionUpdate: "response_completed" },
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      extractXAiModelChangedNotification("x.ai/session_notification", {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "model_changed",
+          model_id: "grok-4",
+          reasoning_effort: 42,
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("keeps model changes with a nullable reasoning effort", () => {
+    expect(
+      extractXAiModelChangedNotification("x.ai/session_notification", {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "model_changed",
+          model_id: "grok-4.6",
+          reasoning_effort: null,
+        },
+      }),
+    ).toEqual({
+      sessionId: "session-1",
+      modelId: "grok-4.6",
+      reasoningEffort: undefined,
+    });
+  });
+
   it("extracts questions from the real xAI ask_user_question payload shape", () => {
     const questions = extractXAiAskUserQuestions({
       sessionId: "session-1",

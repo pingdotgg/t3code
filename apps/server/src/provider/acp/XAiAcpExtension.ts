@@ -1,11 +1,13 @@
 import type { ProviderUserInputAnswers, UserInputQuestion } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import { trimmedUnknownString } from "./AcpUnknownPayload.ts";
 
 const XAiPromptCompleteNotification = Schema.Struct({
   sessionId: Schema.String,
@@ -24,6 +26,8 @@ interface PendingXAiPromptCompletion {
 
 const completedXAiPromptIdLimit = 128;
 const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
+// Grok Build reports costUsdTicks in 10^-10 USD units, so dividing by this yields USD.
+const usdTicksPerUsd = 10_000_000_000;
 
 const XAiAskUserQuestionOption = Schema.Struct({
   label: Schema.String,
@@ -62,6 +66,98 @@ type XAiAskUserQuestionRequest = typeof XAiAskUserQuestionRequest.Type;
 function trimmed(value: string | undefined): string | undefined {
   const text = value?.trim();
   return text && text.length > 0 ? text : undefined;
+}
+
+function nonNegativeSafeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+export interface XAiPromptResponseMetadata {
+  readonly sessionId: string | undefined;
+  readonly modelId: string | undefined;
+  /** Current context usage after the prompt, not whole-prompt billing. */
+  readonly totalTokens: number | undefined;
+  /** The sibling token fields describe only the last model call. */
+  readonly inputTokens: number | undefined;
+  readonly outputTokens: number | undefined;
+  readonly cachedReadTokens: number | undefined;
+  readonly reasoningTokens: number | undefined;
+  readonly usage: Readonly<Record<string, unknown>> | undefined;
+  readonly modelUsage: Readonly<Record<string, unknown>> | undefined;
+  readonly totalCostUsd: number | undefined;
+}
+
+export function extractXAiPromptResponseMetadata(
+  response: EffectAcpSchema.PromptResponse,
+): XAiPromptResponseMetadata {
+  const meta = Predicate.isObject(response._meta) ? response._meta : undefined;
+  const usage = Predicate.isObject(meta?.usage) ? meta.usage : undefined;
+  const modelUsage = Predicate.isObject(usage?.modelUsage) ? usage.modelUsage : undefined;
+  const costUsdTicks = nonNegativeSafeInteger(usage?.costUsdTicks);
+  const totalCostUsd =
+    costUsdTicks !== undefined &&
+    usage !== undefined &&
+    usage.usageIsIncomplete !== true &&
+    usage.costIsPartial !== true
+      ? costUsdTicks / usdTicksPerUsd
+      : undefined;
+
+  return {
+    sessionId: trimmedUnknownString(meta?.sessionId),
+    modelId: trimmedUnknownString(meta?.modelId),
+    totalTokens: nonNegativeSafeInteger(meta?.totalTokens),
+    inputTokens: nonNegativeSafeInteger(meta?.inputTokens),
+    outputTokens: nonNegativeSafeInteger(meta?.outputTokens),
+    cachedReadTokens: nonNegativeSafeInteger(meta?.cachedReadTokens),
+    reasoningTokens: nonNegativeSafeInteger(meta?.reasoningTokens),
+    usage,
+    modelUsage,
+    totalCostUsd,
+  };
+}
+
+export interface XAiModelChangedNotification {
+  readonly sessionId: string;
+  readonly modelId: string;
+  readonly reasoningEffort: string | undefined;
+}
+
+export function extractXAiModelChangedNotification(
+  method: string,
+  payload: unknown,
+): XAiModelChangedNotification | undefined {
+  if (!Predicate.isObject(payload)) {
+    return undefined;
+  }
+  const notification =
+    method === "x.ai/session_notification"
+      ? payload
+      : method === "_x.ai/session_notification" &&
+          payload.method === "x.ai/session_notification" &&
+          Predicate.isObject(payload.params)
+        ? payload.params
+        : undefined;
+  if (!notification) {
+    return undefined;
+  }
+  const sessionId = trimmedUnknownString(notification.sessionId);
+  const update = Predicate.isObject(notification.update) ? notification.update : undefined;
+  const modelId = trimmedUnknownString(update?.model_id);
+  const rawReasoningEffort = update?.reasoning_effort ?? undefined;
+  const reasoningEffort = trimmedUnknownString(rawReasoningEffort);
+  if (
+    sessionId === undefined ||
+    update?.sessionUpdate !== "model_changed" ||
+    !modelId ||
+    (rawReasoningEffort !== undefined && reasoningEffort === undefined)
+  ) {
+    return undefined;
+  }
+  return {
+    sessionId,
+    modelId,
+    reasoningEffort,
+  };
 }
 
 function unwrapAskUserQuestionParams(

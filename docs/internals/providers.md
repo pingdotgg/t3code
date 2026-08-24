@@ -75,6 +75,52 @@ spills the whole accumulated text as one delta. The buffer also flushes at inter
 when a request opens (approval) or user input is requested, via
 `flushBufferedAssistantMessagesForTurn`.
 
+## Grok Build ACP mapping
+
+The Grok driver runs `grok agent stdio`. The shared ACP runtime owns protocol negotiation, session
+setup, replay, configuration state, and standard session updates. The Grok adapter adds the xAI
+extensions that have stable wire shapes and a direct canonical T3 meaning.
+
+| Grok Build input                   | T3 behavior                                                    |
+| ---------------------------------- | -------------------------------------------------------------- |
+| ACP model state and model metadata | Provider models, context windows, and reasoning choices        |
+| `session/set_model`                | Atomic model plus `_meta.reasoningEffort` selection            |
+| `agent_thought_chunk`              | Canonical reasoning item and delta events                      |
+| `session_info_update`              | Thread title update                                            |
+| `usage_update`                     | Context-window update                                          |
+| Prompt response `usage`            | Turn completion usage                                          |
+| Prompt response xAI `_meta`        | Context usage, last-call tokens, model usage, and trusted cost |
+| xAI `model_changed`                | Live model and reasoning synchronization                       |
+| xAI `ask_user_question`            | Structured T3 user-input request and response                  |
+| xAI prompt-complete notification   | Fallback settlement when the standard prompt RPC hangs         |
+
+`grok-build` is a compatibility sentinel in T3, not a model forced onto the CLI. When selected, the
+adapter retains the model reported by session setup. A concrete model or reasoning change uses
+`session/set_model`; changing effort on the same model still sends the request.
+
+### Deliberate boundaries
+
+Several Grok Build notifications do not yet have a truthful adapter-only mapping:
+
+- ACP `available_commands_update` is session and workspace scoped, while provider slash commands in
+  T3 are currently instance-wide. This needs a per-session command contract before it can be shown.
+- xAI model-catalog update notifications arrive on a live adapter session, while provider snapshots
+  are owned by the driver. Dynamic refresh needs an explicit adapter-to-driver invalidation channel.
+- Grok Build 1.0.5 does not advertise ACP modes. Newer source accepts `session/set_mode`, but its
+  `x.ai/exit_plan_mode` approval request needs a dedicated T3 plan-approval flow. The Plan control
+  stays hidden until both mode switching and exit approval can be represented truthfully.
+- Private xAI hooks, MCP status, queue, subagent, and workflow notifications need pinned schemas and
+  canonical lifecycle semantics before ingestion. Unknown extension notifications remain available
+  in native provider logs.
+- ACP reasoning deltas are canonical runtime events, but provider-runtime ingestion currently
+  materializes only assistant text as conversation messages. Rendering stored reasoning is a shared
+  cross-provider change, not a Grok-only adapter rule.
+- Prompt `_meta` fields for structured output, cancellation categories, cancel triggers, and tool
+  overrides have no corresponding provider completion contract yet. The adapter keeps the raw
+  response in its thread snapshot without projecting invented fields.
+- Per-model xAI `response_completed` notifications describe model calls inside a tool loop. T3 uses
+  the prompt response as the authoritative turn boundary to avoid duplicate turn completion.
+
 [drivers]: ../../apps/server/src/provider/builtInDrivers.ts
 [codex]: ../../apps/server/src/provider/Drivers/CodexDriver.ts
 [claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts

@@ -13,6 +13,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
+import { modelChangeRequiresNewThread } from "@t3tools/shared/model";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -21,6 +22,7 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -465,6 +467,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly currentModelSelection: ModelSelection;
     readonly requestedModelSelection: ModelSelection | undefined;
+    readonly hasConversationHistory: boolean;
   }) {
     const requestedModelSelection = input.requestedModelSelection;
     if (
@@ -475,11 +478,12 @@ const make = Effect.gen(function* () {
       return;
     }
     const providers = yield* providerRegistry.getProviders;
-    const requiresNewThread =
-      providers.find((snapshot) => snapshot.instanceId === input.currentModelSelection.instanceId)
-        ?.requiresNewThreadForModelChange === true ||
-      providers.find((snapshot) => snapshot.instanceId === requestedModelSelection.instanceId)
-        ?.requiresNewThreadForModelChange === true;
+    const requiresNewThread = modelChangeRequiresNewThread({
+      providers,
+      currentModelSelection: input.currentModelSelection,
+      nextModelSelection: requestedModelSelection,
+      hasConversationHistory: input.hasConversationHistory,
+    });
     if (!requiresNewThread) {
       return;
     }
@@ -499,6 +503,7 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      readonly onPreflightValidated?: Effect.Effect<void>;
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -573,22 +578,6 @@ const make = Effect.gen(function* () {
       });
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
-    if (options?.pendingTurnStart === true && thread.session?.status !== "running") {
-      yield* setThreadSession({
-        threadId,
-        session: {
-          threadId,
-          status: "starting",
-          providerName: activeSession?.provider ?? preferredProvider,
-          providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
-          runtimeMode: desiredRuntimeMode,
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: createdAt,
-        },
-        createdAt,
-      });
-    }
     if (thread.session !== null) {
       yield* rejectStartedThreadModelChangeIfRequired({
         threadId,
@@ -601,6 +590,7 @@ const make = Effect.gen(function* () {
               }
             : thread.modelSelection,
         requestedModelSelection,
+        hasConversationHistory: thread.latestTurn !== null || thread.messages.length > 0,
       });
     }
     if (
@@ -625,6 +615,25 @@ const make = Effect.gen(function* () {
           detail: `Thread '${threadId}' cannot switch from instance '${currentInstanceId}' to '${desiredInstanceId}' because their provider resume state is incompatible.`,
         });
       }
+    }
+    if (options?.onPreflightValidated !== undefined) {
+      yield* options.onPreflightValidated;
+    }
+    if (options?.pendingTurnStart === true && thread.session?.status !== "running") {
+      yield* setThreadSession({
+        threadId,
+        session: {
+          threadId,
+          status: "starting",
+          providerName: activeSession?.provider ?? preferredProvider,
+          providerInstanceId: activeSession?.providerInstanceId ?? desiredInstanceId,
+          runtimeMode: desiredRuntimeMode,
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
     }
     const project = yield* resolveProject(thread.projectId);
     if (project && Option.isSome(worktreeCleanup)) {
@@ -764,6 +773,7 @@ const make = Effect.gen(function* () {
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
     readonly createdAt: string;
+    readonly onPreflightValidated?: Effect.Effect<void>;
   }) {
     const thread = yield* resolveThread(input.threadId);
     if (!thread) {
@@ -774,6 +784,9 @@ const make = Effect.gen(function* () {
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
+      ...(input.onPreflightValidated !== undefined
+        ? { onPreflightValidated: input.onPreflightValidated }
+        : {}),
     });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
@@ -1174,6 +1187,16 @@ const make = Effect.gen(function* () {
       }
     }
 
+    const appendTurnStartFailure = (detail: string) =>
+      appendProviderFailureActivity({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.start.failed",
+        summary: "Provider turn start failed",
+        detail,
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+
     const handleTurnStartFailure = (cause: Cause.Cause<unknown>) => {
       if (Cause.hasInterruptsOnly(cause)) {
         return Effect.void;
@@ -1184,16 +1207,7 @@ const make = Effect.gen(function* () {
         detail,
         createdAt: event.payload.createdAt,
       }).pipe(
-        Effect.flatMap(() =>
-          appendProviderFailureActivity({
-            threadId: event.payload.threadId,
-            kind: "provider.turn.start.failed",
-            summary: "Provider turn start failed",
-            detail,
-            turnId: null,
-            createdAt: event.payload.createdAt,
-          }),
-        ),
+        Effect.flatMap(() => appendTurnStartFailure(detail)),
         Effect.asVoid,
       );
     };
@@ -1210,6 +1224,22 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    const preflightValidated = yield* Ref.make(false);
+    const preserveExistingSessionOnPreflightFailure =
+      thread.session?.status === "ready" || thread.session?.status === "running";
+    const handleBuildTurnStartFailure = (cause: Cause.Cause<unknown>) => {
+      if (Cause.hasInterruptsOnly(cause)) {
+        return Effect.void;
+      }
+      return Ref.get(preflightValidated).pipe(
+        Effect.flatMap((validated) =>
+          !validated && preserveExistingSessionOnPreflightFailure
+            ? appendTurnStartFailure(formatFailureDetail(cause))
+            : handleTurnStartFailure(cause),
+        ),
+      );
+    };
+
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageText: queuedTurnInput.messageText ?? event.payload.promptOverride ?? message.text,
@@ -1223,9 +1253,12 @@ const make = Effect.gen(function* () {
         : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
+      onPreflightValidated: Ref.set(preflightValidated, true),
     }).pipe(
       Effect.map(Option.some),
-      Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+      Effect.catchCause((cause) =>
+        handleBuildTurnStartFailure(cause).pipe(Effect.as(Option.none())),
+      ),
     );
 
     if (Option.isNone(sendTurnRequest)) {
@@ -1392,7 +1425,12 @@ const make = Effect.gen(function* () {
     });
     switch (event.type) {
       case "thread.meta-updated":
-        yield* threadTitleRegenerationWorker.enqueue(event);
+        if (event.payload.modelSelection !== undefined) {
+          threadModelSelections.set(event.payload.threadId, event.payload.modelSelection);
+        }
+        if (event.payload.regenerateTitle === true) {
+          yield* threadTitleRegenerationWorker.enqueue(event);
+        }
         return;
       case "thread.runtime-mode-set": {
         const thread = yield* resolveThread(event.payload.threadId);
@@ -1454,7 +1492,8 @@ const make = Effect.gen(function* () {
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
-        (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
+        (event.type === "thread.meta-updated" &&
+          (event.payload.regenerateTitle === true || event.payload.modelSelection !== undefined)) ||
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||

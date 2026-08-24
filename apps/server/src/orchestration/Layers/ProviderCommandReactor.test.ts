@@ -9,6 +9,7 @@ import {
   ProviderSession,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
@@ -148,6 +149,7 @@ describe("ProviderCommandReactor", () => {
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
+    readonly models?: ServerProvider["models"];
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly operatorParentThreadId?: ThreadId;
@@ -302,6 +304,7 @@ describe("ProviderCommandReactor", () => {
     const providerSnapshots = [
       {
         instanceId: modelSelection.instanceId,
+        models: input?.models ?? [],
         ...(input?.requiresNewThreadForModelChange === true
           ? { requiresNewThreadForModelChange: true }
           : {}),
@@ -1891,6 +1894,118 @@ describe("ProviderCommandReactor", () => {
       }),
   );
 
+  effectIt.effect(
+    "allows a first strict Grok harness choice and rejects a later stock switch",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("grok");
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: { instanceId, model: "grok-build" },
+            models: [
+              {
+                slug: "grok-build",
+                name: "Grok Build",
+                isCustom: false,
+                sessionCompatibilityGroup: "grok-stock",
+                capabilities: null,
+              },
+              {
+                slug: "grok-codex",
+                name: "Grok Codex",
+                isCustom: false,
+                sessionCompatibilityGroup: "grok-strict:codex",
+                capabilities: null,
+              },
+            ],
+          }),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-grok-compatible-first"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-grok-compatible-first"),
+            role: "user",
+            text: "first",
+            attachments: [],
+          },
+          modelSelection: { instanceId, model: "grok-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+        expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+          modelSelection: { instanceId, model: "grok-codex" },
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-grok-session-ready"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "ready",
+            providerName: "grok",
+            providerInstanceId: instanceId,
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+        yield* Effect.promise(() => harness.drain());
+        const readModelBeforeRejection = yield* Effect.promise(() => harness.readModel());
+        const modelSelectionBeforeRejection = readModelBeforeRejection.threads.find(
+          (candidate) => candidate.id === ThreadId.make("thread-1"),
+        )?.modelSelection;
+        expect(modelSelectionBeforeRejection).toEqual({ instanceId, model: "grok-build" });
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-grok-incompatible-second"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-grok-incompatible-second"),
+            role: "user",
+            text: "second",
+            attachments: [],
+          },
+          modelSelection: { instanceId, model: "grok-build" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+        yield* Effect.promise(() =>
+          waitFor(async () => {
+            const readModel = await harness.readModel();
+            return (
+              readModel.threads
+                .find((thread) => thread.id === ThreadId.make("thread-1"))
+                ?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
+              false
+            );
+          }),
+        );
+
+        expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+        const readModel = yield* Effect.promise(() => harness.readModel());
+        const thread = readModel.threads.find(
+          (candidate) => candidate.id === ThreadId.make("thread-1"),
+        );
+        expect(thread?.session).toMatchObject({
+          status: "ready",
+          providerName: "grok",
+          providerInstanceId: instanceId,
+          lastError: null,
+        });
+        expect(thread?.modelSelection).toEqual(modelSelectionBeforeRejection);
+      }),
+  );
+
   it("starts a first turn on the requested provider instance even when it differs from the thread model", async () => {
     const harness = await createHarness({
       threadModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
@@ -2271,6 +2386,65 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("uses provider-confirmed model selections when restarting for runtime mode changes", async () => {
+    const instanceId = ProviderInstanceId.make("grok");
+    const originalSelection = createModelSelection(instanceId, "grok-4.5", [
+      { id: "reasoningEffort", value: "medium" },
+    ]);
+    const providerSelection = createModelSelection(instanceId, "grok-4.6", [
+      { id: "reasoningEffort", value: "high" },
+    ]);
+    const harness = await createHarness({ threadModelSelection: originalSelection });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-provider-model-change"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-provider-model-change"),
+          role: "user",
+          text: "first",
+          attachments: [],
+        },
+        modelSelection: originalSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-provider-model-change"),
+        threadId: ThreadId.make("thread-1"),
+        modelSelection: providerSelection,
+      }),
+    );
+    await harness.drain();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("cmd-runtime-mode-after-provider-model-change"),
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      modelSelection: providerSelection,
+      runtimeMode: "full-access",
+    });
   });
 
   it("does not inject derived model options when restarting claude on runtime mode changes", async () => {

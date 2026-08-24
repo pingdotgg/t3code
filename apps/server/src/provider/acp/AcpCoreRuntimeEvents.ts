@@ -12,7 +12,13 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 
-import type { AcpPermissionRequest, AcpPlanUpdate, AcpToolCallState } from "./AcpRuntimeModel.ts";
+import type {
+  AcpPermissionRequest,
+  AcpPlanUpdate,
+  AcpTextItemType,
+  AcpTextStreamKind,
+  AcpToolCallState,
+} from "./AcpRuntimeModel.ts";
 
 type AcpAdapterRawSource = Extract<
   RuntimeEventRawSource,
@@ -197,6 +203,7 @@ export function makeAcpAssistantItemEvent(input: {
   readonly threadId: ThreadId;
   readonly turnId: TurnId | undefined;
   readonly itemId: string;
+  readonly itemType: AcpTextItemType;
   readonly lifecycle: "item.started" | "item.completed";
 }): ProviderRuntimeEvent {
   return {
@@ -207,7 +214,7 @@ export function makeAcpAssistantItemEvent(input: {
     turnId: input.turnId,
     itemId: RuntimeItemId.make(input.itemId),
     payload: {
-      itemType: "assistant_message",
+      itemType: input.itemType,
       status: input.lifecycle === "item.completed" ? "completed" : "inProgress",
     },
   };
@@ -219,6 +226,7 @@ export function makeAcpContentDeltaEvent(input: {
   readonly threadId: ThreadId;
   readonly turnId: TurnId | undefined;
   readonly itemId?: string;
+  readonly streamKind: AcpTextStreamKind;
   readonly text: string;
   readonly rawPayload: unknown;
 }): ProviderRuntimeEvent {
@@ -230,8 +238,64 @@ export function makeAcpContentDeltaEvent(input: {
     turnId: input.turnId,
     ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
     payload: {
-      streamKind: "assistant_text",
+      streamKind: input.streamKind,
       delta: input.text,
+    },
+    raw: {
+      source: "acp.jsonrpc",
+      method: "session/update",
+      payload: input.rawPayload,
+    },
+  };
+}
+
+export function makeAcpThreadMetadataUpdatedEvent(input: {
+  readonly stamp: AcpEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly title: string;
+  readonly updatedAt?: string;
+  readonly rawPayload: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "thread.metadata.updated",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    turnId: input.turnId,
+    payload: {
+      name: input.title,
+      ...(input.updatedAt ? { metadata: { updatedAt: input.updatedAt } } : {}),
+    },
+    raw: {
+      source: "acp.jsonrpc",
+      method: "session/update",
+      payload: input.rawPayload,
+    },
+  };
+}
+
+export function makeAcpThreadTokenUsageUpdatedEvent(input: {
+  readonly stamp: AcpEventStamp;
+  readonly provider: ProviderDriverKind;
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId | undefined;
+  readonly usedTokens: number;
+  readonly maxTokens?: number;
+  readonly rawPayload: unknown;
+}): ProviderRuntimeEvent {
+  return {
+    type: "thread.token-usage.updated",
+    ...input.stamp,
+    provider: input.provider,
+    threadId: input.threadId,
+    turnId: input.turnId,
+    payload: {
+      usage: {
+        usedTokens: input.usedTokens,
+        ...(input.maxTokens ? { maxTokens: input.maxTokens } : {}),
+      },
     },
     raw: {
       source: "acp.jsonrpc",

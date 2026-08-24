@@ -33,6 +33,7 @@ import {
   type SessionLoadGate,
   type AcpParsedSessionEvent,
   type AcpSessionModeState,
+  type AcpTextItemType,
   type AcpToolCallState,
 } from "./AcpRuntimeModel.ts";
 
@@ -226,6 +227,7 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly setSessionModel: (
       modelId: string,
+      meta?: NonNullable<EffectAcpSchema.SetSessionModelRequest["_meta"]>,
     ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
     /**
      * Sends a generic ACP extension request and records it through the request logger.
@@ -259,6 +261,7 @@ type AcpStartState =
 interface AcpAssistantSegmentState {
   readonly nextSegmentIndex: number;
   readonly activeItemId?: string;
+  readonly activeItemType?: AcpTextItemType;
 }
 
 interface EnsureActiveAssistantSegmentResult {
@@ -396,6 +399,7 @@ export const make = (
         yield* handleSessionUpdate({
           queue: eventQueue,
           modeStateRef,
+          configOptionsRef,
           toolCallsRef,
           assistantSegmentRef,
           assistantItemRuntimeId,
@@ -789,12 +793,13 @@ export const make = (
           Effect.flatMap((started) => setConfigOption(started.modelConfigId ?? "model", model)),
           Effect.asVoid,
         ),
-      setSessionModel: (modelId) =>
+      setSessionModel: (modelId, meta) =>
         getStartedState.pipe(
           Effect.flatMap((started) => {
             const requestPayload = {
               sessionId: started.sessionId,
               modelId,
+              ...(meta ? { _meta: meta } : {}),
             } satisfies EffectAcpSchema.SetSessionModelRequest;
             return runLoggedRequest(
               "session/set_model",
@@ -844,6 +849,7 @@ function configOptionCurrentValueMatches(
 const handleSessionUpdate = ({
   queue,
   modeStateRef,
+  configOptionsRef,
   toolCallsRef,
   assistantSegmentRef,
   assistantItemRuntimeId,
@@ -851,6 +857,7 @@ const handleSessionUpdate = ({
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly modeStateRef: Ref.Ref<AcpSessionModeState | undefined>;
+  readonly configOptionsRef: Ref.Ref<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
   readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallState>>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly assistantItemRuntimeId: string;
@@ -862,6 +869,9 @@ const handleSessionUpdate = ({
       yield* Ref.update(modeStateRef, (current) =>
         current === undefined ? current : updateModeState(current, parsed.modeId!),
       );
+    }
+    if (parsed.configOptions) {
+      yield* Ref.set(configOptionsRef, parsed.configOptions);
     }
     for (const event of parsed.events) {
       if (event._tag === "ToolCallUpdated") {
@@ -891,17 +901,30 @@ const handleSessionUpdate = ({
         continue;
       }
       if (event._tag === "ContentDelta") {
+        const assistantSegmentState = yield* Ref.get(assistantSegmentRef);
         if (event.text.trim().length === 0) {
-          const assistantSegmentState = yield* Ref.get(assistantSegmentRef);
-          if (!assistantSegmentState.activeItemId) {
+          if (
+            !assistantSegmentState.activeItemId ||
+            assistantSegmentState.activeItemType !== event.itemType
+          ) {
             continue;
           }
+        }
+        if (
+          assistantSegmentState.activeItemId &&
+          assistantSegmentState.activeItemType !== event.itemType
+        ) {
+          yield* closeActiveAssistantSegment({
+            queue,
+            assistantSegmentRef,
+          });
         }
         const itemId = yield* ensureActiveAssistantSegment({
           queue,
           assistantSegmentRef,
           sessionId: params.sessionId,
           assistantItemRuntimeId,
+          itemType: event.itemType,
         });
         yield* Queue.offer(queue, {
           ...event,
@@ -939,38 +962,52 @@ function shouldEmitToolCallUpdate(
   return previous === undefined || previous.title !== next.title || previous.detail !== next.detail;
 }
 
-const assistantItemId = (sessionId: string, runtimeId: string, segmentIndex: number) =>
-  `assistant:${sessionId}:runtime:${runtimeId}:segment:${segmentIndex}`;
+const assistantItemId = (
+  sessionId: string,
+  runtimeId: string,
+  segmentIndex: number,
+  itemType: AcpTextItemType,
+) =>
+  `${itemType === "reasoning" ? "reasoning" : "assistant"}:${sessionId}:runtime:${runtimeId}:segment:${segmentIndex}`;
 
 const ensureActiveAssistantSegment = ({
   queue,
   assistantSegmentRef,
   sessionId,
   assistantItemRuntimeId,
+  itemType,
 }: {
   readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
   readonly assistantSegmentRef: Ref.Ref<AcpAssistantSegmentState>;
   readonly sessionId: string;
   readonly assistantItemRuntimeId: string;
+  readonly itemType: AcpTextItemType;
 }) =>
   Ref.modify<AcpAssistantSegmentState, EnsureActiveAssistantSegmentResult>(
     assistantSegmentRef,
     (current) => {
-      if (current.activeItemId) {
+      if (current.activeItemId && current.activeItemType === itemType) {
         return [{ itemId: current.activeItemId }, current] as const;
       }
-      const itemId = assistantItemId(sessionId, assistantItemRuntimeId, current.nextSegmentIndex);
+      const itemId = assistantItemId(
+        sessionId,
+        assistantItemRuntimeId,
+        current.nextSegmentIndex,
+        itemType,
+      );
       return [
         {
           itemId,
           startedEvent: {
             _tag: "AssistantItemStarted",
             itemId,
+            itemType,
           } satisfies Extract<AcpParsedSessionEvent, { readonly _tag: "AssistantItemStarted" }>,
         },
         {
           nextSegmentIndex: current.nextSegmentIndex + 1,
           activeItemId: itemId,
+          activeItemType: itemType,
         } satisfies AcpAssistantSegmentState,
       ] as const;
     },
@@ -997,6 +1034,7 @@ const closeActiveAssistantSegment = ({
       {
         _tag: "AssistantItemCompleted",
         itemId: current.activeItemId,
+        itemType: current.activeItemType ?? "assistant_message",
       } satisfies AcpParsedSessionEvent,
       {
         nextSegmentIndex: current.nextSegmentIndex,

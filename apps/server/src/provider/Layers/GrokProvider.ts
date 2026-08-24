@@ -1,10 +1,13 @@
 import {
   type GrokSettings,
   type ModelCapabilities,
+  type ProviderOptionChoice,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import type * as EffectAcpSchema from "effect-acp/schema";
+import * as EffectAcpErrors from "effect-acp/errors";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -12,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -29,13 +33,18 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
-import { makeGrokAcpRuntime, resolveGrokAcpBaseModelId } from "../acp/GrokAcpSupport.ts";
+import {
+  makeGrokAcpRuntime,
+  grokAcpSessionCompatibilityGroup,
+  parseGrokAcpModelMetadata,
+  resolveGrokAcpBaseModelId,
+} from "../acp/GrokAcpSupport.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
   badgeLabel: "Early Access",
   showInteractionModeToggle: false,
-  requiresNewThreadForModelChange: true,
+  requiresNewThreadForModelChange: false,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -43,6 +52,18 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const GROK_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
+function grokAuthenticatedState(environment: NodeJS.ProcessEnv) {
+  return environment.XAI_API_KEY?.trim()
+    ? { status: "authenticated" as const, type: "apiKey", label: "xAI API key" }
+    : { status: "authenticated" as const, type: "cached_token", label: "Grok account" };
+}
+
+function grokDiscoveryAuthFailed(cause: Cause.Cause<unknown>): boolean {
+  const error = Option.getOrUndefined(Cause.findErrorOption(cause));
+  return isAcpRequestError(error) && error.code === -32000;
+}
 
 const GROK_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
@@ -99,25 +120,68 @@ function grokModelsFromSettings(
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
 }
 
-function buildGrokDiscoveredModelsFromSessionModelState(
+function buildGrokModelCapabilities(model: EffectAcpSchema.ModelInfo): ModelCapabilities {
+  const meta = parseGrokAcpModelMetadata(model._meta);
+  if (meta.supportsReasoningEffort === false || meta.reasoningEfforts.length === 0) {
+    return EMPTY_CAPABILITIES;
+  }
+  const efforts = meta.reasoningEfforts;
+  const currentValue = meta.reasoningEffort;
+  const defaultValue =
+    efforts.find((effort) => effort.isDefault)?.value ??
+    efforts.find((effort) => effort.value === currentValue)?.value;
+  const options: ReadonlyArray<ProviderOptionChoice> = efforts.map((effort) => ({
+    id: effort.value,
+    label: effort.label,
+    ...(effort.description ? { description: effort.description } : {}),
+    ...(effort.value === defaultValue ? { isDefault: true } : {}),
+  }));
+
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "reasoningEffort",
+        label: "Reasoning",
+        type: "select",
+        options,
+        ...(currentValue && options.some((option) => option.id === currentValue)
+          ? { currentValue }
+          : {}),
+      },
+    ],
+  });
+}
+
+export function buildGrokDiscoveredModelsFromSessionModelState(
   modelState: EffectAcpSchema.SessionModelState | null | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!modelState || modelState.availableModels.length === 0) {
     return [];
   }
+  const currentModelId = modelState.currentModelId.trim()
+    ? resolveGrokAcpBaseModelId(modelState.currentModelId)
+    : undefined;
   const seen = new Set<string>();
   return modelState.availableModels
     .map((model): ServerProviderModel | undefined => {
-      const slug = resolveGrokAcpBaseModelId(model.modelId);
+      const rawModelId = model.modelId.trim();
+      if (!rawModelId) {
+        return undefined;
+      }
+      const slug = resolveGrokAcpBaseModelId(rawModelId);
       if (!slug || seen.has(slug)) {
         return undefined;
       }
       seen.add(slug);
+      const metadata = parseGrokAcpModelMetadata(model._meta);
+      const sessionCompatibilityGroup = grokAcpSessionCompatibilityGroup(metadata.agentType);
       return {
         slug,
         name: model.name.trim() || slug,
         isCustom: false,
-        capabilities: EMPTY_CAPABILITIES,
+        ...(slug === currentModelId ? { isDefault: true } : {}),
+        ...(sessionCompatibilityGroup ? { sessionCompatibilityGroup } : {}),
+        capabilities: buildGrokModelCapabilities(model),
       };
     })
     .filter((model): model is ServerProviderModel => model !== undefined);
@@ -268,7 +332,9 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
         installed: true,
         version,
         status: "error",
-        auth: { status: "unknown" },
+        auth: grokDiscoveryAuthFailed(discoveryExit.cause)
+          ? { status: "unauthenticated" }
+          : { status: "unknown" },
         message: "Grok CLI is installed but ACP startup failed. Check server logs for details.",
       },
     });
@@ -306,7 +372,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       installed: true,
       version,
       status: "ready",
-      auth: { status: "unknown" },
+      auth: grokAuthenticatedState(environment),
     },
   });
 });

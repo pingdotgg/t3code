@@ -3,6 +3,7 @@ import {
   type AssistantDeliveryMode,
   CommandId,
   MessageId,
+  ModelSelection,
   type OrchestrationEvent,
   type OrchestrationMessage,
   type OrchestrationProposedPlanId,
@@ -27,6 +28,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
@@ -101,6 +103,7 @@ const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
+const isModelSelection = Schema.is(ModelSelection);
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -1954,6 +1957,23 @@ const make = Effect.gen(function* () {
             commandId: yield* providerCommandId(event, "thread-meta-update"),
             threadId: thread.id,
             title: event.payload.name,
+          });
+        }
+      }
+
+      if (event.type === "session.configured") {
+        const modelSelection = event.payload.config.modelSelection;
+        if (
+          isModelSelection(modelSelection) &&
+          modelSelection.instanceId === thread.modelSelection.instanceId &&
+          event.providerInstanceId !== undefined &&
+          modelSelection.instanceId === event.providerInstanceId
+        ) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.meta.update",
+            commandId: yield* providerCommandId(event, "thread-model-selection-update"),
+            threadId: thread.id,
+            modelSelection,
           });
         }
       }

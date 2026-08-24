@@ -61,6 +61,8 @@ vi.mock("expo-file-system", () => ({
 
 import { appAtomRegistry } from "./atom-registry";
 import {
+  acknowledgeComposerDraftModelSelection,
+  acknowledgeComposerDraftModelSelectionState,
   clearComposerDraftContentState,
   ComposerDraftPersistenceError,
   composerDraftsAtom,
@@ -74,6 +76,7 @@ import {
   removeComposerDraftsForEnvironment,
   restoreComposerDraftSnapshotState,
   setComposerDraftText,
+  updateComposerDraftSettings,
 } from "./use-composer-drafts";
 
 const DRAFT: ComposerDraft = {
@@ -180,6 +183,66 @@ describe("mobile composer drafts", () => {
         attachments: [],
       },
     });
+  });
+
+  it("acknowledges only the exact delivered model selection", () => {
+    const draftKey = "environment-1:thread-1";
+    const deliveredSelection = {
+      instanceId: ProviderInstanceId.make("grok"),
+      model: "grok-4.5",
+      options: [{ id: "reasoningEffort", value: "medium" }],
+    } as const;
+    const draft: ComposerDraft = {
+      text: "new text typed during delivery",
+      attachments: [],
+      modelSelection: deliveredSelection,
+      runtimeMode: "full-access",
+      workspaceSelection: {
+        mode: "worktree",
+        branch: "main",
+        worktreePath: null,
+      },
+    };
+
+    expect(
+      acknowledgeComposerDraftModelSelectionState(
+        { [draftKey]: draft },
+        draftKey,
+        deliveredSelection,
+      ),
+    ).toEqual({
+      [draftKey]: {
+        text: draft.text,
+        attachments: [],
+        runtimeMode: "full-access",
+        workspaceSelection: draft.workspaceSelection,
+      },
+    });
+  });
+
+  it("preserves a newer mobile picker selection after an older turn delivers", () => {
+    const draftKey = "environment-1:thread-1";
+    const deliveredSelection = {
+      instanceId: ProviderInstanceId.make("grok"),
+      model: "grok-4.5",
+      options: [{ id: "reasoningEffort", value: "medium" }],
+    } as const;
+    const newerSelection = {
+      ...deliveredSelection,
+      model: "grok-4.6",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    } as const;
+    const current = {
+      [draftKey]: {
+        text: "",
+        attachments: [],
+        modelSelection: newerSelection,
+      },
+    };
+
+    expect(acknowledgeComposerDraftModelSelectionState(current, draftKey, deliveredSelection)).toBe(
+      current,
+    );
   });
 
   it("drops the workspace selection when clearing a sent new-task draft", () => {
@@ -407,6 +470,40 @@ describe("mobile composer drafts", () => {
       [sourceKey]: source,
       [targetKey]: target,
       [unrelatedKey]: unrelated,
+    });
+  });
+
+  it("keeps a newer picker selection scheduled for persistence after an older acknowledgement", async () => {
+    const draftKey = "environment-1:thread-1";
+    const deliveredSelection = {
+      instanceId: ProviderInstanceId.make("grok"),
+      model: "grok-4.5",
+      options: [{ id: "reasoningEffort", value: "medium" }],
+    } as const;
+    const newerSelection = {
+      ...deliveredSelection,
+      model: "grok-4.6",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    } as const;
+    appAtomRegistry.set(composerDraftsAtom, {
+      [draftKey]: {
+        text: "keep this draft",
+        attachments: [],
+        modelSelection: deliveredSelection,
+      },
+    });
+
+    updateComposerDraftSettings(draftKey, { modelSelection: newerSelection });
+    await acknowledgeComposerDraftModelSelection(draftKey, deliveredSelection);
+    await flushComposerDrafts();
+
+    expect(JSON.parse(composerDraftFileMocks.getDocument())).toMatchObject({
+      drafts: {
+        [draftKey]: {
+          text: "keep this draft",
+          modelSelection: newerSelection,
+        },
+      },
     });
   });
 

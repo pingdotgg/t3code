@@ -25,6 +25,7 @@ import {
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 
+import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { grokPromptSettlementBelongsToContext, makeGrokAdapter } from "./GrokAdapter.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
@@ -188,6 +189,400 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("applies Grok reasoning effort atomically and skips duplicate selections", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-reasoning-selection");
+      const requestLogDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-reasoning-log-")),
+      );
+      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const instanceId = ProviderInstanceId.make("grok");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId,
+          model: "grok-mock-alt",
+          options: [{ id: "reasoningEffort", value: "low" }],
+        },
+      });
+
+      for (const input of ["use high effort", "keep high effort"]) {
+        yield* adapter.sendTurn({
+          threadId,
+          input,
+          attachments: [],
+          modelSelection: {
+            instanceId,
+            model: "grok-mock-alt",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        });
+      }
+
+      const setModelRequests = (yield* Effect.promise(() => readJsonLines(requestLogPath))).filter(
+        (request) => request.method === "session/set_model",
+      );
+      assert.deepStrictEqual(
+        setModelRequests.map((request) => request.params),
+        [
+          {
+            sessionId: "mock-session-1",
+            modelId: "grok-mock-alt",
+            _meta: { reasoningEffort: "low" },
+          },
+          {
+            sessionId: "mock-session-1",
+            modelId: "grok-mock-alt",
+            _meta: { reasoningEffort: "high" },
+          },
+        ],
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("keeps Grok's model-changed notification authoritative over set-model", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-authoritative-model-change");
+      const requestLogDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-authoritative-model-log-")),
+      );
+      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_EMIT_XAI_MODEL_CHANGED_ON_SET_MODEL: "1",
+          T3_ACP_EFFECTIVE_REASONING_ON_SET_MODEL: "medium",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const instanceId = ProviderInstanceId.make("grok");
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const configured = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "session.configured"
+              ? Deferred.succeed(configured, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      const requestedSelection = {
+        instanceId,
+        model: "grok-mock-alt",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      } as const;
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: requestedSelection,
+      });
+      yield* Deferred.await(configured);
+      yield* adapter.sendTurn({
+        threadId,
+        input: "use normalized effort",
+        attachments: [],
+        modelSelection: requestedSelection,
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "request high again",
+        attachments: [],
+        modelSelection: requestedSelection,
+      });
+
+      const configuredEvent = runtimeEvents.find((event) => event.type === "session.configured");
+      assert.deepStrictEqual(
+        configuredEvent?.type === "session.configured" ? configuredEvent.payload.config : undefined,
+        {
+          model: "grok-mock-alt",
+          effort: "medium",
+          modelSelection: {
+            instanceId: "grok",
+            model: "grok-mock-alt",
+            options: [{ id: "reasoningEffort", value: "medium" }],
+          },
+        },
+      );
+      const setModelRequests = (yield* Effect.promise(() => readJsonLines(requestLogPath))).filter(
+        (request) => request.method === "session/set_model",
+      );
+      assert.equal(setModelRequests.length, 3);
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("maps Grok ACP thought chunks to canonical reasoning events", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-thought-chunks");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_THOUGHT_CHUNKS: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "think first", attachments: [] });
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(eventsFiber);
+
+      assert.exists(
+        runtimeEvents.find(
+          (event) => event.type === "item.started" && event.payload.itemType === "reasoning",
+        ),
+      );
+      const reasoningDelta = runtimeEvents.find(
+        (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
+      );
+      assert.equal(
+        reasoningDelta?.type === "content.delta" ? reasoningDelta.payload.delta : undefined,
+        "checking the workspace",
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("maps standard ACP session metadata, context usage, and prompt usage", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-standard-session-updates");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_SESSION_INFO_UPDATE: "1",
+          T3_ACP_EMIT_USAGE_UPDATE: "1",
+          T3_ACP_EMIT_PROMPT_USAGE: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "report usage", attachments: [] });
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(eventsFiber);
+
+      const metadataUpdated = runtimeEvents.find(
+        (event) => event.type === "thread.metadata.updated",
+      );
+      assert.equal(
+        metadataUpdated?.type === "thread.metadata.updated"
+          ? metadataUpdated.payload.name
+          : undefined,
+        "Grok investigated the workspace",
+      );
+      const usageUpdated = runtimeEvents.find(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      assert.deepStrictEqual(
+        usageUpdated?.type === "thread.token-usage.updated"
+          ? usageUpdated.payload.usage
+          : undefined,
+        { usedTokens: 1_024, maxTokens: 262_144 },
+      );
+      const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.deepStrictEqual(
+        completed?.type === "turn.completed" ? completed.payload.usage : undefined,
+        {
+          inputTokens: 900,
+          outputTokens: 124,
+          totalTokens: 1_024,
+          cachedReadTokens: 300,
+          thoughtTokens: 24,
+        },
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("maps Grok Build prompt metadata and remote model changes", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-xai-prompt-metadata");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_XAI_MODEL_CHANGED: "1",
+          T3_ACP_EMIT_XAI_PROMPT_METADATA: "1",
+          T3_ACP_GROK_MOCK_ALT_CONTEXT_TOKENS: "131072",
+          T3_ACP_PAD_GROK_MODEL_IDS: "1",
+          T3_ACP_PROMPT_METADATA_MODEL_ID: "xai-routing-model",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const turnCompleted = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "turn.completed"
+              ? Deferred.succeed(turnCompleted, undefined)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "report xAI metadata",
+        attachments: [],
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("grok"),
+          model: "grok-mock-alt",
+        },
+      });
+      yield* Deferred.await(turnCompleted);
+      yield* Fiber.interrupt(eventsFiber);
+
+      const sessions = yield* adapter.listSessions();
+      assert.equal(sessions[0]?.model, "grok-mock-alt");
+      const configured = runtimeEvents.find(
+        (event) =>
+          event.type === "session.configured" && event.payload.config.model === "grok-mock-alt",
+      );
+      assert.deepStrictEqual(
+        configured?.type === "session.configured" ? configured.payload.config : undefined,
+        {
+          model: "grok-mock-alt",
+          effort: "high",
+          modelSelection: {
+            instanceId: "grok",
+            model: "grok-mock-alt",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        },
+      );
+      const usageUpdated = runtimeEvents.find(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      assert.deepStrictEqual(
+        usageUpdated?.type === "thread.token-usage.updated"
+          ? usageUpdated.payload.usage
+          : undefined,
+        {
+          usedTokens: 2_048,
+          maxTokens: 131_072,
+          lastUsedTokens: 1_024,
+          lastInputTokens: 900,
+          lastCachedInputTokens: 300,
+          lastOutputTokens: 124,
+          lastReasoningOutputTokens: 24,
+        },
+      );
+      const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.deepStrictEqual(
+        completed?.type === "turn.completed" ? completed.payload.usage : undefined,
+        {
+          inputTokens: 1_900,
+          outputTokens: 148,
+          totalTokens: 2_048,
+          cachedReadTokens: 600,
+          cacheCreationTokens: 50,
+          reasoningTokens: 48,
+          modelCalls: 2,
+          apiDurationMs: 800,
+          costUsdTicks: 125_000_000,
+          modelUsage: {
+            "xai-routing-model": {
+              inputTokens: 1_900,
+              outputTokens: 148,
+              totalTokens: 2_048,
+              cachedReadTokens: 600,
+              cacheCreationTokens: 50,
+              reasoningTokens: 48,
+              modelCalls: 2,
+              apiDurationMs: 800,
+              costUsdTicks: 125_000_000,
+            },
+          },
+          numTurns: 2,
+        },
+      );
+      assert.deepStrictEqual(
+        completed?.type === "turn.completed" ? completed.payload.modelUsage : undefined,
+        {
+          "xai-routing-model": {
+            inputTokens: 1_900,
+            outputTokens: 148,
+            totalTokens: 2_048,
+            cachedReadTokens: 600,
+            cacheCreationTokens: 50,
+            reasoningTokens: 48,
+            modelCalls: 2,
+            apiDurationMs: 800,
+            costUsdTicks: 125_000_000,
+          },
+        },
+      );
+      assert.equal(
+        completed?.type === "turn.completed" ? completed.payload.totalCostUsd : undefined,
+        0.0125,
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");
@@ -273,7 +668,9 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("restores ready without completing an unstarted turn when preparation fails", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-preparation-failure-while-connecting");
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_SUPPORTS_IMAGES: "1" }),
+      );
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
@@ -323,6 +720,110 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       assert.isUndefined(readySession?.activeTurnId);
 
       yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("rejects images when Grok does not advertise ACP image support", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-unsupported-image");
+      const requestLogDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-rejected-image-log-")),
+      );
+      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const instanceId = ProviderInstanceId.make("grok");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const error = yield* Effect.flip(
+        adapter.sendTurn({
+          threadId,
+          input: "inspect this image",
+          attachments: [
+            {
+              type: "image",
+              id: "grok-unsupported-image-12345678-1234-1234-1234-123456789abc",
+              name: "diagram.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+          modelSelection: {
+            instanceId,
+            model: "grok-mock-alt",
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        }),
+      );
+
+      assert.equal(error._tag, "ProviderAdapterValidationError");
+      assert.include(error.message, "does not advertise ACP image prompt support");
+      const setModelRequests = (yield* Effect.promise(() => readJsonLines(requestLogPath))).filter(
+        (request) => request.method === "session/set_model",
+      );
+      assert.deepEqual(setModelRequests, []);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("sends images when Grok advertises ACP image support", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-supported-image");
+      const requestLogDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-image-log-")),
+      );
+      const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_SUPPORTS_IMAGES: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const { attachmentsDir } = yield* ServerConfig;
+      const attachment = {
+        type: "image" as const,
+        id: "grok-supported-image-12345678-1234-1234-1234-123456789abc",
+        name: "diagram.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+      };
+      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.dirname(attachmentPath), { recursive: true }),
+      );
+      yield* Effect.promise(() => NodeFSP.writeFile(attachmentPath, Uint8Array.from([1, 2, 3, 4])));
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "inspect this image",
+        attachments: [attachment],
+      });
+
+      const promptRequest = (yield* Effect.promise(() => readJsonLines(requestLogPath))).find(
+        (request) => request.method === "session/prompt",
+      );
+      const prompt = (promptRequest?.params as { readonly prompt?: unknown } | undefined)?.prompt;
+      assert.deepEqual(prompt, [
+        { type: "text", text: "inspect this image" },
+        { type: "image", data: "AQIDBA==", mimeType: "image/png" },
+      ]);
+
       yield* adapter.stopSession(threadId);
     }),
   );

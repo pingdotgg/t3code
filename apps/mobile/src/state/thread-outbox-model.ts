@@ -105,6 +105,28 @@ export function modelSelectionsEqual(left: ModelSelectionType, right: ModelSelec
   );
 }
 
+export async function completeThreadOutboxDelivery(input: {
+  readonly deliverySucceeded: boolean;
+  readonly retry: boolean;
+  readonly acknowledgeDraftSelection: () => Promise<void>;
+  readonly onAcknowledgeError: (error: unknown) => void;
+  readonly removeMessage: () => Promise<void>;
+}): Promise<boolean> {
+  if (input.retry) {
+    return false;
+  }
+  if (input.deliverySucceeded) {
+    try {
+      await input.acknowledgeDraftSelection();
+    } catch (error) {
+      input.onAcknowledgeError(error);
+      return false;
+    }
+  }
+  await input.removeMessage();
+  return true;
+}
+
 export function encodeQueuedThreadMessage(message: QueuedThreadMessage): unknown {
   return encodeStoredQueuedThreadMessage({
     schemaVersion: THREAD_OUTBOX_SCHEMA_VERSION,

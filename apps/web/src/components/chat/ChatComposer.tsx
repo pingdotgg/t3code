@@ -24,7 +24,11 @@ import {
   serializeComposerFileLink,
   serializeComposerThreadLink,
 } from "@t3tools/shared/composerTrigger";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  createModelSelection,
+  normalizeModelSlug,
+  providerInteractionModeControlsEnabled,
+} from "@t3tools/shared/model";
 import {
   buildTaskReferenceSearchIndex,
   searchTaskReferences,
@@ -243,7 +247,6 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderInteractionModeToggle } from "../../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -930,12 +933,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ChatView forces the effective mode to "default", so hiding the toggle
   // can't trap anyone in plan mode.
   const planModeUiEnabled = settings.planModeEnabled;
+  const showInteractionModeControls = providerInteractionModeControlsEnabled({
+    planModeEnabled: planModeUiEnabled,
+    providers: providerStatuses,
+    modelSelection: { instanceId: selectedInstanceId },
+  });
   const composerProviderControls = useMemo(
-    () => ({
-      showInteractionModeToggle:
-        planModeUiEnabled && getProviderInteractionModeToggle(providerStatuses, selectedProvider),
-    }),
-    [planModeUiEnabled, providerStatuses, selectedProvider],
+    () => ({ showInteractionModeToggle: showInteractionModeControls }),
+    [showInteractionModeControls],
   );
   const selectedModelSelection = useMemo<ModelSelection>(
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
@@ -1117,7 +1122,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           label: "/model",
           description: "Switch response model for this thread",
         },
-        ...(planModeUiEnabled
+        ...(showInteractionModeControls
           ? ([
               {
                 id: "slash:plan",
@@ -1171,7 +1176,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return [];
   }, [
     composerTrigger,
-    planModeUiEnabled,
+    showInteractionModeControls,
     selectedProvider,
     selectedProviderStatus,
     taskReferenceIndex,
@@ -1807,6 +1812,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
+        if (!showInteractionModeControls) {
+          return;
+        }
         void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -1853,7 +1861,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
     },
-    [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
+    [
+      applyPromptReplacement,
+      handleInteractionModeChange,
+      resolveActiveComposerTrigger,
+      showInteractionModeControls,
+    ],
   );
 
   const onComposerMenuItemHighlighted = useCallback(
@@ -2003,7 +2016,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     event: KeyboardEvent,
   ) => {
     if (key === "Tab" && event.shiftKey) {
-      if (!planModeUiEnabled) return false;
+      if (!showInteractionModeControls) return false;
       toggleInteractionMode();
       return true;
     }

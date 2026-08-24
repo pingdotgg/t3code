@@ -5,11 +5,79 @@ import { ProviderInstanceId, type ServerConfig } from "@t3tools/contracts";
 import {
   buildModelOptions,
   groupByProvider,
+  markModelOptionsRequiringNewThread,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
+  threadShellHasConversationHistory,
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("allows stock Grok harness choices and marks strict ones as new-thread-only", () => {
+    const instanceId = ProviderInstanceId.make("grok");
+    const config = {
+      providers: [
+        {
+          instanceId,
+          driver: "grok",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "grok-build",
+              name: "Grok Build",
+              isCustom: false,
+              sessionCompatibilityGroup: "grok-stock",
+              capabilities: null,
+            },
+            {
+              slug: "grok-build-plan",
+              name: "Grok Build Plan",
+              isCustom: false,
+              sessionCompatibilityGroup: "grok-stock",
+              capabilities: null,
+            },
+            {
+              slug: "grok-codex",
+              name: "Grok Codex",
+              isCustom: false,
+              sessionCompatibilityGroup: "grok-strict:codex",
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const currentModelSelection = { instanceId, model: "grok-build" };
+    const options = buildModelOptions(config, currentModelSelection);
+    const hasConversationHistory = threadShellHasConversationHistory({
+      latestTurn: null,
+      latestUserMessageAt: "2026-08-23T12:00:00.000Z",
+    });
+    expect(hasConversationHistory).toBe(true);
+
+    const restricted = markModelOptionsRequiringNewThread({
+      options,
+      providers: config.providers,
+      currentModelSelection,
+      hasConversationHistory,
+    });
+    expect(restricted[0]?.disabledReason).toBeUndefined();
+    expect(restricted[1]?.disabledReason).toBeUndefined();
+    expect(restricted[2]).toMatchObject({
+      selection: { model: "grok-codex" },
+      disabledReason: "Start a new thread to use this model.",
+    });
+    expect(
+      markModelOptionsRequiringNewThread({
+        options,
+        providers: config.providers,
+        currentModelSelection,
+        hasConversationHistory: false,
+      })[2]?.disabledReason,
+    ).toBeUndefined();
+  });
+
   it("groups models by provider and flags legacy entries", () => {
     const config = {
       providers: [

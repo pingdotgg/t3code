@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  EnvironmentId,
   ProviderDriverKind,
+  ThreadId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
@@ -17,6 +20,7 @@ import {
 // vary only the descriptor shape per scenario.
 
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
+const GROK_PROVIDER: ProviderDriverKind = ProviderDriverKind.make("grok");
 const MODEL = "test-model";
 
 function selectDescriptor(
@@ -289,6 +293,30 @@ describe("getComposerProviderState", () => {
 });
 
 describe("provider traits render guards", () => {
+  it("renders Grok's reasoning control and dispatches its default effort", () => {
+    const models = modelWith([
+      selectDescriptor("reasoningEffort", [
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High", isDefault: true },
+      ]),
+    ]);
+    const args = {
+      provider: GROK_PROVIDER,
+      model: MODEL,
+      models,
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => {},
+      planModeEnabled: false,
+      threadRef: scopeThreadRef(EnvironmentId.make("environment-1"), ThreadId.make("thread-1")),
+    };
+
+    expect(renderProviderTraitsPicker(args)).not.toBeNull();
+    expect(getComposerProviderState(args).modelOptionsForDispatch).toEqual(
+      selections(["reasoningEffort", "high"]),
+    );
+  });
+
   it("returns null when no thread target is provided", () => {
     const models = modelWith([
       selectDescriptor("effort", [{ id: "high", label: "High", isDefault: true }]),
