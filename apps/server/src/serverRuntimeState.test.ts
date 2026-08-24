@@ -34,28 +34,36 @@ describe("serverRuntimeState", () => {
         port: 4_971,
         origin: "http://127.0.0.1:4971",
         devUrl: "http://localhost:5733/",
+        desktopAttachToken: "attach-secret",
         startedAt: "2026-06-20T00:00:00.000Z",
       };
 
       yield* ServerRuntimeState.persistServerRuntimeState({ path: statePath, state });
       const restored = yield* ServerRuntimeState.readPersistedServerRuntimeState(statePath);
+      const info = yield* fileSystem.stat(statePath);
 
       assert.deepEqual(Option.getOrThrow(restored), state);
+      assert.equal(info.mode & 0o777, 0o600);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("records the dev web URL when the server fronts a dev server", () =>
     Effect.gen(function* () {
       const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
-        config: { host: undefined, devUrl: new URL("http://localhost:5733") },
+        config: {
+          host: undefined,
+          devUrl: new URL("http://localhost:5733"),
+          desktopAttachToken: "attach-secret",
+        },
         port: 13_773,
       });
 
       assert.equal(state.devUrl, "http://localhost:5733/");
       assert.equal(state.origin, "http://127.0.0.1:13773");
+      assert.equal(state.desktopAttachToken, "attach-secret");
 
       const withoutDev = yield* ServerRuntimeState.makePersistedServerRuntimeState({
-        config: { host: undefined, devUrl: undefined },
+        config: { host: undefined, devUrl: undefined, desktopAttachToken: undefined },
         port: 13_773,
       });
       assert.isFalse("devUrl" in withoutDev);

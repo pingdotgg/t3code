@@ -3,6 +3,11 @@ import {
   HostProcessPlatform,
   HostProcessUserId,
 } from "@t3tools/shared/hostProcess";
+import {
+  BOOT_SERVICE_LAUNCHD_LABEL,
+  BOOT_SERVICE_PLIST_FILE,
+  BOOT_SERVICE_UNIT_FILE,
+} from "@t3tools/shared/bootServiceIdentity";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -29,12 +34,11 @@ import {
   type ServiceState,
 } from "./serviceProtocol.ts";
 
-const BOOT_SERVICE_NAME = "t3code";
-export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
-// `.service` suffix keeps the label distinct from the desktop app's bundle id
-// (com.t3tools.t3code), so launchd and TCC records never collide.
-export const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
-export const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
+export {
+  BOOT_SERVICE_LAUNCHD_LABEL,
+  BOOT_SERVICE_PLIST_FILE,
+  BOOT_SERVICE_UNIT_FILE,
+} from "@t3tools/shared/bootServiceIdentity";
 export const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 
 /** systemd expands `%` specifiers, including in unquoted append-log paths. */

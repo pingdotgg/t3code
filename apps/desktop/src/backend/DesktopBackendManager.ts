@@ -104,6 +104,11 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   // `t3 serve`, etc).
   readonly manageProcess?: boolean;
   readonly attachedPid?: number;
+  readonly readinessTimeout?: Duration.Duration;
+  // A bearer session already validated during attachment. Keeping it on the
+  // resolved config lets the renderer authenticate immediately without
+  // deferring attachment failure until after the window opens.
+  readonly attachedBearerToken?: string;
 }
 
 // A preflight failure records whether it is fatal. Transient failures (WSL
@@ -284,10 +289,10 @@ export interface DesktopBackendInstance {
 export interface BackendInstanceSpec {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
-  // configResolve can now fail with PlatformError because the
-  // bootstrap-token closure inside DesktopBackendConfiguration uses
-  // crypto.randomBytes (Effect 4 beta.73 migration).
-  readonly configResolve: Effect.Effect<DesktopBackendStartConfig, PlatformError.PlatformError>;
+  // Configuration resolves at the process boundary and may fail before a
+  // process is started (for example, random token generation or pairing with
+  // an already-running backend).
+  readonly configResolve: Effect.Effect<DesktopBackendStartConfig, Error>;
   // Receives the *resolved* httpBaseUrl of the run that just became
   // ready. The window service uses this to decide what URL to load
   // (the WSL backend reports its distro IP, the Windows backend reports
@@ -295,6 +300,16 @@ export interface BackendInstanceSpec {
   // between "fired onReady" and "currentConfig already advanced".
   readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
+  // Fired only when a ready run ends without an explicit stop. Attachment
+  // users use this to invalidate discovery before the restart resolves.
+  readonly onUnexpectedShutdown?: (reason: string) => Effect.Effect<void>;
+  // Lets the primary surface a recoverable configuration failure and decide
+  // whether the manager should keep retrying. restartAttempt is the number of
+  // scheduled restarts since the last successful readiness check.
+  readonly onConfigurationFailure?: (
+    error: Error,
+    restartAttempt: number,
+  ) => Effect.Effect<boolean>;
   // Fired once when a fatal or bounded preflight failure has exhausted its
   // retries. Returns true when the callback changed configuration and the
   // manager should resolve once more; false stops the failed instance.
@@ -354,7 +369,10 @@ const closeRun = (
 ): Effect.Effect<boolean> => {
   const waitForFiber = Option.match(run.fiber, {
     onNone: () => Effect.void,
-    onSome: (fiber) => Fiber.await(fiber).pipe(Effect.asVoid),
+    // Managed runs normally finish when closing their child-process scope.
+    // Attached runs have no owned process finalizer, so their health-watch
+    // fiber must be interrupted explicitly or Desktop shutdown waits forever.
+    onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
   });
   const close = Scope.close(run.scope, Exit.void).pipe(Effect.andThen(waitForFiber));
   const timeout = options?.timeout;
@@ -439,32 +457,6 @@ const decodeDesktopTelemetryControlLine = Schema.decodeUnknownEffect(
 
 const ATTACHED_BACKEND_WATCH_INTERVAL = Duration.seconds(2);
 
-const probeAttachedBackendOnce = (
-  httpBaseUrl: URL,
-): Effect.Effect<boolean, never, HttpClient.HttpClient> => {
-  const readinessUrl = new URL(BACKEND_READINESS_PATH, httpBaseUrl);
-  return waitForHttpReadyShared({
-    baseUrl: httpBaseUrl.href,
-    path: BACKEND_READINESS_PATH,
-    timeoutMs: Duration.toMillis(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT),
-    intervalMs: Duration.toMillis(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT),
-    probeTimeoutMs: Duration.toMillis(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT),
-    makeError: ({ cause }) =>
-      new BackendReadinessTimeoutError({
-        executablePath: "attached",
-        entryPath: "attached",
-        cwd: ".",
-        httpBaseUrl,
-        readinessUrl,
-        timeoutMs: Duration.toMillis(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT),
-        cause,
-      }),
-  }).pipe(
-    Effect.as(true),
-    Effect.orElseSucceed(() => false),
-  );
-};
-
 const runAttachedBackend = Effect.fn("runAttachedBackend")(function* (
   options: RunBackendProcessOptions,
 ): Effect.fn.Return<BackendProcessExit, BackendProcessError, HttpClient.HttpClient | Scope.Scope> {
@@ -492,7 +484,18 @@ const runAttachedBackend = Effect.fn("runAttachedBackend")(function* (
 
   while (true) {
     yield* Effect.sleep(ATTACHED_BACKEND_WATCH_INTERVAL);
-    const stillReady = yield* probeAttachedBackendOnce(options.httpBaseUrl);
+    const stillReady = yield* waitForHttpReady({
+      executablePath: options.executablePath,
+      entryPath: options.entryPath,
+      cwd: options.cwd,
+      httpBaseUrl: options.httpBaseUrl,
+      timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
+    }).pipe(
+      Effect.as(true),
+      Effect.catchTag("BackendReadinessTimeoutError", (error) =>
+        (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.as(false)),
+      ),
+    );
     if (!stillReady) {
       return {
         code: Option.none(),
@@ -776,22 +779,42 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             latest.ready ? { ...latest, ready: false } : latest,
           );
         }
-        const config = yield* spec.configResolve.pipe(
-          Effect.tapError((error) =>
+        const configResult = yield* spec.configResolve.pipe(
+          Effect.map((config) => ({ _tag: "Success", config }) as const),
+          Effect.catch((error) =>
             logInstanceError("failed to generate desktop backend configuration", {
               cause: error.message,
-            }),
+            }).pipe(Effect.as({ _tag: "Failure", error } as const)),
           ),
-          Effect.option,
         );
-        if (Option.isNone(config)) {
-          if (current.desiredRunning) {
+        if (configResult._tag === "Failure") {
+          const shouldRestart = yield* (
+            spec.onConfigurationFailure?.(configResult.error, current.restartAttempt) ??
+              Effect.succeed(true)
+          );
+          if (shouldRestart) {
+            // `start` expresses desired state even when configuration cannot
+            // be produced on the first attempt. This is especially important
+            // when the recovery dialog switches from a lost attachment to a
+            // separate managed backend: the next resolve must actually run.
+            yield* Ref.update(state, (latest) => ({
+              ...latest,
+              desiredRunning: true,
+              ready: false,
+            }));
             yield* scheduleRestart("failed to generate desktop backend configuration");
+          } else {
+            yield* Ref.update(state, (latest) => ({
+              ...latest,
+              desiredRunning: false,
+              ready: false,
+            }));
           }
           return;
         }
+        const config = configResult.config;
         const entryExists = yield* fileSystem
-          .exists(config.value.entryPath)
+          .exists(config.entryPath)
           .pipe(Effect.orElseSucceed(() => false));
 
         const resetFatalPreflightCounter =
@@ -801,11 +824,11 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           ...latest,
           desiredRunning: true,
           ready: false,
-          config: Option.some(config.value),
+          config: Option.some(config),
           preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
         }));
 
-        const preflightFailure = config.value.preflightFailure;
+        const preflightFailure = config.preflightFailure;
         if (Option.isSome(preflightFailure)) {
           const { reason, fatal, retryLimit } = preflightFailure.value;
           if (!fatal && retryLimit === undefined) {
@@ -872,8 +895,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           latest.preflightFailureAttempt === 0 ? latest : { ...latest, preflightFailureAttempt: 0 },
         );
 
-        if (!entryExists && config.value.manageProcess !== false) {
-          yield* scheduleRestart(`missing server entry at ${config.value.entryPath}`);
+        if (!entryExists && config.manageProcess !== false) {
+          yield* scheduleRestart(`missing server entry at ${config.entryPath}`);
           return;
         }
 
@@ -963,6 +986,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 if (wasReady) {
                   yield* spec.onShutdown?.() ?? Effect.void;
                 }
+                // An attached server can disappear after authentication but
+                // before the first readiness probe succeeds. Invalidate that
+                // cached attachment too; otherwise every restart keeps
+                // watching the same dead origin forever.
+                if (!stopRequested && (wasReady || config.manageProcess === false)) {
+                  yield* spec.onUnexpectedShutdown?.(reason) ?? Effect.void;
+                }
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
@@ -973,7 +1003,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         });
 
         const program = runBackendProcess({
-          ...config.value,
+          ...config,
           desktopTelemetryStream: desktopTelemetryPublisher.encoded,
           onDesktopTelemetryControl: (message) =>
             desktopTelemetryPublisher.handleControlForSource(spec.id, message),
@@ -983,7 +1013,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               pid: Option.some(pid),
             }));
             yield* backendOutputLog.beginSession({
-              details: `pid=${pid} port=${config.value.bootstrap.port} cwd=${config.value.cwd}`,
+              details: `pid=${pid} port=${config.bootstrap.port} cwd=${config.cwd}`,
             });
           }),
           onExitObserved: () =>
@@ -1011,7 +1041,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               return;
             }
 
-            yield* spec.onReady?.(config.value.httpBaseUrl) ?? Effect.void;
+            yield* spec.onReady?.(config.httpBaseUrl) ?? Effect.void;
           }),
           onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
             function* (error) {

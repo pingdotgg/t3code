@@ -1,13 +1,11 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as Crypto from "effect/Crypto";
-import { HttpClient } from "effect/unstable/http";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
@@ -18,6 +16,7 @@ import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
+import * as DesktopExistingLocalBackendStartup from "../backend/DesktopExistingLocalBackendStartup.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
@@ -25,7 +24,6 @@ import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
-import * as DesktopExistingLocalBackend from "../backend/DesktopExistingLocalBackend.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
@@ -151,6 +149,8 @@ const bootstrap = Effect.gen(function* () {
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const shutdown = yield* DesktopShutdown.DesktopShutdown;
+  const electronApp = yield* ElectronApp.ElectronApp;
   yield* logBootstrapInfo("bootstrap start");
 
   if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
@@ -158,24 +158,24 @@ const bootstrap = Effect.gen(function* () {
   }
 
   const settings = yield* desktopSettings.get;
-  const existingLocalBackend = settings.attachExistingLocalBackend
-    ? yield* DesktopExistingLocalBackend.discoverExistingLocalBackend({
-        homeDirectory: environment.homeDirectory,
-        desktopBaseDir: environment.baseDir,
-        path: environment.path,
-        fileSystem: yield* FileSystem.FileSystem,
-        httpClient: yield* HttpClient.HttpClient,
-      })
-    : Option.none();
+  const existingLocalBackendSelection =
+    yield* DesktopExistingLocalBackendStartup.resolveExistingLocalBackendForStartup;
+  if (existingLocalBackendSelection._tag === "Quit") {
+    yield* Ref.set(state.quitting, true);
+    yield* shutdown.request;
+    yield* electronApp.quit;
+    return;
+  }
+  const existingLocalBackend = existingLocalBackendSelection.attachment;
   const backendPortSelection = Option.isSome(existingLocalBackend)
-    ? ({ port: existingLocalBackend.value.port, selectedByScan: false } as const)
+    ? ({ port: existingLocalBackend.value.backend.port, selectedByScan: false } as const)
     : yield* resolveDesktopBackendPort(environment.configuredBackendPort);
   const backendPort = backendPortSelection.port;
   if (Option.isSome(existingLocalBackend)) {
     yield* logBootstrapInfo("attaching to existing local backend", {
-      origin: existingLocalBackend.value.origin,
-      port: existingLocalBackend.value.port,
-      baseDir: existingLocalBackend.value.baseDir,
+      origin: existingLocalBackend.value.backend.origin,
+      port: existingLocalBackend.value.backend.port,
+      baseDir: existingLocalBackend.value.backend.baseDir,
     });
   } else {
     yield* logBootstrapInfo(
@@ -196,17 +196,29 @@ const bootstrap = Effect.gen(function* () {
   const serverExposureState = yield* serverExposure.configureFromSettings({ port: backendPort });
   const backendConfig = yield* serverExposure.backendConfig;
   const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+  const backendOrigin = Option.match(existingLocalBackend, {
+    onNone: () => backendConfig.httpBaseUrl,
+    onSome: ({ backend }) => new URL(backend.origin),
+  });
   const rendererTarget = environment.isDevelopment
     ? Option.getOrThrow(environment.devServerUrl)
-    : backendConfig.httpBaseUrl;
+    : Option.match(existingLocalBackend, {
+        onNone: () => backendConfig.httpBaseUrl,
+        onSome: ({ backend }) => new URL(backend.origin),
+      });
   yield* electronProtocol.registerDesktopProtocol({
     scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
     targetOrigin: rendererTarget,
-    backendOrigin: backendConfig.httpBaseUrl,
+    backendOrigin,
+    ...(environment.isDevelopment || Option.isNone(existingLocalBackend)
+      ? {}
+      : {
+          rendererRoot: environment.path.join(environment.serverRoot, "apps/server/dist/client"),
+        }),
     clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
   });
   yield* logBootstrapInfo("bootstrap resolved backend endpoint", {
-    baseUrl: backendConfig.httpBaseUrl.href,
+    baseUrl: backendOrigin.href,
   });
   if (serverExposureState.endpointUrl) {
     yield* logBootstrapInfo("bootstrap enabled network access", {

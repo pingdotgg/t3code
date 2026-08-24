@@ -7,6 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthStandardClientScopes,
   CommandId,
   EnvironmentOrchestrationHttpApi,
   ProviderInstanceId,
@@ -339,6 +340,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const created = JSON.parse(createdOutput.output) as {
         readonly id: string;
         readonly credential: string;
+        readonly scopes: ReadonlyArray<string>;
       };
       const listedOutput = yield* captureStdout(
         runCli(["auth", "pairing", "list", "--base-dir", baseDir, "--json"]),
@@ -352,6 +354,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       assert.equal(typeof created.id, "string");
       assert.equal(typeof created.credential, "string");
       assert.equal(created.credential.length > 0, true);
+      assert.deepEqual(created.scopes, AuthStandardClientScopes);
       assert.equal(listed.length, 1);
       assert.equal(listed[0]?.id, created.id);
       assert.equal("credential" in (listed[0] ?? {}), false);

@@ -78,4 +78,47 @@ describe("DesktopLocalEnvironmentAuth", () => {
       assert.strictEqual(yield* Ref.get(requestCount), 1);
     }),
   );
+
+  it.effect("uses and refreshes a bearer session validated during attachment", () =>
+    Effect.gen(function* () {
+      const currentConfig = yield* Ref.make({
+        ...config,
+        attachedBearerToken: "attached-bearer-one",
+      });
+      const poolLayer = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+        list: Effect.succeed([
+          {
+            id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+            label: Effect.succeed("Local environment"),
+            currentConfig: Ref.get(currentConfig).pipe(Effect.map(Option.some)),
+          },
+        ]),
+      } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
+      const testLayer = DesktopLocalEnvironmentAuth.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            poolLayer,
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("validated attachment must not exchange again")),
+            ),
+          ),
+        ),
+      );
+
+      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.provide(testLayer),
+      );
+      const first = yield* auth.getBearerToken;
+      yield* Ref.set(currentConfig, {
+        ...config,
+        httpBaseUrl: new URL("http://127.0.0.1:41774"),
+        attachedBearerToken: "attached-bearer-two",
+      });
+      const second = yield* auth.getBearerToken;
+
+      assert.equal(first, "attached-bearer-one");
+      assert.equal(second, "attached-bearer-two");
+    }),
+  );
 });

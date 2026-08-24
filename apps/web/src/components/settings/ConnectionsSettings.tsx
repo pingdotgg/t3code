@@ -44,6 +44,7 @@ import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls
 import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  resolveDesktopBackendControlState,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 import {
@@ -1760,12 +1761,21 @@ export function ConnectionsSettings() {
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
-  const currentSessionScopes = desktopBridge
-    ? AuthAdministrativeScopes
-    : primarySessionState.data?.authenticated
-      ? (primarySessionState.data.scopes ?? null)
-      : null;
-  const currentAuthPolicy = desktopBridge ? null : (primarySessionState.data?.auth.policy ?? null);
+  const { isAttached: isAttachedToExistingLocalBackend, canManageDesktopBackend } =
+    resolveDesktopBackendControlState({
+      hasDesktopBridge: Boolean(desktopBridge),
+      supportsExistingBackendState: Boolean(desktopBridge?.getExistingLocalBackendState),
+      existingBackendState: existingLocalBackendState,
+    });
+  const authenticatedSessionScopes = primarySessionState.data?.authenticated
+    ? (primarySessionState.data.scopes ?? null)
+    : null;
+  const currentSessionScopes = isAttachedToExistingLocalBackend
+    ? authenticatedSessionScopes
+    : desktopBridge
+      ? AuthAdministrativeScopes
+      : authenticatedSessionScopes;
+  const currentAuthPolicy = primarySessionState.data?.auth.policy ?? null;
   const savedEnvironments = useMemo(
     () =>
       environments
@@ -1894,7 +1904,7 @@ export function ConnectionsSettings() {
       : null,
   );
   const desktopNetworkAccess = useEnvironmentQuery(
-    canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
+    canManageLocalBackend && canManageDesktopBackend ? desktopNetworkAccessStateAtom : null,
   );
   const desktopSshHosts = useEnvironmentQuery(
     desktopBridge && addBackendDialogOpen && savedBackendMode === "ssh"
@@ -1950,7 +1960,7 @@ export function ConnectionsSettings() {
       ),
     );
   }, [authAccessChanges.data]);
-  const isLocalBackendNetworkAccessible = desktopBridge
+  const isLocalBackendNetworkAccessible = canManageDesktopBackend
     ? desktopServerExposureState?.mode === "network-accessible"
     : currentAuthPolicy === "remote-reachable";
   const trimmedTailscaleServePortInput = tailscaleServePortInput.trim();
@@ -3110,20 +3120,25 @@ export function ConnectionsSettings() {
             ) : null}
             {desktopBridge ? (
               <>
-                {desktopBridge.getExistingLocalBackendState ? (
+                {desktopBridge.getExistingLocalBackendState && existingLocalBackendState ? (
                   <SettingsRow
                     {...searchableSetting("attach-existing-local-backend")}
                     description={
-                      existingLocalBackendState?.attached
-                        ? existingLocalBackendState.origin
-                          ? `Connected to the T3 Code server already running at ${existingLocalBackendState.origin}.`
-                          : "Connected to the T3 Code server already running on this machine."
-                        : "Connect to a T3 Code server already running on this machine instead of starting another one."
+                      !existingLocalBackendState.available
+                        ? "Running-server attachment is disabled in Desktop development so development state stays isolated."
+                        : existingLocalBackendState.attached
+                          ? existingLocalBackendState.origin
+                            ? `Connected to the T3 Code server already running at ${existingLocalBackendState.origin}. Network exposure is managed where that server was launched.`
+                            : "Connected to the T3 Code server already running on this machine. Network exposure is managed where that server was launched."
+                          : "Connect to a T3 Code server already running on this machine instead of starting another one."
                     }
                     control={
                       <Switch
-                        checked={existingLocalBackendState?.enabled ?? true}
-                        disabled={isUpdatingAttachExistingLocalBackend}
+                        checked={existingLocalBackendState.enabled}
+                        disabled={
+                          !existingLocalBackendState.available ||
+                          isUpdatingAttachExistingLocalBackend
+                        }
                         onCheckedChange={(checked) => {
                           void handleAttachExistingLocalBackendChange(checked);
                         }}
@@ -3132,9 +3147,15 @@ export function ConnectionsSettings() {
                     }
                   />
                 ) : null}
-                {renderNetworkAccessRow()}
-                {renderEndpointRows("endpoint-rail")}
-                {renderTailscaleRow()}
+                {canManageDesktopBackend ? (
+                  <>
+                    {renderNetworkAccessRow()}
+                    {renderEndpointRows("endpoint-rail")}
+                    {renderTailscaleRow()}
+                  </>
+                ) : isAttachedToExistingLocalBackend ? (
+                  renderDisabledNetworkAccessRow()
+                ) : null}
                 {renderWslRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
               </>

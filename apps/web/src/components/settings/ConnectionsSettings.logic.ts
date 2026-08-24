@@ -1,6 +1,25 @@
-import type { AdvertisedEndpoint, DesktopBridge, DesktopWslState } from "@t3tools/contracts";
+import type {
+  AdvertisedEndpoint,
+  DesktopBridge,
+  DesktopExistingLocalBackendState,
+  DesktopWslState,
+} from "@t3tools/contracts";
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
+
+export function resolveDesktopBackendControlState(input: {
+  readonly hasDesktopBridge: boolean;
+  readonly supportsExistingBackendState: boolean;
+  readonly existingBackendState: DesktopExistingLocalBackendState | null;
+}) {
+  const isAttached = input.existingBackendState?.attached === true;
+  return {
+    isAttached,
+    canManageDesktopBackend:
+      input.hasDesktopBridge &&
+      (!input.supportsExistingBackendState || input.existingBackendState?.attached === false),
+  } as const;
+}
 
 /**
  * A QR code encoding a loopback URL makes the scanning device dial itself, so

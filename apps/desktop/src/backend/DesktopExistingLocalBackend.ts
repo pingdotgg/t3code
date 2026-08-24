@@ -1,39 +1,33 @@
-import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
+import { ExecutionEnvironmentDescriptor, PortSchema, PositiveInt } from "@t3tools/contracts";
+import {
+  BOOT_SERVICE_PLIST_FILE,
+  BOOT_SERVICE_UNIT_FILE,
+} from "@t3tools/shared/bootServiceIdentity";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
-const PAIRING_TTL = "1h";
-const PAIRING_LABEL = "T3 Code Desktop";
-const SYSTEMD_USER_UNIT = "t3code.service";
 
 const PersistedServerRuntimeState = Schema.Struct({
   version: Schema.Literal(1),
-  pid: Schema.Int,
+  pid: PositiveInt,
   host: Schema.optional(Schema.String),
-  port: Schema.Int,
-  origin: Schema.String,
-  devUrl: Schema.optional(Schema.String),
+  port: PortSchema,
+  origin: Schema.URLFromString,
+  devUrl: Schema.optional(Schema.URLFromString),
+  desktopAttachToken: Schema.optional(Schema.NonEmptyString),
   startedAt: Schema.String,
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
 
-const IssuedPairingCredential = Schema.Struct({
-  credential: Schema.NonEmptyString,
-});
-
 const decodePersistedServerRuntimeState = Schema.decodeUnknownEffect(
   Schema.fromJsonString(PersistedServerRuntimeState),
-);
-const decodeIssuedPairingCredential = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(IssuedPairingCredential),
 );
 
 export interface ExistingLocalBackend {
@@ -43,10 +37,17 @@ export interface ExistingLocalBackend {
   readonly pid: number;
   readonly environmentId: string | null;
   readonly label: string | null;
+  readonly desktopAttachToken: string | null;
 }
 
-export class ExistingLocalBackendMintError extends Schema.TaggedErrorClass<ExistingLocalBackendMintError>()(
-  "ExistingLocalBackendMintError",
+export interface ExistingLocalBackendAttachment {
+  readonly backend: ExistingLocalBackend;
+  readonly credential: string;
+  readonly bearerToken: string;
+}
+
+export class ExistingLocalBackendPairingError extends Schema.TaggedErrorClass<ExistingLocalBackendPairingError>()(
+  "ExistingLocalBackendPairingError",
   {
     baseDir: Schema.String,
     origin: Schema.String,
@@ -54,23 +55,9 @@ export class ExistingLocalBackendMintError extends Schema.TaggedErrorClass<Exist
   },
 ) {
   override get message(): string {
-    return `Could not mint a pairing token for the running T3 Code server at ${this.origin}: ${this.detail}`;
+    return `Could not establish a secure Desktop session with the running T3 Code server at ${this.origin}: ${this.detail}`;
   }
 }
-
-const concatUint8Arrays = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
-  let totalLength = 0;
-  for (const chunk of chunks) totalLength += chunk.byteLength;
-  const out = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
-};
-
-const decodeUtf8 = (bytes: Uint8Array): string => new TextDecoder("utf-8").decode(bytes);
 
 // signal 0 delivers nothing; it only reports whether the pid exists. EPERM
 // means it exists but belongs to another user, which still counts as alive.
@@ -113,6 +100,7 @@ const extractT3HomeAssignment = (
 };
 
 export const parseSystemdT3Home = (unitText: string): string | null => {
+  let resolvedHome: string | null = null;
   for (const rawLine of unitText.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line.startsWith("Environment=")) continue;
@@ -123,9 +111,30 @@ export const parseSystemdT3Home = (unitText: string): string | null => {
     const home = extractT3HomeAssignment(quotedWhole ? raw.slice(1, -1) : raw, {
       remainderIsValue: quotedWhole,
     });
-    if (home !== null && home.length > 0) return home;
+    if (home !== null && home.length > 0) resolvedHome = home;
   }
-  return null;
+  return resolvedHome;
+};
+
+const decodeXmlText = (value: string): string =>
+  value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
+
+/** Read T3CODE_HOME from the launchd plist emitted by `t3 service install`. */
+export const parseLaunchdT3Home = (plistText: string): string | null => {
+  const environmentVariables =
+    /<key>\s*EnvironmentVariables\s*<\/key>\s*<dict>([\s\S]*?)<\/dict>/.exec(plistText)?.[1];
+  if (environmentVariables === undefined) return null;
+  const encodedHome = /<key>\s*T3CODE_HOME\s*<\/key>\s*<string>([\s\S]*?)<\/string>/.exec(
+    environmentVariables,
+  )?.[1];
+  if (encodedHome === undefined) return null;
+  const home = decodeXmlText(encodedHome.trim());
+  return home.length > 0 ? home : null;
 };
 
 const uniqueDirs = (dirs: ReadonlyArray<string>): Array<string> => {
@@ -141,14 +150,14 @@ const uniqueDirs = (dirs: ReadonlyArray<string>): Array<string> => {
 };
 
 export const collectSeedBaseDirs = (input: {
-  readonly homeDirectory: string;
+  readonly defaultBaseDir: string;
   readonly desktopBaseDir: string;
-  readonly systemdT3Home: string | null;
+  readonly serviceT3Home: string | null;
 }): Array<string> =>
   uniqueDirs([
+    ...(input.serviceT3Home === null ? [] : [input.serviceT3Home]),
+    input.defaultBaseDir,
     input.desktopBaseDir,
-    `${input.homeDirectory.replace(/\/+$/, "")}/.t3`,
-    ...(input.systemdT3Home === null ? [] : [input.systemdT3Home]),
   ]);
 
 const readOptionalFile = (fileSystem: FileSystem.FileSystem, path: string) =>
@@ -168,15 +177,15 @@ const readSystemdT3Home = Effect.fn("desktop.existingLocalBackend.readSystemdT3H
   fileSystem: FileSystem.FileSystem,
 ) {
   const unitDir = path.join(homeDirectory, ".config", "systemd", "user");
-  const unitFile = path.join(unitDir, SYSTEMD_USER_UNIT);
-  const dropInDir = path.join(unitDir, `${SYSTEMD_USER_UNIT}.d`);
+  const unitFile = path.join(unitDir, BOOT_SERVICE_UNIT_FILE);
+  const dropInDir = path.join(unitDir, `${BOOT_SERVICE_UNIT_FILE}.d`);
   const pieces: Array<string> = [];
   const unitText = yield* readOptionalFile(fileSystem, unitFile);
   if (Option.isSome(unitText)) pieces.push(unitText.value);
   const dropInNames = yield* fileSystem
     .readDirectory(dropInDir)
     .pipe(Effect.orElseSucceed(() => []));
-  for (const name of dropInNames) {
+  for (const name of dropInNames.toSorted()) {
     if (!name.endsWith(".conf")) continue;
     const dropInText = yield* readOptionalFile(fileSystem, path.join(dropInDir, name));
     if (Option.isSome(dropInText)) pieces.push(dropInText.value);
@@ -184,11 +193,39 @@ const readSystemdT3Home = Effect.fn("desktop.existingLocalBackend.readSystemdT3H
   return parseSystemdT3Home(pieces.join("\n"));
 });
 
+const readLaunchdT3Home = Effect.fn("desktop.existingLocalBackend.readLaunchdT3Home")(function* (
+  homeDirectory: string,
+  path: Path.Path,
+  fileSystem: FileSystem.FileSystem,
+) {
+  const plistPath = path.join(homeDirectory, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE);
+  const plistText = yield* readOptionalFile(fileSystem, plistPath);
+  return Option.match(plistText, {
+    onNone: () => null,
+    onSome: parseLaunchdT3Home,
+  });
+});
+
+const readServiceT3Home = Effect.fn("desktop.existingLocalBackend.readServiceT3Home")(function* (
+  platform: NodeJS.Platform,
+  homeDirectory: string,
+  path: Path.Path,
+  fileSystem: FileSystem.FileSystem,
+) {
+  if (platform === "linux") {
+    return yield* readSystemdT3Home(homeDirectory, path, fileSystem);
+  }
+  if (platform === "darwin") {
+    return yield* readLaunchdT3Home(homeDirectory, path, fileSystem);
+  }
+  return null;
+});
+
 const probeExistingBackend = (
-  origin: string,
+  origin: URL,
   client: HttpClient.HttpClient,
 ): Effect.Effect<Option.Option<ExecutionEnvironmentDescriptor>> => {
-  const url = new URL(WELL_KNOWN_ENVIRONMENT_PATH, origin.endsWith("/") ? origin : `${origin}/`);
+  const url = new URL(WELL_KNOWN_ENVIRONMENT_PATH, origin);
   return client.execute(HttpClientRequest.get(url.toString())).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(ExecutionEnvironmentDescriptor)),
@@ -224,11 +261,12 @@ const inspectBaseDir = Effect.fn("desktop.existingLocalBackend.inspectBaseDir")(
   if (Option.isNone(descriptor)) return Option.none<ExistingLocalBackend>();
   return Option.some({
     baseDir: input.baseDir,
-    origin: state.value.origin,
+    origin: state.value.origin.href,
     port: state.value.port,
     pid: state.value.pid,
     environmentId: descriptor.value.environmentId,
     label: descriptor.value.label,
+    desktopAttachToken: state.value.desktopAttachToken ?? null,
   } satisfies ExistingLocalBackend);
 });
 
@@ -236,30 +274,24 @@ export const discoverExistingLocalBackend = Effect.fn("desktop.existingLocalBack
   function* (input: {
     readonly homeDirectory: string;
     readonly desktopBaseDir: string;
+    readonly platform: NodeJS.Platform;
     readonly path: Path.Path;
     readonly fileSystem: FileSystem.FileSystem;
     readonly httpClient: HttpClient.HttpClient;
   }) {
-    const systemdT3Home = yield* readSystemdT3Home(
+    const serviceT3Home = yield* readServiceT3Home(
+      input.platform,
       input.homeDirectory,
       input.path,
       input.fileSystem,
     );
     const seedDirs = collectSeedBaseDirs({
-      homeDirectory: input.homeDirectory,
+      defaultBaseDir: input.path.join(input.homeDirectory, ".t3"),
       desktopBaseDir: input.desktopBaseDir,
-      systemdT3Home,
+      serviceT3Home,
     });
-    const defaultHome = input.path.join(input.homeDirectory, ".t3");
-    const childNames = yield* input.fileSystem
-      .readDirectory(defaultHome)
-      .pipe(Effect.orElseSucceed(() => []));
-    const candidates = uniqueDirs([
-      ...seedDirs,
-      ...childNames.map((name) => input.path.join(defaultHome, name)),
-    ]);
 
-    for (const baseDir of candidates) {
+    for (const baseDir of seedDirs) {
       const found = yield* inspectBaseDir({
         baseDir,
         path: input.path,
@@ -272,92 +304,43 @@ export const discoverExistingLocalBackend = Effect.fn("desktop.existingLocalBack
   },
 );
 
-export type PairingProcessSpawn = (
-  command: ReturnType<typeof ChildProcess.make>,
-) => Effect.Effect<
-  ChildProcessSpawner.ChildProcessHandle,
-  import("effect/PlatformError").PlatformError,
-  import("effect/Scope").Scope
->;
+export const pairExistingLocalBackend = Effect.fn("desktop.existingLocalBackend.pair")(
+  function* (input: {
+    readonly backend: ExistingLocalBackend;
+    readonly httpClient: HttpClient.HttpClient;
+  }) {
+    const credential = input.backend.desktopAttachToken;
+    if (credential === null) {
+      return yield* new ExistingLocalBackendPairingError({
+        baseDir: input.backend.baseDir,
+        origin: input.backend.origin,
+        detail:
+          "The running server does not advertise Desktop attachment credentials. Update and restart that server, then try again.",
+      });
+    }
 
-export const mintExistingLocalBackendCredential = Effect.fn(
-  "desktop.existingLocalBackend.mintCredential",
-)(function* (input: {
-  readonly backend: ExistingLocalBackend;
-  readonly executablePath: string;
-  readonly entryPath: string;
-  readonly spawn: PairingProcessSpawn;
-}) {
-  const command = ChildProcess.make(
-    input.executablePath,
-    [
-      input.entryPath,
-      "auth",
-      "pairing",
-      "create",
-      "--base-dir",
-      input.backend.baseDir,
-      "--ttl",
-      PAIRING_TTL,
-      "--label",
-      PAIRING_LABEL,
-      "--json",
-    ],
-    {
-      env: {
-        ELECTRON_RUN_AS_NODE: "1",
-        T3CODE_HOME: input.backend.baseDir,
+    const session = yield* bootstrapRemoteBearerSession({
+      httpBaseUrl: input.backend.origin,
+      credential,
+      clientMetadata: {
+        label: "T3 Code Desktop",
+        deviceType: "desktop",
       },
-      extendEnv: true,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      killSignal: "SIGTERM",
-      forceKillAfter: Duration.seconds(15),
-    },
-  );
-
-  const result = yield* Effect.scoped(
-    Effect.gen(function* () {
-      const handle = yield* input.spawn(command);
-      const [stdoutBytes, stderrBytes, exitCode] = yield* Effect.all(
-        [Stream.runCollect(handle.stdout), Stream.runCollect(handle.stderr), handle.exitCode],
-        { concurrency: "unbounded" },
-      );
-      return {
-        exitCode: Number(exitCode),
-        stdout: decodeUtf8(concatUint8Arrays([...stdoutBytes] as Uint8Array[])),
-        stderr: decodeUtf8(concatUint8Arrays([...stderrBytes] as Uint8Array[])),
-      };
-    }),
-  ).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ExistingLocalBackendMintError({
-          baseDir: input.backend.baseDir,
-          origin: input.backend.origin,
-          detail: cause instanceof Error ? cause.message : "Failed to spawn pairing CLI.",
-        }),
-    ),
-  );
-
-  if (result.exitCode !== 0) {
-    return yield* new ExistingLocalBackendMintError({
-      baseDir: input.backend.baseDir,
-      origin: input.backend.origin,
-      detail: result.stderr.trim() || `pairing CLI exited ${String(result.exitCode)}`,
-    });
-  }
-
-  const issued = yield* decodeIssuedPairingCredential(result.stdout.trim()).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ExistingLocalBackendMintError({
-          baseDir: input.backend.baseDir,
-          origin: input.backend.origin,
-          detail: cause instanceof Error ? cause.message : "pairing CLI returned invalid JSON.",
-        }),
-    ),
-  );
-  return issued.credential;
-});
+    }).pipe(
+      Effect.provideService(HttpClient.HttpClient, input.httpClient),
+      Effect.mapError(
+        (cause) =>
+          new ExistingLocalBackendPairingError({
+            baseDir: input.backend.baseDir,
+            origin: input.backend.origin,
+            detail: cause instanceof Error ? cause.message : "The server rejected the connection.",
+          }),
+      ),
+    );
+    return {
+      backend: input.backend,
+      credential,
+      bearerToken: session.access_token,
+    } satisfies ExistingLocalBackendAttachment;
+  },
+);

@@ -2,8 +2,10 @@ import * as NetService from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
 import * as Config from "effect/Config";
+import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as LogLevel from "effect/LogLevel";
 import * as Option from "effect/Option";
@@ -219,6 +221,7 @@ export const resolveServerConfig = (
     const { findAvailablePort } = yield* NetService.NetService;
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
+    const crypto = yield* Crypto.Crypto;
     const env = yield* EnvServerConfig;
     const normalizedFlags = {
       mode: flags.mode ?? Option.none(),
@@ -303,6 +306,7 @@ export const resolveServerConfig = (
       () => mode === "desktop",
     );
     const desktopBootstrapToken = bootstrap?.desktopBootstrapToken;
+    const desktopAttachToken = Encoding.encodeHex(yield* crypto.randomBytes(24));
     const desktopTelemetryFd = bootstrap?.desktopTelemetryFd;
     const desktopTelemetryControlFd = bootstrap?.desktopTelemetryControlFd;
     const resourceMonitorPath = bootstrap?.resourceMonitorPath;
@@ -379,6 +383,7 @@ export const resolveServerConfig = (
       noBrowser,
       startupPresentation,
       desktopBootstrapToken,
+      desktopAttachToken,
       desktopTelemetryFd,
       desktopTelemetryControlFd,
       resourceMonitorPath,

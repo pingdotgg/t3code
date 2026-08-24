@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -9,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -94,6 +96,47 @@ const restoreEnv = (name: string, value: string | undefined) => {
   }
 };
 
+function existingBackendTestLayer(input: {
+  readonly baseDir: string;
+  readonly oauthResponses: ReadonlyArray<Response>;
+  readonly onHttpRequest?: (url: string) => void;
+}) {
+  let oauthResponseIndex = 0;
+  return Layer.effect(
+    DesktopBackendConfiguration.DesktopBackendConfiguration,
+    DesktopBackendConfiguration.make,
+  ).pipe(
+    Layer.provideMerge(serverExposureLayer),
+    Layer.provideMerge(DesktopAppSettings.layerTest()),
+    Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+    Layer.provideMerge(DesktopWslServerTree.layerTest()),
+    Layer.provideMerge(makeEnvironmentLayer(input.baseDir, { platform: "linux" })),
+    Layer.provideMerge(
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          input.onHttpRequest?.(request.url);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              request.url.endsWith("/.well-known/t3/environment")
+                ? Response.json({
+                    environmentId: "existing-environment",
+                    label: "Existing environment",
+                    platform: { os: "linux", arch: "x64" },
+                    serverVersion: "0.0.1",
+                    capabilities: { repositoryIdentity: true },
+                  })
+                : (input.oauthResponses[oauthResponseIndex++] ??
+                    Response.json({ error: "unexpected_request" }, { status: 500 })),
+            ),
+          );
+        }),
+      ),
+    ),
+  );
+}
+
 const withHarness = <A, E, R>(
   effect: Effect.Effect<
     A,
@@ -124,6 +167,200 @@ const withHarness = <A, E, R>(
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("DesktopBackendConfiguration", () => {
+  it.effect("never discovers a packaged or background backend from desktop development", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+
+      const resolution = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveExistingLocalBackend;
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslEnvironment.layerTest()),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                devServerUrl: "http://127.0.0.1:5733",
+                isPackaged: false,
+              }),
+            ),
+          ),
+        ),
+      );
+
+      assert.deepEqual(resolution, { _tag: "Disabled", reason: "development" });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps a detected backend retryable and never falls through after pairing fails", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-existing-backend-config-test-",
+      });
+      yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${baseDir}/userdata/server-runtime.json`,
+        `{"version":1,"pid":${String(process.pid)},"port":41773,"origin":"http://127.0.0.1:41773","desktopAttachToken":"attach-secret","startedAt":"2026-08-21T00:00:00.000Z"}`,
+      );
+      let httpRequestCount = 0;
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const first = yield* configuration.resolveExistingLocalBackend;
+        assert.equal(first._tag, "PairingFailed");
+
+        const primaryError = yield* configuration.resolvePrimary.pipe(Effect.flip);
+        assert.equal(primaryError._tag, "ExistingLocalBackendPairingError");
+        assert.equal(httpRequestCount, 4);
+      }).pipe(
+        Effect.provide(
+          existingBackendTestLayer({
+            baseDir,
+            oauthResponses: [
+              Response.json({ error: "invalid_grant" }, { status: 400 }),
+              Response.json({ error: "invalid_grant" }, { status: 400 }),
+            ],
+            onHttpRequest: () => {
+              httpRequestCount += 1;
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("caches discovery and a successful explicit pairing retry", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-existing-backend-config-test-",
+      });
+      yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${baseDir}/userdata/server-runtime.json`,
+        `{"version":1,"pid":${String(process.pid)},"port":41773,"origin":"http://127.0.0.1:41773","desktopAttachToken":"attach-secret","startedAt":"2026-08-21T00:00:00.000Z"}`,
+      );
+      let httpRequestCount = 0;
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        assert.equal((yield* configuration.resolveExistingLocalBackend)._tag, "PairingFailed");
+        const retry = yield* configuration.resolveExistingLocalBackend;
+        assert.equal(retry._tag, "ReadyToAttach");
+        if (retry._tag === "ReadyToAttach") {
+          assert.equal(retry.attachment.bearerToken, "desktop-bearer-token");
+        }
+        const attachedConfig = yield* configuration.resolvePrimary;
+        assert.equal(attachedConfig.manageProcess, false);
+        assert.equal(attachedConfig.attachedBearerToken, "desktop-bearer-token");
+        assert.equal(
+          Duration.toMillis(attachedConfig.readinessTimeout ?? Duration.zero),
+          Duration.toMillis(Duration.seconds(5)),
+        );
+        assert.deepEqual(attachedConfig.args, []);
+        const cached = yield* configuration.resolveExistingLocalBackend;
+        assert.equal(cached._tag, "ReadyToAttach");
+        assert.equal(httpRequestCount, 4);
+      }).pipe(
+        Effect.provide(
+          existingBackendTestLayer({
+            baseDir,
+            oauthResponses: [
+              Response.json({ error: "invalid_grant" }, { status: 400 }),
+              Response.json({
+                access_token: "desktop-bearer-token",
+                issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                token_type: "Bearer",
+                expires_in: 3600,
+                scope: "orchestration:read",
+              }),
+            ],
+            onHttpRequest: () => {
+              httpRequestCount += 1;
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("re-discovers an invalidated attachment and never silently falls back", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-existing-backend-config-test-",
+      });
+      const runtimePath = `${baseDir}/userdata/server-runtime.json`;
+      yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        runtimePath,
+        `{"version":1,"pid":${String(process.pid)},"port":41773,"origin":"http://127.0.0.1:41773","desktopAttachToken":"attach-one","startedAt":"2026-08-21T00:00:00.000Z"}`,
+      );
+      const requestedUrls: string[] = [];
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const first = yield* configuration.resolveExistingLocalBackend;
+        assert.equal(first._tag, "ReadyToAttach");
+
+        yield* fileSystem.writeFileString(
+          runtimePath,
+          `{"version":1,"pid":${String(process.pid)},"port":41774,"origin":"http://127.0.0.1:41774","desktopAttachToken":"attach-two","startedAt":"2026-08-21T00:01:00.000Z"}`,
+        );
+        assert.isTrue(yield* configuration.invalidateExistingLocalBackendAttachment);
+
+        const moved = yield* configuration.resolveExistingLocalBackend;
+        assert.equal(moved._tag, "ReadyToAttach");
+        if (moved._tag === "ReadyToAttach") {
+          assert.equal(moved.attachment.backend.port, 41774);
+          assert.equal(moved.attachment.credential, "attach-two");
+          assert.equal(moved.attachment.bearerToken, "bearer-two");
+        }
+
+        assert.isTrue(yield* configuration.invalidateExistingLocalBackendAttachment);
+        yield* fileSystem.remove(runtimePath);
+        const unavailable = yield* configuration.resolveExistingLocalBackend;
+        assert.equal(unavailable._tag, "PairingFailed");
+        if (unavailable._tag === "PairingFailed") {
+          assert.include(unavailable.error.detail, "previously attached server");
+        }
+      }).pipe(
+        Effect.provide(
+          existingBackendTestLayer({
+            baseDir,
+            oauthResponses: [
+              Response.json({
+                access_token: "bearer-one",
+                issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                token_type: "Bearer",
+                expires_in: 3600,
+                scope: "orchestration:read",
+              }),
+              Response.json({
+                access_token: "bearer-two",
+                issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                token_type: "Bearer",
+                expires_in: 3600,
+                scope: "orchestration:read",
+              }),
+            ],
+            onHttpRequest: (url) => requestedUrls.push(url),
+          }),
+        ),
+      );
+
+      assert.include(requestedUrls, "http://127.0.0.1:41773/oauth/token");
+      assert.include(requestedUrls, "http://127.0.0.1:41774/oauth/token");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("resolvePrimary produces a stable scoped bootstrap token", () =>
     withHarness(
       Effect.gen(function* () {
@@ -151,6 +388,23 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.bootstrap.tailscaleServePort, 8443);
         assert.match(first.bootstrap.desktopBootstrapToken, /^[0-9a-f]{48}$/i);
         assert.equal(second.bootstrap.desktopBootstrapToken, first.bootstrap.desktopBootstrapToken);
+      }),
+    ),
+  );
+
+  it.effect("uses isolated server state for an explicitly independent launch", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+
+        yield* configuration.useIndependentBackendForLaunch;
+        const config = yield* configuration.resolvePrimary;
+
+        assert.equal(
+          config.bootstrap.t3Home,
+          environment.path.join(environment.baseDir, "desktop-independent"),
+        );
       }),
     ),
   );

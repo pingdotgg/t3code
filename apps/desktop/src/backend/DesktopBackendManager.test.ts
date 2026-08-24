@@ -121,14 +121,16 @@ interface MakeInstanceInput {
   readonly backendOutputLog?: Partial<DesktopObservability.DesktopBackendOutputLogShape>;
   readonly onReady?: Effect.Effect<void>;
   readonly onShutdown?: Effect.Effect<void>;
+  readonly onUnexpectedShutdown?: (reason: string) => Effect.Effect<void>;
+  readonly onConfigurationFailure?: (
+    error: Error,
+    restartAttempt: number,
+  ) => Effect.Effect<boolean>;
   readonly onPreflightFailed?: (
     failure: DesktopBackendManager.PreflightFailure,
   ) => Effect.Effect<boolean>;
   readonly config?: DesktopBackendManager.DesktopBackendStartConfig;
-  readonly configResolve?: Effect.Effect<
-    DesktopBackendManager.DesktopBackendStartConfig,
-    PlatformError.PlatformError
-  >;
+  readonly configResolve?: Effect.Effect<DesktopBackendManager.DesktopBackendStartConfig, Error>;
   readonly desktopTelemetryStream?: Stream.Stream<Uint8Array>;
   readonly desktopTelemetryPublisher?: Partial<
     DesktopTelemetryPublisher.DesktopTelemetryPublisher["Service"]
@@ -176,6 +178,10 @@ function makeTestInstance(input: MakeInstanceInput) {
     configResolve: input.configResolve ?? Effect.succeed(input.config ?? baseConfig),
     ...(input.onReady ? { onReady: () => input.onReady! } : {}),
     ...(input.onShutdown ? { onShutdown: () => input.onShutdown! } : {}),
+    ...(input.onUnexpectedShutdown ? { onUnexpectedShutdown: input.onUnexpectedShutdown } : {}),
+    ...(input.onConfigurationFailure
+      ? { onConfigurationFailure: input.onConfigurationFailure }
+      : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
   });
 
@@ -1027,6 +1033,65 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
+  it.effect("lets a configuration failure callback stop the restart loop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const failure = new Error("attachment unavailable");
+        const seenErrors: Error[] = [];
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.die("unexpected backend spawn")),
+          ),
+          configResolve: Effect.fail(failure),
+          onConfigurationFailure: (error) =>
+            Effect.sync(() => {
+              seenErrors.push(error);
+              return false;
+            }),
+        });
+
+        yield* instance.start;
+
+        assert.deepEqual(seenErrors, [failure]);
+        assert.isFalse((yield* instance.snapshot).desiredRunning);
+        assert.isFalse((yield* instance.snapshot).restartScheduled);
+      }),
+    ),
+  );
+
+  it.effect("reports the backoff attempt to configuration failure callbacks", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const failure = new Error("attachment unavailable");
+        const seenAttempts: number[] = [];
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.die("unexpected backend spawn")),
+          ),
+          configResolve: Effect.fail(failure),
+          onConfigurationFailure: (_error, restartAttempt) =>
+            Effect.sync(() => {
+              seenAttempts.push(restartAttempt);
+              return restartAttempt < 4;
+            }),
+        });
+
+        yield* instance.start;
+        assert.deepEqual(seenAttempts, [0]);
+
+        yield* TestClock.adjust(Duration.millis(500));
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* TestClock.adjust(Duration.seconds(2));
+        yield* TestClock.adjust(Duration.seconds(4));
+
+        assert.deepEqual(seenAttempts, [0, 1, 2, 3, 4]);
+        assert.isFalse((yield* instance.snapshot).desiredRunning);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
   it.effect("keeps a timed-out run active until its process exits", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1478,30 +1543,149 @@ describe("DesktopBackendManager", () => {
   );
 
   it.effect("attaches to an existing backend without spawning a process", () =>
-    Effect.gen(function* () {
-      const spawnerLayer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() => Effect.die("unexpected backend spawn")),
-      );
-      const instance = yield* makeTestInstance({
-        spawnerLayer,
-        config: {
-          ...baseConfig,
-          manageProcess: false,
-          attachedPid: 473_417,
-        },
-      });
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.die("unexpected backend spawn")),
+        );
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          config: {
+            ...baseConfig,
+            manageProcess: false,
+            attachedPid: 473_417,
+            readinessTimeout: Duration.seconds(1),
+          },
+        });
 
-      yield* instance.start;
-      const ready = yield* instance.waitForReady(Duration.seconds(1));
-      const snapshot = yield* instance.snapshot;
+        yield* instance.start;
+        while (!(yield* instance.snapshot).ready) {
+          yield* Effect.yieldNow;
+        }
+        const ready = yield* instance.waitForReady(Duration.seconds(1));
+        const snapshot = yield* instance.snapshot;
 
-      assert.isTrue(ready);
-      assert.isTrue(snapshot.ready);
-      assert.equal(Option.getOrThrow(snapshot.activePid), 473_417);
+        assert.isTrue(ready);
+        assert.isTrue(snapshot.ready);
+        assert.equal(Option.getOrThrow(snapshot.activePid), 473_417);
 
-      yield* instance.stop();
-      assert.isFalse((yield* instance.snapshot).desiredRunning);
-    }),
+        yield* instance.stop();
+        assert.isFalse((yield* instance.snapshot).desiredRunning);
+      }),
+    ),
+  );
+
+  it.effect("keeps an attached backend ready through a transient failed health check", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let requestCount = 0;
+        const firstRequest = yield* Deferred.make<void>();
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.die("unexpected backend spawn")),
+        );
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          httpClientLayer: httpClientLayer((request) =>
+            Effect.gen(function* () {
+              requestCount += 1;
+              if (requestCount === 1) {
+                yield* Deferred.succeed(firstRequest, void 0);
+              }
+              return responseForRequest(request, requestCount === 2 ? 503 : 200);
+            }),
+          ),
+          config: {
+            ...baseConfig,
+            manageProcess: false,
+            attachedPid: 473_417,
+            readinessTimeout: Duration.seconds(1),
+          },
+        });
+
+        yield* instance.start;
+        yield* Deferred.await(firstRequest);
+        assert.equal(requestCount, 1);
+
+        yield* TestClock.adjust(Duration.seconds(2));
+        yield* TestClock.adjust(Duration.millis(100));
+        yield* Effect.yieldNow;
+
+        const snapshot = yield* instance.snapshot;
+        assert.equal(requestCount, 3);
+        assert.isTrue(snapshot.ready);
+        assert.isFalse(snapshot.restartScheduled);
+
+        yield* instance.stop();
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("notifies attachment recovery after a ready backend becomes unreachable", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let requestCount = 0;
+        const lost = yield* Deferred.make<string>();
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.die("unexpected backend spawn")),
+          ),
+          httpClientLayer: httpClientLayer((request) => {
+            requestCount += 1;
+            return Effect.succeed(responseForRequest(request, requestCount === 1 ? 200 : 503));
+          }),
+          config: {
+            ...baseConfig,
+            manageProcess: false,
+            attachedPid: 473_417,
+            readinessTimeout: Duration.seconds(1),
+          },
+          onUnexpectedShutdown: (reason) => Deferred.succeed(lost, reason).pipe(Effect.asVoid),
+        });
+
+        yield* instance.start;
+        while (!(yield* instance.snapshot).ready) {
+          yield* Effect.yieldNow;
+        }
+        yield* TestClock.adjust(Duration.seconds(5));
+        const reason = yield* Deferred.await(lost).pipe(Effect.timeout("1 second"));
+
+        assert.include(reason, "became unreachable");
+        assert.isTrue((yield* instance.snapshot).restartScheduled);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("notifies attachment recovery when the server disappears before readiness", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const lost = yield* Deferred.make<string>();
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.die("unexpected backend spawn")),
+          ),
+          httpClientLayer: httpClientLayer((request) =>
+            Effect.succeed(responseForRequest(request, 503)),
+          ),
+          config: {
+            ...baseConfig,
+            manageProcess: false,
+            attachedPid: 473_417,
+            readinessTimeout: Duration.seconds(1),
+          },
+          onUnexpectedShutdown: (reason) => Deferred.succeed(lost, reason).pipe(Effect.asVoid),
+        });
+
+        yield* instance.start;
+        yield* TestClock.adjust(Duration.seconds(2));
+        const reason = yield* Deferred.await(lost).pipe(Effect.timeout("1 second"));
+
+        assert.include(reason, "Timed out waiting for attached backend readiness");
+        assert.isTrue((yield* instance.snapshot).desiredRunning);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
   );
 });

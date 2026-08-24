@@ -141,6 +141,64 @@ describe("ElectronProtocol", () => {
     }).pipe(Effect.provide(ElectronProtocol.layer)),
   );
 
+  it.effect("serves the Desktop-owned renderer when attaching to another server", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-renderer-"))),
+      (rendererRoot) =>
+        Effect.gen(function* () {
+          NodeFS.mkdirSync(NodePath.join(rendererRoot, "assets"));
+          NodeFS.writeFileSync(NodePath.join(rendererRoot, "index.html"), "desktop index");
+          NodeFS.writeFileSync(NodePath.join(rendererRoot, "assets", "app.js"), "desktop js");
+          NodeFS.writeFileSync(NodePath.join(rendererRoot, "assets", "terminal.wasm"), "wasm");
+
+          let handler: ((request: Request) => Promise<Response>) | undefined;
+          handleMock.mockImplementation((_scheme, nextHandler) => {
+            handler = nextHandler;
+          });
+
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const protocol = yield* ElectronProtocol.ElectronProtocol;
+              yield* protocol.registerDesktopProtocol({
+                scheme: "t3code",
+                targetOrigin: new URL("http://127.0.0.1:41773/"),
+                backendOrigin: new URL("http://127.0.0.1:41773/"),
+                rendererRoot,
+                clerkFrontendApiHostname: undefined,
+              });
+
+              const route = yield* Effect.promise(() =>
+                handler!(new Request("t3code://app/projects/local")),
+              );
+              const asset = yield* Effect.promise(() =>
+                handler!(new Request("t3code://app/assets/app.js")),
+              );
+              const wasm = yield* Effect.promise(() =>
+                handler!(new Request("t3code://app/assets/terminal.wasm")),
+              );
+              const missingAsset = yield* Effect.promise(() =>
+                handler!(new Request("t3code://app/assets/missing.js")),
+              );
+              const traversal = yield* Effect.promise(() =>
+                handler!(new Request("t3code://app/%2e%2e%2fsecret")),
+              );
+
+              assert.equal(yield* Effect.promise(() => route.text()), "desktop index");
+              assert.equal(route.headers.get("content-type"), "text/html; charset=utf-8");
+              assert.equal(yield* Effect.promise(() => asset.text()), "desktop js");
+              assert.equal(asset.headers.get("content-type"), "text/javascript; charset=utf-8");
+              assert.equal(wasm.headers.get("content-type"), "application/wasm");
+              assert.equal(missingAsset.status, 404);
+              assert.equal(traversal.status, 404);
+              assert.equal(netFetchMock.mock.calls.length, 0);
+            }),
+          );
+        }),
+      (rendererRoot) =>
+        Effect.sync(() => NodeFS.rmSync(rendererRoot, { recursive: true, force: true })),
+    ).pipe(Effect.provide(ElectronProtocol.layer)),
+  );
+
   it.effect("preserves protocol registration failures", () =>
     Effect.gen(function* () {
       const cause = new Error("protocol registration failed");
@@ -228,3 +286,7 @@ describe("ElectronProtocol", () => {
     assert.deepEqual(directives["font-src"], ["'self'", "t3code:", "data:"]);
   });
 });
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";

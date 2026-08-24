@@ -66,15 +66,30 @@ A few more macOS notes:
 
 ## Using It with the Desktop App
 
-The desktop app attaches to a server that is already running on this machine instead of
-starting a second backend. That keeps one environment and one T3 Connect device.
+The installed desktop app attaches to a server that is already running on this machine instead
+of starting a second backend. That keeps one environment and one T3 Connect device. Desktop
+development remains isolated and always uses its development backend.
 
 This is on by default. Turn it off in **Settings → Connections → Attach to running server**
 if you want the desktop app to spawn its own local backend.
 
-Discovery looks at the desktop data directory, `~/.t3`, any `T3CODE_HOME` set on the
-`t3code.service` user unit, and child directories of `~/.t3` that have a live
-`userdata/server-runtime.json`.
+While attached, network exposure is controlled by the process that launched the server. The
+desktop app shows that status but does not offer its own Network access or Tailscale controls.
+
+Discovery checks the installed background service first, including a custom `T3CODE_HOME` in
+its systemd unit or launchd plist. It then checks the default T3 home and the configured desktop
+home for a live server started with `t3 serve`.
+
+If Desktop finds a server but cannot create a secure local session, it does not silently start
+another backend. You can try again, open the existing server in a browser, start a separate
+backend for that Desktop launch, or quit. Starting a separate backend this way does not change
+the saved attachment setting and uses an isolated local data directory instead of opening the
+detected server's database.
+
+Desktop keeps using the interface bundled with the installed app while attached, so updating the
+app does not depend on the background server's bundled web version. If the service restarts or
+moves to another local port, Desktop discovers it again. If secure reconnection still fails,
+Desktop asks whether to retry, start a separate backend, or stop reconnecting.
 
 ## Using It with T3 Connect
 

@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as IpcChannels from "../channels.ts";
@@ -15,10 +16,13 @@ import { makeIpcMethod } from "../DesktopIpc.ts";
 const readExistingLocalBackendState: Effect.Effect<
   DesktopExistingLocalBackendState,
   never,
-  DesktopAppSettings.DesktopAppSettings | DesktopBackendPool.DesktopBackendPool
+  | DesktopAppSettings.DesktopAppSettings
+  | DesktopBackendPool.DesktopBackendPool
+  | DesktopEnvironment.DesktopEnvironment
 > = Effect.gen(function* () {
   const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const settings = yield* appSettings.get;
   const primary = yield* pool.primary;
   const config = yield* primary.currentConfig;
@@ -27,6 +31,7 @@ const readExistingLocalBackendState: Effect.Effect<
     onSome: (value) => value.manageProcess === false,
   });
   return {
+    available: !environment.isDevelopment,
     enabled: settings.attachExistingLocalBackend,
     attached,
     origin: attached
@@ -35,7 +40,6 @@ const readExistingLocalBackendState: Effect.Effect<
           () => null,
         )
       : null,
-    label: null,
   };
 });
 

@@ -211,6 +211,10 @@
       "types": "./src/httpReadiness.ts",
       "import": "./src/httpReadiness.ts"
     },
+    "./bootServiceIdentity": {
+      "types": "./src/bootServiceIdentity.ts",
+      "import": "./src/bootServiceIdentity.ts"
+    },
     "./devHome": {
       "types": "./src/devHome.ts",
       "import": "./src/devHome.ts"

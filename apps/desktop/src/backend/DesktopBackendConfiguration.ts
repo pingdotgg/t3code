@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
@@ -23,7 +24,6 @@ import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
-import { ChildProcessSpawner } from "effect/unstable/process";
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -37,16 +37,43 @@ export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedE
   }
 }
 
+export type ExistingLocalBackendResolution =
+  | {
+      readonly _tag: "Disabled";
+      readonly reason: "development" | "setting-disabled" | "wsl-only" | "independent-launch";
+    }
+  | { readonly _tag: "NotFound" }
+  | {
+      readonly _tag: "ReadyToAttach";
+      readonly attachment: DesktopExistingLocalBackend.ExistingLocalBackendAttachment;
+    }
+  | {
+      readonly _tag: "PairingFailed";
+      readonly backend: DesktopExistingLocalBackend.ExistingLocalBackend;
+      readonly error: DesktopExistingLocalBackend.ExistingLocalBackendPairingError;
+    };
+
+type ExistingLocalBackendSelection =
+  | { readonly _tag: "Unresolved" }
+  | {
+      readonly _tag: "Required";
+      readonly previousBackend: DesktopExistingLocalBackend.ExistingLocalBackend;
+    }
+  | ExistingLocalBackendResolution;
+
+export type DesktopBackendConfigurationError =
+  | PlatformError.PlatformError
+  | DesktopExistingLocalBackend.ExistingLocalBackendPairingError;
+
 export class DesktopBackendConfiguration extends Context.Service<
   DesktopBackendConfiguration,
   {
     // Build the Windows-native primary backend's start config. Reads the
     // primary's port/host/exposure from DesktopServerExposure. Can fail
-    // with PlatformError because bootstrap token generation now uses
-    // crypto.randomBytes under the hood (post Effect 4 migration).
+    // while generating a bootstrap token or pairing with a detected backend.
     readonly resolvePrimary: Effect.Effect<
       DesktopBackendManager.DesktopBackendStartConfig,
-      PlatformError.PlatformError
+      DesktopBackendConfigurationError
     >;
     // Build a WSL backend start config for the given distro on the given
     // port. The WSL backend is always loopback-only (the primary owns LAN
@@ -65,6 +92,18 @@ export class DesktopBackendConfiguration extends Context.Service<
     // fall-back to Windows), so the env switcher can't show "WSL" for a
     // backend that actually resolved to Windows.
     readonly resolvePrimaryLabel: Effect.Effect<string>;
+    // Resolve the external backend selected for this desktop launch. Detection
+    // and a successful attachment are cached, while PairingFailed remains
+    // retryable. A detected server never degrades into NotFound just because
+    // authenticated session creation failed.
+    readonly resolveExistingLocalBackend: Effect.Effect<ExistingLocalBackendResolution>;
+    // Forget a live attachment after its health watcher fails. The next
+    // resolve re-discovers the service and refuses to silently fall back to a
+    // separate backend if it has moved or is temporarily unavailable.
+    readonly invalidateExistingLocalBackendAttachment: Effect.Effect<boolean>;
+    // Explicit, launch-scoped escape hatch used only after the user confirms
+    // that Desktop may start a separate backend.
+    readonly useIndependentBackendForLaunch: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/backend/DesktopBackendConfiguration") {}
 
@@ -371,6 +410,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   function* (
     input: SharedBootstrapInput & {
       readonly resourceMonitorPath: Option.Option<string>;
+      readonly t3Home: string;
     },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -385,7 +425,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       mode: "desktop" as const,
       noBrowser: true,
       port: backendExposure.port,
-      t3Home: environment.baseDir,
+      t3Home: input.t3Home,
       host: backendExposure.bindHost,
       desktopBootstrapToken: input.bootstrapToken,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
@@ -421,59 +461,29 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
 
 const resolveAttachStartConfig = Effect.fn("desktop.backendConfiguration.resolveAttach")(
   function* (input: {
-    readonly existing: DesktopExistingLocalBackend.ExistingLocalBackend;
-    readonly observabilitySettings: BackendObservabilitySettings;
-    readonly spawn: DesktopExistingLocalBackend.PairingProcessSpawn;
+    readonly attachment: DesktopExistingLocalBackend.ExistingLocalBackendAttachment;
   }): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
     never,
     DesktopEnvironment.DesktopEnvironment
   > {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const origin = new URL(input.existing.origin);
-    const credential = yield* DesktopExistingLocalBackend.mintExistingLocalBackendCredential({
-      backend: input.existing,
-      executablePath: process.execPath,
-      entryPath: environment.backendEntryPath,
-      spawn: input.spawn,
-    }).pipe(Effect.option);
+    const origin = new URL(input.attachment.backend.origin);
 
     const bootstrap = {
       mode: "desktop" as const,
       noBrowser: true,
-      port: input.existing.port,
-      t3Home: input.existing.baseDir,
+      port: input.attachment.backend.port,
+      t3Home: input.attachment.backend.baseDir,
       host: origin.hostname,
-      desktopBootstrapToken: Option.getOrElse(credential, () => ""),
+      desktopBootstrapToken: input.attachment.credential,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
-      ...buildObservabilityFragment(input.observabilitySettings),
     };
-
-    if (Option.isNone(credential)) {
-      return {
-        executablePath: process.execPath,
-        args: [environment.backendEntryPath, "auth", "pairing", "create"],
-        entryPath: environment.backendEntryPath,
-        cwd: environment.backendCwd,
-        env: backendChildEnvPatch(),
-        extendEnv: true,
-        bootstrap,
-        bootstrapDelivery: "fd3",
-        httpBaseUrl: origin,
-        captureOutput: false,
-        manageProcess: false,
-        attachedPid: input.existing.pid,
-        preflightFailure: Option.some({
-          reason: `Could not pair with the running T3 Code server at ${input.existing.origin}.`,
-          fatal: true,
-        }),
-      } satisfies DesktopBackendManager.DesktopBackendStartConfig;
-    }
 
     return {
       executablePath: process.execPath,
-      args: [environment.backendEntryPath, "auth", "pairing", "create"],
+      args: [],
       entryPath: environment.backendEntryPath,
       cwd: environment.backendCwd,
       env: backendChildEnvPatch(),
@@ -483,7 +493,12 @@ const resolveAttachStartConfig = Effect.fn("desktop.backendConfiguration.resolve
       httpBaseUrl: origin,
       captureOutput: false,
       manageProcess: false,
-      attachedPid: input.existing.pid,
+      attachedPid: input.attachment.backend.pid,
+      attachedBearerToken: input.attachment.bearerToken,
+      // Attached servers are already known to be healthy when pairing
+      // succeeds. Keep subsequent health checks short so the desktop can
+      // begin reconnection while a service restart is still in progress.
+      readinessTimeout: Duration.seconds(5),
       preflightFailure: Option.none(),
     } satisfies DesktopBackendManager.DesktopBackendStartConfig;
   },
@@ -687,7 +702,6 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const httpClient = yield* HttpClient.HttpClient;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
@@ -714,11 +728,11 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  // Both resolvers share the same bootstrap token: the renderer holds a
-  // single token and uses it against whichever backend it's currently
-  // talking to. Observability settings get re-read each resolve so a
-  // hot-swap of the server-settings file is picked up on the next
-  // restart cycle without having to bounce the desktop process.
+  // The managed primary and WSL resolvers share one bootstrap token: the
+  // renderer uses it against either Desktop-owned backend. An attached
+  // primary carries its own pairing credential instead. Observability
+  // settings get re-read each managed resolve so a hot-swap of the
+  // server-settings file is picked up on the next restart cycle.
   const sharedInputs = Effect.gen(function* () {
     const bootstrapToken = yield* getOrCreateBootstrapToken;
     const observabilitySettings = yield* readPersistedBackendObservabilitySettings.pipe(
@@ -727,6 +741,125 @@ export const make = Effect.gen(function* () {
     );
     return { bootstrapToken, observabilitySettings } satisfies SharedBootstrapInput;
   });
+
+  const existingLocalBackendSelection = yield* SynchronizedRef.make<ExistingLocalBackendSelection>({
+    _tag: "Unresolved",
+  });
+
+  const resolveExistingLocalBackend = SynchronizedRef.modifyEffect(
+    existingLocalBackendSelection,
+    (
+      selection,
+    ): Effect.Effect<readonly [ExistingLocalBackendResolution, ExistingLocalBackendSelection]> => {
+      if (
+        selection._tag === "Disabled" ||
+        selection._tag === "NotFound" ||
+        selection._tag === "ReadyToAttach"
+      ) {
+        return Effect.succeed([selection, selection] as const);
+      }
+
+      return Effect.gen(function* () {
+        const attachmentRequired = selection._tag === "Required";
+        let detected = Option.none<DesktopExistingLocalBackend.ExistingLocalBackend>();
+
+        if (selection._tag === "Unresolved") {
+          // Development owns its worktree-local state and must never inspect or
+          // attach to a packaged/background environment in the user's real
+          // T3 home.
+          if (environment.isDevelopment) {
+            const disabled = { _tag: "Disabled", reason: "development" } as const;
+            return [disabled, disabled] as const;
+          }
+
+          const persistedSettings = yield* settings.get;
+          if (!persistedSettings.attachExistingLocalBackend) {
+            const disabled = { _tag: "Disabled", reason: "setting-disabled" } as const;
+            return [disabled, disabled] as const;
+          }
+
+          const wslRequested = persistedSettings.wslOnly && persistedSettings.wslBackendEnabled;
+          if (wslRequested && (yield* wslEnvironment.isAvailable)) {
+            const disabled = { _tag: "Disabled", reason: "wsl-only" } as const;
+            return [disabled, disabled] as const;
+          }
+        }
+
+        detected = yield* DesktopExistingLocalBackend.discoverExistingLocalBackend({
+          homeDirectory: environment.homeDirectory,
+          desktopBaseDir: environment.baseDir,
+          platform: environment.platform,
+          path,
+          fileSystem,
+          httpClient,
+        });
+        if (Option.isNone(detected)) {
+          if (!attachmentRequired) {
+            const notFound = { _tag: "NotFound" } as const;
+            return [notFound, notFound] as const;
+          }
+          const previousBackend = selection.previousBackend;
+          const failed = {
+            _tag: "PairingFailed",
+            backend: previousBackend,
+            error: new DesktopExistingLocalBackend.ExistingLocalBackendPairingError({
+              baseDir: previousBackend.baseDir,
+              origin: previousBackend.origin,
+              detail: "The previously attached server is no longer available.",
+            }),
+          } as const;
+          return [failed, selection] as const;
+        }
+
+        const backend = Option.getOrThrow(detected);
+        const attachment = yield* DesktopExistingLocalBackend.pairExistingLocalBackend({
+          backend,
+          httpClient,
+        }).pipe(
+          Effect.map((value) => ({ _tag: "Success", value }) as const),
+          Effect.catchTag("ExistingLocalBackendPairingError", (error) =>
+            Effect.succeed({ _tag: "Failure", error } as const),
+          ),
+        );
+        if (attachment._tag === "Failure") {
+          const failed = { _tag: "PairingFailed", backend, error: attachment.error } as const;
+          // Retry through discovery as well as authentication: the service may
+          // have restarted on a different pid or port while the dialog was open.
+          return [failed, { _tag: "Required", previousBackend: backend }] as const;
+        }
+
+        const ready = {
+          _tag: "ReadyToAttach",
+          attachment: attachment.value,
+        } as const;
+        yield* Effect.logInfo("selected existing local T3 Code backend", {
+          origin: backend.origin,
+          baseDir: backend.baseDir,
+          pid: backend.pid,
+        });
+        return [ready, ready] as const;
+      });
+    },
+  );
+
+  const useIndependentBackendForLaunch = SynchronizedRef.set(existingLocalBackendSelection, {
+    _tag: "Disabled",
+    reason: "independent-launch",
+  });
+
+  const invalidateExistingLocalBackendAttachment = SynchronizedRef.modify(
+    existingLocalBackendSelection,
+    (selection) =>
+      selection._tag === "ReadyToAttach"
+        ? [
+            true,
+            {
+              _tag: "Required",
+              previousBackend: selection.attachment.backend,
+            } as ExistingLocalBackendSelection,
+          ]
+        : [false, selection],
+  );
 
   const buildWslPrimaryConfig = Effect.gen(function* () {
     // wsl-only mode pipes the WSL backend through the same port the
@@ -752,34 +885,26 @@ export const make = Effect.gen(function* () {
   });
 
   const buildWindowsPrimaryConfig = Effect.gen(function* () {
-    const persistedSettings = yield* settings.get;
-    const shared = yield* sharedInputs;
-    if (persistedSettings.attachExistingLocalBackend) {
-      const existing = yield* DesktopExistingLocalBackend.discoverExistingLocalBackend({
-        homeDirectory: environment.homeDirectory,
-        desktopBaseDir: environment.baseDir,
-        path,
-        fileSystem,
-        httpClient,
-      });
-      if (Option.isSome(existing)) {
-        yield* Effect.logInfo("attaching to existing local T3 Code backend", {
-          origin: existing.value.origin,
-          baseDir: existing.value.baseDir,
-          pid: existing.value.pid,
-        });
-        return yield* resolveAttachStartConfig({
-          existing: existing.value,
-          observabilitySettings: shared.observabilitySettings,
-          spawn: (command) => spawner.spawn(command),
-        }).pipe(Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment));
-      }
+    const existingResolution = yield* resolveExistingLocalBackend;
+    if (existingResolution._tag === "PairingFailed") {
+      return yield* existingResolution.error;
     }
+    if (existingResolution._tag === "ReadyToAttach") {
+      const attachment = existingResolution.attachment;
+      return yield* resolveAttachStartConfig({
+        attachment,
+      }).pipe(Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment));
+    }
+    const shared = yield* sharedInputs;
     const resourceMonitorPath = yield* resolveResourceMonitorPath().pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
-    return yield* resolvePrimaryStartConfig({ ...shared, resourceMonitorPath }).pipe(
+    const t3Home =
+      existingResolution._tag === "Disabled" && existingResolution.reason === "independent-launch"
+        ? path.join(environment.baseDir, "desktop-independent")
+        : environment.baseDir;
+    return yield* resolvePrimaryStartConfig({ ...shared, resourceMonitorPath, t3Home }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
     );
@@ -806,6 +931,9 @@ export const make = Effect.gen(function* () {
   });
 
   return DesktopBackendConfiguration.of({
+    resolveExistingLocalBackend,
+    invalidateExistingLocalBackendAttachment,
+    useIndependentBackendForLaunch,
     resolvePrimary: Effect.gen(function* () {
       const { useWsl, wslRequested } = yield* describePrimary;
       if (useWsl) {

@@ -505,10 +505,10 @@ export const DesktopWslStateSchema = Schema.Struct({
 });
 
 export const DesktopExistingLocalBackendStateSchema = Schema.Struct({
+  available: Schema.Boolean,
   enabled: Schema.Boolean,
   attached: Schema.Boolean,
   origin: Schema.NullOr(Schema.String),
-  label: Schema.NullOr(Schema.String),
 });
 export type DesktopExistingLocalBackendState = typeof DesktopExistingLocalBackendStateSchema.Type;
 

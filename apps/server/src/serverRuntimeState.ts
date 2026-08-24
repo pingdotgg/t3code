@@ -17,6 +17,9 @@ export const PersistedServerRuntimeState = Schema.Struct({
   // Present when the server fronts a dev web server (VITE_DEV_SERVER_URL).
   // Dev is single-origin: browsers must pair through this URL, not `origin`.
   devUrl: Schema.optional(Schema.String),
+  // Secret used only by another local T3 Code Desktop process to exchange for
+  // a normal bearer session through the running server.
+  desktopAttachToken: Schema.optional(Schema.NonEmptyString),
   startedAt: Schema.String,
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
@@ -48,7 +51,10 @@ const runtimeOriginForConfig = (
 };
 
 export const makePersistedServerRuntimeState = (input: {
-  readonly config: Pick<ServerConfig.ServerConfig["Service"], "host" | "devUrl">;
+  readonly config: Pick<
+    ServerConfig.ServerConfig["Service"],
+    "host" | "devUrl" | "desktopAttachToken"
+  >;
   readonly port: number;
 }): Effect.Effect<PersistedServerRuntimeState> =>
   Effect.map(DateTime.now, (now) => ({
@@ -58,6 +64,9 @@ export const makePersistedServerRuntimeState = (input: {
     port: input.port,
     origin: runtimeOriginForConfig(input.config, input.port),
     ...(input.config.devUrl ? { devUrl: input.config.devUrl.toString() } : {}),
+    ...(input.config.desktopAttachToken
+      ? { desktopAttachToken: input.config.desktopAttachToken }
+      : {}),
     startedAt: DateTime.formatIso(now),
   }));
 
@@ -68,6 +77,7 @@ export const persistServerRuntimeState = (input: {
   writeFileStringAtomically({
     filePath: input.path,
     contents: `${JSON.stringify(input.state)}\n`,
+    mode: 0o600,
   }).pipe(
     Effect.mapError(
       (cause) =>

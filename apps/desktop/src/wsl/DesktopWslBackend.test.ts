@@ -68,6 +68,9 @@ const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExp
 const backendConfigurationLayer = Layer.succeed(
   DesktopBackendConfiguration.DesktopBackendConfiguration,
   {
+    resolveExistingLocalBackend: Effect.succeed({ _tag: "NotFound" }),
+    invalidateExistingLocalBackendAttachment: Effect.succeed(false),
+    useIndependentBackendForLaunch: Effect.void,
     resolvePrimary: Effect.die("unexpected resolvePrimary"),
     resolvePrimaryLabel: Effect.succeed("Windows"),
     resolveWsl: () => Effect.die("unexpected resolveWsl"),

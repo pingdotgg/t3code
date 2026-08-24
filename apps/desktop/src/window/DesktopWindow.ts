@@ -92,7 +92,10 @@ export class DesktopWindow extends Context.Service<
     // to the backend through the connection layer, so the reported httpBaseUrl is
     // no longer used to point the window at the backend — it is kept only for the
     // readiness log and to preserve the callback contract the backend pool drives.
-    readonly handleBackendReady: (httpBaseUrl: URL) => Effect.Effect<void, DesktopWindowError>;
+    readonly handleBackendReady: (
+      httpBaseUrl: URL,
+      options?: { readonly reloadExisting?: boolean },
+    ) => Effect.Effect<void, DesktopWindowError>;
     // Called when the backend transitions back to "not ready" (clean stop,
     // restart, crash). Clears the latch that lets `activate` auto-create a
     // window so a "macOS dock click" while the backend is down doesn't
@@ -860,11 +863,19 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.withSpan("desktop.window.activate")),
     createMainIfBackendReady,
     showConnectingSplash,
-    handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
-      yield* Ref.set(backendReadyRef, true);
-      yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
-      yield* createMainIfBackendReady;
-    }),
+    handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(
+      function* (httpBaseUrl, options) {
+        yield* Ref.set(backendReadyRef, true);
+        yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
+        if (options?.reloadExisting === true) {
+          const existingWindow = yield* currentMainWindow;
+          if (Option.isSome(existingWindow)) {
+            existingWindow.value.webContents.reload();
+          }
+        }
+        yield* createMainIfBackendReady;
+      },
+    ),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),
     ),

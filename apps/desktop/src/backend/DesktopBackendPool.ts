@@ -85,6 +85,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -95,6 +96,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopExistingLocalBackend from "./DesktopExistingLocalBackend.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -103,6 +105,58 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 
 const { logWarning: logBackendPoolWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-pool");
+const isExistingLocalBackendPairingError = Schema.is(
+  DesktopExistingLocalBackend.ExistingLocalBackendPairingError,
+);
+const AUTOMATIC_ATTACHMENT_RECONNECT_ATTEMPTS = 4;
+
+export const handlePrimaryConfigurationFailure = Effect.fn(
+  "desktop.backendPool.primaryConfigurationFailed",
+)(function* (input: {
+  readonly error: Error;
+  readonly restartAttempt: number;
+  readonly showMessageBox: ElectronDialog.ElectronDialog["Service"]["showMessageBox"];
+  readonly useIndependentBackendForLaunch: Effect.Effect<void>;
+}) {
+  if (!isExistingLocalBackendPairingError(input.error)) {
+    return true;
+  }
+
+  if (input.restartAttempt <= AUTOMATIC_ATTACHMENT_RECONNECT_ATTEMPTS) {
+    return true;
+  }
+
+  const result = yield* input
+    .showMessageBox({
+      type: "warning",
+      title: "T3 Code server connection lost",
+      message: "Desktop could not reconnect securely to the local T3 Code server.",
+      detail: [
+        `Server: ${input.error.origin}`,
+        "No additional backend has been started.",
+        "Try discovery again, explicitly start a separate backend for this launch, or stop reconnecting.",
+        "",
+        input.error.message,
+      ].join("\n"),
+      buttons: ["Try Again", "Start Separate Backend", "Stop Reconnecting"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    })
+    .pipe(
+      Effect.catch((dialogError) =>
+        logBackendPoolWarning("failed to show backend reconnection dialog", {
+          error: dialogError.message,
+        }).pipe(Effect.as({ response: 2 })),
+      ),
+    );
+
+  if (result.response === 1) {
+    yield* input.useIndependentBackendForLaunch;
+    return true;
+  }
+  return result.response === 0;
+});
 
 export type BackendInstanceId = DesktopBackendManager.BackendInstanceId;
 export const BackendInstanceId = DesktopBackendManager.BackendInstanceId;
@@ -226,6 +280,7 @@ export const layer = Layer.effect(
     // the same FileSystem, spawner, HTTP client and log factory the
     // primary instance uses.
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
+    const reloadAttachedRendererOnReady = yield* Ref.make(false);
 
     // A WSL preflight failure on the primary only happens in wsl-only mode.
     // Fatal configuration failures persist the Windows fallback. Bounded
@@ -290,7 +345,10 @@ export const layer = Layer.effect(
       // otherwise a post-readiness window-open failure vanishes silently and
       // is near-impossible to diagnose in production.
       onReady: (httpBaseUrl) =>
-        desktopWindow.handleBackendReady(httpBaseUrl).pipe(
+        Effect.gen(function* () {
+          const reloadExisting = yield* Ref.getAndSet(reloadAttachedRendererOnReady, false);
+          yield* desktopWindow.handleBackendReady(httpBaseUrl, { reloadExisting });
+        }).pipe(
           Effect.catch((error) =>
             logBackendPoolWarning("failed to open main window after backend readiness", {
               error: error.message,
@@ -298,6 +356,19 @@ export const layer = Layer.effect(
           ),
         ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
+      onUnexpectedShutdown: () =>
+        configuration.invalidateExistingLocalBackendAttachment.pipe(
+          Effect.flatMap((invalidated) =>
+            invalidated ? Ref.set(reloadAttachedRendererOnReady, true) : Effect.void,
+          ),
+        ),
+      onConfigurationFailure: (error, restartAttempt) =>
+        handlePrimaryConfigurationFailure({
+          error,
+          restartAttempt,
+          showMessageBox: electronDialog.showMessageBox,
+          useIndependentBackendForLaunch: configuration.useIndependentBackendForLaunch,
+        }),
       onPreflightFailed: handlePrimaryPreflightFailure,
     });
 

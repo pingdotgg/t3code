@@ -1,6 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -52,6 +55,9 @@ export interface DesktopProtocolRegistrationInput {
   readonly scheme: string;
   readonly targetOrigin: URL;
   readonly backendOrigin: URL;
+  // When present, serve the renderer bundled with this Desktop build instead
+  // of proxying static assets from an attached server of an arbitrary version.
+  readonly rendererRoot?: string;
   readonly clerkFrontendApiHostname: string | undefined;
 }
 
@@ -182,6 +188,86 @@ async function proxyRequest(
   return withContentSecurityPolicy(response, contentSecurityPolicy);
 }
 
+const CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".wasm": "application/wasm",
+  ".webmanifest": "application/manifest+json",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
+
+const isWithinRoot = (root: string, candidate: string): boolean =>
+  candidate === root || candidate.startsWith(`${root}${NodePath.sep}`);
+
+export async function serveLocalRendererRequest(
+  request: Request,
+  rendererRoot: string,
+  contentSecurityPolicy: string,
+): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  if (requestUrl.host !== DESKTOP_HOST) {
+    return new Response(null, { status: 404 });
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
+  }
+
+  let pathname: string;
+  try {
+    pathname = decodeURIComponent(requestUrl.pathname);
+  } catch {
+    return new Response(null, { status: 400 });
+  }
+  if (pathname.includes("\u0000")) {
+    return new Response(null, { status: 400 });
+  }
+
+  const root = NodePath.resolve(rendererRoot);
+  const relativePath = pathname.replace(/^\/+/, "") || "index.html";
+  let candidate = NodePath.resolve(root, relativePath);
+  if (!isWithinRoot(root, candidate)) {
+    return new Response(null, { status: 404 });
+  }
+
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await NodeFSP.readFile(candidate));
+  } catch {
+    // Client-side routes fall back to the app shell. Asset requests keep a
+    // real 404 so a missing versioned chunk cannot be mistaken for HTML.
+    if (NodePath.extname(relativePath) !== "") {
+      return new Response(null, { status: 404 });
+    }
+    candidate = NodePath.join(root, "index.html");
+    try {
+      bytes = new Uint8Array(await NodeFSP.readFile(candidate));
+    } catch {
+      return new Response(null, { status: 404 });
+    }
+  }
+
+  const headers = new Headers({
+    "Content-Length": String(bytes.byteLength),
+    "Content-Type":
+      CONTENT_TYPES[NodePath.extname(candidate).toLowerCase()] ?? "application/octet-stream",
+  });
+  const body =
+    request.method === "HEAD"
+      ? null
+      : (bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+  return withContentSecurityPolicy(
+    new Response(body, { status: 200, headers }),
+    contentSecurityPolicy,
+  );
+}
+
 const TRANSIENT_FETCH_RETRY_DELAYS_MS = [0, 50, 150] as const;
 
 async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<Response> {
@@ -215,7 +301,9 @@ export const make = Effect.gen(function* () {
         Effect.try({
           try: () => {
             Electron.protocol.handle(input.scheme, (request) =>
-              proxyRequest(request, input.targetOrigin, contentSecurityPolicy),
+              input.rendererRoot === undefined
+                ? proxyRequest(request, input.targetOrigin, contentSecurityPolicy)
+                : serveLocalRendererRequest(request, input.rendererRoot, contentSecurityPolicy),
             );
           },
           catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),

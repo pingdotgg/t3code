@@ -16,6 +16,7 @@ import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
+import * as DesktopExistingLocalBackend from "./DesktopExistingLocalBackend.ts";
 import type { DesktopBackendSnapshot, DesktopBackendStartConfig } from "./DesktopBackendManager.ts";
 
 function makeStubInstance(
@@ -42,6 +43,12 @@ function makeStubInstance(
 
 function makePoolLayer(
   labelRef: Ref.Ref<string>,
+  options?: {
+    readonly configuration?: Partial<
+      DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]
+    >;
+    readonly dialogLayer?: Layer.Layer<ElectronDialog.ElectronDialog>;
+  },
 ): Layer.Layer<DesktopBackendPool.DesktopBackendPool> {
   return DesktopBackendPool.layer.pipe(
     Layer.provideMerge(
@@ -74,12 +81,16 @@ function makePoolLayer(
           removeControlSource: () => Effect.void,
         }),
         Layer.succeed(DesktopBackendConfiguration.DesktopBackendConfiguration, {
+          resolveExistingLocalBackend: Effect.succeed({ _tag: "NotFound" }),
+          invalidateExistingLocalBackendAttachment: Effect.succeed(false),
+          useIndependentBackendForLaunch: Effect.void,
           resolvePrimary: Effect.die("unexpected primary config resolve"),
           resolvePrimaryLabel: Ref.get(labelRef),
           resolveWsl: () => Effect.die("unexpected WSL config resolve"),
+          ...options?.configuration,
         } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]),
         DesktopAppSettings.layerTest(),
-        ElectronDialog.layer,
+        options?.dialogLayer ?? ElectronDialog.layer,
         Layer.succeed(DesktopWindow.DesktopWindow, {
           createMain: Effect.die("unexpected window create"),
           ensureMain: Effect.die("unexpected window ensure"),
@@ -128,9 +139,7 @@ describe("DesktopBackendPool", () => {
 
   it.effect("layerTest dies when no instances are supplied", () =>
     Effect.exit(
-      Effect.gen(function* () {
-        yield* DesktopBackendPool.DesktopBackendPool;
-      }).pipe(Effect.provide(DesktopBackendPool.layerTest([]))),
+      DesktopBackendPool.DesktopBackendPool.pipe(Effect.provide(DesktopBackendPool.layerTest([]))),
     ).pipe(Effect.map((exit) => assert.equal(exit._tag, "Failure"))),
   );
 
@@ -148,5 +157,55 @@ describe("DesktopBackendPool", () => {
         assert.equal(yield* primary.label, "WSL (Ubuntu)");
       }),
     ),
+  );
+
+  it.effect("retries attachment before offering to start a separate backend", () =>
+    Effect.gen(function* () {
+      const independentCount = yield* Ref.make(0);
+      const dialogCount = yield* Ref.make(0);
+      const backend: DesktopExistingLocalBackend.ExistingLocalBackend = {
+        baseDir: "/home/tester/.t3/service",
+        origin: "http://127.0.0.1:41773/",
+        port: 41773,
+        pid: 1234,
+        environmentId: "existing-environment",
+        label: "Existing environment",
+        desktopAttachToken: "attach-secret",
+      };
+      const pairingError = new DesktopExistingLocalBackend.ExistingLocalBackendPairingError({
+        baseDir: backend.baseDir,
+        origin: backend.origin,
+        detail: "server rejected attachment",
+      });
+      const showMessageBox: ElectronDialog.ElectronDialog["Service"]["showMessageBox"] = () =>
+        Ref.updateAndGet(dialogCount, (count) => count + 1).pipe(
+          Effect.as({ response: 1, checkboxChecked: false }),
+        );
+      const useIndependentBackendForLaunch = Ref.update(independentCount, (count) => count + 1);
+
+      for (const restartAttempt of [1, 2, 3, 4]) {
+        assert.isTrue(
+          yield* DesktopBackendPool.handlePrimaryConfigurationFailure({
+            error: pairingError,
+            restartAttempt,
+            showMessageBox,
+            useIndependentBackendForLaunch,
+          }),
+        );
+      }
+      assert.equal(yield* Ref.get(dialogCount), 0);
+      assert.equal(yield* Ref.get(independentCount), 0);
+
+      assert.isTrue(
+        yield* DesktopBackendPool.handlePrimaryConfigurationFailure({
+          error: pairingError,
+          restartAttempt: 5,
+          showMessageBox,
+          useIndependentBackendForLaunch,
+        }),
+      );
+      assert.equal(yield* Ref.get(dialogCount), 1);
+      assert.equal(yield* Ref.get(independentCount), 1);
+    }),
   );
 });

@@ -3,8 +3,50 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  resolveDesktopBackendControlState,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
+
+describe("resolveDesktopBackendControlState", () => {
+  it("keeps managed desktop controls enabled for legacy and managed backends", () => {
+    expect(
+      resolveDesktopBackendControlState({
+        hasDesktopBridge: true,
+        supportsExistingBackendState: false,
+        existingBackendState: null,
+      }),
+    ).toEqual({ isAttached: false, canManageDesktopBackend: true });
+    expect(
+      resolveDesktopBackendControlState({
+        hasDesktopBridge: true,
+        supportsExistingBackendState: true,
+        existingBackendState: { available: true, enabled: true, attached: false, origin: null },
+      }),
+    ).toEqual({ isAttached: false, canManageDesktopBackend: true });
+  });
+
+  it("hides managed controls while attachment state loads and after attaching", () => {
+    expect(
+      resolveDesktopBackendControlState({
+        hasDesktopBridge: true,
+        supportsExistingBackendState: true,
+        existingBackendState: null,
+      }),
+    ).toEqual({ isAttached: false, canManageDesktopBackend: false });
+    expect(
+      resolveDesktopBackendControlState({
+        hasDesktopBridge: true,
+        supportsExistingBackendState: true,
+        existingBackendState: {
+          enabled: true,
+          available: true,
+          attached: true,
+          origin: "http://127.0.0.1:3773",
+        },
+      }),
+    ).toEqual({ isAttached: true, canManageDesktopBackend: false });
+  });
+});
 
 const baseWslState: DesktopWslState = {
   enabled: false,

@@ -79,6 +79,10 @@ export class ServerConfig extends Context.Service<
     readonly noBrowser: boolean;
     readonly startupPresentation: StartupPresentation;
     readonly desktopBootstrapToken: string | undefined;
+    // Per-process credential advertised through the owner-only runtime state
+    // file so a local Desktop client can authenticate without opening the
+    // server's database from a second process.
+    readonly desktopAttachToken?: string | undefined;
     readonly desktopTelemetryFd?: number | undefined;
     readonly desktopTelemetryControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;
@@ -200,6 +204,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,
+    desktopAttachToken: undefined,
     desktopTelemetryFd: undefined,
     desktopTelemetryControlFd: undefined,
     resourceMonitorPath: undefined,
