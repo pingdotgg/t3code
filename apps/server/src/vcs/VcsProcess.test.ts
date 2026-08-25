@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { TestClock } from "effect/testing";
 
 import {
@@ -34,13 +35,14 @@ const baseInput = {
 
 const captureProcessResult = (
   result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  input: VcsProcess.VcsProcessInput = baseInput,
 ) =>
   VcsProcess.make.pipe(
     Effect.provideService(
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({ run: () => result }),
     ),
-    Effect.flatMap((service) => service.run(baseInput)),
+    Effect.flatMap((service) => service.run(input)),
     Effect.flip,
   );
 
@@ -138,6 +140,54 @@ describe("VcsProcess.run", () => {
       expect(error.message).not.toContain(secretStderr);
       expect(error.message).not.toContain("super-secret-token");
     }).pipe(provideLive),
+  );
+
+  it.effect("classifies tea without an available login as authentication", () =>
+    Effect.gen(function* () {
+      const error = yield* captureProcessResult(
+        Effect.succeed({
+          stdout: "",
+          stderr: "no available login",
+          code: ChildProcessSpawner.ExitCode(1),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+        { ...baseInput, command: "tea" },
+      );
+
+      expect(error).toMatchObject({
+        command: "tea",
+        detail: "Authentication failed.",
+        failureKind: "authentication",
+      });
+    }),
+  );
+
+  it.effect("does not classify another command with tea login wording as authentication", () =>
+    Effect.gen(function* () {
+      const error = yield* captureProcessResult(
+        Effect.succeed({
+          stdout: "",
+          stderr: "no available login",
+          code: ChildProcessSpawner.ExitCode(1),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        }),
+        { ...baseInput, command: "git" },
+      );
+
+      expect(error).toMatchObject({
+        command: "git",
+        detail: "Process exited with a non-zero status.",
+        failureKind: "command-failed",
+      });
+    }),
   );
 
   it.effect("classifies API rate limits without retaining provider stderr", () =>

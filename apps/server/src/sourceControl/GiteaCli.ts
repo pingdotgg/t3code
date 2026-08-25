@@ -39,6 +39,13 @@ const giteaCliDecodeErrorContext = {
   cause: Schema.Defect(),
 };
 
+const giteaPullRequestDecodeErrorContext = {
+  command: Schema.Literal("tea"),
+  cwd: Schema.String,
+  cause: Schema.Defect(),
+  reference: Schema.String,
+};
+
 export class GiteaCliUnavailableError extends Schema.TaggedErrorClass<GiteaCliUnavailableError>()(
   "GiteaCliUnavailableError",
   giteaCliExecutionErrorContext,
@@ -173,11 +180,7 @@ export class GiteaPullRequestListDecodeError extends Schema.TaggedErrorClass<Git
 
 export class GiteaPullRequestDecodeError extends Schema.TaggedErrorClass<GiteaPullRequestDecodeError>()(
   "GiteaPullRequestDecodeError",
-  {
-    ...giteaCliDecodeErrorContext,
-    operation: Schema.Literals(["getPullRequest", "createPullRequest"]),
-    reference: Schema.String,
-  },
+  giteaPullRequestDecodeErrorContext,
 ) {
   get detail(): string {
     return "Gitea CLI returned invalid pull request JSON.";
@@ -687,7 +690,6 @@ export const make = Effect.gen(function* () {
         if (!Result.isSuccess(decoded)) {
           return yield* Effect.fail(
             new GiteaPullRequestDecodeError({
-              operation: "getPullRequest",
               command: "tea",
               cwd: input.cwd,
               reference: input.reference,
