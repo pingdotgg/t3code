@@ -1,10 +1,25 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  getInitialAndroidKeyboardRecoveryState,
   isAndroidKeyboardAnimationUsable,
   reduceAndroidKeyboardRecovery,
   type AndroidKeyboardRecoveryState,
 } from "./androidKeyboardRecovery";
+
+describe("getInitialAndroidKeyboardRecoveryState", () => {
+  it("quarantines Android surfaces mounted while the app is active", () => {
+    expect(getInitialAndroidKeyboardRecoveryState({ isAndroid: true, isAppActive: true })).toBe(
+      "quarantined",
+    );
+    expect(getInitialAndroidKeyboardRecoveryState({ isAndroid: true, isAppActive: false })).toBe(
+      "ready",
+    );
+    expect(getInitialAndroidKeyboardRecoveryState({ isAndroid: false, isAppActive: true })).toBe(
+      "ready",
+    );
+  });
+});
 
 describe("reduceAndroidKeyboardRecovery", () => {
   it("quarantines keyboard translation after the app resumes", () => {

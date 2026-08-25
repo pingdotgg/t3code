@@ -42,6 +42,7 @@ interface TerminalSurfaceProps extends ViewProps {
   readonly theme?: TerminalTheme;
   readonly onInput: (data: string) => void;
   readonly onResize: (size: { readonly cols: number; readonly rows: number }) => void;
+  readonly onTerminalFocus?: () => void;
 }
 
 function estimateGridSize(input: {
@@ -150,6 +151,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
               props.onInput(`${text}\r`);
             }
           }}
+          onFocus={props.onTerminalFocus}
         />
         <Pressable
           disabled={!props.isRunning}
@@ -228,6 +230,7 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
           themeConfig={buildGhosttyThemeConfig(theme)}
           onInput={handleNativeInput}
           onResize={handleNativeResize}
+          onTerminalFocus={props.onTerminalFocus}
         />
       </View>
     );

@@ -23,6 +23,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private val inputView = EditText(context)
   private val onInput by EventDispatcher()
   private val onResize by EventDispatcher()
+  private val onTerminalFocus by EventDispatcher()
   private var terminalHandle = 0L
   private var fedBuffer = ""
   private var cols = 0
@@ -189,6 +190,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     if (isCleanedUp) return
     isCleanedUp = true
     inputView.setOnEditorActionListener(null)
+    inputView.setOnFocusChangeListener(null)
     terminalCanvas.onScrollRows = null
     terminalCanvas.onRequestKeyboard = null
     terminalCanvas.onCellMetricsChanged = null
@@ -213,6 +215,11 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
       InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
     inputView.setPadding(0, 0, 0, 0)
+    inputView.setOnFocusChangeListener { _, hasFocus ->
+      if (hasFocus) {
+        onTerminalFocus(emptyMap<String, Any>())
+      }
+    }
     inputView.setOnEditorActionListener { _, actionId, event ->
       val isKeyUp = event?.action == KeyEvent.ACTION_UP
       val isImeSend = actionId == EditorInfo.IME_ACTION_SEND && !isKeyUp

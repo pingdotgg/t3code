@@ -1091,9 +1091,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }, []);
 
   const handleShowKeyboard = useCallback(() => {
-    markInputFocused();
     setKeyboardFocusRequest((current) => current + 1);
-  }, [markInputFocused]);
+  }, []);
   const handleRetryEnvironment = useCallback(() => {
     if (routeEnvironmentId !== null) {
       void retryEnvironment(routeEnvironmentId);
@@ -1278,6 +1277,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                 keyboardFocusRequest={keyboardFocusRequest}
                 onInput={handleInput}
                 onResize={handleResize}
+                onTerminalFocus={markInputFocused}
                 style={{ flex: 1 }}
                 terminalKey={terminalKey}
                 theme={terminalTheme}
