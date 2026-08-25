@@ -1,20 +1,21 @@
-# Fork 每夜版发布
+# Fork 发布
 
 > 面向 `nolaurence/t3code-chinese` 维护者。
 
 本 fork 只保留一个 GitHub Actions 工作流：[`.github/workflows/release.yml`](../../../.github/workflows/release.yml)。
-上游的 CI、部署、npm、移动端、AUR 和稳定版发布工作流不会继续保留。
+上游的 CI、部署、npm、移动端和 AUR 工作流不会继续保留。
 
 ## 计划与触发方式
 
 - 每天 UTC 18:00（北京时间 02:00）检查一次 `main`。
 - 如果 `main` 与上一个每夜版标签指向同一提交，定时任务会在变更检查后结束。
 - 手动执行 `workflow_dispatch` 时始终构建，可用于验证工作流修改。
-- 同一时间只允许一个每夜版任务运行，后来的任务不会取消正在发布的版本。
+- 推送精确的 `vX.Y.Z` 标签时构建稳定版；带 `-dev` 等后缀的版本会被拒绝。
+- 同一时间只允许一个发布任务运行，后来的任务不会取消正在发布的版本。
 
 ## 发布产物
 
-每次发布先运行工作区质量门禁和 release smoke，再构建：
+每次稳定版或每夜版发布先运行工作区质量门禁和 release smoke，再构建：
 
 - macOS arm64 DMG 和更新 ZIP
 - macOS x64 DMG 和更新 ZIP
@@ -22,8 +23,8 @@
 - Windows x64 NSIS 安装程序
 - 对应的 Electron 更新清单与 blockmap
 
-产物会发布到本仓库的 GitHub 预发布版本。工作流不会发布 `t3` npm 包、部署 T3 Connect
-Relay 或托管 Web、更新 AUR、发送公告，也不会把版本号改动写回 `main`。
+每夜版产物会发布为 GitHub 预发布版本，稳定版产物会发布为最新 GitHub 正式版本。工作流不会发布
+`t3` npm 包、部署 T3 Connect Relay 或托管 Web、更新 AUR，也不会发送公告。
 
 由于 fork 不发布 `t3`，客户端无法通过 npm 把独立安装的远端服务自动升级到每夜版的精确版本。
 桌面内置服务和手动部署的兼容远端仍可使用。要恢复精确版本远端升级，需要 fork 自有 npm 包，
@@ -31,6 +32,7 @@ Relay 或托管 Web、更新 AUR、发送公告，也不会把版本号改动写
 
 每夜版标签格式为 `vX.Y.Z-nightly.YYYYMMDD.<run_number>`。基础版本取
 `apps/desktop/package.json` 当前版本的下一个补丁版本；包版本只在发布 runner 内临时修改。
+稳定版标签和包版本使用精确的 `X.Y.Z` 版本。
 
 ## 可选公共配置
 
@@ -68,9 +70,9 @@ Windows Azure Trusted Signing 需要：
 ## 验证步骤
 
 1. 将工作流推送到本仓库的分支。
-2. 打开 **Actions > Fork Nightly > Run workflow**，选择该分支。
+2. 打开 **Actions > Fork Release > Run workflow**，选择该分支。
 3. 确认质量门禁和四个平台构建全部通过。
-4. 确认 GitHub 预发布版本包含安装包、macOS ZIP、更新清单与 blockmap。
+4. 确认 GitHub 发布版本包含安装包、macOS ZIP、更新清单与 blockmap。
 5. 在依赖每日定时发布前，至少在每个操作系统上安装验证一次。
 
 本地发布专项检查：

@@ -1,14 +1,18 @@
 # Fork-owned workflow. Do not replace it with upstream release automation.
-name: Fork Nightly
+name: Fork Release
 
 on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "!v*-nightly.*"
   schedule:
     # 02:00 Asia/Shanghai. GitHub schedules use UTC.
     - cron: "0 18 * * *"
   workflow_dispatch:
 
 concurrency:
-  group: fork-nightly
+  group: fork-release
   cancel-in-progress: false
 
 permissions:
@@ -38,8 +42,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            echo "Manual run requested. Proceeding with release."
+          if [[ "$EVENT_NAME" != "schedule" ]]; then
+            echo "$EVENT_NAME run requested. Proceeding with release."
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -63,16 +67,19 @@ jobs:
           fi
 
   preflight:
-    name: Resolve nightly metadata
+    name: Resolve release metadata
     needs: check_changes
     if: needs.check_changes.outputs.has_changes == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      release_channel: ${{ steps.release_meta.outputs.release_channel }}
       version: ${{ steps.release_meta.outputs.version }}
       tag: ${{ steps.release_meta.outputs.tag }}
       release_name: ${{ steps.release_meta.outputs.name }}
       previous_tag: ${{ steps.previous_tag.outputs.previous_tag }}
+      is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
+      make_latest: ${{ steps.release_meta.outputs.make_latest }}
       ref: ${{ github.sha }}
     steps:
       - name: Checkout
@@ -95,21 +102,44 @@ jobs:
         name: Resolve release version
         shell: bash
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
           NIGHTLY_SHA: ${{ github.sha }}
           NIGHTLY_RUN_NUMBER: ${{ github.run_number }}
         run: |
-          nightly_date=$(date -u +%Y%m%d)
-          node scripts/resolve-nightly-release.ts \
-            --date "$nightly_date" \
-            --run-number "$NIGHTLY_RUN_NUMBER" \
-            --sha "$NIGHTLY_SHA" \
-            --github-output
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            version="${REF_NAME#v}"
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Stable releases require an exact vX.Y.Z tag; received: $REF_NAME" >&2
+              exit 1
+            fi
+
+            echo "release_channel=stable" >> "$GITHUB_OUTPUT"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "tag=v$version" >> "$GITHUB_OUTPUT"
+            echo "name=T3 Code v$version" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            nightly_date=$(date -u +%Y%m%d)
+            node scripts/resolve-nightly-release.ts \
+              --date "$nightly_date" \
+              --run-number "$NIGHTLY_RUN_NUMBER" \
+              --sha "$NIGHTLY_SHA" \
+              --github-output
+
+            echo "release_channel=nightly" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - id: previous_tag
-        name: Resolve previous nightly tag
+        name: Resolve previous release tag
         run: |
           node scripts/resolve-previous-release-tag.ts \
-            --channel nightly \
+            --channel "${{ steps.release_meta.outputs.release_channel }}" \
             --current-tag "${{ steps.release_meta.outputs.tag }}" \
             --github-output
 
@@ -479,7 +509,7 @@ jobs:
           retention-days: 1
 
   release:
-    name: Publish fork nightly
+    name: Publish GitHub release
     needs: [preflight, quality, build]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
@@ -527,7 +557,7 @@ jobs:
             rm -f "$x64_manifest"
           done
 
-      - name: Publish GitHub prerelease
+      - name: Publish GitHub release
         if: needs.preflight.outputs.previous_tag != ''
         uses: softprops/action-gh-release@v3
         with:
@@ -536,8 +566,8 @@ jobs:
           name: ${{ needs.preflight.outputs.release_name }}
           generate_release_notes: true
           previous_tag: ${{ needs.preflight.outputs.previous_tag }}
-          prerelease: true
-          make_latest: false
+          prerelease: ${{ needs.preflight.outputs.is_prerelease }}
+          make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: |
             release-assets/*.dmg
             release-assets/*.zip
@@ -548,7 +578,7 @@ jobs:
           fail_on_unmatched_files: true
           token: ${{ github.token }}
 
-      - name: Publish first GitHub prerelease
+      - name: Publish first GitHub release
         if: needs.preflight.outputs.previous_tag == ''
         uses: softprops/action-gh-release@v3
         with:
@@ -556,8 +586,8 @@ jobs:
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: ${{ needs.preflight.outputs.release_name }}
           generate_release_notes: true
-          prerelease: true
-          make_latest: false
+          prerelease: ${{ needs.preflight.outputs.is_prerelease }}
+          make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: |
             release-assets/*.dmg
             release-assets/*.zip

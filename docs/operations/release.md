@@ -1,21 +1,21 @@
-# Fork Nightly Releases
+# Fork Releases
 
 > For maintainers of `nolaurence/t3code-chinese`.
 
 This fork has one GitHub Actions workflow: [`.github/workflows/release.yml`](../../.github/workflows/release.yml).
-Upstream CI, deployment, npm, mobile, AUR, and stable-release workflows are intentionally not
-carried by the fork.
+Upstream CI, deployment, npm, mobile, and AUR workflows are intentionally not carried by the fork.
 
 ## Schedule and triggers
 
 - The workflow checks `main` once a day at 18:00 UTC (02:00 Asia/Shanghai).
 - A scheduled run exits after the change check when `main` still points at the last nightly tag.
 - `workflow_dispatch` always builds a nightly and can be used to validate workflow changes.
-- Concurrency is limited to one nightly run; an active release is never cancelled by a newer run.
+- Pushing an exact `vX.Y.Z` tag builds a stable release. Suffixed versions such as `-dev` are rejected.
+- Concurrency is limited to one release run; an active release is never cancelled by a newer run.
 
 ## Published artifacts
 
-Every nightly runs the workspace quality gates and release smoke checks, then builds:
+Every release runs the workspace quality gates and release smoke checks, then builds:
 
 - macOS arm64 DMG and update ZIP
 - macOS x64 DMG and update ZIP
@@ -23,9 +23,9 @@ Every nightly runs the workspace quality gates and release smoke checks, then bu
 - Windows x64 NSIS installer
 - Electron update manifests and blockmaps for those artifacts
 
-The workflow publishes the files to a GitHub prerelease in this repository. It does not publish the
-`t3` npm package, deploy T3 Connect Relay or the hosted web app, update AUR, send announcements, or
-write version changes back to `main`.
+The workflow publishes nightly files as a GitHub prerelease and stable files as the latest GitHub
+release in this repository. It does not publish the `t3` npm package, deploy T3 Connect Relay or the
+hosted web app, update AUR, or send announcements.
 
 Because the fork does not publish `t3`, a client cannot automatically update an independently
 installed remote server to the nightly's exact version through npm. The desktop-bundled server and
@@ -34,6 +34,7 @@ requires a fork-owned npm package plus matching client/server update configurati
 
 Nightly tags use `vX.Y.Z-nightly.YYYYMMDD.<run_number>`. The base is the next patch after the version
 in `apps/desktop/package.json`. Package versions are changed only inside the release runners.
+Stable tags and package versions use exact `X.Y.Z` versions.
 
 ## Optional public configuration
 
@@ -74,9 +75,9 @@ credential set should be treated as an error and completed or removed.
 ## Validation
 
 1. Push the workflow to a branch in this repository.
-2. Open **Actions > Fork Nightly > Run workflow** and select that branch.
+2. Open **Actions > Fork Release > Run workflow** and select that branch.
 3. Confirm all four build variants and the quality job pass.
-4. Confirm the GitHub prerelease contains installers, macOS ZIPs, manifests, and blockmaps.
+4. Confirm the GitHub release contains installers, macOS ZIPs, manifests, and blockmaps.
 5. Install at least one artifact per operating system before relying on the daily schedule.
 
 The local release-only checks are:
