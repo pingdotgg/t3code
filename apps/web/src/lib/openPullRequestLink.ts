@@ -8,7 +8,11 @@ import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { type MouseEvent, useCallback } from "react";
 
-import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  pullRequestHostOf,
+  pullRequestRepositoryOf,
+  type SourceControlProviderKind,
+} from "@t3tools/contracts";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { readLocalApi } from "../localApi";
@@ -197,6 +201,15 @@ export function findProjectForChangeRequest(
   });
 }
 
+/** The project-bound reference both the panel and the pull requests page open. */
+export function pullRequestTargetOf(
+  project: Pick<EnvironmentProject, "id" | "repositoryIdentity">,
+  number: number,
+) {
+  const repository = pullRequestRepositoryOf(project.repositoryIdentity);
+  return repository === null ? null : { projectId: project.id, repository, number };
+}
+
 /**
  * Opens a change request link on the page, and says whether it did. Anything else — another
  * organisation's repository, a host nothing here is checked out from, a link that merely looks
@@ -257,16 +270,12 @@ export function useOpenChangeRequestLink(
             );
       const project = findProjectForChangeRequest(projects, parsed);
       if (project === undefined || !reads(project.environmentId)) return false;
+      const target = pullRequestTargetOf(project, parsed.number);
+      if (target === null) return false;
       event.preventDefault();
       event.stopPropagation();
       if (resolvedThreadRef) {
-        useRightPanelStore.getState().openPullRequest(resolvedThreadRef, {
-          projectId: project.id,
-          // The identity's own spelling, not the one read out of the URL: the panel asks the
-          // provider for this repository, while matching a link only ever compares lower case.
-          repository: project.repositoryIdentity?.displayName ?? parsed.repository,
-          number: parsed.number,
-        });
+        useRightPanelStore.getState().openPullRequest(resolvedThreadRef, target);
         return true;
       }
       void navigate({
@@ -276,8 +285,8 @@ export function useOpenChangeRequestLink(
           // Every state, so the pull request being opened is also in the list behind it whether
           // it is open, merged or closed.
           state: "all",
-          repository: parsed.repository,
-          number: parsed.number,
+          repository: target.repository,
+          number: target.number,
           selectedProjectId: project.id,
           // Named so the page opens the right one of two servers holding this project.
           selectedEnvironmentId: project.environmentId,

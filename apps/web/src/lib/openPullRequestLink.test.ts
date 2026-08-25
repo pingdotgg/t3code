@@ -7,6 +7,7 @@ import {
   openPullRequestLink,
   parseChangeRequestUrl,
   PullRequestLinkOpenError,
+  pullRequestTargetOf,
   shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
 import { ProjectId } from "@t3tools/contracts";
@@ -258,5 +259,24 @@ describe("findProjectForChangeRequest", () => {
         number: 1,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("pullRequestTargetOf", () => {
+  it("opens and navigates to an Azure DevOps pull request by its short repository name", () => {
+    const project = {
+      id: "p1",
+      repositoryIdentity: {
+        provider: "azure-devops",
+        displayName: "bcagroup/bristol%20thin%20slice/_git/genus-yard-mobile",
+        name: "genus-yard-mobile",
+      },
+    } as never;
+
+    expect(pullRequestTargetOf(project, 17)).toEqual({
+      projectId: "p1",
+      repository: "genus-yard-mobile",
+      number: 17,
+    });
   });
 });
