@@ -1311,8 +1311,12 @@ function ThreadNavigationSidebarPane(
             size="pageTitle"
             brand={
               <Text
+                accessible
+                accessibilityLabel="T3 Code, Threads"
+                aria-level={1}
                 className="flex-1 font-t3-bold text-foreground"
                 numberOfLines={1}
+                role="heading"
                 style={androidSidebarPageTitleTextStyle()}
               >
                 Threads
