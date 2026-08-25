@@ -23,7 +23,7 @@ function MarkdownFrontmatterList({
         return (
           <View
             key={`${item}:${occurrence}`}
-            className="rounded-sm border border-border px-2.5 py-1"
+            className="max-w-full rounded-sm border border-border px-2.5 py-1"
             style={{ backgroundColor }}
           >
             <NativeText className="font-t3-regular text-sm" style={{ color: textColor }}>
