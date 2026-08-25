@@ -160,7 +160,11 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
-import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import {
+  derivePhysicalProjectKey,
+  getProjectOrderKey,
+  selectProjectGroupingSettings,
+} from "../logicalProject";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import {
   buildSidebarProjectPickerEntries,
@@ -697,6 +701,7 @@ function OpenCommandPaletteDialog(props: {
         getId: getProjectOrderKey,
         getPreferenceIds: (project) => [
           getProjectOrderKey(project),
+          derivePhysicalProjectKey(project),
           legacyProjectCwdPreferenceKey(project.workspaceRoot),
         ],
       }),
@@ -2561,7 +2566,7 @@ function OpenCommandPaletteDialog(props: {
               ),
             }
           : isBrowsing
-            ? { startAddon: directoryPicker ? <FolderIcon /> : <FolderPlusIcon /> }
+            ? { startAddon: <FolderPlusIcon /> }
             : {}),
         onKeyDown: handleKeyDown,
       }}

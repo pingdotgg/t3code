@@ -91,7 +91,11 @@ import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
-import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import {
+  derivePhysicalProjectKey,
+  getProjectOrderKey,
+  selectProjectGroupingSettings,
+} from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
   type SidebarProjectSnapshot,
@@ -1844,6 +1848,7 @@ export default function Sidebar() {
         getId: getProjectOrderKey,
         getPreferenceIds: (project) => [
           getProjectOrderKey(project),
+          derivePhysicalProjectKey(project),
           legacyProjectCwdPreferenceKey(project.workspaceRoot),
         ],
       }),

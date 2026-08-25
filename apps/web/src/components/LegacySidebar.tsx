@@ -2112,16 +2112,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     const nextOverrides = {
       ...projectGroupingSettings.sidebarProjectGroupingOverrides,
     };
+    const nextInheritance = {
+      ...projectGroupingSettings.sidebarProjectGroupingInheritance,
+    };
     delete nextOverrides[overrideKey];
     delete nextOverrides[legacyOverrideKey];
-    nextOverrides[overrideKey] = projectGroupingSelection;
+    delete nextInheritance[overrideKey];
+    if (projectGroupingSelection === "inherit") {
+      nextInheritance[overrideKey] = true;
+    } else {
+      nextOverrides[overrideKey] = projectGroupingSelection;
+    }
     updateSettings({
       sidebarProjectGroupingOverrides: nextOverrides,
+      sidebarProjectGroupingInheritance: nextInheritance,
     });
     closeProjectGroupingDialog();
   }, [
     closeProjectGroupingDialog,
     projectGroupingSelection,
+    projectGroupingSettings.sidebarProjectGroupingInheritance,
     projectGroupingSettings.sidebarProjectGroupingOverrides,
     projectGroupingTarget,
     updateSettings,
@@ -3103,6 +3113,7 @@ export default function LegacySidebar() {
       getId: getProjectOrderKey,
       getPreferenceIds: (project) => [
         getProjectOrderKey(project),
+        derivePhysicalProjectKey(project),
         legacyProjectCwdPreferenceKey(project.workspaceRoot),
       ],
     });

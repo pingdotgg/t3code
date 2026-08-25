@@ -2,7 +2,6 @@ import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
 import type {
   EnvironmentId,
   ScopedProjectRef,
-  SidebarProjectGroupingOverride,
   SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
@@ -12,7 +11,8 @@ import { normalizeProjectPathForComparison } from "./projects.ts";
 
 export interface ProjectGroupingSettings {
   readonly sidebarProjectGroupingMode: SidebarProjectGroupingMode;
-  readonly sidebarProjectGroupingOverrides: Record<string, SidebarProjectGroupingOverride>;
+  readonly sidebarProjectGroupingOverrides: Record<string, SidebarProjectGroupingMode>;
+  readonly sidebarProjectGroupingInheritance: Record<string, boolean>;
 }
 
 export type ProjectGroupingMode = SidebarProjectGroupingMode;
@@ -21,6 +21,7 @@ export function selectProjectGroupingSettings(settings: ClientSettings): Project
   return {
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
     sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
+    sidebarProjectGroupingInheritance: settings.sidebarProjectGroupingInheritance,
   };
 }
 
@@ -97,16 +98,19 @@ export function resolveProjectGroupingOverride(
   const [overrideKey, legacyOverrideKey] = deriveProjectGroupingOverrideKeys(project);
   const override = settings.sidebarProjectGroupingOverrides[overrideKey];
   if (override !== undefined) {
-    return override === "inherit" ? null : override;
+    return override;
+  }
+  if (settings.sidebarProjectGroupingInheritance[overrideKey] === true) {
+    return null;
   }
   const legacyOverride = settings.sidebarProjectGroupingOverrides[legacyOverrideKey];
-  return legacyOverride === undefined || legacyOverride === "inherit" ? null : legacyOverride;
+  return legacyOverride ?? null;
 }
 
 export function getProjectOrderKey(
-  project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
+  project: Pick<EnvironmentProject, "environmentId" | "id">,
 ): string {
-  return derivePhysicalProjectKey(project);
+  return scopedProjectKey(scopeProjectRef(project.environmentId, project.id));
 }
 
 export function resolveProjectGroupingMode(

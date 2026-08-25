@@ -9,7 +9,9 @@ import {
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
+  derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKeys,
+  getProjectOrderKey,
   resolveProjectGroupingOverride,
   selectProjectGroupingSettings,
 } from "../../logicalProject";
@@ -79,6 +81,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import { useProjects, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
+import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../../uiStateStore";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -306,6 +309,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectGroupingSettingsRef = useRef(projectGroupingSettings);
   projectGroupingSettingsRef.current = projectGroupingSettings;
+  const migrateProjectOrderKeys = useUiStateStore((state) => state.migrateProjectOrderKeys);
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const threads = useThreadShells();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
@@ -503,16 +507,33 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         if (result._tag === "Success") {
           const currentGroupingSettings = projectGroupingSettingsRef.current;
           const existingOverrides = currentGroupingSettings.sidebarProjectGroupingOverrides;
+          const existingInheritance = currentGroupingSettings.sidebarProjectGroupingInheritance;
           const [overrideKey, legacyOverrideKey] = deriveProjectGroupingOverrideKeys(checkout);
           const groupingOverride = resolveProjectGroupingOverride(
             checkout,
             currentGroupingSettings,
           );
           const nextOverrides = { ...existingOverrides };
+          const nextInheritance = { ...existingInheritance };
           delete nextOverrides[overrideKey];
           delete nextOverrides[legacyOverrideKey];
-          nextOverrides[overrideKey] = groupingOverride ?? "inherit";
-          updateClientSettings({ sidebarProjectGroupingOverrides: nextOverrides });
+          delete nextInheritance[overrideKey];
+          if (groupingOverride === null) {
+            nextInheritance[overrideKey] = true;
+          } else {
+            nextOverrides[overrideKey] = groupingOverride;
+          }
+          updateClientSettings({
+            sidebarProjectGroupingOverrides: nextOverrides,
+            sidebarProjectGroupingInheritance: nextInheritance,
+          });
+          migrateProjectOrderKeys(
+            [
+              derivePhysicalProjectKey(checkout),
+              legacyProjectCwdPreferenceKey(checkout.workspaceRoot),
+            ],
+            getProjectOrderKey(checkout),
+          );
         }
         return result._tag === "Success";
       } finally {
@@ -520,7 +541,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         setIsSavingPath(false);
       }
     },
-    [reportFailure, updateClientSettings, updateProject],
+    [migrateProjectOrderKeys, reportFailure, updateClientSettings, updateProject],
   );
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
@@ -712,12 +733,25 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     (member: SidebarProjectGroupMember, selection: SidebarProjectGroupingMode | "inherit") => {
       const [overrideKey, legacyOverrideKey] = deriveProjectGroupingOverrideKeys(member);
       const nextOverrides = { ...projectGroupingSettings.sidebarProjectGroupingOverrides };
+      const nextInheritance = { ...projectGroupingSettings.sidebarProjectGroupingInheritance };
       delete nextOverrides[overrideKey];
       delete nextOverrides[legacyOverrideKey];
-      nextOverrides[overrideKey] = selection;
-      updateClientSettings({ sidebarProjectGroupingOverrides: nextOverrides });
+      delete nextInheritance[overrideKey];
+      if (selection === "inherit") {
+        nextInheritance[overrideKey] = true;
+      } else {
+        nextOverrides[overrideKey] = selection;
+      }
+      updateClientSettings({
+        sidebarProjectGroupingOverrides: nextOverrides,
+        sidebarProjectGroupingInheritance: nextInheritance,
+      });
     },
-    [projectGroupingSettings.sidebarProjectGroupingOverrides, updateClientSettings],
+    [
+      projectGroupingSettings.sidebarProjectGroupingInheritance,
+      projectGroupingSettings.sidebarProjectGroupingOverrides,
+      updateClientSettings,
+    ],
   );
 
   const removeMembers = useCallback(

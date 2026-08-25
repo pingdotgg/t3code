@@ -5,6 +5,7 @@ import {
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
   markThreadVisited,
+  migrateProjectOrderKeys,
   parsePersistedState,
   PERSISTED_STATE_KEY,
   type PersistedUiState,
@@ -102,6 +103,17 @@ describe("uiStateStore pure functions", () => {
     const next = reorderProjects(makeUiState(), currentOrder, [keyALocal, keyARemote], [keyC]);
 
     expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
+  });
+
+  it("migrates path order keys to a stable project key", () => {
+    const state = makeUiState({
+      projectOrder: ["project-a", "old-physical", "project-b", "stable-project"],
+    });
+
+    expect(
+      migrateProjectOrderKeys(state, ["old-physical", "legacy-project-cwd:/old"], "stable-project")
+        .projectOrder,
+    ).toEqual(["project-a", "stable-project", "project-b"]);
   });
 
   it("does not reorder missing or identical groups", () => {

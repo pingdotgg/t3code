@@ -519,10 +519,10 @@ describe("orderItemsByPreferredIds", () => {
     ]);
   });
 
-  it("honors projectOrder physical keys via getProjectOrderKey", async () => {
+  it("honors stable projectOrder keys via getProjectOrderKey", async () => {
     // Regression guard for #1904 / the regression introduced by #2055:
-    // `projectOrder` is populated with physical keys (envId + cwd-derived)
-    // by the store and by drag-end handlers. Readers must identify projects
+    // `projectOrder` is populated with environment-scoped project IDs by the
+    // store and drag-end handlers. Readers must identify projects
     // with the same key format, or manual sort silently snaps back.
     const { getProjectOrderKey } = await import("../logicalProject");
     const projects = [

@@ -61,6 +61,7 @@ export function buildHomeProjectScopes(input: {
     settings: {
       sidebarProjectGroupingMode: input.projectGroupingMode,
       sidebarProjectGroupingOverrides: {},
+      sidebarProjectGroupingInheritance: {},
     },
   }).map((group) => {
     return {

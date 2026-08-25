@@ -6,6 +6,7 @@ import {
   buildProjectGroups,
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
+  getProjectOrderKey,
   resolveProjectGroupingMode,
   type ProjectGroupingSettings,
 } from "./projectGrouping.ts";
@@ -50,6 +51,7 @@ function settings(
   return {
     sidebarProjectGroupingMode: mode,
     sidebarProjectGroupingOverrides: overrides,
+    sidebarProjectGroupingInheritance: {},
   };
 }
 
@@ -135,14 +137,19 @@ describe("buildProjectGroups", () => {
 
     expect(deriveProjectGroupingOverrideKey(movedProject)).toBe(overrideKey);
     expect(resolveProjectGroupingMode(movedProject, groupingSettings)).toBe("separate");
+    expect(getProjectOrderKey(movedProject)).toBe(getProjectOrderKey(project));
   });
 
-  it("uses explicit inheritance instead of a legacy path override", () => {
+  it("uses scoped inheritance instead of a legacy path override", () => {
     const project = makeProject("t3code", "/work/t3code");
-    const groupingSettings = settings("repository", {
-      [derivePhysicalProjectKey(project)]: "separate",
-      [deriveProjectGroupingOverrideKey(project)]: "inherit",
-    });
+    const groupingSettings = {
+      ...settings("repository", {
+        [derivePhysicalProjectKey(project)]: "separate",
+      }),
+      sidebarProjectGroupingInheritance: {
+        [deriveProjectGroupingOverrideKey(project)]: true,
+      },
+    };
 
     expect(resolveProjectGroupingMode(project, groupingSettings)).toBe("repository");
   });

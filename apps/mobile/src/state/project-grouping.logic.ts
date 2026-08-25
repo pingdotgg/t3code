@@ -6,6 +6,7 @@ import type { Preferences } from "../persistence/mobile-preferences";
 export const DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS: ProjectGroupingSettings = {
   sidebarProjectGroupingMode: "repository",
   sidebarProjectGroupingOverrides: {},
+  sidebarProjectGroupingInheritance: {},
 };
 
 export function resolveMobileProjectGroupingSettings(
@@ -16,6 +17,7 @@ export function resolveMobileProjectGroupingSettings(
       preferences.projectGroupingMode ??
       (preferences.projectGroupingEnabled === false ? "separate" : "repository"),
     sidebarProjectGroupingOverrides: {},
+    sidebarProjectGroupingInheritance: {},
   };
 }
 

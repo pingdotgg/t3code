@@ -381,6 +381,27 @@ export function reorderProjects(
   };
 }
 
+export function migrateProjectOrderKeys(
+  state: UiState,
+  previousKeys: readonly string[],
+  nextKey: string,
+): UiState {
+  const previousKeySet = new Set(previousKeys.filter((key) => key !== nextKey));
+  const firstPreviousIndex = state.projectOrder.findIndex((key) => previousKeySet.has(key));
+  if (firstPreviousIndex < 0) {
+    return state;
+  }
+
+  const insertionIndex = state.projectOrder
+    .slice(0, firstPreviousIndex)
+    .filter((key) => !previousKeySet.has(key) && key !== nextKey).length;
+  const projectOrder = state.projectOrder.filter(
+    (key) => !previousKeySet.has(key) && key !== nextKey,
+  );
+  projectOrder.splice(insertionIndex, 0, nextKey);
+  return { ...state, projectOrder };
+}
+
 interface UiStateStore extends UiState {
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
@@ -392,6 +413,7 @@ interface UiStateStore extends UiState {
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
   ) => void;
+  migrateProjectOrderKeys: (previousKeys: readonly string[], nextKey: string) => void;
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
@@ -410,6 +432,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) =>
       reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
     ),
+  migrateProjectOrderKeys: (previousKeys, nextKey) =>
+    set((state) => migrateProjectOrderKeys(state, previousKeys, nextKey)),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

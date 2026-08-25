@@ -18,6 +18,7 @@ import {
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
+  derivePhysicalProjectKey,
   deriveLogicalProjectKeyFromSettings,
   getProjectOrderKey,
   selectProjectGroupingSettings,
@@ -458,6 +459,7 @@ export function useHandleNewThread() {
       getId: getProjectOrderKey,
       getPreferenceIds: (project) => [
         getProjectOrderKey(project),
+        derivePhysicalProjectKey(project),
         legacyProjectCwdPreferenceKey(project.workspaceRoot),
       ],
     });
