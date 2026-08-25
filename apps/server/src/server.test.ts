@@ -5209,7 +5209,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           createdAt: "2026-01-01T00:00:00.000Z",
         }) as const;
 
-      const wsUrl = yield* getWsServerUrl("/ws?clientSurface=mobile&clientAppVersion=1.2.3");
+      const wsUrl = yield* getWsServerUrl(
+        "/ws?clientSurface=mobile&clientAppVersion=1.2.3&clientOs=iOS&clientOsMajorVersion=18&clientDeviceModel=iPhone+15+Pro",
+      );
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
@@ -5242,7 +5244,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "analytics:client.thread.started",
       ]);
       assert.deepEqual(analyticsProperties, [
-        { surface: "mobile", appVersion: "1.2.3" },
+        {
+          surface: "mobile",
+          appVersion: "1.2.3",
+          os: "iOS",
+          osMajorVersion: 18,
+          deviceModel: "iPhone 15 Pro",
+        },
         { surface: "mobile", appVersion: "1.2.3" },
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
