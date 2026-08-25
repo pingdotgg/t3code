@@ -1170,7 +1170,7 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
         configuredShell = settings.defaultTerminalShell;
       }),
     ),
-    Effect.forkScoped,
+    Effect.forkScoped({ startImmediately: true }),
   );
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
