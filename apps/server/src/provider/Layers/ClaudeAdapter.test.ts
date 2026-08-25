@@ -4797,6 +4797,73 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("denies AskUserQuestion when the signal aborted before the listener registered", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "approval-required",
+      });
+
+      yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
+
+      const canUseTool = harness.getLastCreateQueryInput()?.options.canUseTool;
+      assert.equal(typeof canUseTool, "function");
+      if (!canUseTool) {
+        return;
+      }
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 2).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      // Abort before the call so the adapter's listener registration can
+      // never observe the abort event, only the recheck can.
+      const controller = new AbortController();
+      controller.abort();
+      const permissionPromise = canUseTool(
+        "AskUserQuestion",
+        {
+          questions: [
+            {
+              question: "Continue?",
+              header: "Continue",
+              options: [{ label: "Yes", description: "Proceed" }],
+              multiSelect: false,
+            },
+          ],
+        },
+        {
+          signal: controller.signal,
+          toolUseID: "tool-ask-pre-aborted",
+        },
+      );
+
+      const permissionResult = yield* Effect.promise(() => permissionPromise);
+      assert.deepEqual(permissionResult, {
+        behavior: "deny",
+        message: "User cancelled tool execution.",
+      } satisfies PermissionResult);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepEqual(
+        runtimeEvents.map((event) => event.type),
+        ["user-input.requested", "user-input.resolved"],
+      );
+      const resolvedEvent = runtimeEvents[1];
+      if (resolvedEvent?.type === "user-input.resolved") {
+        assert.deepEqual(resolvedEvent.payload.answers, {});
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("stopping a session settles pending user-input waits", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

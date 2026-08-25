@@ -38,6 +38,15 @@ describe("ClaudeSettings auto-compaction", () => {
       expect(() => decodeClaudeSettings({ autoCompactWindow: value })).toThrow();
     },
   );
+
+  it("rejects an unsupported threshold at the settings patch boundary", () => {
+    expect(() =>
+      decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300k" } } }),
+    ).toThrow();
+    expect(
+      decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300000" } } }),
+    ).toBeDefined();
+  });
 });
 
 describe("ClientSettings word wrap", () => {

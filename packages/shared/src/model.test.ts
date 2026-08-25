@@ -172,6 +172,9 @@ describe("applyClaudePromptEffortPrefix", () => {
     expect(applyClaudePromptEffortPrefix("/plugin:skill run", "ultrathink")).toBe(
       "/plugin:skill run",
     );
+    expect(applyClaudePromptEffortPrefix("/deploy.prod to staging", "ultrathink")).toBe(
+      "/deploy.prod to staging",
+    );
   });
 
   it("still adds the ultrathink prefix to ordinary prompts", () => {

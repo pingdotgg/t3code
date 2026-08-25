@@ -3570,7 +3570,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
-                    compactDisabled={compactDisabled || noProviderAvailable}
+                    compactDisabled={
+                      compactDisabled || noProviderAvailable || isSendBusy || isConnecting
+                    }
                     compactDisabledReason={resolvedCompactDisabledReason}
                     {...(selectedProvider === "claudeAgent"
                       ? { onCompactContext: compactThreadContext }
