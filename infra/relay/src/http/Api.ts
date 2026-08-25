@@ -48,10 +48,15 @@ import {
   RelayEnvironmentPrincipal,
   type RelayEnvironmentConnectRequest,
   type RelayManagedEndpointOrigin,
+  RelayManagedEndpointRecoveryProofPayload,
   type RelayDpopAccessTokenScope,
   RelayInternalError,
 } from "@t3tools/contracts/relay";
-import { normalizeRelayIssuer } from "@t3tools/shared/relayJwt";
+import {
+  normalizeRelayIssuer,
+  RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
+  verifyRelayJwt,
+} from "@t3tools/shared/relayJwt";
 
 import * as DeliveryAttempts from "../agentActivity/DeliveryAttempts.ts";
 import * as AgentActivityRows from "../agentActivity/AgentActivityRows.ts";
@@ -99,6 +104,10 @@ const relayCorsPreflightHeaders = {
   "access-control-allow-headers": relayCorsAllowedHeaders.join(","),
   "access-control-max-age": "86400",
 } as const;
+
+const decodeManagedTunnelRecoveryProof = Schema.decodeUnknownEffect(
+  RelayManagedEndpointRecoveryProofPayload,
+);
 
 const appendRelayCredentialResponseHeaders = HttpEffect.appendPreResponseHandler(
   (_request, response) =>
@@ -478,6 +487,56 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
   },
 );
 
+type EnvironmentTunnelRecoveryProofInput = {
+  readonly proof: string;
+  readonly userId: string;
+  readonly environmentId: string;
+  readonly environmentPublicKey: string;
+} & (
+  | { readonly action: "register"; readonly tunnelId: string }
+  | { readonly action: "recover"; readonly origin: RelayManagedEndpointOrigin }
+);
+
+export const verifyEnvironmentTunnelRecoveryProof = Effect.fn(
+  "relay.api.server.verifyEnvironmentTunnelRecoveryProof",
+)(function* (input: EnvironmentTunnelRecoveryProofInput) {
+  const config = yield* RelayConfiguration.RelayConfiguration;
+  const now = yield* DateTime.now;
+  const verified = yield* verifyRelayJwt({
+    publicKey: input.environmentPublicKey,
+    token: input.proof,
+    typ: RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
+    issuer: `t3-env:${input.environmentId}`,
+    audience: normalizeRelayIssuer(config.relayIssuer),
+    nowEpochSeconds: Math.floor(now.epochMilliseconds / 1_000),
+  }).pipe(
+    Effect.flatMap(decodeManagedTunnelRecoveryProof),
+    Effect.mapError(() => new HttpApiError.Unauthorized({})),
+  );
+
+  if (
+    verified.environmentId !== input.environmentId ||
+    verified.sub !== input.environmentId ||
+    verified.cloudUserId !== input.userId ||
+    verified.action !== input.action
+  ) {
+    return yield* new HttpApiError.Unauthorized({});
+  }
+  if (input.action === "register") {
+    if (verified.action !== "register" || verified.tunnelId !== input.tunnelId) {
+      return yield* new HttpApiError.Unauthorized({});
+    }
+    return;
+  }
+  if (
+    verified.action !== "recover" ||
+    verified.origin.localHttpHost !== input.origin.localHttpHost ||
+    verified.origin.localHttpPort !== input.origin.localHttpPort
+  ) {
+    return yield* new HttpApiError.Unauthorized({});
+  }
+});
+
 export const registerEnvironmentTunnelRecovery = Effect.fn(
   "relay.api.server.registerEnvironmentTunnelRecovery",
 )(function* (input: {
@@ -540,10 +599,13 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
     recovered.endpoint.wsBaseUrl !== link.endpoint.wsBaseUrl
   ) {
     if (recoveredTunnelId !== undefined) {
-      const owner = { userId: input.userId, environmentId: input.environmentId };
-      const target = yield* managedEndpointProvider.prepareDeprovision(owner);
-      if (target?.tunnelId === recoveredTunnelId) {
-        yield* managedEndpointProvider.deprovision({ ...owner, target }).pipe(
+      yield* managedEndpointProvider
+        .release({
+          userId: input.userId,
+          environmentId: input.environmentId,
+          expectedTunnelId: recoveredTunnelId,
+        })
+        .pipe(
           Effect.catch((cause) =>
             Effect.logWarning("Failed to clean up a tunnel with a mismatched endpoint", {
               userId: input.userId,
@@ -553,7 +615,6 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
             }),
           ),
         );
-      }
     }
     return yield* new HttpApiError.Unauthorized({});
   }
@@ -1140,6 +1201,14 @@ export const serverApi = HttpApiBuilder.group(
           if (principal.environmentId !== params.environmentId) {
             return yield* new HttpApiError.Unauthorized({});
           }
+          yield* verifyEnvironmentTunnelRecoveryProof({
+            action: "register",
+            proof: payload.proof,
+            userId: payload.cloudUserId,
+            environmentId: params.environmentId,
+            environmentPublicKey: principal.environmentPublicKey,
+            tunnelId: payload.tunnelId,
+          });
           yield* appendRelayCredentialResponseHeaders;
           return yield* registerEnvironmentTunnelRecovery({
             userId: payload.cloudUserId,
@@ -1157,6 +1226,14 @@ export const serverApi = HttpApiBuilder.group(
             if (principal.environmentId !== params.environmentId) {
               return yield* new HttpApiError.Unauthorized({});
             }
+            yield* verifyEnvironmentTunnelRecoveryProof({
+              action: "recover",
+              proof: payload.proof,
+              userId: payload.cloudUserId,
+              environmentId: params.environmentId,
+              environmentPublicKey: principal.environmentPublicKey,
+              origin: payload.origin,
+            });
             yield* appendRelayCredentialResponseHeaders;
             return yield* recoverEnvironmentTunnelRecord({
               userId: payload.cloudUserId,

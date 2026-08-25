@@ -215,6 +215,8 @@ describe("CloudManagedEndpointRuntime", () => {
       const firstBatchObserved = yield* Deferred.make<void>();
       const secondBatchObserved = yield* Deferred.make<void>();
       const recoveryRequested = yield* Deferred.make<RelayManagedEndpointRuntimeConfig>();
+      const recoveryRetried = yield* Deferred.make<RelayManagedEndpointRuntimeConfig>();
+      let recoveryRequestCount = 0;
       const spawned: Array<number> = [];
       const encoder = new TextEncoder();
       const connectorOutput = Stream.fromQueue(output).pipe(
@@ -248,9 +250,13 @@ describe("CloudManagedEndpointRuntime", () => {
         '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Failed to get tunnel" connIndex=0\n';
 
       yield* runtime.recoveryRequests.pipe(
-        Stream.runForEach((requested) =>
-          Deferred.succeed(recoveryRequested, requested).pipe(Effect.asVoid),
-        ),
+        Stream.runForEach((requested) => {
+          recoveryRequestCount += 1;
+          return Deferred.succeed(
+            recoveryRequestCount === 1 ? recoveryRequested : recoveryRetried,
+            requested,
+          ).pipe(Effect.asVoid);
+        }),
         Effect.forkChild,
       );
       yield* runtime.applyConfig(config);
@@ -274,6 +280,10 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* Queue.offer(output, encoder.encode(rejectedLine));
 
       expect(yield* Deferred.await(recoveryRequested)).toEqual(config);
+
+      yield* Queue.offer(output, encoder.encode(rejectedLine.repeat(4)));
+
+      expect(yield* Deferred.await(recoveryRetried)).toEqual(config);
       expect(spawned).toEqual([600]);
     }),
   );

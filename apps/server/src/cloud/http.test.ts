@@ -272,7 +272,10 @@ describe("releaseManagedTunnelOnShutdown", () => {
         Effect.sync(() => {
           values.set(name, value);
         }),
-      create: unusedSecretStoreOperation,
+      create: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, value);
+        }),
       getOrCreateRandom: unusedSecretStoreOperation,
       remove: (name) =>
         Effect.sync(() => {
@@ -682,7 +685,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       if (body?._tag === "Uint8Array") {
         expect(
           yield* decodeManagedTunnelRecoveryRegistration(new TextDecoder().decode(body.body)),
-        ).toEqual({
+        ).toMatchObject({
           cloudUserId: "user-123",
           tunnelId: "existing-tunnel",
         });
@@ -770,6 +773,32 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(yield* recoverManagedCloudTunnel("http://127.0.0.1:3773")).toBe(false);
       expect(applyConfigCalls).toEqual([]);
       expect(requests).toEqual([]);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
+  it.effect("ignores recovery requests for a tunnel that has already been replaced", () => {
+    const { store } = makeMemorySecretStore([
+      [
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"current-token","tunnelId":"current-tunnel"}',
+      ],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      expect(
+        yield* recoverManagedCloudTunnel("http://127.0.0.1:3773", {
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "old-token",
+          tunnelId: "old-tunnel",
+        }),
+      ).toBe(false);
+      expect(requests).toEqual([]);
+      expect(applyConfigCalls).toEqual([]);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 

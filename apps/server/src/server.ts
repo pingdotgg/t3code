@@ -8,6 +8,8 @@ import {
   ProviderDriverKind,
   type RepositoryIdentity,
 } from "@t3tools/contracts";
+import { EnvironmentHttpApi, ProviderDriverKind } from "@t3tools/contracts";
+import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
@@ -745,38 +747,39 @@ const makeServerLayer = Layer.unwrap(
             const localOrigin = `http://127.0.0.1:${address.port}`;
             const endpointRuntime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
             const recoveryLock = yield* Semaphore.make(1);
-            const recoverManagedTunnel = recoveryLock.withPermits(1)(
-              recoverManagedCloudTunnel(localOrigin).pipe(
-                Effect.retry({
-                  while: (error) =>
-                    error._tag !== "EnvironmentHttpBadRequestError" &&
-                    error._tag !== "EnvironmentHttpUnauthorizedError" &&
-                    error._tag !== "EnvironmentHttpConflictError" &&
-                    (error._tag !== "EnvironmentCloudEndpointUnavailableError" ||
-                      CloudManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus(
-                        error.endpointRuntimeStatus,
-                      )),
-                  schedule: Schedule.exponential("1 second").pipe(
-                    Schedule.modifyDelay(({ duration }) =>
-                      Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+            const recoverManagedTunnel = (config: RelayManagedEndpointRuntimeConfig) =>
+              recoveryLock.withPermits(1)(
+                recoverManagedCloudTunnel(localOrigin, config).pipe(
+                  Effect.retry({
+                    while: (error) =>
+                      error._tag !== "EnvironmentHttpBadRequestError" &&
+                      error._tag !== "EnvironmentHttpUnauthorizedError" &&
+                      error._tag !== "EnvironmentHttpConflictError" &&
+                      (error._tag !== "EnvironmentCloudEndpointUnavailableError" ||
+                        CloudManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus(
+                          error.endpointRuntimeStatus,
+                        )),
+                    schedule: Schedule.exponential("1 second").pipe(
+                      Schedule.modifyDelay(({ duration }) =>
+                        Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                      ),
+                      Schedule.upTo({ duration: "10 minutes" }),
                     ),
-                    Schedule.upTo({ duration: "10 minutes" }),
+                  }),
+                  Effect.tap((recovered) =>
+                    recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
                   ),
-                }),
-                Effect.tap((recovered) =>
-                  recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
+                  Effect.catchCause((cause) =>
+                    Cause.hasInterrupts(cause)
+                      ? Effect.interrupt
+                      : Effect.logWarning("Failed to recover the T3 Connect managed tunnel", {
+                          cause,
+                        }),
+                  ),
                 ),
-                Effect.catchCause((cause) =>
-                  Cause.hasInterrupts(cause)
-                    ? Effect.interrupt
-                    : Effect.logWarning("Failed to recover the T3 Connect managed tunnel", {
-                        cause,
-                      }),
-                ),
-              ),
-            );
+              );
             yield* endpointRuntime.recoveryRequests.pipe(
-              Stream.runForEach(() => recoverManagedTunnel),
+              Stream.runForEach(recoverManagedTunnel),
               Effect.forkScoped,
             );
             // No settling delay before the first attempt: routes are already

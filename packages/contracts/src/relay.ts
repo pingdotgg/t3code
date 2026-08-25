@@ -189,12 +189,14 @@ export type RelayManagedEndpointRuntimeConfig = typeof RelayManagedEndpointRunti
 export const RelayManagedEndpointRecoveryRequest = Schema.Struct({
   cloudUserId: TrimmedNonEmptyString,
   origin: RelayManagedEndpointOrigin,
+  proof: TrimmedNonEmptyString,
 });
 export type RelayManagedEndpointRecoveryRequest = typeof RelayManagedEndpointRecoveryRequest.Type;
 
 export const RelayManagedEndpointRecoveryRegistrationRequest = Schema.Struct({
   cloudUserId: TrimmedNonEmptyString,
   tunnelId: TrimmedNonEmptyString,
+  proof: TrimmedNonEmptyString,
 });
 export type RelayManagedEndpointRecoveryRegistrationRequest =
   typeof RelayManagedEndpointRecoveryRegistrationRequest.Type;
@@ -231,6 +233,25 @@ const RelaySignedJwtRegisteredClaims = {
   iat: Schema.Int,
   exp: Schema.Int,
 } as const;
+
+export const RelayManagedEndpointRecoveryProofPayload = Schema.Union([
+  Schema.Struct({
+    ...RelaySignedJwtRegisteredClaims,
+    action: Schema.Literal("register"),
+    environmentId: EnvironmentId,
+    cloudUserId: TrimmedNonEmptyString,
+    tunnelId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    ...RelaySignedJwtRegisteredClaims,
+    action: Schema.Literal("recover"),
+    environmentId: EnvironmentId,
+    cloudUserId: TrimmedNonEmptyString,
+    origin: RelayManagedEndpointOrigin,
+  }),
+]);
+export type RelayManagedEndpointRecoveryProofPayload =
+  typeof RelayManagedEndpointRecoveryProofPayload.Type;
 
 export const RelayAgentActivityPublishProofPayload = Schema.Struct({
   ...RelaySignedJwtRegisteredClaims,

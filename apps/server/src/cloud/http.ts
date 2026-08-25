@@ -29,7 +29,9 @@ import {
   RelayEnvironmentLinkProofPayload,
   RelayLinkProofRequest,
   RelayManagedEndpointOrigin,
+  RelayManagedEndpointRecoveryProofPayload,
   RelayManagedEndpointRecoveryResponse,
+  type RelayManagedEndpointRuntimeConfig,
   RelayOkResponse,
 } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -38,6 +40,7 @@ import {
   RELAY_HEALTH_REQUEST_TYP,
   RELAY_HEALTH_RESPONSE_TYP,
   RELAY_LINK_PROOF_TYP,
+  RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
   RELAY_MINT_REQUEST_TYP,
   RELAY_MINT_RESPONSE_TYP,
   signRelayJwt,
@@ -501,7 +504,14 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
         CLOUD_ENDPOINT_RUNTIME_CONFIG,
         stringToBytes(endpointRuntimeJson),
       );
-      if (options?.requestRecovery !== false) {
+      const registered = yield* registerManagedCloudTunnelRecovery().pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to register T3 Connect managed tunnel recovery", {
+            cause,
+          }).pipe(Effect.as(false)),
+        ),
+      );
+      if (!registered && options?.requestRecovery !== false) {
         yield* dependencies.endpointRuntime.requestRecovery(payload.endpointRuntime);
       }
     } else {
@@ -654,6 +664,53 @@ export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileD
   },
 );
 
+type ManagedTunnelRecoveryProofInput = {
+  readonly environmentId: RelayManagedEndpointRecoveryProofPayload["environmentId"];
+  readonly cloudUserId: string;
+  readonly relayUrl: string;
+} & (
+  | { readonly action: "register"; readonly tunnelId: string }
+  | { readonly action: "recover"; readonly origin: RelayManagedEndpointOrigin }
+);
+
+const makeManagedTunnelRecoveryProof = Effect.fn(
+  "environment.cloud.makeManagedTunnelRecoveryProof",
+)(function* (dependencies: CloudHttpDependencies, input: ManagedTunnelRecoveryProofInput) {
+  const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(dependencies.secrets);
+  const configuredIssuer = yield* dependencies.secrets.get(RELAY_ISSUER_SECRET);
+  const now = yield* DateTime.now;
+  const issuedAt = Math.floor(now.epochMilliseconds / 1_000);
+  const claims = {
+    iss: `t3-env:${input.environmentId}`,
+    aud: normalizeRelayIssuer(
+      Option.isSome(configuredIssuer) ? bytesToString(configuredIssuer.value) : input.relayUrl,
+    ),
+    sub: input.environmentId,
+    jti: yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+    iat: issuedAt,
+    exp: issuedAt + 60,
+    environmentId: input.environmentId,
+    cloudUserId: input.cloudUserId,
+  };
+  const payload =
+    input.action === "register"
+      ? { ...claims, action: "register" as const, tunnelId: input.tunnelId }
+      : { ...claims, action: "recover" as const, origin: input.origin };
+
+  return yield* signRelayJwt({
+    privateKey: keyPair.privateKey,
+    typ: RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
+    payload,
+  }).pipe(
+    Effect.mapError(
+      () =>
+        new EnvironmentHttpInternalServerError({
+          message: "Could not sign the managed tunnel recovery request.",
+        }),
+    ),
+  );
+});
+
 export const registerManagedCloudTunnelRecovery = Effect.fn(
   "environment.cloud.registerManagedCloudTunnelRecovery",
 )(function* () {
@@ -679,12 +736,22 @@ export const registerManagedCloudTunnelRecovery = Effect.fn(
   }
 
   const environmentId = yield* dependencies.environment.getEnvironmentId;
+  const relayUrlValue = bytesToString(relayUrl.value);
+  const cloudUserIdValue = bytesToString(cloudUserId.value);
+  const proof = yield* makeManagedTunnelRecoveryProof(dependencies, {
+    action: "register",
+    environmentId,
+    cloudUserId: cloudUserIdValue,
+    relayUrl: relayUrlValue,
+    tunnelId: config.tunnelId,
+  });
   const registered = yield* relayClientRequest(dependencies, {
-    url: `${bytesToString(relayUrl.value)}/v1/environments/${encodeURIComponent(environmentId)}/tunnel/recovery`,
+    url: `${relayUrlValue}/v1/environments/${encodeURIComponent(environmentId)}/tunnel/recovery`,
     token: bytesToString(environmentCredential.value),
     payload: {
-      cloudUserId: bytesToString(cloudUserId.value),
+      cloudUserId: cloudUserIdValue,
       tunnelId: config.tunnelId,
+      proof,
     },
     schema: RelayOkResponse,
   });
@@ -692,7 +759,7 @@ export const registerManagedCloudTunnelRecovery = Effect.fn(
 });
 
 export const recoverManagedCloudTunnel = Effect.fn("environment.cloud.recoverManagedCloudTunnel")(
-  function* (localOrigin: string) {
+  function* (localOrigin: string, expectedConfig?: RelayManagedEndpointRuntimeConfig) {
     const dependencies = yield* cloudHttpDependencies;
     const [runtimeConfig, relayUrl, cloudUserId, environmentCredential] = yield* Effect.all([
       dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
@@ -707,6 +774,18 @@ export const recoverManagedCloudTunnel = Effect.fn("environment.cloud.recoverMan
       Option.isNone(environmentCredential)
     ) {
       return false;
+    }
+    if (expectedConfig !== undefined) {
+      const current = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeConfig.value)));
+      if (
+        current === null ||
+        current.providerKind !== expectedConfig.providerKind ||
+        current.connectorToken !== expectedConfig.connectorToken ||
+        current.tunnelId !== expectedConfig.tunnelId ||
+        current.tunnelName !== expectedConfig.tunnelName
+      ) {
+        return false;
+      }
     }
 
     const localUrl = yield* Effect.try({
@@ -723,15 +802,26 @@ export const recoverManagedCloudTunnel = Effect.fn("environment.cloud.recoverMan
     }
 
     const environmentId = yield* dependencies.environment.getEnvironmentId;
+    const relayUrlValue = bytesToString(relayUrl.value);
+    const cloudUserIdValue = bytesToString(cloudUserId.value);
+    const origin = {
+      localHttpHost: localUrl.hostname,
+      localHttpPort: endpointRequestPort(localUrl),
+    };
+    const proof = yield* makeManagedTunnelRecoveryProof(dependencies, {
+      action: "recover",
+      environmentId,
+      cloudUserId: cloudUserIdValue,
+      relayUrl: relayUrlValue,
+      origin,
+    });
     const recovered = yield* relayClientRequest(dependencies, {
-      url: `${bytesToString(relayUrl.value)}/v1/environments/${encodeURIComponent(environmentId)}/tunnel`,
+      url: `${relayUrlValue}/v1/environments/${encodeURIComponent(environmentId)}/tunnel`,
       token: bytesToString(environmentCredential.value),
       payload: {
-        cloudUserId: bytesToString(cloudUserId.value),
-        origin: {
-          localHttpHost: localUrl.hostname,
-          localHttpPort: endpointRequestPort(localUrl),
-        },
+        cloudUserId: cloudUserIdValue,
+        origin,
+        proof,
       },
       schema: RelayManagedEndpointRecoveryResponse,
     });
