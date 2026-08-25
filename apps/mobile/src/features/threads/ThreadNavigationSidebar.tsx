@@ -26,6 +26,11 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
+import {
+  ANDROID_SIDEBAR_PAGE_TITLE_FONT_SIZE,
+  ANDROID_SIDEBAR_PAGE_TITLE_LINE_HEIGHT,
+  ANDROID_SIDEBAR_PAGE_TITLE_ROW_MIN_HEIGHT,
+} from "../../lib/layoutMetrics";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -1295,7 +1300,10 @@ function ThreadNavigationSidebarPane(
           backgroundColor,
         }}
       >
-        <View className="h-[50px] flex-row items-end gap-0.5 pr-2 pl-5">
+        <View
+          className="flex-row items-end gap-0.5 pr-2 pl-5"
+          style={{ minHeight: ANDROID_SIDEBAR_PAGE_TITLE_ROW_MIN_HEIGHT }}
+        >
           {/* Title slot doubles as the connection status surface: while an
               environment reconnects, the brand fades to a status label in
               place (no layout shift in the list below). */}
@@ -1304,7 +1312,15 @@ function ThreadNavigationSidebarPane(
             onPress={props.onOpenEnvironmentSettings}
             size="pageTitle"
             brand={
-              <View className="h-11 flex-1 justify-center">
+              <View
+                className="flex-1 justify-center"
+                style={{
+                  minHeight: Math.max(
+                    ANDROID_SIDEBAR_PAGE_TITLE_FONT_SIZE,
+                    ANDROID_SIDEBAR_PAGE_TITLE_LINE_HEIGHT,
+                  ),
+                }}
+              >
                 <CompactBrandTitle allowFontScaling={false} />
               </View>
             }

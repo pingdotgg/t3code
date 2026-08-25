@@ -64,6 +64,7 @@ export function CompactBrandTitle(
           fontFamily: "DMSans-Medium",
           fontSize: 21,
           letterSpacing: -0.5,
+          ...(Platform.OS === "android" ? { includeFontPadding: false } : null),
         }}
       >
         Code
@@ -84,6 +85,7 @@ export function CompactBrandTitle(
             fontSize: 9,
             letterSpacing: 0.9,
             textTransform: "uppercase",
+            ...(Platform.OS === "android" ? { includeFontPadding: false } : null),
           }}
         >
           {stageLabel}

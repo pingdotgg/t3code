@@ -5,6 +5,16 @@ export const HOME_HORIZONTAL_INSET = 20;
 export const IPAD_HOME_TITLE_OFFSET = 10;
 
 /**
+ * Android split-view "Threads" heading. Sized like an iOS large title, but the
+ * row must clear the line box: a 34px font in a 50px row with default Android
+ * `includeFontPadding` clips and smears, which desktop-window density misses
+ * make unreadable.
+ */
+export const ANDROID_SIDEBAR_PAGE_TITLE_FONT_SIZE = 34;
+export const ANDROID_SIDEBAR_PAGE_TITLE_LINE_HEIGHT = 41;
+export const ANDROID_SIDEBAR_PAGE_TITLE_ROW_MIN_HEIGHT = 50;
+
+/**
  * Height of the native iOS navigation bar below the safe-area inset, used as
  * a fallback when the measured HeaderHeightContext is unavailable.
  */
