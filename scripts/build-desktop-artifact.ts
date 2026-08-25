@@ -2356,13 +2356,32 @@ export const buildWslRuntimeArchiveArgs = (
   ...WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS,
 ];
 
-// The runtime's canonical identity: sha256 over every shipped file's posix
-// path and bytes, walked in sorted order. It is computed from the staged tree
-// rather than the archive, and deliberately ignores mtimes, ownership, and
-// mode, so two builds of the same server payload agree even though their
-// tar/gzip bytes do not — gzip stores a timestamp, and tar records whatever
-// the staging filesystem happened to report. That stability is what lets a new
-// desktop release reuse a distro-local runtime an older release installed.
+// Everything about an entry that survives the trip into the distro and changes
+// how the runtime behaves: whether it is a file, a directory, or a link, the
+// bytes of a file, the target of a link, and whether it is executable. Owner
+// and group bits carry no meaning once tar has restored the tree as whoever ran
+// the install, so the mode collapses to one bit.
+const wslRuntimeSemanticMode = (mode: number): string => ((mode & 0o111) === 0 ? "644" : "755");
+
+type WslRuntimeWalkEntry =
+  | { readonly childPath: string; readonly kind: "link"; readonly target: string }
+  | { readonly childPath: string; readonly kind: "node"; readonly info: FileSystem.File.Info };
+
+// The runtime's canonical identity: sha256 over every shipped entry's posix
+// path, type, semantic mode, and content, walked in sorted order. It is
+// computed from the staged tree rather than the archive, and deliberately
+// ignores mtimes and ownership, so two builds of the same server payload agree
+// even though their tar/gzip bytes do not — gzip stores a timestamp, and tar
+// records whatever the staging filesystem happened to report. That stability is
+// what lets a new desktop release reuse a distro-local runtime an older release
+// installed.
+//
+// The executable bit is not incidental metadata: tar restores it, and a release
+// whose only change is making a helper executable ships a runtime the previous
+// one could not run. Reducing it out gave both trees the same id, so the fixed
+// release reused the broken cache forever. A Windows builder reports no
+// executable bits at all, so every regular file there lands in the same bucket
+// and the id stays stable; where modes are real, a mode change moves the id.
 export const computeWslRuntimeContentId = Effect.fn("computeWslRuntimeContentId")(function* (
   sourceDir: string,
 ) {
@@ -2372,7 +2391,8 @@ export const computeWslRuntimeContentId = Effect.fn("computeWslRuntimeContentId"
   const toRelativePosixPath = (absolutePath: string) =>
     path.relative(sourceDir, absolutePath).replaceAll("\\", "/");
 
-  const files: Array<string> = [];
+  const files: Array<{ readonly relativePath: string; readonly mode: number }> = [];
+  const links: Array<string> = [];
   const directories: Array<string> = [];
   // The sidecar installs with pnpm's hoisted linker, so this tree is physical
   // (see createStageWorkspaceConfig) and a plain walk cannot meet a symlink
@@ -2386,39 +2406,64 @@ export const computeWslRuntimeContentId = Effect.fn("computeWslRuntimeContentId"
     if (current === undefined) break;
     const children = yield* Effect.forEach(
       yield* fs.readDirectory(current),
-      (name) => {
+      (name): Effect.Effect<WslRuntimeWalkEntry, PlatformError> => {
         const childPath = path.join(current, name);
-        return Effect.map(fs.stat(childPath), (info) => ({ childPath, info }));
+        // readLink before stat, because stat resolves a link to whatever it
+        // points at: a link would otherwise be hashed as a copy of its target,
+        // which is not what tar stores, and a link pointing outside the tree
+        // would fail the walk outright.
+        return fs.readLink(childPath).pipe(
+          Effect.option,
+          Effect.flatMap(
+            (linkTarget): Effect.Effect<WslRuntimeWalkEntry, PlatformError> =>
+              Option.isSome(linkTarget)
+                ? Effect.succeed({ childPath, kind: "link", target: linkTarget.value })
+                : Effect.map(fs.stat(childPath), (info) => ({
+                    childPath,
+                    kind: "node" as const,
+                    info,
+                  })),
+          ),
+        );
       },
       { concurrency: WSL_RUNTIME_CONTENT_ID_CONCURRENCY },
     );
-    for (const { childPath, info } of children) {
-      const relativePath = toRelativePosixPath(childPath);
+    for (const child of children) {
+      const relativePath = toRelativePosixPath(child.childPath);
       if (WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => relativePath.startsWith(prefix))) {
         continue;
       }
+      if (child.kind === "link") {
+        // A link's own mode means nothing; its target is its whole content.
+        links.push(`l\0${relativePath}\0${child.target.replaceAll("\\", "/")}\n`);
+        continue;
+      }
+      const info = child.info;
       if (info.type === "Directory") {
-        directories.push(relativePath);
-        pending.push(childPath);
+        directories.push(`d\0${relativePath}\0${wslRuntimeSemanticMode(info.mode)}\n`);
+        pending.push(child.childPath);
       } else {
-        files.push(relativePath);
+        files.push({ relativePath, mode: info.mode });
       }
     }
   }
 
-  files.sort();
+  files.sort((left, right) =>
+    left.relativePath < right.relativePath ? -1 : left.relativePath > right.relativePath ? 1 : 0,
+  );
   directories.sort();
+  links.sort();
   // Hash the files concurrently but fold them in sorted order: Effect.forEach
   // returns results in input order, so completion order cannot reach the digest.
   // Reading this tree one file at a time is roughly thirty times slower on a
   // Windows builder, where every read goes through the virus scanner.
   const fileLines = yield* Effect.forEach(
     files,
-    (relativePath) =>
+    (entry) =>
       Effect.map(
-        fs.readFile(path.join(sourceDir, relativePath)),
+        fs.readFile(path.join(sourceDir, entry.relativePath)),
         (contents) =>
-          `f\0${relativePath}\0${NodeCrypto.createHash("sha256").update(contents).digest("hex")}\n`,
+          `f\0${entry.relativePath}\0${wslRuntimeSemanticMode(entry.mode)}\0${NodeCrypto.createHash("sha256").update(contents).digest("hex")}\n`,
       ),
     { concurrency: WSL_RUNTIME_CONTENT_ID_CONCURRENCY },
   );
@@ -2426,8 +2471,11 @@ export const computeWslRuntimeContentId = Effect.fn("computeWslRuntimeContentId"
   const hash = NodeCrypto.createHash("sha256");
   // Directories hold no bytes but are still part of the tree's shape: an empty
   // directory is the one difference the file list alone cannot see.
-  for (const relativePath of directories) {
-    hash.update(`d\0${relativePath}\0\n`);
+  for (const line of directories) {
+    hash.update(line);
+  }
+  for (const line of links) {
+    hash.update(line);
   }
   for (const line of fileLines) {
     hash.update(line);

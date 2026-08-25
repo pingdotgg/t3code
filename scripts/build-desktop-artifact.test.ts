@@ -1,5 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off - the content-id fixtures reproduce the digest the build computes with node:crypto.
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { systemError } from "effect/PlatformError";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
@@ -65,6 +69,7 @@ import {
   WINDOWS_SERVER_ASAR_RESOURCE,
   WINDOWS_SERVER_ASAR_UNPACK_GLOB,
   WINDOWS_SERVER_RESOURCE_SOURCE_DIR,
+  WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS,
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_NAME,
@@ -98,6 +103,147 @@ const stageWslRuntimeTreeFixture = Effect.fn("stageWslRuntimeTreeFixture")(funct
     "pty",
   );
 });
+
+// A staged tree described rather than created, so the cases the host filesystem
+// cannot express — an executable bit on Windows, an unprivileged symlink — are
+// still testable. Directories are implied by the paths.
+type WslRuntimeTreeFixture = Record<
+  string,
+  | { readonly kind: "file"; readonly contents: string; readonly mode: number }
+  | { readonly kind: "link"; readonly target: string }
+>;
+
+const FIXTURE_ROOT = "/wsl-runtime-fixture";
+
+const wslRuntimeTreeFixtureLayer = (
+  tree: WslRuntimeTreeFixture,
+  ownership: { readonly uid: number } = { uid: 0 },
+) => {
+  // path.join hands back backslashes on Windows; the fixture is keyed posix.
+  const toRelativeKey = (candidate: string) => {
+    const normalized = candidate.replaceAll("\\", "/");
+    if (normalized === FIXTURE_ROOT) return "";
+    return normalized.startsWith(`${FIXTURE_ROOT}/`)
+      ? normalized.slice(FIXTURE_ROOT.length + 1)
+      : null;
+  };
+  const makeInfo = (type: "File" | "Directory", mode: number): FileSystem.File.Info => ({
+    type,
+    mtime: Option.none(),
+    atime: Option.none(),
+    birthtime: Option.none(),
+    dev: 0,
+    ino: Option.none(),
+    mode,
+    nlink: Option.none(),
+    uid: Option.some(ownership.uid),
+    gid: Option.some(ownership.uid),
+    rdev: Option.none(),
+    size: FileSystem.Size(0),
+    blksize: Option.none(),
+    blocks: Option.none(),
+  });
+  // stat and readFile see through links, exactly as a real filesystem does.
+  // That is what makes reading the link first load-bearing rather than
+  // decorative: without it the walk records a link as a copy of its target.
+  const followLinks = (relative: string) => {
+    let current = relative;
+    for (let hops = 0; hops < 8; hops += 1) {
+      const entry = tree[current];
+      if (entry === undefined) return null;
+      if (entry.kind === "file") return entry;
+      const segments = current.split("/").slice(0, -1);
+      for (const segment of entry.target.split("/")) {
+        if (segment === "..") segments.pop();
+        else if (segment !== ".") segments.push(segment);
+      }
+      current = segments.join("/");
+    }
+    return null;
+  };
+  const missing = (method: string, candidate: string) =>
+    Effect.fail(
+      systemError({
+        _tag: "NotFound",
+        module: "FileSystem",
+        method,
+        pathOrDescriptor: candidate,
+      }),
+    );
+
+  return FileSystem.layerNoop({
+    readDirectory: (candidate) => {
+      const relative = toRelativeKey(candidate);
+      if (relative === null) return missing("readDirectory", candidate);
+      const prefix = relative === "" ? "" : `${relative}/`;
+      const names = new Set<string>();
+      for (const key of Object.keys(tree)) {
+        if (!key.startsWith(prefix)) continue;
+        names.add(key.slice(prefix.length).split("/")[0]!);
+      }
+      return Effect.succeed([...names].sort());
+    },
+    stat: (candidate) => {
+      const relative = toRelativeKey(candidate);
+      if (relative === null) return missing("stat", candidate);
+      const target = followLinks(relative);
+      if (target !== null) return Effect.succeed(makeInfo("File", target.mode));
+      return Object.keys(tree).some((key) => key.startsWith(`${relative}/`))
+        ? Effect.succeed(makeInfo("Directory", 0o755))
+        : missing("stat", candidate);
+    },
+    readLink: (candidate) => {
+      const relative = toRelativeKey(candidate);
+      const entry = relative === null ? undefined : tree[relative];
+      return entry?.kind === "link" ? Effect.succeed(entry.target) : missing("readLink", candidate);
+    },
+    readFile: (candidate) => {
+      const relative = toRelativeKey(candidate);
+      const target = relative === null ? null : followLinks(relative);
+      return target === null
+        ? missing("readFile", candidate)
+        : Effect.succeed(new TextEncoder().encode(target.contents));
+    },
+  });
+};
+
+// The id as it was before modes and entry types reached it: posix path and
+// followed bytes, nothing else. Tests pair it against the current id to show
+// which trees the old one could not tell apart.
+const legacyWslRuntimeContentId = (tree: WslRuntimeTreeFixture) => {
+  const resolveContents = (key: string): string => {
+    const entry = tree[key];
+    if (entry === undefined) throw new Error(`fixture has no entry at ${key}`);
+    if (entry.kind === "file") return entry.contents;
+    const segments = key.split("/").slice(0, -1);
+    for (const segment of entry.target.split("/")) {
+      if (segment === "..") segments.pop();
+      else if (segment !== ".") segments.push(segment);
+    }
+    return resolveContents(segments.join("/"));
+  };
+
+  const directories = new Set<string>();
+  for (const key of Object.keys(tree)) {
+    const segments = key.split("/");
+    for (let depth = 1; depth < segments.length; depth += 1) {
+      const candidate = segments.slice(0, depth).join("/");
+      // The walk starts inside the content roots, so they and their ancestors
+      // never became directory lines.
+      if (WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS.some((root) => candidate.startsWith(`${root}/`))) {
+        directories.add(candidate);
+      }
+    }
+  }
+
+  const hash = NodeCrypto.createHash("sha256");
+  for (const directory of [...directories].sort()) hash.update(`d\0${directory}\0\n`);
+  for (const key of Object.keys(tree).sort()) {
+    const contents = NodeCrypto.createHash("sha256").update(resolveContents(key)).digest("hex");
+    hash.update(`f\0${key}\0${contents}\n`);
+  }
+  return hash.digest("hex");
+};
 
 function mockProcess(exitCode: number) {
   return ChildProcessSpawner.makeHandle({
@@ -1437,6 +1583,113 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         );
       }),
     ),
+  );
+
+  // Windows cannot express an executable bit or create a symlink without
+  // privileges, so these run the walk against a described tree instead of a
+  // staged one. Each case pairs the legacy path-and-bytes digest, which is what
+  // the id used to be, against the current one: equal legacy id, different
+  // content id is the regression.
+  it.effect("separates trees that differ only in a file's executable bit", () =>
+    Effect.gen(function* () {
+      const nonExecutable = {
+        "apps/server/dist/bin.mjs": { kind: "file", contents: "serve", mode: 0o644 },
+        "node_modules/pkg/tool": { kind: "file", contents: "#!/bin/sh\nexec node", mode: 0o644 },
+      } as const satisfies WslRuntimeTreeFixture;
+      const executable = {
+        ...nonExecutable,
+        "node_modules/pkg/tool": { kind: "file", contents: "#!/bin/sh\nexec node", mode: 0o755 },
+      } as const satisfies WslRuntimeTreeFixture;
+
+      assert.equal(
+        legacyWslRuntimeContentId(nonExecutable),
+        legacyWslRuntimeContentId(executable),
+        "the tree the old id described is identical, which is how the defect hid",
+      );
+      assert.notEqual(
+        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
+          Effect.provide(wslRuntimeTreeFixtureLayer(nonExecutable)),
+        ),
+        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
+          Effect.provide(wslRuntimeTreeFixtureLayer(executable)),
+        ),
+      );
+    }),
+  );
+
+  it.effect("separates a symlink from a regular file holding the same bytes", () =>
+    Effect.gen(function* () {
+      const linked = {
+        "apps/server/dist/bin.mjs": { kind: "file", contents: "serve", mode: 0o644 },
+        "node_modules/pkg/real.js": { kind: "file", contents: "module.exports = 1;", mode: 0o644 },
+        "node_modules/.bin/pkg": { kind: "link", target: "../pkg/real.js" },
+      } as const satisfies WslRuntimeTreeFixture;
+      const copied = {
+        ...linked,
+        "node_modules/.bin/pkg": { kind: "file", contents: "module.exports = 1;", mode: 0o644 },
+      } as const satisfies WslRuntimeTreeFixture;
+
+      // The old walk stat'd through the link, so it saw two identical files.
+      // tar stores a link, and a link is not a copy: retargeting or replacing
+      // one has to reach the id.
+      assert.equal(legacyWslRuntimeContentId(linked), legacyWslRuntimeContentId(copied));
+      assert.notEqual(
+        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
+          Effect.provide(wslRuntimeTreeFixtureLayer(linked)),
+        ),
+        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
+          Effect.provide(wslRuntimeTreeFixtureLayer(copied)),
+        ),
+      );
+    }),
+  );
+
+  it.effect("separates links that point at different targets", () =>
+    Effect.gen(function* () {
+      const base = {
+        "apps/server/dist/bin.mjs": { kind: "file", contents: "serve", mode: 0o644 },
+        "node_modules/pkg/one.js": { kind: "file", contents: "one", mode: 0o644 },
+        "node_modules/pkg/two.js": { kind: "file", contents: "one", mode: 0o644 },
+      } as const satisfies WslRuntimeTreeFixture;
+      const toOne = {
+        ...base,
+        "node_modules/.bin/pkg": { kind: "link", target: "../pkg/one.js" },
+      } as const satisfies WslRuntimeTreeFixture;
+      const toTwo = {
+        ...base,
+        "node_modules/.bin/pkg": { kind: "link", target: "../pkg/two.js" },
+      } as const satisfies WslRuntimeTreeFixture;
+
+      assert.notEqual(
+        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
+          Effect.provide(wslRuntimeTreeFixtureLayer(toOne)),
+        ),
+        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
+          Effect.provide(wslRuntimeTreeFixtureLayer(toTwo)),
+        ),
+      );
+    }),
+  );
+
+  // The other half of the contract: mode and type are semantic, whoever owned
+  // the staging directory is not. Timestamps are covered against a real
+  // filesystem above, where utimes can prove the stage actually differed.
+  it.effect("still ignores ownership", () =>
+    Effect.gen(function* () {
+      const tree = {
+        "apps/server/dist/bin.mjs": { kind: "file", contents: "serve", mode: 0o644 },
+        "node_modules/pkg/tool": { kind: "file", contents: "run", mode: 0o755 },
+      } as const satisfies WslRuntimeTreeFixture;
+
+      assert.equal(
+        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
+          Effect.provide(wslRuntimeTreeFixtureLayer(tree, { uid: 0 })),
+        ),
+        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
+          Effect.provide(wslRuntimeTreeFixtureLayer(tree, { uid: 501 })),
+        ),
+      );
+    }),
   );
 
   it("promotes target fff binaries to direct staged dependencies", () => {
