@@ -33,7 +33,6 @@ import {
   useState,
 } from "react";
 import {
-  AppState,
   Keyboard,
   Platform,
   useWindowDimensions,
@@ -69,6 +68,8 @@ import type {
   PendingUserInputDraftAnswer,
   ThreadFeedEntry,
 } from "../../lib/threadActivity";
+import { isAndroidKeyboardAnimationUsable } from "../keyboard/androidKeyboardRecovery";
+import { useAndroidKeyboardRecovery } from "../keyboard/useAndroidKeyboardRecovery";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import {
@@ -236,32 +237,23 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // hide — then Home within a second). The keyboard library's height AND
   // visibility then stay frozen open, so gating the sticky translation on
   // visibility alone still strands the composer after resume. Quarantine the
-  // translation on every Android resume instead; any sign of a live keyboard
-  // stream — an owned input gaining focus, or any visibility/height movement —
-  // lifts it. A healthy resume sees no visual difference (the translation is
-  // already zero while the keyboard is closed).
-  const [keyboardStateSuspect, setKeyboardStateSuspect] = useState(false);
-  useEffect(() => {
-    if (Platform.OS !== "android") {
-      return;
-    }
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
-        setKeyboardStateSuspect(true);
+  // translation on every Android resume instead; only a fresh keyboard show or
+  // an owned input gaining focus lifts it. A healthy resume sees no visual
+  // difference (the translation is already zero while the keyboard is closed).
+  const { isQuarantined: isKeyboardStateQuarantined, markInputFocused } =
+    useAndroidKeyboardRecovery();
+  const isKeyboardAnimationUsable = isAndroidKeyboardAnimationUsable({
+    isKeyboardVisible,
+    isQuarantined: isKeyboardStateQuarantined,
+  });
+  const handleOwnedInputFocusChange = useCallback(
+    (focused: boolean) => {
+      if (focused) {
+        markInputFocused();
       }
-    });
-    return () => {
-      subscription.remove();
-    };
-  }, []);
-  useEffect(() => {
-    setKeyboardStateSuspect(false);
-  }, [isKeyboardVisible, liveKeyboardHeight]);
-  const handleOwnedInputFocusChange = useCallback((focused: boolean) => {
-    if (focused) {
-      setKeyboardStateSuspect(false);
-    }
-  }, []);
+    },
+    [markInputFocused],
+  );
   const windowHeight = useWindowDimensions().height;
   const navigationHeaderHeight = useContext(HeaderHeightContext) || insets.top + IOS_NAV_BAR_HEIGHT;
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
@@ -295,7 +287,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // focus-keyed inset is already in place while the composer rides down.
   // Dictation keeps that focus while the composer switches to its compact pill.
   const composerBottomInset = (
-    Platform.OS === "android" ? isKeyboardVisible : composerExpanded || composerFocused
+    Platform.OS === "android" ? isKeyboardAnimationUsable : composerExpanded || composerFocused
   )
     ? 0
     : Math.max(insets.bottom, 12);
@@ -754,7 +746,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           // iOS emits a native animated height target on both will-show and
           // will-hide, so stay subscribed for the full transition. Android
           // retains its background/resume stale-state quarantine.
-          enabled={Platform.OS === "ios" || (isKeyboardVisible && !keyboardStateSuspect)}
+          enabled={Platform.OS === "ios" || isKeyboardAnimationUsable}
           pointerEvents="box-none"
           style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
           offset={{ closed: 0, opened: 0 }}
