@@ -7,6 +7,15 @@ multiple messages, then send again in the same thread.
 On servers that support direct uploads, images upload as soon as you add them. The send button
 becomes available after every upload finishes. Failed uploads can be retried or removed.
 
+## Task progress
+
+During a multi-step turn, the **Tasks** tab above the composer shows the current step and the number
+of completed steps. Open the tab to see completed, current, and pending steps.
+
+If T3 Code reloads or reconnects while the turn continues, the **Tasks** tab restores the latest
+progress. The tab disappears when the turn finishes. To hide it sooner, dismiss it for the current
+app session.
+
 ## Commands and skills
 
 Type `/` to open the command menu. Type `$` to find and add a skill. Skill rows show their source,

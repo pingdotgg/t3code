@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  deriveActiveComposerTasks,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
   deriveTurnPlans,
@@ -19,6 +20,7 @@ import {
   findLatestProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  resolveActivePlanTurnId,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
@@ -494,6 +496,125 @@ describe("deriveActivePlanState", () => {
     expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
       { durationMs: 3_000, step: "Check", status: "completed" },
     ]);
+  });
+});
+
+describe("deriveActiveComposerTasks", () => {
+  it("restores unfinished tasks from the persisted plan for the active turn", () => {
+    const activeTurnId = TurnId.make("turn-relaunch");
+    const activities = [
+      makeActivity({
+        id: "plan-before-relaunch",
+        createdAt: "2026-08-24T12:00:00.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: activeTurnId,
+        payload: {
+          plan: [
+            { step: "Inspect persistence", status: "completed" },
+            { step: "Restore Tasks tab", status: "inProgress" },
+            { step: "Verify reconnect", status: "pending" },
+          ],
+        },
+      }),
+    ];
+
+    expect(
+      deriveActiveComposerTasks({
+        activities,
+        activeTurnId,
+        latestTurnSettled: false,
+      }),
+    ).toEqual({
+      progress: {
+        step: "Restore Tasks tab",
+        completedSteps: 1,
+        totalSteps: 3,
+      },
+      steps: [
+        { step: "Inspect persistence", status: "completed" },
+        { step: "Restore Tasks tab", status: "inProgress" },
+        { step: "Verify reconnect", status: "pending" },
+      ],
+    });
+  });
+
+  it("hides a plan after every task completes", () => {
+    const activeTurnId = TurnId.make("turn-completed");
+
+    expect(
+      deriveActiveComposerTasks({
+        activities: [
+          makeActivity({
+            kind: "turn.plan.updated",
+            turnId: activeTurnId,
+            payload: {
+              plan: [
+                { step: "Inspect persistence", status: "completed" },
+                { step: "Restore Tasks tab", status: "completed" },
+              ],
+            },
+          }),
+        ],
+        activeTurnId,
+        latestTurnSettled: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not attach a previous turn's plan to the active composer", () => {
+    expect(
+      deriveActiveComposerTasks({
+        activities: [
+          makeActivity({
+            kind: "turn.plan.updated",
+            turnId: "turn-previous",
+            payload: { plan: [{ step: "Old task", status: "inProgress" }] },
+          }),
+        ],
+        activeTurnId: TurnId.make("turn-active"),
+        latestTurnSettled: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("hides task progress after the active turn settles", () => {
+    const activeTurnId = TurnId.make("turn-settled");
+
+    expect(
+      deriveActiveComposerTasks({
+        activities: [
+          makeActivity({
+            kind: "turn.plan.updated",
+            turnId: activeTurnId,
+            payload: { plan: [{ step: "Last task", status: "inProgress" }] },
+          }),
+        ],
+        activeTurnId,
+        latestTurnSettled: true,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveActivePlanTurnId", () => {
+  it("prefers the running session turn when latest turn projection diverges", () => {
+    expect(
+      resolveActivePlanTurnId(TurnId.make("turn-latest"), {
+        status: "running",
+        activeTurnId: TurnId.make("turn-active"),
+      }),
+    ).toBe(TurnId.make("turn-active"));
+  });
+
+  it("uses the latest projected turn when the session is not running", () => {
+    expect(
+      resolveActivePlanTurnId(TurnId.make("turn-latest"), {
+        status: "ready",
+        activeTurnId: null,
+      }),
+    ).toBe(TurnId.make("turn-latest"));
   });
 });
 

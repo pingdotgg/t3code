@@ -321,6 +321,7 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       dispatch,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      readShell: () => Effect.runPromise(snapshotQuery.getShellSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
@@ -738,6 +739,168 @@ describe("ProviderRuntimeIngestion", () => {
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
       10_000,
     );
+  });
+
+  it("settles the active turn when the provider aborts it", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-aborted");
+    const startedAt = "2026-01-01T00:00:00.000Z";
+    const abortedAt = "2026-01-01T00:00:01.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-aborted"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+
+    await harness.drain();
+    const runningReadModel = await harness.readModel();
+    const runningThread = runningReadModel.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(runningThread?.session?.status).toBe("running");
+    expect(runningThread?.session?.activeTurnId).toBe(turnId);
+
+    harness.emit({
+      type: "turn.plan.updated",
+      eventId: asEventId("evt-turn-plan-aborted"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.250Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { plan: [{ step: "Keep working", status: "inProgress" }] },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-turn-aborted-assistant-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.250Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-turn-aborted"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "Partial answer before abort.",
+      },
+    });
+    harness.emit({
+      type: "turn.proposed.delta",
+      eventId: asEventId("evt-turn-aborted-plan-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.250Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { delta: "## Partial plan before abort" },
+    });
+    await harness.drain();
+    const shellWithPlan = await harness.readShell();
+    expect(shellWithPlan.threads.find((entry) => entry.id === "thread-1")?.planProgress).toEqual({
+      step: "Keep working",
+      completedSteps: 0,
+      totalSteps: 1,
+    });
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-untargeted-turn-aborted"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.375Z",
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "An untargeted abort arrived." },
+    });
+    await harness.drain();
+    const shellAfterUntargetedAbort = await harness.readShell();
+    expect(
+      shellAfterUntargetedAbort.threads.find((entry) => entry.id === "thread-1")?.planProgress,
+    ).toEqual({
+      step: "Keep working",
+      completedSteps: 0,
+      totalSteps: 1,
+    });
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-other-turn-aborted"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.500Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-other"),
+      payload: { reason: "A different turn aborted." },
+    });
+
+    await harness.drain();
+    const activeReadModel = await harness.readModel();
+    const activeThread = activeReadModel.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(activeThread?.session?.status).toBe("running");
+    expect(activeThread?.session?.activeTurnId).toBe(turnId);
+    const shellAfterOtherAbort = await harness.readShell();
+    expect(
+      shellAfterOtherAbort.threads.find((entry) => entry.id === "thread-1")?.planProgress,
+    ).toEqual({
+      step: "Keep working",
+      completedSteps: 0,
+      totalSteps: 1,
+    });
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-aborted"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: abortedAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { reason: "Provider aborted the turn." },
+    });
+
+    await harness.drain();
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("interrupted");
+    expect(thread?.session?.activeTurnId).toBeNull();
+    expect(thread?.latestTurn).toMatchObject({
+      turnId,
+      state: "interrupted",
+      completedAt: abortedAt,
+    });
+    expect(
+      thread?.messages.find((message) => message.id === "assistant:item-turn-aborted"),
+    ).toMatchObject({
+      text: "Partial answer before abort.",
+      streaming: false,
+    });
+    expect(
+      thread?.proposedPlans.find(
+        (proposedPlan) => proposedPlan.id === "plan:thread-1:turn:turn-aborted",
+      ),
+    ).toMatchObject({
+      planMarkdown: "## Partial plan before abort",
+    });
+    const shellAfterActiveAbort = await harness.readShell();
+    expect(
+      shellAfterActiveAbort.threads.find((entry) => entry.id === "thread-1")?.planProgress,
+    ).toBeNull();
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-late-turn-aborted"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { reason: "Late duplicate abort." },
+    });
+    await harness.drain();
+    const afterLateAbort = await harness.readModel();
+    const threadAfterLateAbort = afterLateAbort.threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(threadAfterLateAbort?.session?.status).toBe("interrupted");
+    expect(threadAfterLateAbort?.session?.activeTurnId).toBeNull();
   });
 
   it("accepts claude turn lifecycle when seeded thread id is a synthetic placeholder", async () => {

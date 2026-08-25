@@ -1545,6 +1545,12 @@ const make = Effect.gen(function* () {
             return true;
           case "turn.started":
             return !conflictsWithActiveTurn || conflictingTurnStartIsPendingTurnStart;
+          case "turn.aborted":
+            return (
+              activeTurnId !== null &&
+              eventTurnId !== undefined &&
+              sameId(activeTurnId, eventTurnId)
+            );
           case "turn.completed":
             if (conflictsWithActiveTurn || missingTurnForActiveTurn) {
               return false;
@@ -1576,6 +1582,7 @@ const make = Effect.gen(function* () {
         event.type === "session.exited" ||
         event.type === "thread.started" ||
         event.type === "turn.started" ||
+        event.type === "turn.aborted" ||
         event.type === "turn.completed"
       ) {
         const status = (() => {
@@ -1588,6 +1595,8 @@ const make = Effect.gen(function* () {
               return "running";
             case "session.exited":
               return "stopped";
+            case "turn.aborted":
+              return "interrupted";
             case "turn.completed":
               return normalizeRuntimeTurnState(event.payload.state) === "failed"
                 ? "error"
@@ -1602,7 +1611,9 @@ const make = Effect.gen(function* () {
         const nextActiveTurnId =
           event.type === "turn.started"
             ? (eventTurnId ?? null)
-            : event.type === "turn.completed" || event.type === "session.exited"
+            : event.type === "turn.completed" ||
+                event.type === "turn.aborted" ||
+                event.type === "session.exited"
               ? null
               : event.type === "session.state.changed" &&
                   !sessionStatusAllowsActiveTurn(
@@ -1843,7 +1854,10 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (event.type === "turn.completed") {
+      if (
+        event.type === "turn.completed" ||
+        (event.type === "turn.aborted" && shouldApplyThreadLifecycle)
+      ) {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const proposedPlans = detailedThread?.proposedPlans ?? [];
@@ -1973,11 +1987,13 @@ const make = Effect.gen(function* () {
       // active turn's progress; session.exited always clears.
       if (event.type === "session.exited") {
         threadPlanProgress.clearThreadPlanProgress(thread.id);
+      } else if (event.type === "turn.completed" || event.type === "turn.aborted") {
+        if (shouldApplyThreadLifecycle) {
+          threadPlanProgress.clearThreadPlanProgress(thread.id);
+        }
       } else if (!conflictsWithActiveTurn) {
         if (event.type === "turn.plan.updated") {
           threadPlanProgress.recordPlanProgress(thread.id, event.payload.plan);
-        } else if (event.type === "turn.completed" || event.type === "turn.aborted") {
-          threadPlanProgress.clearThreadPlanProgress(thread.id);
         }
       }
 

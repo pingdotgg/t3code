@@ -96,13 +96,14 @@ import {
   derivePendingUserInputs,
   derivePhase,
   deriveTimelineEntries,
+  deriveActiveComposerTasks,
   deriveActiveWorkStartedAt,
-  deriveActivePlanState,
   deriveTurnPlans,
   findLatestProposedPlan,
   deriveWorkLogEntries,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  resolveActivePlanTurnId,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
@@ -2360,25 +2361,20 @@ function ChatViewContent(props: ChatViewProps) {
       activeLatestTurn?.turnId ?? null,
     );
   }, [activeLatestTurn?.turnId, activeThread?.proposedPlans, latestTurnSettled]);
-  const activePlan = useMemo(
-    () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
+  const activePlanTurnId = resolveActivePlanTurnId(
+    activeLatestTurn?.turnId ?? null,
+    activeThread?.session ?? null,
   );
-  // Current step for the in-chat working row: only for the running turn's own
-  // plan (deriveActivePlanState falls back to older turns' plans, which must
-  // not label fresh work). Falls back to the first pending step so an
-  // all-pending freshly written plan labels the row, matching the chip and
-  // the server's planProgress.
-  const workingStepLabel = useMemo(() => {
-    if (!activePlan || activePlan.turnId !== (activeLatestTurn?.turnId ?? null)) {
-      return null;
-    }
-    return (
-      activePlan.steps.find((step) => step.status === "inProgress")?.step ??
-      activePlan.steps.find((step) => step.status === "pending")?.step ??
-      null
-    );
-  }, [activeLatestTurn?.turnId, activePlan]);
+  const activeComposerTasks = useMemo(
+    () =>
+      deriveActiveComposerTasks({
+        activities: threadActivities,
+        activeTurnId: activePlanTurnId,
+        latestTurnSettled,
+      }),
+    [activePlanTurnId, latestTurnSettled, threadActivities],
+  );
+  const workingStepLabel = activeComposerTasks?.progress.step ?? null;
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&
@@ -4295,14 +4291,8 @@ function ChatViewContent(props: ChatViewProps) {
   // partition (same shell, same capability gate, same PR auto-settle input)
   // so the banner and the sidebar row never disagree.
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
-  const activeComposerTasksProgress =
-    activeLatestTurn !== null && !latestTurnSettled
-      ? (activeThreadShell?.planProgress ?? null)
-      : null;
-  const activeComposerTaskSteps =
-    activeComposerTasksProgress && activePlan && activePlan.turnId === activeLatestTurn?.turnId
-      ? activePlan.steps
-      : null;
+  const activeComposerTasksProgress = activeComposerTasks?.progress ?? null;
+  const activeComposerTaskSteps = activeComposerTasks?.steps ?? null;
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
   const activeThreadPr = resolveDisplayedThreadPr({
@@ -6844,6 +6834,7 @@ function ChatViewContent(props: ChatViewProps) {
                             respondingRequestIds={respondingRequestIds}
                             showPlanFollowUpPrompt={showPlanFollowUpPrompt}
                             activeProposedPlan={activeProposedPlan}
+                            activeTasksTurnId={activeComposerTasks ? activePlanTurnId : null}
                             activeTasksProgress={activeComposerTasksProgress}
                             activeTaskSteps={activeComposerTaskSteps}
                             runtimeMode={runtimeMode}

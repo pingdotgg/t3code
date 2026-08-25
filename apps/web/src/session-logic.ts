@@ -146,6 +146,50 @@ export interface ActivePlanState {
   }>;
 }
 
+export interface ActiveComposerTasks {
+  progress: {
+    step: string;
+    completedSteps: number;
+    totalSteps: number;
+  };
+  steps: ActivePlanState["steps"];
+}
+
+export function resolveActivePlanTurnId(
+  latestTurnId: TurnId | null,
+  session: Pick<ThreadSession, "status" | "activeTurnId"> | null,
+): TurnId | null {
+  return session?.status === "running" ? session.activeTurnId : latestTurnId;
+}
+
+export function deriveActiveComposerTasks(input: {
+  activities: ReadonlyArray<OrchestrationThreadActivity>;
+  activeTurnId: TurnId | null;
+  latestTurnSettled: boolean;
+}): ActiveComposerTasks | null {
+  const { activities, activeTurnId, latestTurnSettled } = input;
+  const activePlan = deriveActivePlanState(activities, activeTurnId ?? undefined);
+  if (latestTurnSettled || activeTurnId === null || activePlan?.turnId !== activeTurnId) {
+    return null;
+  }
+
+  const currentStep =
+    activePlan.steps.find((step) => step.status === "inProgress") ??
+    activePlan.steps.find((step) => step.status === "pending");
+  if (!currentStep) {
+    return null;
+  }
+
+  return {
+    progress: {
+      step: currentStep.step,
+      completedSteps: activePlan.steps.filter((step) => step.status === "completed").length,
+      totalSteps: activePlan.steps.length,
+    },
+    steps: activePlan.steps,
+  };
+}
+
 export interface LatestProposedPlanState {
   id: OrchestrationProposedPlanId;
   createdAt: string;
