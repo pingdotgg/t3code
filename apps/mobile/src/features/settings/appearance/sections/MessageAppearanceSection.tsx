@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../../../components/AppSymbol";
@@ -79,8 +79,9 @@ function ColorSwatch(props: {
 
 /**
  * Default swatch + presets + custom, in the same circular style as the theme
- * pickers. Selecting custom seeds it with the current effective color and
- * reveals a hex field.
+ * pickers. Selecting custom reveals a hex field without changing the stored
+ * color until a valid value is typed, so it stays reachable even when the
+ * current color matches a preset.
  */
 function ColorSwatchRow(props: {
   readonly defaultColor: string;
@@ -95,7 +96,9 @@ function ColorSwatchRow(props: {
   const iconColor = useThemeColor("--color-icon");
   const subtleIconColor = String(useThemeColor("--color-icon-muted"));
   const customSurface = String(useThemeColor("--color-subtle"));
-  const isCustom = props.value !== null && !props.presets.includes(props.value);
+  const [customSelected, setCustomSelected] = useState(false);
+  const isCustomValue = props.value !== null && !props.presets.includes(props.value);
+  const isCustom = customSelected || isCustomValue;
 
   const commitCustom = (text: string) => {
     const normalized = normalizeUserBubbleColor(text);
@@ -117,13 +120,16 @@ function ColorSwatchRow(props: {
           {props.value === null ? props.defaultLabel : props.value.toUpperCase()}
         </Text>
       </View>
-      <View accessibilityRole="radiogroup" className="flex-row items-center gap-2 pl-[38px]">
+      <View accessibilityRole="radiogroup" className="flex-row flex-wrap items-center gap-2">
         <ColorSwatch
           color={props.defaultColor}
           disabled={props.disabled}
           label={`${props.defaultLabel} ${props.label.toLowerCase()}`}
-          onPress={() => props.onChange(null)}
-          selected={props.value === null}
+          onPress={() => {
+            setCustomSelected(false);
+            props.onChange(null);
+          }}
+          selected={props.value === null && !customSelected}
         />
         {props.presets.map((preset) => (
           <ColorSwatch
@@ -131,36 +137,37 @@ function ColorSwatchRow(props: {
             disabled={props.disabled}
             key={preset}
             label={`${props.label} ${preset}`}
-            onPress={() => props.onChange(preset)}
-            selected={props.value === preset}
+            onPress={() => {
+              setCustomSelected(false);
+              props.onChange(preset);
+            }}
+            selected={props.value === preset && !customSelected}
           />
         ))}
         <ColorSwatch
-          color={isCustom && props.value !== null ? props.value : customSurface}
+          color={isCustomValue && props.value !== null ? props.value : customSurface}
           disabled={props.disabled}
-          icon={isCustom ? undefined : "plus"}
+          icon={isCustomValue ? undefined : "plus"}
           iconColor={subtleIconColor}
           label={`Custom ${props.label.toLowerCase()}`}
-          onPress={() => props.onChange(isCustom ? props.value : props.defaultColor)}
+          onPress={() => setCustomSelected(true)}
           selected={isCustom}
         />
       </View>
       {isCustom ? (
-        <View className="pl-[38px]">
-          <AppTextInput
-            accessibilityLabel={`Custom ${props.label.toLowerCase()} hex value`}
-            autoCapitalize="none"
-            autoComplete="off"
-            autoCorrect={false}
-            defaultValue={props.value ?? ""}
-            key={props.value}
-            maxLength={7}
-            onEndEditing={(event) => commitCustom(event.nativeEvent.text)}
-            onSubmitEditing={(event) => commitCustom(event.nativeEvent.text)}
-            placeholder="#4F46E5"
-            returnKeyType="done"
-          />
-        </View>
+        <AppTextInput
+          accessibilityLabel={`Custom ${props.label.toLowerCase()} hex value`}
+          autoCapitalize="none"
+          autoComplete="off"
+          autoCorrect={false}
+          defaultValue={props.value ?? ""}
+          key={props.value}
+          maxLength={7}
+          onEndEditing={(event) => commitCustom(event.nativeEvent.text)}
+          onSubmitEditing={(event) => commitCustom(event.nativeEvent.text)}
+          placeholder="#4F46E5"
+          returnKeyType="done"
+        />
       ) : null}
     </View>
   );
