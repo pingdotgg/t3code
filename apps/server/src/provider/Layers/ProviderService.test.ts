@@ -1636,6 +1636,54 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("serializes concurrent recovery for the same inactive thread", () => {
+    const originalStartSession = routing.codex.startSession.getMockImplementation();
+    if (!originalStartSession) throw new Error("fake Codex adapter has no start implementation");
+
+    return Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("concurrent-goal-recovery-thread");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/concurrent-goal-recovery-thread",
+        runtimeMode: "full-access",
+      });
+      yield* provider.stopSession({ threadId });
+      routing.codex.startSession.mockClear();
+
+      const firstRecoveryStarted = yield* Deferred.make<void>();
+      const releaseFirstRecovery = yield* Deferred.make<void>();
+      routing.codex.startSession.mockImplementation((input) =>
+        Deferred.succeed(firstRecoveryStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseFirstRecovery)),
+          Effect.andThen(originalStartSession(input)),
+        ),
+      );
+
+      const first = yield* provider
+        .setCodexGoal({ threadId, objective: "First recovery" })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(firstRecoveryStarted);
+      const second = yield* provider.clearCodexGoal(threadId).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      yield* Deferred.succeed(releaseFirstRecovery, undefined);
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      yield* provider.stopSession({ threadId });
+      routing.codex.startSession.mockClear();
+      routing.codex.stopSession.mockClear();
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => routing.codex.startSession.mockImplementation(originalStartSession)),
+      ),
+    );
+  });
+
   it.effect("rejects native Codex Goal operations for unsupported providers", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
