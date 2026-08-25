@@ -815,6 +815,15 @@ function KeybindingKeyControl({
 
   return (
     <>
+      {isDirty ? (
+        <Button
+          size="compact"
+          disabled={isSaving || keyDraft.trim().length === 0 || !isWhenDraftValid}
+          onClick={save}
+        >
+          {isSaving ? "Saving" : "Save"}
+        </Button>
+      ) : null}
       {showPill ? (
         <button
           type="button"
@@ -842,15 +851,6 @@ function KeybindingKeyControl({
           onKeyDown={captureKeybinding}
         />
       )}
-      {isDirty ? (
-        <Button
-          size="compact"
-          disabled={isSaving || keyDraft.trim().length === 0 || !isWhenDraftValid}
-          onClick={save}
-        >
-          {isSaving ? "Saving" : "Save"}
-        </Button>
-      ) : null}
     </>
   );
 }
@@ -874,10 +874,16 @@ function WhenClauseControl({
   return (
     <Popover>
       <PopoverTrigger
-        className={cn(
-          "inline-flex h-6 max-w-full items-center gap-1 rounded-sm px-1 font-mono text-[12px] outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/24",
-          !expression && "text-muted-foreground",
-        )}
+        render={
+          <Button
+            variant="ghost"
+            size="compact"
+            className={cn(
+              "h-6 max-w-full gap-1 px-1 font-mono font-normal text-[12px] sm:text-[12px]",
+              !expression && "text-muted-foreground",
+            )}
+          />
+        }
         aria-label={`Edit when clause for ${label}`}
       >
         <span className="truncate">{expression || "Always"}</span>
