@@ -6,9 +6,8 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
-import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom } from "effect/unstable/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -76,22 +75,6 @@ export type CodexGoalCommand =
 
 const GOAL_USAGE =
   "Usage: /goal [status | create <objective> | steer <objective> | pause | resume | clear | reset]";
-
-export function toCodexGoalSubscriptionTarget<
-  EnvironmentId,
-  GoalInput extends { readonly threadId: unknown },
->(target: {
-  readonly environmentId: EnvironmentId;
-  readonly input: GoalInput;
-}): {
-  readonly environmentId: EnvironmentId;
-  readonly input: { readonly threadId: GoalInput["threadId"] };
-} {
-  return {
-    environmentId: target.environmentId,
-    input: { threadId: target.input.threadId },
-  };
-}
 
 export function formatCodexGoalUsage(goal: CodexGoal): string {
   const budget = goal.tokenBudget == null ? "" : ` / ${goal.tokenBudget.toLocaleString()}`;
@@ -225,11 +208,6 @@ export function createThreadEnvironmentAtoms<R, E>(
         ),
       ),
   });
-  const refreshCodexGoal = (
-    target: Parameters<typeof codexGoal>[0],
-    registry: AtomRegistry.AtomRegistry,
-  ) => Effect.sync(() => registry.refresh(codexGoal(target)));
-
   return {
     codexGoal,
     getCodexGoal: createEnvironmentRpcCommand(runtime, {
@@ -247,15 +225,12 @@ export function createThreadEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }: { environmentId: string; input: CodexGoalSetInput }) =>
           JSON.stringify([environmentId, input.threadId]),
       },
-      onSuccess: (target, registry) =>
-        refreshCodexGoal(toCodexGoalSubscriptionTarget(target), registry),
     }),
     clearCodexGoal: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:codex-goal:clear",
       tag: WS_METHODS.codexGoalClear,
       scheduler,
       concurrency,
-      onSuccess: refreshCodexGoal,
     }),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",

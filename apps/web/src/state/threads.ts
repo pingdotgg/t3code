@@ -7,7 +7,7 @@ import {
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/threads";
-import type { CodexGoal, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { CodexGoal, EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -35,10 +35,11 @@ const EMPTY_CODEX_GOAL_ATOM = Atom.make(AsyncResult.success<CodexGoal | null>(nu
 export function useCodexGoal(
   environmentId: EnvironmentId | null,
   threadId: ThreadId | null,
+  providerInstanceId: ProviderInstanceId | null,
 ): CodexGoal | null {
   const result = useAtomValue(
-    environmentId !== null && threadId !== null
-      ? threadEnvironment.codexGoal({ environmentId, input: { threadId } })
+    environmentId !== null && threadId !== null && providerInstanceId !== null
+      ? threadEnvironment.codexGoal({ environmentId, input: { threadId, providerInstanceId } })
       : EMPTY_CODEX_GOAL_ATOM,
   );
   return Option.getOrNull(AsyncResult.value(result));
