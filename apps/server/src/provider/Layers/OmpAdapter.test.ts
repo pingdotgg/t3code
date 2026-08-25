@@ -128,7 +128,7 @@ describe("OMP elicitation mapping", () => {
           q0__other: { type: "string", title: "Other" },
           confirmed: { type: "boolean", title: "Continue?" },
         },
-        required: ["confirmed"],
+        required: ["q0", "confirmed"],
       },
     } as const;
 
@@ -139,7 +139,7 @@ describe("OMP elicitation mapping", () => {
     );
     assert.deepStrictEqual(
       questions.map((entry) => entry.required),
-      [false, true],
+      [true, true],
     );
     assert.deepStrictEqual(buildOmpElicitationContent(questions, { q0: "Preview environment" }), {
       q0: "preview",
@@ -164,7 +164,7 @@ describe("OMP elicitation mapping", () => {
           attempts: { type: "integer", title: "Attempts" },
           ratio: { type: "number", title: "Ratio" },
         },
-        required: ["attempts"],
+        required: ["attempts", "ratio"],
       },
     });
 
@@ -178,6 +178,25 @@ describe("OMP elicitation mapping", () => {
     });
   });
 });
+describe("OMP optional elicitation", () => {
+  it("omits optional fields that current clients cannot express", () => {
+    const questions = ompElicitationQuestions({
+      mode: "form",
+      sessionId: "session-1",
+      message: "Optional context",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          context: { type: "string", title: "Context" },
+        },
+        required: [],
+      },
+    });
+
+    assert.deepStrictEqual(questions, []);
+  });
+});
+
 describe("OMP multi-select elicitation", () => {
   it("preserves predefined and custom multi-select answers", () => {
     const questions = ompElicitationQuestions({

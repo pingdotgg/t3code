@@ -248,7 +248,9 @@ export function ompElicitationQuestions(
 ): ReadonlyArray<OmpElicitationQuestion> {
   const properties = request.requestedSchema.properties ?? {};
   const requiredKeys = new Set(request.requestedSchema.required ?? []);
-  const entries = Object.entries(properties).filter(([key]) => !key.endsWith("__other"));
+  const entries = Object.entries(properties).filter(
+    ([key]) => !key.endsWith("__other") && requiredKeys.has(key),
+  );
   return entries.map(([key, schema], index) => {
     const choices = enumChoices(schema);
     const options =
