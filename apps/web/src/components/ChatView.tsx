@@ -3412,30 +3412,29 @@ function ChatViewContent(props: ChatViewProps) {
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
   const linkedThreadPullRequest = activeThread?.linkedPullRequest ?? null;
-  const threadRepository =
-    linkedThreadPullRequest?.repository ?? activeProject?.repositoryIdentity?.displayName ?? null;
+  const activeProjectRepository = activeProject?.repositoryIdentity?.displayName ?? null;
+  const threadRepository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
   const openThreadPullRequest = useCallback(
     (number: number) => {
-      if (
-        !supportsPullRequests ||
-        !activeThreadRef ||
-        !activeProject ||
-        threadRepository === null
-      ) {
+      if (!supportsPullRequests || !activeThreadRef || !activeProject) {
         return;
       }
+      const linkedPullRequest =
+        linkedThreadPullRequest?.number === number ? linkedThreadPullRequest : null;
+      const repository = linkedPullRequest?.repository ?? activeProjectRepository;
+      if (repository === null) return;
       useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-        projectId: linkedThreadPullRequest?.projectId ?? activeProject.id,
-        repository: threadRepository,
+        projectId: linkedPullRequest?.projectId ?? activeProject.id,
+        repository,
         number,
       });
     },
     [
       activeProject,
+      activeProjectRepository,
       activeThreadRef,
       linkedThreadPullRequest,
       supportsPullRequests,
-      threadRepository,
     ],
   );
   const togglePreviewPanel = useCallback(() => {

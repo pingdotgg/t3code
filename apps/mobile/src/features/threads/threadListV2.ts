@@ -30,6 +30,16 @@ export { snoozeWakeLabel };
 export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
+/** Keep the previous linked PR state while its detail query reloads. */
+export function resolveThreadListV2ChangeRequestState(input: {
+  readonly hasLinkedPullRequest: boolean;
+  readonly state: ChangeRequestSettleSource["state"] | null;
+  readonly updatedAt: string | null;
+}): ChangeRequestSettleSource | null | undefined {
+  if (input.state === null) return input.hasLinkedPullRequest ? undefined : null;
+  return { state: input.state, updatedAt: input.updatedAt };
+}
+
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
   readonly displayedPresets: ReadonlyArray<SnoozePreset>;

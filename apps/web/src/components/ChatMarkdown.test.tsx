@@ -18,6 +18,7 @@ vi.mock("../state/entities", () => ({
 vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => vi.fn() }));
 vi.mock("~/lib/openPullRequestLink", () => ({
   findProjectForChangeRequest: () => undefined,
+  matchesLinkedPullRequestUrl: () => false,
   parseChangeRequestUrl: () => null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));

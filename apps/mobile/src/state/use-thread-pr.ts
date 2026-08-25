@@ -56,7 +56,7 @@ export function useThreadPr(
       : presentThreadPr(pullRequestDetailToVcsStatus(detail), {
           kind: detail.provider,
           name: detail.provider,
-          baseUrl: new URL(detail.url).origin,
+          baseUrl: "",
         });
   }
 

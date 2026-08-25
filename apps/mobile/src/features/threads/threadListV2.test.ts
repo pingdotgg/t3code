@@ -16,6 +16,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
+  resolveThreadListV2ChangeRequestState,
   resolveThreadListV2Enabled,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -53,6 +54,38 @@ function makeThread(
 }
 
 const NOW = "2026-06-02T00:00:00.000Z";
+
+describe("resolveThreadListV2ChangeRequestState", () => {
+  it("preserves the previous state while a linked pull request reloads", () => {
+    expect(
+      resolveThreadListV2ChangeRequestState({
+        hasLinkedPullRequest: true,
+        state: null,
+        updatedAt: null,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("clears the previous state after a pull request is unlinked", () => {
+    expect(
+      resolveThreadListV2ChangeRequestState({
+        hasLinkedPullRequest: false,
+        state: null,
+        updatedAt: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("reports a loaded linked pull request", () => {
+    expect(
+      resolveThreadListV2ChangeRequestState({
+        hasLinkedPullRequest: true,
+        state: "merged",
+        updatedAt: "2026-06-02T00:00:00.000Z",
+      }),
+    ).toEqual({ state: "merged", updatedAt: "2026-06-02T00:00:00.000Z" });
+  });
+});
 
 describe("resolveThreadListV2SnoozeMenuSelection", () => {
   it("accepts a displayed evening preset while its wake time is still future", () => {

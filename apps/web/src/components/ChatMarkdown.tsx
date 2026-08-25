@@ -109,6 +109,7 @@ import {
 } from "../workspaceBasenameLookup";
 import {
   findProjectForChangeRequest,
+  matchesLinkedPullRequestUrl,
   parseChangeRequestUrl,
   useOpenChangeRequestLink,
 } from "~/lib/openPullRequestLink";
@@ -1576,6 +1577,12 @@ function ChatMarkdown({
       if (linked && linkedPullRequest === null) {
         throw new Error("The pull request is not available in this environment.");
       }
+      if (!linked) {
+        const currentPullRequest = readThreadShell(threadRef)?.linkedPullRequest;
+        if (currentPullRequest == null || !matchesLinkedPullRequestUrl(currentPullRequest, href)) {
+          return;
+        }
+      }
       const result = await updateThreadMetadata({
         environmentId: threadRef.environmentId,
         input: { threadId: threadRef.threadId, linkedPullRequest },
@@ -1822,12 +1829,11 @@ function ChatMarkdown({
                 const currentPullRequest =
                   threadRef === undefined ? null : readThreadShell(threadRef)?.linkedPullRequest;
                 const threadLinkAction =
-                  pullRequest === null
-                    ? undefined
-                    : currentPullRequest?.projectId === pullRequest.projectId &&
-                        currentPullRequest.repository === pullRequest.repository &&
-                        currentPullRequest.number === pullRequest.number
-                      ? "unlink-from-thread"
+                  currentPullRequest != null &&
+                  matchesLinkedPullRequestUrl(currentPullRequest, href)
+                    ? "unlink-from-thread"
+                    : pullRequest === null
+                      ? undefined
                       : "link-to-thread";
                 void showExternalLinkContextMenu({
                   href,

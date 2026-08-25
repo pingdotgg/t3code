@@ -27,6 +27,7 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
+  resolveThreadListV2ChangeRequestState,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
@@ -411,11 +412,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const prUpdatedAt = pr?.updatedAt ?? null;
   const threadKey = `${thread.environmentId}:${thread.id}`;
   useEffect(() => {
-    onChangeRequestState?.(
-      threadKey,
-      prState === null ? null : { state: prState, updatedAt: prUpdatedAt },
-    );
-  }, [onChangeRequestState, prState, prUpdatedAt, threadKey]);
+    const changeRequest = resolveThreadListV2ChangeRequestState({
+      hasLinkedPullRequest: thread.linkedPullRequest != null,
+      state: prState,
+      updatedAt: prUpdatedAt,
+    });
+    if (changeRequest === undefined) return;
+    onChangeRequestState?.(threadKey, changeRequest);
+  }, [onChangeRequestState, prState, prUpdatedAt, thread.linkedPullRequest, threadKey]);
 
   const screenColor = useThemeColor("--color-screen");
   const drawerColor = useThemeColor("--color-drawer");
