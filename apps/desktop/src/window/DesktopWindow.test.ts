@@ -86,6 +86,7 @@ function makeFakeBrowserWindow() {
 
   const window = {
     close: vi.fn(),
+    destroy: vi.fn(),
     focus: vi.fn(),
     getBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
     getNormalBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
@@ -203,6 +204,7 @@ function makeTestLayer(input: {
   readonly desktopSettings?: DesktopAppSettings.DesktopSettings;
   readonly mainWindowBoundsUpdates?: DesktopAppSettings.DesktopWindowBounds[];
   readonly mainWindowMaximizedUpdates?: boolean[];
+  readonly revealedWindows?: Electron.BrowserWindow[];
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
@@ -259,7 +261,10 @@ function makeTestLayer(input: {
     focusedMainOrFirst: Ref.get(input.mainWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
-    reveal: () => Effect.void,
+    reveal: (window) =>
+      Effect.sync(() => {
+        input.revealedWindows?.push(window);
+      }),
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
@@ -607,6 +612,51 @@ describe("DesktopWindow", () => {
         close(recoveredClose);
         assert.equal(recoveredClose.preventDefault.mock.calls.length, 1);
         assert.equal(fakeWindow.hide.mock.calls.length, 2);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("hides the Windows connecting splash and reveals it again on activation", () =>
+    Effect.gen(function* () {
+      const splash = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const revealedWindows: Electron.BrowserWindow[] = [];
+      const layer = makeTestLayer({
+        window: splash.window,
+        createCount,
+        mainWindow,
+        platform: "win32",
+        revealedWindows,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        desktopWindow.setBackgroundModeEnabled(true);
+        yield* desktopWindow.showConnectingSplash;
+
+        const close = splash.windowListeners.get("close");
+        if (!close) {
+          return yield* Effect.die("connecting splash close listener was not registered");
+        }
+
+        const closeEvent = { preventDefault: vi.fn() };
+        close(closeEvent);
+
+        assert.equal(closeEvent.preventDefault.mock.calls.length, 1);
+        assert.equal(splash.hide.mock.calls.length, 1);
+
+        yield* desktopWindow.activate;
+
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.deepEqual(revealedWindows, [splash.window]);
+
+        desktopWindow.prepareForQuit();
+        const quitCloseEvent = { preventDefault: vi.fn() };
+        close(quitCloseEvent);
+
+        assert.equal(quitCloseEvent.preventDefault.mock.calls.length, 0);
+        assert.equal(splash.hide.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
   );

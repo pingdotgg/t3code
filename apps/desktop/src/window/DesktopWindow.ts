@@ -300,10 +300,18 @@ export const make = Effect.gen(function* () {
   let backgroundModeEnabled = false;
   let quitPrepared = false;
 
+  const hideWindowInBackground = (window: Electron.BrowserWindow, event: Electron.Event) => {
+    if (environment.platform === "win32" && backgroundModeEnabled && !quitPrepared) {
+      event.preventDefault();
+      window.hide();
+    }
+  };
+
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
     if (Option.isSome(splash) && !splash.value.isDestroyed()) {
-      splash.value.close();
+      // Programmatic dismissal must bypass the splash's close-to-background handler.
+      splash.value.destroy();
     }
   });
 
@@ -606,10 +614,7 @@ export const make = Effect.gen(function* () {
     window.on("unmaximize", scheduleBoundsPersist);
     window.on("close", (event) => {
       runFork(flushBoundsPersist);
-      if (environment.platform === "win32" && backgroundModeEnabled && !quitPrepared) {
-        event.preventDefault();
-        window.hide();
-      }
+      hideWindowInBackground(window, event);
     });
 
     if (environment.platform === "darwin") {
@@ -843,6 +848,9 @@ export const make = Effect.gen(function* () {
       },
     });
     yield* Ref.set(splashWindowRef, Option.some(splash));
+    splash.on("close", (event) => {
+      hideWindowInBackground(splash, event);
+    });
     splash.once("closed", () => {
       void runPromise(Ref.set(splashWindowRef, Option.none()));
     });
