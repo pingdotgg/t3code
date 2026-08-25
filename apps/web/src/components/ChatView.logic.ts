@@ -58,6 +58,33 @@ export function isProviderAuthError(message: string | null | undefined): boolean
   );
 }
 
+/**
+ * Resolves which provider status the thread error banner's re-authenticate
+ * action should target after a failing turn.
+ *
+ * When the failing turn's session recorded a provider instance, the action must
+ * target *that* instance — not whatever the composer currently has selected —
+ * otherwise switching the picker after a failure would re-authenticate the
+ * wrong instance. If that instance is not present in `providerStatuses`, we
+ * return `null` to suppress the action rather than guessing.
+ *
+ * Only when the session has no recorded provider instance (older sessions
+ * without instance tracking) do we fall back to the active provider status.
+ */
+export function resolveThreadErrorProviderStatus<T extends { instanceId: string }>(input: {
+  sessionProviderInstanceId: string | null;
+  providerStatuses: ReadonlyArray<T>;
+  activeProviderStatus: T | null;
+}): T | null {
+  const { sessionProviderInstanceId, providerStatuses, activeProviderStatus } = input;
+  if (sessionProviderInstanceId) {
+    return (
+      providerStatuses.find((status) => status.instanceId === sessionProviderInstanceId) ?? null
+    );
+  }
+  return activeProviderStatus;
+}
+
 export function shouldDockDraftHeroForSubmission(input: {
   isDraftHeroState: boolean;
   activeThreadKey: string | null;

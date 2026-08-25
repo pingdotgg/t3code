@@ -29,6 +29,7 @@ import {
   reconcileRetainedMountedThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftPromotionNavigationTarget,
+  resolveThreadErrorProviderStatus,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   resolveDraftHeroState,
@@ -940,5 +941,48 @@ describe("isProviderAuthError", () => {
     // API-key auth problems are not fixed by the OAuth `setup-token` flow, so
     // they must not trigger the re-authenticate action.
     expect(isProviderAuthError("API Error: 401 Invalid API key")).toBe(false);
+  });
+});
+
+describe("resolveThreadErrorProviderStatus", () => {
+  const claude = { instanceId: "claudeAgent", reauthentication: { command: "claude auth login" } };
+  const claudeWork = {
+    instanceId: "claude_work",
+    reauthentication: { command: "claude auth login" },
+  };
+
+  it("targets the failing turn's session provider instance when present", () => {
+    expect(
+      resolveThreadErrorProviderStatus({
+        sessionProviderInstanceId: "claude_work",
+        providerStatuses: [claude, claudeWork],
+        activeProviderStatus: claude,
+      }),
+    ).toBe(claudeWork);
+  });
+
+  it("suppresses the action when the session instance id is unknown", () => {
+    // The session recorded a provider instance, but it is no longer in the
+    // status list. Falling back to the composer-selected `activeProviderStatus`
+    // would re-authenticate the wrong instance, so we must resolve to null.
+    expect(
+      resolveThreadErrorProviderStatus({
+        sessionProviderInstanceId: "claude_gone",
+        providerStatuses: [claude, claudeWork],
+        activeProviderStatus: claude,
+      }),
+    ).toBeNull();
+  });
+
+  it("falls back to the active provider only when the session has no instance id", () => {
+    // Older sessions without instance tracking: the active provider is the best
+    // (and only) signal we have.
+    expect(
+      resolveThreadErrorProviderStatus({
+        sessionProviderInstanceId: null,
+        providerStatuses: [claude, claudeWork],
+        activeProviderStatus: claude,
+      }),
+    ).toBe(claude);
   });
 });

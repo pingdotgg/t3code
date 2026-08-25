@@ -358,6 +358,7 @@ import {
   reconcileMountedTerminalThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
+  resolveThreadErrorProviderStatus,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -2821,17 +2822,19 @@ function ChatViewContent(props: ChatViewProps) {
   // instance that actually ran the failing turn (the thread session's
   // provider), not whatever the composer currently has selected — otherwise
   // switching the picker after a failure could re-authenticate the wrong
-  // Claude instance. Falls back to the active provider before a session exists.
+  // Claude instance. When the failing session's instance is unknown we suppress
+  // the action instead of guessing; we only fall back to the active provider
+  // for older sessions that never recorded a provider instance.
   const sessionProviderInstanceId = activeThread?.session?.providerInstanceId ?? null;
-  const threadErrorProviderStatus = useMemo(() => {
-    if (sessionProviderInstanceId) {
-      return (
-        providerStatuses.find((status) => status.instanceId === sessionProviderInstanceId) ??
-        activeProviderStatus
-      );
-    }
-    return activeProviderStatus;
-  }, [sessionProviderInstanceId, providerStatuses, activeProviderStatus]);
+  const threadErrorProviderStatus = useMemo(
+    () =>
+      resolveThreadErrorProviderStatus({
+        sessionProviderInstanceId,
+        providerStatuses,
+        activeProviderStatus,
+      }),
+    [sessionProviderInstanceId, providerStatuses, activeProviderStatus],
+  );
   const [resumeCompactionPermanentlyDismissed, setResumeCompactionPermanentlyDismissed] =
     useLocalStorage(
       `t3code:resume-compaction-dismissed:${environmentId}:${activeProviderInstanceId ?? "claudeAgent"}`,
