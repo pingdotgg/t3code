@@ -6192,7 +6192,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const providerInstanceId = ProviderInstanceId.make("codex");
       const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
       const setInputs: unknown[] = [];
-      const getOptions: Array<{ readonly allowRecovery?: boolean } | undefined> = [];
+      const getOptions: Array<
+        | {
+            readonly allowRecovery?: boolean;
+            readonly failIfInactive?: boolean;
+          }
+        | undefined
+      > = [];
       const initialGoal = {
         objective: "Initial Goal",
         status: "active" as const,
@@ -6286,7 +6292,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(result.steered.objective, "Steered Goal");
       assert.deepEqual(result.cleared, { cleared: true });
       assert.deepEqual(setInputs, [{ threadId, objective: "Steered Goal" }]);
-      assert.deepEqual(getOptions, [{ allowRecovery: false }, { allowRecovery: false }]);
+      assert.deepEqual(getOptions, [
+        { allowRecovery: false, failIfInactive: true },
+        { allowRecovery: false },
+      ]);
       assert.deepEqual(
         Array.from(result.streamed).map((event) => event.type),
         ["snapshot", "updated", "cleared"],

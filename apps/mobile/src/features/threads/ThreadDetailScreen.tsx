@@ -564,7 +564,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const codexGoal = useCodexGoal(
     hasActiveCodexGoalSession ? props.environmentId : null,
     hasActiveCodexGoalSession ? props.selectedThread.id : null,
-    hasActiveCodexGoalSession ? (props.selectedThread.session?.providerInstanceId ?? null) : null,
+    hasActiveCodexGoalSession
+      ? (props.selectedThread.session?.providerInstanceId ?? selectedInstanceId)
+      : null,
   );
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
   const selectedProviderSkills = useMemo(() => {

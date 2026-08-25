@@ -2066,6 +2066,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       }
       if (!routed.isActive) {
         if (options?.allowRecovery === false) {
+          if (options.failIfInactive === true) {
+            return yield* toValidationError(
+              "ProviderService.getCodexGoal",
+              `Cannot read the native Codex Goal for inactive thread '${threadId}' without recovering its provider session.`,
+            );
+          }
           return null;
         }
         routed = yield* resolveRoutableSession({

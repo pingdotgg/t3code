@@ -1615,6 +1615,16 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.startSession.mock.calls.length, 0);
       assert.equal(routing.codex.getCodexGoal.mock.calls.length, 0);
 
+      const inactiveFailure = yield* provider
+        .getCodexGoal(threadId, { allowRecovery: false, failIfInactive: true })
+        .pipe(Effect.result);
+      assert.equal(inactiveFailure._tag, "Failure");
+      if (inactiveFailure._tag === "Failure") {
+        assert.equal(inactiveFailure.failure._tag, "ProviderValidationError");
+      }
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+      assert.equal(routing.codex.getCodexGoal.mock.calls.length, 0);
+
       const recovered = yield* provider.getCodexGoal(threadId);
       assert.equal(recovered?.objective, "Resume only on demand");
       assert.equal(routing.codex.startSession.mock.calls.length, 1);
