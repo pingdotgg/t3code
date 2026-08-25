@@ -34,18 +34,19 @@ function tunnel(input: {
 }
 
 function allocation(input: {
-  readonly tunnelId: string;
+  readonly tunnelId: string | null;
   readonly recoveryEnabled: boolean;
 }): ManagedEndpointAllocations.ManagedEndpointTunnelAllocation {
   return {
     userId: "user-1",
-    environmentId: `environment-${input.tunnelId}`,
-    hostname: `${input.tunnelId}.example.test`,
+    environmentId: `environment-${input.tunnelId ?? "pending"}`,
+    hostname: `${input.tunnelId ?? "pending"}.example.test`,
     tunnelId: input.tunnelId,
     tunnelName: `${PREFIX}aaaaaaaaaaaaaaaa`,
     dnsRecordId: "dns-1",
     readyAt: "2026-08-25T11:00:00.000Z",
     updatedAt: "2026-08-25T11:00:00.000Z",
+    generation: 1,
     recoveryEnabled: input.recoveryEnabled,
   };
 }
@@ -150,6 +151,7 @@ function harness(input?: {
     listByTunnelNames: (tunnelNames) =>
       Effect.succeed(recorded.filter((entry) => tunnelNames.includes(entry.tunnelName))),
     claimRelease: () => Effect.die("unused"),
+    withClaimedTunnel: () => Effect.die("unused"),
     claimDeprovision: () => Effect.die("unused"),
     remove: () => Effect.die("unused"),
     removeClaimed: () => Effect.die("unused"),
@@ -353,6 +355,27 @@ describe("ManagedEndpointReaper", () => {
       expect((yield* reaper.sweep).deleted).toBe(1);
       expect(state.deleted).toEqual(["orphan"]);
       expect(state.releases).toEqual([]);
+    }).pipe(Effect.provide(state.layer));
+  });
+
+  it.effect("removes an expired tunnel that was created but never recorded", () => {
+    const state = harness({
+      tunnels: [
+        tunnel({
+          id: "unrecorded",
+          suffix: "aaaaaaaaaaaaaaaa",
+          status: "inactive",
+          timestamp: "2026-08-25T11:00:00.000Z",
+        }),
+      ],
+      allocations: [allocation({ tunnelId: null, recoveryEnabled: false })],
+    });
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MILLIS);
+      const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+      expect((yield* reaper.sweep).deleted).toBe(1);
+      expect(state.deleted).toEqual(["unrecorded"]);
     }).pipe(Effect.provide(state.layer));
   });
 

@@ -468,8 +468,11 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       environmentId: input.environmentId,
       target: deprovisionTarget,
     });
-    if (!deprovisioned && (yield* links.getForUser(input)) === null) {
-      yield* managedEndpointProvider.deprovision(input);
+    if (!deprovisioned) {
+      const retryTarget = yield* managedEndpointProvider.prepareDeprovision(input);
+      if (retryTarget !== null && (yield* links.getForUser(input)) === null) {
+        yield* managedEndpointProvider.deprovision({ ...input, target: retryTarget });
+      }
     }
     return unlinked;
   },
@@ -519,9 +522,10 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
     environmentPublicKey: input.environmentPublicKey,
   });
   if (!enabled) {
-    const target = yield* managedEndpointProvider.prepareDeprovision(input);
+    const owner = { userId: input.userId, environmentId: input.environmentId };
+    const target = yield* managedEndpointProvider.prepareDeprovision(owner);
     if (target !== null && (yield* links.getForUser(input)) === null) {
-      yield* managedEndpointProvider.deprovision({ ...input, target }).pipe(
+      yield* managedEndpointProvider.deprovision({ ...owner, target }).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("Failed to clean up a tunnel after its link was removed", {
             userId: input.userId,

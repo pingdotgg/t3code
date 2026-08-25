@@ -82,6 +82,30 @@ function makeHandle(input: {
 }
 
 describe("CloudManagedEndpointRuntime", () => {
+  it("retries connector startup failures but stops for unsupported runtimes", () => {
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({
+        status: "failed",
+        reason: "The relay client is not installed.",
+      }),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({
+        status: "failed",
+        reason: "spawn failed",
+      }),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({
+        status: "failed",
+        reason: "Relay client is unsupported on linux-arm.",
+      }),
+    ).toBe(false);
+    expect(
+      ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus({ status: "unsupported" }),
+    ).toBe(false);
+  });
+
   it.effect("serializes updates to persisted cloud link state", () =>
     Effect.gen(function* () {
       const firstEntered = yield* Deferred.make<void>();

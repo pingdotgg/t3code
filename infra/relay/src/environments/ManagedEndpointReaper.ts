@@ -78,11 +78,12 @@ export const make = Effect.gen(function* () {
   }) {
     const current = yield* tunnels.get(input.tunnel.id).pipe(
       Effect.map(Option.some),
-      Effect.catchTag("ManagedEndpointTunnelClientError", (error) =>
-        ManagedEndpointProvider.isManagedEndpointNotFound(error.cause)
-          ? Effect.succeed(Option.none())
-          : Effect.fail(error),
-      ),
+      Effect.catchTags({
+        ManagedEndpointTunnelClientError: (error) =>
+          ManagedEndpointProvider.isManagedEndpointNotFound(error.cause)
+            ? Effect.succeed(Option.none())
+            : Effect.fail(error),
+      }),
     );
     if (Option.isNone(current)) {
       return true;
@@ -90,16 +91,21 @@ export const make = Effect.gen(function* () {
     if (!isExpiredManagedTunnel({ ...input, tunnel: current.value })) {
       return false;
     }
-    if ((yield* allocations.listByTunnelNames([input.tunnel.name])).length > 0) {
+    if (
+      (yield* allocations.listByTunnelNames([input.tunnel.name])).some(
+        (allocation) => allocation.tunnelId !== null,
+      )
+    ) {
       return false;
     }
     return yield* tunnels.delete(input.tunnel.id).pipe(
       Effect.as(true),
-      Effect.catchTag("ManagedEndpointTunnelClientError", (error) =>
-        ManagedEndpointProvider.isManagedEndpointNotFound(error.cause)
-          ? Effect.succeed(true)
-          : Effect.fail(error),
-      ),
+      Effect.catchTags({
+        ManagedEndpointTunnelClientError: (error) =>
+          ManagedEndpointProvider.isManagedEndpointNotFound(error.cause)
+            ? Effect.succeed(true)
+            : Effect.fail(error),
+      }),
     );
   });
 
@@ -166,21 +172,26 @@ export const make = Effect.gen(function* () {
         break;
       }
       const allocation = recordedByTunnelName.get(tunnel.name);
-      if (allocation !== undefined && allocation.tunnelId !== tunnel.id) {
+      if (
+        allocation !== undefined &&
+        allocation.tunnelId !== null &&
+        allocation.tunnelId !== tunnel.id
+      ) {
         continue;
       }
-      if (allocation !== undefined && !allocation.recoveryEnabled) {
+      const owner = allocation?.tunnelId === tunnel.id ? allocation : undefined;
+      if (owner !== undefined && !owner.recoveryEnabled) {
         skippedLegacy += 1;
         continue;
       }
 
       const result =
-        allocation === undefined
+        owner === undefined
           ? yield* deleteOrphan({ tunnel, status, prefix, cutoff }).pipe(Effect.result)
           : yield* provider
               .release({
-                userId: allocation.userId,
-                environmentId: allocation.environmentId,
+                userId: owner.userId,
+                environmentId: owner.environmentId,
                 expectedTunnelId: tunnel.id,
                 expectedInactiveBefore: cutoffIso,
                 expectedStatus: status,

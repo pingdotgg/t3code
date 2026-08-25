@@ -494,11 +494,11 @@ export const make = Effect.gen(function* () {
       if (allocation === null) {
         return true;
       }
-      const claimedAt = yield* allocations
+      const claimedGeneration = yield* allocations
         .claimDeprovision({
           userId: input.userId,
           environmentId: input.environmentId,
-          updatedAt: allocation.updatedAt,
+          generation: allocation.generation,
         })
         .pipe(
           Effect.mapError(
@@ -512,7 +512,7 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-      if (claimedAt === null) {
+      if (claimedGeneration === null) {
         return false;
       }
       const dnsRecordId = allocation.dnsRecordId;
@@ -547,7 +547,7 @@ export const make = Effect.gen(function* () {
         .removeClaimed({
           userId: input.userId,
           environmentId: input.environmentId,
-          updatedAt: claimedAt,
+          generation: claimedGeneration,
         })
         .pipe(
           Effect.mapError(
@@ -586,17 +586,17 @@ export const make = Effect.gen(function* () {
       }
       // Claim the release against the allocation's current generation before
       // touching Cloudflare. A provision racing this release (fast environment
-      // restart) rewrites updatedAt when it records its tunnel, so a stale
+      // restart) increments the generation when it records its tunnel, so a stale
       // claim means the recorded tunnel may already back a fresh connector and
       // must be left alive. A provision that starts after the claim instead
       // fails loudly on the deleted tunnel and the client-side retry
       // provisions a replacement.
-      const claimedAt = yield* allocations
+      const claimedGeneration = yield* allocations
         .claimRelease({
           userId: input.userId,
           environmentId: input.environmentId,
           tunnelId,
-          updatedAt: allocation.updatedAt,
+          generation: allocation.generation,
         })
         .pipe(
           Effect.mapError(
@@ -609,69 +609,10 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-      if (claimedAt === null) {
+      if (claimedGeneration === null) {
         return false;
       }
-      if (input.expectedInactiveBefore !== undefined && input.expectedStatus !== undefined) {
-        const currentAllocation = yield* allocations.get(input).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ManagedEndpointDeprovisioningFailed({
-                ...input,
-                stage: "load-allocation",
-                tunnelId,
-                cause,
-              }),
-          ),
-        );
-        if (
-          currentAllocation === null ||
-          currentAllocation.tunnelId !== tunnelId ||
-          currentAllocation.updatedAt !== claimedAt
-        ) {
-          return false;
-        }
-
-        const currentTunnel = yield* tunnels.get(tunnelId).pipe(
-          Effect.map(Option.some),
-          Effect.catchTag("ManagedEndpointTunnelClientError", (cause) =>
-            isManagedEndpointNotFound(cause.cause)
-              ? Effect.succeed(Option.none())
-              : Effect.fail(
-                  new ManagedEndpointDeprovisioningFailed({
-                    ...input,
-                    stage: "load-tunnel",
-                    tunnelId,
-                    cause,
-                  }),
-                ),
-          ),
-        );
-        if (Option.isNone(currentTunnel)) {
-          return true;
-        }
-        const inactiveAt =
-          input.expectedStatus === "down"
-            ? currentTunnel.value.connsInactiveAt
-            : currentTunnel.value.createdAt;
-        if (
-          currentTunnel.value.id !== tunnelId ||
-          currentTunnel.value.status !== input.expectedStatus ||
-          typeof inactiveAt !== "string"
-        ) {
-          return false;
-        }
-        const inactiveTime = DateTime.make(inactiveAt);
-        const cutoff = DateTime.make(input.expectedInactiveBefore);
-        if (
-          Option.isNone(inactiveTime) ||
-          Option.isNone(cutoff) ||
-          inactiveTime.value.epochMilliseconds > cutoff.value.epochMilliseconds
-        ) {
-          return false;
-        }
-      }
-      yield* ignoreNotFound(tunnels.delete(tunnelId)).pipe(
+      const deleteTunnel = ignoreNotFound(tunnels.delete(tunnelId)).pipe(
         Effect.mapError(
           (cause) =>
             new ManagedEndpointDeprovisioningFailed({
@@ -682,6 +623,97 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+      if (input.expectedInactiveBefore !== undefined && input.expectedStatus !== undefined) {
+        const released = yield* allocations
+          .withClaimedTunnel(
+            {
+              userId: input.userId,
+              environmentId: input.environmentId,
+              tunnelId,
+              generation: claimedGeneration,
+            },
+            Effect.gen(function* () {
+              const currentTunnel = yield* tunnels.get(tunnelId).pipe(
+                Effect.map(Option.some),
+                Effect.catchTags({
+                  ManagedEndpointTunnelClientError: (cause) =>
+                    isManagedEndpointNotFound(cause.cause)
+                      ? Effect.succeed(Option.none())
+                      : Effect.fail(
+                          new ManagedEndpointDeprovisioningFailed({
+                            ...input,
+                            stage: "load-tunnel",
+                            tunnelId,
+                            cause,
+                          }),
+                        ),
+                }),
+              );
+              if (Option.isNone(currentTunnel)) {
+                return true;
+              }
+              const inactiveAt =
+                input.expectedStatus === "down"
+                  ? currentTunnel.value.connsInactiveAt
+                  : currentTunnel.value.createdAt;
+              if (
+                currentTunnel.value.id !== tunnelId ||
+                currentTunnel.value.status !== input.expectedStatus ||
+                typeof inactiveAt !== "string"
+              ) {
+                return false;
+              }
+              const inactiveTime = DateTime.make(inactiveAt);
+              const cutoff = DateTime.make(input.expectedInactiveBefore!);
+              if (
+                Option.isNone(inactiveTime) ||
+                Option.isNone(cutoff) ||
+                inactiveTime.value.epochMilliseconds > cutoff.value.epochMilliseconds
+              ) {
+                return false;
+              }
+
+              const finalGeneration = yield* allocations
+                .claimRelease({
+                  userId: input.userId,
+                  environmentId: input.environmentId,
+                  tunnelId,
+                  generation: claimedGeneration,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointDeprovisioningFailed({
+                        ...input,
+                        stage: "claim-release",
+                        tunnelId,
+                        cause,
+                      }),
+                  ),
+                );
+              if (finalGeneration === null) {
+                return false;
+              }
+              yield* deleteTunnel;
+              return true;
+            }),
+          )
+          .pipe(
+            Effect.catchTags({
+              ManagedEndpointAllocationPersistenceError: (cause) =>
+                Effect.fail(
+                  new ManagedEndpointDeprovisioningFailed({
+                    ...input,
+                    stage: "claim-release",
+                    tunnelId,
+                    cause,
+                  }),
+                ),
+            }),
+          );
+        return Option.getOrElse(released, () => false);
+      }
+      yield* deleteTunnel;
       // The recorded tunnelId is now stale, but the allocation row is left
       // untouched deliberately: connect/status authorization requires a fully
       // recorded allocation, and an offline environment must keep reporting
@@ -806,11 +838,12 @@ export const make = Effect.gen(function* () {
         });
       }
       const tunnel = { id: tunnelResponse.id, name: tunnelResponse.name };
-      yield* allocations
+      const recordedTunnel = yield* allocations
         .recordTunnel({
           userId: input.userId,
           environmentId: input.environmentId,
           tunnelId: tunnel.id,
+          generation: allocation.generation,
         })
         .pipe(
           Effect.mapError(
@@ -826,6 +859,17 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+      if (!recordedTunnel) {
+        return yield* new ManagedEndpointProvisioningFailed({
+          userId: input.userId,
+          environmentId: input.environmentId,
+          stage: "record-tunnel",
+          hostname,
+          tunnelName,
+          tunnelId: tunnel.id,
+          cause: "The tunnel allocation changed during provisioning.",
+        });
+      }
 
       yield* tunnels
         .putConfiguration(tunnel.id, {

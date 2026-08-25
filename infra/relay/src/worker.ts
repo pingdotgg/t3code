@@ -334,7 +334,7 @@ export const ApiLive = Api.make(
                 ),
               ),
             ),
-            Effect.catchCause((cause) =>
+            Effect.catch((cause) =>
               Effect.logWarning("Failed to prune expired relay state", { cause }),
             ),
           ),
@@ -345,7 +345,7 @@ export const ApiLive = Api.make(
                 ? Effect.logInfo("Finished managed tunnel cleanup", result)
                 : Effect.void,
             ),
-            Effect.catchCause((cause) =>
+            Effect.catch((cause) =>
               Effect.logWarning("Failed to clean up inactive managed tunnels", { cause }),
             ),
           ),

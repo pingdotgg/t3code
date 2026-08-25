@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { PgDialect } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
@@ -93,6 +94,7 @@ describe("ManagedEndpointAllocations", () => {
       dnsRecordId: "dns-1",
       readyAt: "2026-08-25T12:00:00.000Z",
       updatedAt: "2026-08-25T12:00:00.000Z",
+      generation: 1,
     };
     const fakeDb = {
       select: () => ({
@@ -138,16 +140,14 @@ describe("ManagedEndpointAllocations", () => {
   );
 
   it.effect("returns a claim generation only when deprovision wins the allocation CAS", () => {
-    let claimedAt: string | undefined;
     const fakeDb = {
       update: (table: unknown) => {
         expect(table).toBe(relayManagedEndpointAllocations);
         return {
-          set: (values: { readonly updatedAt: string }) => {
-            claimedAt = values.updatedAt;
+          set: (_values: { readonly updatedAt: string }) => {
             return {
               where: () => ({
-                returning: () => Effect.succeed([{ userId: "user-1" }]),
+                returning: () => Effect.succeed([{ generation: 8 }]),
               }),
             };
           },
@@ -160,11 +160,55 @@ describe("ManagedEndpointAllocations", () => {
       const generation = yield* allocations.claimDeprovision({
         userId: "user-1",
         environmentId: "environment-1",
-        updatedAt: "captured-generation",
+        generation: 7,
       });
 
-      expect(generation).toBe(claimedAt);
+      expect(generation).toBe(8);
       expect(generation).not.toBeNull();
+    }).pipe(Effect.provide(layerWithDb(fakeDb)));
+  });
+
+  it.effect("holds the claimed allocation row while deleting its tunnel", () => {
+    const operations: string[] = [];
+    const fakeDb = {
+      $client: {
+        withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          Effect.sync(() => {
+            operations.push("transaction");
+          }).pipe(Effect.andThen(effect)),
+      },
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => ({
+              for: (strength: string) =>
+                Effect.sync(() => {
+                  operations.push(`lock:${strength}`);
+                  return [{ generation: 7 }];
+                }),
+            }),
+          }),
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      const result = yield* allocations.withClaimedTunnel(
+        {
+          userId: "user-1",
+          environmentId: "environment-1",
+          tunnelId: "tunnel-1",
+          generation: 7,
+        },
+        Effect.sync(() => {
+          operations.push("delete");
+          return true;
+        }),
+      );
+
+      expect(Option.getOrNull(result)).toBe(true);
+      expect(operations).toEqual(["transaction", "lock:update", "delete"]);
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
 
@@ -186,7 +230,7 @@ describe("ManagedEndpointAllocations", () => {
         yield* allocations.removeClaimed({
           userId: "user-1",
           environmentId: "environment-1",
-          updatedAt: "outdated-claim-generation",
+          generation: 7,
         }),
       ).toBe(false);
     }).pipe(Effect.provide(layerWithDb(fakeDb)));

@@ -189,6 +189,7 @@ function makeAllocations(
     dnsRecordId: "dns-record-id",
     readyAt: "2026-05-25T00:00:00.000Z",
     updatedAt: "2026-05-25T00:00:00.000Z",
+    generation: 1,
   },
 ): ManagedEndpointAllocations.ManagedEndpointAllocations["Service"] {
   return {
@@ -200,6 +201,7 @@ function makeAllocations(
     enableRecovery: () => Effect.die("unused"),
     listByTunnelNames: () => Effect.die("unused"),
     claimRelease: () => Effect.die("unused"),
+    withClaimedTunnel: () => Effect.die("unused"),
     claimDeprovision: () => Effect.die("unused"),
     remove: () => Effect.die("unused"),
     removeClaimed: () => Effect.die("unused"),
@@ -472,6 +474,7 @@ describe("EnvironmentConnector", () => {
             dnsRecordId: "dns-record-id",
             readyAt: null,
             updatedAt: "2026-05-25T00:00:00.000Z",
+            generation: 1,
           }),
         }),
       ),

@@ -753,7 +753,10 @@ const makeServerLayer = Layer.unwrap(
                 Effect.retry({
                   while: (error) =>
                     error._tag !== "EnvironmentHttpBadRequestError" &&
-                    error._tag !== "EnvironmentCloudEndpointUnavailableError",
+                    (error._tag !== "EnvironmentCloudEndpointUnavailableError" ||
+                      CloudManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus(
+                        error.endpointRuntimeStatus,
+                      )),
                   schedule: Schedule.exponential("1 second").pipe(
                     Schedule.modifyDelay(({ duration }) =>
                       Effect.succeed(Duration.min(duration, Duration.seconds(30))),
@@ -764,7 +767,7 @@ const makeServerLayer = Layer.unwrap(
                 Effect.tap((recovered) =>
                   recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
                 ),
-                Effect.catchCause((cause) =>
+                Effect.catch((cause) =>
                   Effect.logWarning("Failed to recover the T3 Connect managed tunnel", { cause }),
                 ),
               ),

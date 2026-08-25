@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "f3c6f2a5-2ecf-43cb-b381-98790fdca66e",
+  "id": "a0128e5a-4bba-4f2d-9851-82c3744dae2c",
   "prevIds": ["2374caff-40bf-423c-9255-55e76dddbc2a"],
   "ddl": [
     {
@@ -873,6 +873,19 @@
       "generated": null,
       "identity": null,
       "name": "recovery_enabled_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "relay_managed_endpoint_allocations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "generation",
       "entityType": "columns",
       "schema": "public",
       "table": "relay_managed_endpoint_allocations"

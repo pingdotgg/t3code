@@ -94,6 +94,21 @@ export function classifyRelayClientOutput(line: string): "connected" | "warning"
   return /\b(?:ERR|WRN|FTL|PNC)\b/u.test(line) ? "warning" : "debug";
 }
 
+/** Connector startup failures can clear after installation or a later spawn attempt. */
+export function isRetryableManagedEndpointRuntimeStatus(status: unknown): boolean {
+  if (typeof status !== "object" || status === null || !("status" in status)) {
+    return false;
+  }
+  if (status.status !== "failed") {
+    return false;
+  }
+  return !(
+    "reason" in status &&
+    typeof status.reason === "string" &&
+    status.reason.startsWith("Relay client is unsupported on ")
+  );
+}
+
 function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
   return JSON.stringify({
     providerKind: config.providerKind,

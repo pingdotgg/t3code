@@ -95,6 +95,7 @@ export const relayManagedEndpointAllocations = pgTable(
     dnsRecordId: varchar("dns_record_id", { length: 191 }),
     readyAt: varchar("ready_at", { length: 64 }),
     recoveryEnabledAt: varchar("recovery_enabled_at", { length: 64 }),
+    generation: integer("generation").notNull().default(0),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),
   },

@@ -6,6 +6,7 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 
 import * as RelayConfiguration from "../Config.ts";
@@ -196,7 +197,11 @@ function makeAllocations(calls: AllocationCall[] = []) {
   ) => {
     const allocation = allocations.get(key);
     if (allocation !== undefined) {
-      allocations.set(key, { ...change(allocation), updatedAt: `generation-${++generation}` });
+      allocations.set(key, {
+        ...change(allocation),
+        generation: allocation.generation + 1,
+        updatedAt: `generation-${++generation}`,
+      });
     }
   };
   return ManagedEndpointAllocations.ManagedEndpointAllocations.of({
@@ -214,6 +219,7 @@ function makeAllocations(calls: AllocationCall[] = []) {
           dnsRecordId: null,
           readyAt: null,
           updatedAt: `generation-${++generation}`,
+          generation: 0,
         };
         allocations.set(allocationKey(input), allocation);
         return allocation;
@@ -221,10 +227,15 @@ function makeAllocations(calls: AllocationCall[] = []) {
     recordTunnel: (input) =>
       Effect.sync(() => {
         calls.push({ operation: "recordTunnel", input });
+        const current = allocations.get(allocationKey(input));
+        if (current?.generation !== input.generation) {
+          return false;
+        }
         mutate(allocationKey(input), (allocation) => ({
           ...allocation,
           tunnelId: input.tunnelId,
         }));
+        return true;
       }),
     recordDns: (input) =>
       Effect.sync(() => {
@@ -267,22 +278,29 @@ function makeAllocations(calls: AllocationCall[] = []) {
         if (
           allocation === undefined ||
           allocation.tunnelId !== input.tunnelId ||
-          allocation.updatedAt !== input.updatedAt
+          allocation.generation !== input.generation
         ) {
           return null;
         }
         mutate(allocationKey(input), (current) => current);
-        return allocations.get(allocationKey(input))?.updatedAt ?? null;
+        return allocations.get(allocationKey(input))?.generation ?? null;
+      }),
+    withClaimedTunnel: (input, effect) =>
+      Effect.suspend(() => {
+        const current = allocations.get(allocationKey(input));
+        return current?.tunnelId === input.tunnelId && current.generation === input.generation
+          ? effect.pipe(Effect.map(Option.some))
+          : Effect.succeed(Option.none());
       }),
     claimDeprovision: (input) =>
       Effect.sync(() => {
         calls.push({ operation: "claimDeprovision", input });
         const allocation = allocations.get(allocationKey(input));
-        if (allocation === undefined || allocation.updatedAt !== input.updatedAt) {
+        if (allocation === undefined || allocation.generation !== input.generation) {
           return null;
         }
         mutate(allocationKey(input), (current) => current);
-        return allocations.get(allocationKey(input))?.updatedAt ?? null;
+        return allocations.get(allocationKey(input))?.generation ?? null;
       }),
     remove: (input) =>
       Effect.sync(() => {
@@ -293,7 +311,7 @@ function makeAllocations(calls: AllocationCall[] = []) {
       Effect.sync(() => {
         calls.push({ operation: "removeClaimed", input });
         const allocation = allocations.get(allocationKey(input));
-        if (allocation === undefined || allocation.updatedAt !== input.updatedAt) {
+        if (allocation === undefined || allocation.generation !== input.generation) {
           return false;
         }
         allocations.delete(allocationKey(input));
@@ -1007,6 +1025,31 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("rejects a tunnel recorded after its allocation generation changed", () => {
+    const allocations = makeAllocations();
+    const changed = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
+      ...allocations,
+      recordTunnel: () => Effect.succeed(false),
+    });
+    const layer = providerLayer(makePersistentTunnelClient(), makeDnsClient(), changed);
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const error = yield* Effect.flip(
+        provider.provision({
+          userId: "user_ABC",
+          environmentId: "env_ABC",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningFailed",
+        stage: "record-tunnel",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("keeps a tunnel that reconnects before scheduled deletion", () => {
     const tunnelCalls: TunnelCall[] = [];
     const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
@@ -1048,13 +1091,14 @@ describe("ManagedEndpointProvider", () => {
       ...allocations,
       claimRelease: (input) =>
         allocations.claimRelease(input).pipe(
-          Effect.tap((claimedAt) =>
-            claimedAt === null
+          Effect.tap((claimedGeneration) =>
+            claimedGeneration === null
               ? Effect.void
               : allocations.recordTunnel({
                   userId: input.userId,
                   environmentId: input.environmentId,
                   tunnelId: "replacement-tunnel",
+                  generation: claimedGeneration,
                 }),
           ),
         ),

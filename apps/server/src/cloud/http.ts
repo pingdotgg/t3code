@@ -459,57 +459,56 @@ const cloudLinkProofHandler = Effect.fn("environment.cloud.linkProof")(
 const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(function* (
   dependencies: CloudHttpDependencies,
   payload: RelayEnvironmentConfigRequest,
-  options?: { readonly requestRecovery?: boolean },
+  options?: { readonly requestRecovery?: boolean; readonly lockHeld?: boolean },
 ) {
-  return yield* dependencies.endpointRuntime.withLinkStateLock(
-    Effect.gen(function* () {
-      yield* validateRelayConfigPayload(payload);
-      yield* validateLinkedCloudUser({
-        secrets: dependencies.secrets,
-        cloudUserId: payload.cloudUserId,
+  const apply = Effect.gen(function* () {
+    yield* validateRelayConfigPayload(payload);
+    yield* validateLinkedCloudUser({
+      secrets: dependencies.secrets,
+      cloudUserId: payload.cloudUserId,
+    });
+    yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
+    const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
+      payload.endpointRuntime,
+    );
+    const ok =
+      endpointRuntimeStatus.status === "disabled" || endpointRuntimeStatus.status === "running";
+    if (!ok) {
+      return yield* new EnvironmentCloudEndpointUnavailableError({
+        message: "Managed endpoint runtime could not be started.",
+        endpointRuntimeStatus,
       });
-      yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
-      const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
-        payload.endpointRuntime,
-      );
-      const ok =
-        endpointRuntimeStatus.status === "disabled" || endpointRuntimeStatus.status === "running";
-      if (!ok) {
-        return yield* new EnvironmentCloudEndpointUnavailableError({
-          message: "Managed endpoint runtime could not be started.",
-          endpointRuntimeStatus,
-        });
-      }
+    }
 
-      yield* dependencies.secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
+    yield* dependencies.secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
+    yield* dependencies.secrets.set(
+      RELAY_ISSUER_SECRET,
+      stringToBytes(payload.relayIssuer ?? payload.relayUrl),
+    );
+    yield* dependencies.secrets.set(CLOUD_LINKED_USER_ID, stringToBytes(payload.cloudUserId));
+    yield* dependencies.secrets.set(
+      RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+      stringToBytes(payload.environmentCredential),
+    );
+    yield* dependencies.secrets.set(
+      CLOUD_MINT_PUBLIC_KEY,
+      stringToBytes(payload.cloudMintPublicKey),
+    );
+    if (payload.endpointRuntime) {
+      const endpointRuntimeJson = yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime);
       yield* dependencies.secrets.set(
-        RELAY_ISSUER_SECRET,
-        stringToBytes(payload.relayIssuer ?? payload.relayUrl),
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        stringToBytes(endpointRuntimeJson),
       );
-      yield* dependencies.secrets.set(CLOUD_LINKED_USER_ID, stringToBytes(payload.cloudUserId));
-      yield* dependencies.secrets.set(
-        RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
-        stringToBytes(payload.environmentCredential),
-      );
-      yield* dependencies.secrets.set(
-        CLOUD_MINT_PUBLIC_KEY,
-        stringToBytes(payload.cloudMintPublicKey),
-      );
-      if (payload.endpointRuntime) {
-        const endpointRuntimeJson = yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime);
-        yield* dependencies.secrets.set(
-          CLOUD_ENDPOINT_RUNTIME_CONFIG,
-          stringToBytes(endpointRuntimeJson),
-        );
-        if (options?.requestRecovery !== false) {
-          yield* dependencies.endpointRuntime.requestRecovery(payload.endpointRuntime);
-        }
-      } else {
-        yield* dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
+      if (options?.requestRecovery !== false) {
+        yield* dependencies.endpointRuntime.requestRecovery(payload.endpointRuntime);
       }
-      return { ok, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
-    }),
-  );
+    } else {
+      yield* dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
+    }
+    return { ok, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
+  });
+  return yield* options?.lockHeld ? apply : dependencies.endpointRuntime.withLinkStateLock(apply);
 });
 
 const cloudRelayConfigHandler = Effect.fn("environment.cloud.relayConfig")(
@@ -629,7 +628,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
         cloudMintPublicKey: link.cloudMintPublicKey,
         endpointRuntime: link.endpointRuntime,
       },
-      { requestRecovery: false },
+      { requestRecovery: false, lockHeld: true },
     );
   },
   Effect.catchIf(
@@ -647,7 +646,10 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
 
 export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileDesiredLink")(
   function* (localOrigin: string) {
-    return yield* reconcileDesiredCloudLinkWith(yield* cloudHttpDependencies, localOrigin);
+    const dependencies = yield* cloudHttpDependencies;
+    return yield* dependencies.endpointRuntime.withLinkStateLock(
+      reconcileDesiredCloudLinkWith(dependencies, localOrigin),
+    );
   },
 );
 
