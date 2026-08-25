@@ -1087,6 +1087,64 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("does not change tunnel ingress after another provision takes ownership", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const allocations = makeAllocations();
+    const changed = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
+      ...allocations,
+      withClaimedTunnel: () => Effect.succeed(Option.none()),
+    });
+    const layer = providerLayer(makePersistentTunnelClient(tunnelCalls), makeDnsClient(), changed);
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const error = yield* Effect.flip(
+        provider.provision({
+          userId: "user_ABC",
+          environmentId: "env_ABC",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningFailed",
+        stage: "configure-tunnel",
+      });
+      expect(tunnelCalls.map((call) => call.operation)).not.toContain("putConfiguration");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not change DNS after another provision takes ownership", () => {
+    const dnsCalls: DnsCall[] = [];
+    const allocations = makeAllocations();
+    let lockCount = 0;
+    const changed = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
+      ...allocations,
+      withClaimedTunnel: (input, effect) =>
+        ++lockCount === 1
+          ? allocations.withClaimedTunnel(input, effect)
+          : Effect.succeed(Option.none()),
+    });
+    const layer = providerLayer(makePersistentTunnelClient(), makeDnsClient(dnsCalls), changed);
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const error = yield* Effect.flip(
+        provider.provision({
+          userId: "user_ABC",
+          environmentId: "env_ABC",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        }),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningFailed",
+        stage: "record-dns",
+      });
+      expect(dnsCalls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("does not mark a superseded tunnel allocation as ready", () => {
     const allocations = makeAllocations();
     const changed = ManagedEndpointAllocations.ManagedEndpointAllocations.of({

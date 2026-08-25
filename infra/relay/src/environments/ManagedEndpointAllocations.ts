@@ -29,6 +29,8 @@ export interface ManagedEndpointTunnelAllocation extends ManagedEndpointAllocati
   readonly recoveryEnabled: boolean;
 }
 
+export const MANAGED_ENDPOINT_ALLOCATION_LOOKUP_BATCH_SIZE = 500;
+
 export function resolveReadyManagedEndpoint(input: {
   readonly allocation: ManagedEndpointAllocation;
   readonly baseDomain: string | undefined;
@@ -422,31 +424,45 @@ export const make = Effect.gen(function* () {
         if (tunnelNames.length === 0) {
           return [];
         }
-        return yield* db
-          .select({
-            ...allocationSelection,
-            recoveryEnabledAt: relayManagedEndpointAllocations.recoveryEnabledAt,
-          })
-          .from(relayManagedEndpointAllocations)
-          .where(inArray(relayManagedEndpointAllocations.tunnelName, tunnelNames))
-          .pipe(
-            Effect.map((rows) =>
-              rows.map(({ recoveryEnabledAt, ...allocation }) => ({
-                ...allocation,
-                recoveryEnabled: recoveryEnabledAt !== null,
-              })),
+        const batches = Array.from(
+          { length: Math.ceil(tunnelNames.length / MANAGED_ENDPOINT_ALLOCATION_LOOKUP_BATCH_SIZE) },
+          (_, index) =>
+            tunnelNames.slice(
+              index * MANAGED_ENDPOINT_ALLOCATION_LOOKUP_BATCH_SIZE,
+              (index + 1) * MANAGED_ENDPOINT_ALLOCATION_LOOKUP_BATCH_SIZE,
             ),
-            Effect.mapError(
-              (cause) =>
-                new ManagedEndpointAllocationPersistenceError({
-                  operation: "list-tunnels",
-                  stage: "database-request",
-                  userId: "*",
-                  environmentId: "*",
-                  cause,
-                }),
-            ),
-          );
+        );
+        const results = yield* Effect.forEach(
+          batches,
+          (batch) =>
+            db
+              .select({
+                ...allocationSelection,
+                recoveryEnabledAt: relayManagedEndpointAllocations.recoveryEnabledAt,
+              })
+              .from(relayManagedEndpointAllocations)
+              .where(inArray(relayManagedEndpointAllocations.tunnelName, batch))
+              .pipe(
+                Effect.map((rows) =>
+                  rows.map(({ recoveryEnabledAt, ...allocation }) => ({
+                    ...allocation,
+                    recoveryEnabled: recoveryEnabledAt !== null,
+                  })),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new ManagedEndpointAllocationPersistenceError({
+                      operation: "list-tunnels",
+                      stage: "database-request",
+                      userId: "*",
+                      environmentId: "*",
+                      cause,
+                    }),
+                ),
+              ),
+          { concurrency: 1 },
+        );
+        return results.flat();
       },
     ),
     claimRelease: Effect.fn("relay.managed_endpoint_allocations.claim_release")(function* (

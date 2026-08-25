@@ -139,6 +139,27 @@ describe("ManagedEndpointAllocations", () => {
     }).pipe(Effect.provide(layerWithDb({} as RelayDb.RelayDb["Service"]))),
   );
 
+  it.effect("splits large tunnel lookups into bounded database queries", () => {
+    const batchSizes: number[] = [];
+    const fakeDb = {
+      select: () => ({
+        from: () => ({
+          where: (condition: unknown) => {
+            batchSizes.push(new PgDialect().sqlToQuery(condition as never).params.length);
+            return Effect.succeed([]);
+          },
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      const names = Array.from({ length: 1_001 }, (_, index) => `tunnel-${index}`);
+      expect(yield* allocations.listByTunnelNames(names)).toEqual([]);
+      expect(batchSizes).toEqual([500, 500, 1]);
+    }).pipe(Effect.provide(layerWithDb(fakeDb)));
+  });
+
   it.effect("returns a claim generation only when deprovision wins the allocation CAS", () => {
     const fakeDb = {
       update: (table: unknown) => {

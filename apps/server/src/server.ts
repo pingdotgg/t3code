@@ -782,7 +782,16 @@ const makeServerLayer = Layer.unwrap(
             // covers anything this sleep used to hedge against. Every
             // millisecond here is dead time on the path to remote
             // reachability after a restart.
-            if (hasCloudPublicConfig && (yield* CloudCliState.readCliDesiredCloudLink)) {
+            const wantsCliLink = hasCloudPublicConfig
+              ? yield* CloudCliState.readCliDesiredCloudLink.pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Failed to read the desired T3 Connect link", { cause }).pipe(
+                      Effect.as(false),
+                    ),
+                  ),
+                )
+              : false;
+            if (wantsCliLink) {
               yield* reconcileDesiredCloudLink(localOrigin).pipe(
                 Effect.retry({
                   while: (error) =>

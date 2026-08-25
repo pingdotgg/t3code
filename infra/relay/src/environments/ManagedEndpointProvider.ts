@@ -937,30 +937,66 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      yield* tunnels
-        .putConfiguration(tunnel.id, {
-          ingress: [
-            {
-              hostname,
-              service: formatOriginService(input.origin),
-            },
-            { service: "http_status:404" },
-          ],
-        })
+      const configured = yield* allocations
+        .withClaimedTunnel(
+          {
+            userId: input.userId,
+            environmentId: input.environmentId,
+            tunnelId: tunnel.id,
+            generation: tunnelGeneration,
+          },
+          tunnels
+            .putConfiguration(tunnel.id, {
+              ingress: [
+                {
+                  hostname,
+                  service: formatOriginService(input.origin),
+                },
+                { service: "http_status:404" },
+              ],
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ManagedEndpointProvisioningFailed({
+                    userId: input.userId,
+                    environmentId: input.environmentId,
+                    stage: "configure-tunnel",
+                    hostname,
+                    tunnelName,
+                    tunnelId: tunnel.id,
+                    cause,
+                  }),
+              ),
+            ),
+        )
         .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ManagedEndpointProvisioningFailed({
-                userId: input.userId,
-                environmentId: input.environmentId,
-                stage: "configure-tunnel",
-                hostname,
-                tunnelName,
-                tunnelId: tunnel.id,
-                cause,
-              }),
-          ),
+          Effect.catchTags({
+            ManagedEndpointAllocationPersistenceError: (cause) =>
+              Effect.fail(
+                new ManagedEndpointProvisioningFailed({
+                  userId: input.userId,
+                  environmentId: input.environmentId,
+                  stage: "configure-tunnel",
+                  hostname,
+                  tunnelName,
+                  tunnelId: tunnel.id,
+                  cause,
+                }),
+              ),
+          }),
         );
+      if (Option.isNone(configured)) {
+        return yield* new ManagedEndpointProvisioningFailed({
+          userId: input.userId,
+          environmentId: input.environmentId,
+          stage: "configure-tunnel",
+          hostname,
+          tunnelName,
+          tunnelId: tunnel.id,
+          cause: "The tunnel allocation changed before its configuration was updated.",
+        });
+      }
 
       const dnsRecord = {
         type: "CNAME",
@@ -970,33 +1006,61 @@ export const make = Effect.gen(function* () {
         proxied: true,
       } as const;
 
-      const dnsRecordId = yield* ensureDnsRecord(hostname, allocation.dnsRecordId, dnsRecord).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ManagedEndpointProvisioningFailed({
-              userId: input.userId,
-              environmentId: input.environmentId,
-              stage: "ensure-dns-record",
+      const recordedDns = yield* allocations
+        .withClaimedTunnel(
+          {
+            userId: input.userId,
+            environmentId: input.environmentId,
+            tunnelId: tunnel.id,
+            generation: tunnelGeneration,
+          },
+          Effect.gen(function* () {
+            const dnsRecordId = yield* ensureDnsRecord(
               hostname,
-              tunnelName,
-              tunnelId: tunnel.id,
-              ...(allocation.dnsRecordId === null ? {} : { dnsRecordId: allocation.dnsRecordId }),
-              cause,
-            }),
-        ),
-      );
-      const dnsGeneration = yield* allocations
-        .recordDns({
-          userId: input.userId,
-          environmentId: input.environmentId,
-          dnsRecordId,
-          tunnelId: tunnel.id,
-          generation: tunnelGeneration,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ManagedEndpointProvisioningFailed({
+              allocation.dnsRecordId,
+              dnsRecord,
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ManagedEndpointProvisioningFailed({
+                    userId: input.userId,
+                    environmentId: input.environmentId,
+                    stage: "ensure-dns-record",
+                    hostname,
+                    tunnelName,
+                    tunnelId: tunnel.id,
+                    ...(allocation.dnsRecordId === null
+                      ? {}
+                      : { dnsRecordId: allocation.dnsRecordId }),
+                    cause,
+                  }),
+              ),
+            );
+            const dnsGeneration = yield* allocations
+              .recordDns({
+                userId: input.userId,
+                environmentId: input.environmentId,
+                dnsRecordId,
+                tunnelId: tunnel.id,
+                generation: tunnelGeneration,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ManagedEndpointProvisioningFailed({
+                      userId: input.userId,
+                      environmentId: input.environmentId,
+                      stage: "record-dns",
+                      hostname,
+                      tunnelName,
+                      tunnelId: tunnel.id,
+                      dnsRecordId,
+                      cause,
+                    }),
+                ),
+              );
+            if (dnsGeneration === null) {
+              return yield* new ManagedEndpointProvisioningFailed({
                 userId: input.userId,
                 environmentId: input.environmentId,
                 stage: "record-dns",
@@ -1004,11 +1068,29 @@ export const make = Effect.gen(function* () {
                 tunnelName,
                 tunnelId: tunnel.id,
                 dnsRecordId,
-                cause,
-              }),
-          ),
+                cause: "The tunnel allocation changed before its DNS record was saved.",
+              });
+            }
+            return { dnsRecordId, dnsGeneration };
+          }),
+        )
+        .pipe(
+          Effect.catchTags({
+            ManagedEndpointAllocationPersistenceError: (cause) =>
+              Effect.fail(
+                new ManagedEndpointProvisioningFailed({
+                  userId: input.userId,
+                  environmentId: input.environmentId,
+                  stage: "record-dns",
+                  hostname,
+                  tunnelName,
+                  tunnelId: tunnel.id,
+                  cause,
+                }),
+              ),
+          }),
         );
-      if (dnsGeneration === null) {
+      if (Option.isNone(recordedDns)) {
         return yield* new ManagedEndpointProvisioningFailed({
           userId: input.userId,
           environmentId: input.environmentId,
@@ -1016,10 +1098,10 @@ export const make = Effect.gen(function* () {
           hostname,
           tunnelName,
           tunnelId: tunnel.id,
-          dnsRecordId,
-          cause: "The tunnel allocation changed before its DNS record was saved.",
+          cause: "The tunnel allocation changed before its DNS record was updated.",
         });
       }
+      const { dnsRecordId, dnsGeneration } = recordedDns.value;
 
       const connectorToken = yield* tunnels.getToken(tunnel.id).pipe(
         Effect.mapError(
