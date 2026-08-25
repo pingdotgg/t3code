@@ -3416,13 +3416,14 @@ function ChatViewContent(props: ChatViewProps) {
   const threadRepository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
   const openThreadPullRequest = useCallback(
     (number: number) => {
-      if (!supportsPullRequests || !activeThreadRef || !activeProject) {
+      if (!supportsPullRequests || !activeThreadRef) {
         return;
       }
+      const projectId = linkedThreadPullRequest?.projectId ?? activeProject?.id;
       const repository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
-      if (repository === null) return;
+      if (projectId === undefined || repository === null) return;
       useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-        projectId: linkedThreadPullRequest?.projectId ?? activeProject.id,
+        projectId,
         repository,
         number,
       });
