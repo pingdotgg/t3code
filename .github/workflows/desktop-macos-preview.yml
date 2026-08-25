@@ -13,12 +13,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build macOS Apple Silicon preview
+  authorize:
+    name: Authorize macOS signing
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'preview:mac') &&
       (github.event.action != 'labeled' || github.event.label.name == 'preview:mac')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      trusted: ${{ steps.authorize.outputs.trusted }}
+    steps:
+      - id: authorize
+        name: Check repository access
+        uses: actions/github-script@v8
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const trustedRoles = new Set(["admin", "maintain"]);
+            const accounts = new Set([
+              process.env.PR_AUTHOR,
+              context.actor,
+              process.env.TRIGGERING_ACTOR,
+            ]);
+
+            for (const username of accounts) {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username,
+              });
+              const role = data.role_name ?? data.permission;
+              if (!trustedRoles.has(role)) {
+                core.warning(`${username} has ${role} access and cannot run signed previews.`);
+                core.setOutput("trusted", "false");
+                return;
+              }
+            }
+
+            core.setOutput("trusted", "true");
+
+  build:
+    name: Build macOS Apple Silicon preview
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
     runs-on: blacksmith-12vcpu-macos-26
     timeout-minutes: 30
     steps:
@@ -114,7 +155,8 @@ jobs:
           export T3CODE_APPLE_TEAM_ID="$APPLE_TEAM_ID"
           export T3CODE_MACOS_PROVISIONING_PROFILE="$profile_path"
 
-          vp run dist:desktop:artifact \
+          env -u GITHUB_REPOSITORY -u T3CODE_DESKTOP_UPDATE_REPOSITORY \
+            vp run dist:desktop:artifact \
             --platform mac \
             --target dmg \
             --arch arm64 \
