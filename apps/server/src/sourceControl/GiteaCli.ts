@@ -27,10 +27,10 @@ const LIST_PAGE_SIZE = 50;
 const MAX_LIST_PAGES = 5;
 
 const giteaCliExecutionErrorContext = {
-  operation: Schema.Literal("execute"),
   command: Schema.Literal("tea"),
   cwd: Schema.String,
-  cause: Schema.Defect(),
+  status: Schema.optional(Schema.Int),
+  cause: Schema.optional(Schema.Defect()),
 };
 
 const giteaCliDecodeErrorContext = {
@@ -48,7 +48,7 @@ export class GiteaCliUnavailableError extends Schema.TaggedErrorClass<GiteaCliUn
   }
 
   override get message(): string {
-    return `Gitea CLI failed in ${this.operation}: ${this.detail}`;
+    return `Gitea CLI failed: ${this.detail}`;
   }
 }
 
@@ -61,7 +61,7 @@ export class GiteaCliAuthenticationError extends Schema.TaggedErrorClass<GiteaCl
   }
 
   override get message(): string {
-    return `Gitea CLI failed in ${this.operation}: ${this.detail}`;
+    return `Gitea CLI failed: ${this.detail}`;
   }
 }
 
@@ -74,7 +74,7 @@ export class GiteaCliRateLimitError extends Schema.TaggedErrorClass<GiteaCliRate
   }
 
   override get message(): string {
-    return `Gitea CLI failed in ${this.operation}: ${this.detail}`;
+    return `Gitea CLI failed: ${this.detail}`;
   }
 }
 
@@ -90,12 +90,11 @@ export class GiteaPullRequestNotFoundError extends Schema.TaggedErrorClass<Gitea
   }
 
   override get message(): string {
-    return `Gitea CLI failed in ${this.operation}: ${this.detail}`;
+    return `Gitea CLI failed: ${this.detail}`;
   }
 
   static fromVcsError(
     context: {
-      readonly operation: "execute";
       readonly command: "tea";
       readonly cwd: string;
       readonly reference: string;
@@ -106,10 +105,7 @@ export class GiteaPullRequestNotFoundError extends Schema.TaggedErrorClass<Gitea
       return new GiteaPullRequestNotFoundError({ ...context, cause: error });
     }
 
-    return GiteaCliCommandError.fromVcsError(
-      { operation: context.operation, command: context.command, cwd: context.cwd },
-      error,
-    );
+    return GiteaCliCommandError.fromVcsError({ command: context.command, cwd: context.cwd }, error);
   }
 }
 
@@ -122,19 +118,23 @@ export class GiteaCliCommandError extends Schema.TaggedErrorClass<GiteaCliComman
   }
 
   override get message(): string {
-    return `Gitea CLI failed in ${this.operation}: ${this.detail}`;
+    return `Gitea CLI failed: ${this.detail}`;
   }
 
   static fromVcsError(
     context: {
-      readonly operation: "execute";
       readonly command: "tea";
       readonly cwd: string;
     },
     error: VcsError,
   ): GiteaCliError {
     return Match.valueTags(error, {
-      VcsProcessSpawnError: (cause) => new GiteaCliUnavailableError({ ...context, cause }),
+      VcsProcessSpawnError: (cause) => {
+        if (isSpawnNotFound(cause)) {
+          return new GiteaCliUnavailableError({ ...context, cause });
+        }
+        return new GiteaCliCommandError({ ...context, cause });
+      },
       VcsProcessExitError: (cause) => {
         switch (cause.failureKind) {
           case "authentication":
@@ -170,7 +170,7 @@ export class GiteaPullRequestListDecodeError extends Schema.TaggedErrorClass<Git
   }
 
   override get message(): string {
-    return `Gitea CLI failed in ${this.operation}: ${this.detail}`;
+    return `Gitea CLI failed: ${this.detail}`;
   }
 }
 
@@ -187,7 +187,7 @@ export class GiteaPullRequestDecodeError extends Schema.TaggedErrorClass<GiteaPu
   }
 
   override get message(): string {
-    return `Gitea CLI failed in ${this.operation}: ${this.detail}`;
+    return `Gitea CLI failed: ${this.detail}`;
   }
 }
 
@@ -204,7 +204,7 @@ export class GiteaRepositoryDecodeError extends Schema.TaggedErrorClass<GiteaRep
   }
 
   override get message(): string {
-    return `Gitea CLI failed in ${this.operation}: ${this.detail}`;
+    return `Gitea CLI failed: ${this.detail}`;
   }
 }
 
@@ -347,28 +347,49 @@ export function parseHttpStatusCode(stderr: string): number | null {
   return status;
 }
 
-/** Carries only the status code, never response bodies or headers that could hold credentials. */
-function httpStatusCause(status: number): Error {
-  return new Error(`Gitea API responded with HTTP ${status}.`);
+/** Detects a spawn failure caused by a missing executable (ENOENT). */
+function isSpawnNotFound(cause: unknown): boolean {
+  if (!isNonErrorDefect(cause)) {
+    return false;
+  }
+
+  return hasEnoentCode(cause) || ENOENT_MESSAGE.test(cause.message) || isNestedEnoent(cause);
+}
+
+const ENOENT_MESSAGE = /ENOENT|no such file or directory/iu;
+
+function isNonErrorDefect(cause: unknown): cause is Error {
+  return cause instanceof Error;
+}
+
+function hasEnoentCode(error: Error): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+function isNestedEnoent(error: Error): boolean {
+  const inner = (error as { readonly cause?: unknown }).cause;
+  if (!isNonErrorDefect(inner)) {
+    return false;
+  }
+  return hasEnoentCode(inner) || ENOENT_MESSAGE.test(inner.message) || isNestedEnoent(inner);
 }
 
 function httpStatusFailure(
   status: number,
   context: { readonly cwd: string; readonly reference?: string },
 ): GiteaCliError {
-  const base = { operation: "execute", command: "tea", cwd: context.cwd } as const;
-  const cause = httpStatusCause(status);
+  const base = { command: "tea", cwd: context.cwd, status } as const;
 
   if (status === 401 || status === 403) {
-    return new GiteaCliAuthenticationError({ ...base, cause });
+    return new GiteaCliAuthenticationError(base);
   }
   if (status === 429) {
-    return new GiteaCliRateLimitError({ ...base, cause });
+    return new GiteaCliRateLimitError(base);
   }
   if (status === 404 && context.reference !== undefined) {
-    return new GiteaPullRequestNotFoundError({ ...base, reference: context.reference, cause });
+    return new GiteaPullRequestNotFoundError({ ...base, reference: context.reference });
   }
-  return new GiteaCliCommandError({ ...base, cause });
+  return new GiteaCliCommandError(base);
 }
 
 function repositoryEndpoint(repository: string): string {
@@ -413,7 +434,11 @@ export function parseGiteaPullRequestReference(
   const index = url?.[3];
   if (!owner || !repo || !index) return null;
 
-  return { index, repository: `${decodeURIComponent(owner)}/${decodeURIComponent(repo)}` };
+  try {
+    return { index, repository: `${decodeURIComponent(owner)}/${decodeURIComponent(repo)}` };
+  } catch {
+    return null;
+  }
 }
 
 /** The endpoint prefix for a reference: an explicit repo from a URL, or the repo in cwd. */
@@ -518,10 +543,7 @@ export const make = Effect.gen(function* () {
 
   const execute: GiteaCli["Service"]["execute"] = (input) =>
     run(input, (error) =>
-      GiteaCliCommandError.fromVcsError(
-        { operation: "execute", command: "tea", cwd: input.cwd },
-        error,
-      ),
+      GiteaCliCommandError.fromVcsError({ command: "tea", cwd: input.cwd }, error),
     );
 
   /**
@@ -564,24 +586,55 @@ export const make = Effect.gen(function* () {
         `repos/{owner}/{repo}/pulls?state=${listStateParameter(input.state)}&limit=${LIST_PAGE_SIZE}&page=${input.page}`,
       ],
     }).pipe(
-      Effect.flatMap((raw) =>
-        raw.length === 0
-          ? Effect.succeed([] as ReadonlyArray<GiteaPullRequestSummary>)
-          : Effect.sync(() => decodeGiteaPullRequestListJson(raw)).pipe(
-              Effect.flatMap((decoded) =>
-                Result.isSuccess(decoded)
-                  ? Effect.succeed(decoded.success.map(toSummaryWithOptionalUpdatedAt))
-                  : Effect.fail(
-                      new GiteaPullRequestListDecodeError({
-                        operation: "listPullRequests",
-                        command: "tea",
-                        cwd: input.cwd,
-                        cause: decoded.failure,
-                      }),
-                    ),
-              ),
-            ),
-      ),
+      Effect.flatMap((raw) => {
+        if (raw.length === 0) {
+          return Effect.succeed({
+            entries: [] as ReadonlyArray<GiteaPullRequestSummary>,
+            rawCount: 0,
+          });
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (error) {
+          return Effect.fail(
+            new GiteaPullRequestListDecodeError({
+              operation: "listPullRequests",
+              command: "tea",
+              cwd: input.cwd,
+              cause: error,
+            }),
+          );
+        }
+        if (!Array.isArray(parsed)) {
+          return Effect.fail(
+            new GiteaPullRequestListDecodeError({
+              operation: "listPullRequests",
+              command: "tea",
+              cwd: input.cwd,
+              cause: new Error("Expected a JSON array"),
+            }),
+          );
+        }
+        const rawList = parsed as ReadonlyArray<unknown>;
+        return Effect.sync(() => decodeGiteaPullRequestListJson(raw)).pipe(
+          Effect.flatMap((decoded) =>
+            Result.isSuccess(decoded)
+              ? Effect.succeed({
+                  entries: decoded.success.map(toSummaryWithOptionalUpdatedAt),
+                  rawCount: rawList.length,
+                })
+              : Effect.fail(
+                  new GiteaPullRequestListDecodeError({
+                    operation: "listPullRequests",
+                    command: "tea",
+                    cwd: input.cwd,
+                    cause: decoded.failure,
+                  }),
+                ),
+          ),
+        );
+      }),
     );
 
   return GiteaCli.of({
@@ -595,18 +648,28 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const wanted = input.limit ?? 20;
         const headRefName = sourceRefName(input);
+        const sourceOwner = input.source?.owner?.toLowerCase() ?? null;
         const matches: Array<GiteaPullRequestSummary> = [];
 
         for (let page = 1; page <= MAX_LIST_PAGES; page += 1) {
-          const entries = yield* listPage({ cwd: input.cwd, state: input.state, page });
+          const { entries, rawCount } = yield* listPage({
+            cwd: input.cwd,
+            state: input.state,
+            page,
+          });
 
           for (const entry of entries) {
-            if (entry.headRefName === headRefName && matchesRequestedState(entry, input.state)) {
+            if (
+              entry.headRefName === headRefName &&
+              matchesRequestedState(entry, input.state) &&
+              (sourceOwner === null ||
+                entry.headRepositoryOwnerLogin?.toLowerCase() === sourceOwner)
+            ) {
               matches.push(entry);
             }
           }
 
-          if (matches.length >= wanted || entries.length < LIST_PAGE_SIZE) break;
+          if (matches.length >= wanted || rawCount < LIST_PAGE_SIZE) break;
         }
 
         return matches.slice(0, wanted);
@@ -617,11 +680,9 @@ export const make = Effect.gen(function* () {
         if (reference === null) {
           return yield* Effect.fail(
             new GiteaPullRequestNotFoundError({
-              operation: "execute",
               command: "tea",
               cwd: input.cwd,
               reference: input.reference,
-              cause: new Error("Reference is neither a pull request number nor a Gitea PR URL."),
             }),
           );
         }
@@ -780,12 +841,12 @@ export const make = Effect.gen(function* () {
             "checkout",
             parseGiteaPullRequestReference(input.reference)?.index ?? input.reference,
             "--branch",
+            ...(input.force ? ["--force"] : []),
           ],
         },
         (error) =>
           GiteaPullRequestNotFoundError.fromVcsError(
             {
-              operation: "execute",
               command: "tea",
               cwd: input.cwd,
               reference: input.reference,

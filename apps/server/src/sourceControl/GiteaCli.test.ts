@@ -752,6 +752,185 @@ layer("GiteaCli failures", (it) => {
     }),
   );
 
+  it("returns null for a PR URL with invalid percent-encoding", () => {
+    const result = GiteaCli.parseGiteaPullRequestReference(
+      "https://git.example.com/o/r/pulls/%ZZ42",
+    );
+    expect(result).toBeNull();
+  });
+
+  it.effect("reports HTTP status on errors instead of a placeholder cause", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiOutput('{"message":"forbidden"}', 403)));
+
+      const tea = yield* GiteaCli.GiteaCli;
+      const error = yield* Effect.flip(tea.getDefaultBranch({ cwd: "/repo" }));
+
+      expect(error._tag).toBe("GiteaCliAuthenticationError");
+      if ("status" in error) {
+        expect(error.status).toBe(403);
+      }
+    }),
+  );
+
+  it.effect("omits cause on HTTP status errors when there is no upstream error", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiOutput('{"message":"rate limited"}', 429)));
+
+      const tea = yield* GiteaCli.GiteaCli;
+      const error = yield* Effect.flip(tea.getDefaultBranch({ cwd: "/repo" }));
+
+      expect(error._tag).toBe("GiteaCliRateLimitError");
+      if ("cause" in error) {
+        expect(error.cause).toBeUndefined();
+      }
+    }),
+  );
+
+  it.effect("does not leak the operation literal in error messages", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiOutput('{"message":"forbidden"}', 403)));
+
+      const tea = yield* GiteaCli.GiteaCli;
+      const error = yield* Effect.flip(tea.getDefaultBranch({ cwd: "/repo" }));
+
+      expect(error.message).not.toContain("execute");
+    }),
+  );
+
+  it.effect("filters by normalized head repository owner when source identifies a fork", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          apiJson([
+            pullRequestJson({
+              number: 1,
+              head: {
+                ref: "feature",
+                label: "fork:feature",
+                repo: { full_name: "fork/repo", owner: { login: "fork" } },
+              },
+            }),
+            pullRequestJson({
+              number: 2,
+              head: {
+                ref: "feature",
+                label: "other:feature",
+                repo: { full_name: "other/repo", owner: { login: "other" } },
+              },
+            }),
+            pullRequestJson({
+              number: 3,
+              head: {
+                ref: "feature",
+                label: "fork:feature",
+                repo: { full_name: "Fork/repo", owner: { login: "Fork" } },
+              },
+            }),
+          ]),
+        ),
+      );
+
+      const tea = yield* GiteaCli.GiteaCli;
+      const result = yield* tea.listPullRequests({
+        cwd: "/repo",
+        headSelector: "feature",
+        source: { owner: "fork", refName: "feature" },
+        state: "open",
+      });
+
+      expect(result.map((entry) => entry.number)).toEqual([1, 3]);
+    }),
+  );
+
+  it.effect(
+    "continues pagination when malformed entries reduce decoded count below page size",
+    () =>
+      Effect.gen(function* () {
+        const fullPageWithMalformed = Array.from({ length: 50 }, (_unused, index) =>
+          index === 0
+            ? { number: "not a number" }
+            : pullRequestJson({ number: index + 1, head: { ref: "unrelated", repo: null } }),
+        );
+        mockedRun.mockReturnValueOnce(Effect.succeed(apiJson(fullPageWithMalformed)));
+        mockedRun.mockReturnValueOnce(Effect.succeed(apiJson([pullRequestJson({ number: 77 })])));
+
+        const tea = yield* GiteaCli.GiteaCli;
+        const result = yield* tea.listPullRequests({
+          cwd: "/repo",
+          headSelector: "t3code/abcd1234",
+          state: "open",
+        });
+
+        expect(result.map((entry) => entry.number)).toEqual([77]);
+        expect(mockedRun).toHaveBeenCalledTimes(2);
+      }),
+  );
+
+  it.effect("passes --force to checkout when input.force is true", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiOutput("")));
+
+      const tea = yield* GiteaCli.GiteaCli;
+      yield* tea.checkoutPullRequest({ cwd: "/repo", reference: "42", force: true });
+
+      expect(lastArgs()).toEqual(["pulls", "checkout", "42", "--branch", "--force"]);
+    }),
+  );
+
+  it.effect("does not pass --force to checkout when input.force is absent", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiOutput("")));
+
+      const tea = yield* GiteaCli.GiteaCli;
+      yield* tea.checkoutPullRequest({ cwd: "/repo", reference: "42" });
+
+      expect(lastArgs()).toEqual(["pulls", "checkout", "42", "--branch"]);
+    }),
+  );
+
+  it.effect("classifies a non-ENOENT spawn failure as GiteaCliCommandError", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessSpawnError({
+            operation: "GiteaCli.execute",
+            command: "tea",
+            cwd: "/repo",
+            argumentCount: 3,
+            cause: new Error("spawn EACCES permission denied"),
+          }),
+        ),
+      );
+
+      const tea = yield* GiteaCli.GiteaCli;
+      const error = yield* Effect.flip(tea.getDefaultBranch({ cwd: "/repo" }));
+
+      expect(error._tag).toBe("GiteaCliCommandError");
+    }),
+  );
+
+  it.effect("classifies an ENOENT spawn failure as GiteaCliUnavailableError", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessSpawnError({
+            operation: "GiteaCli.execute",
+            command: "tea",
+            cwd: "/repo",
+            argumentCount: 3,
+            cause: new Error("spawn tea ENOENT"),
+          }),
+        ),
+      );
+
+      const tea = yield* GiteaCli.GiteaCli;
+      const error = yield* Effect.flip(tea.getDefaultBranch({ cwd: "/repo" }));
+
+      expect(error._tag).toBe("GiteaCliUnavailableError");
+    }),
+  );
+
   it.effect("fails on invalid JSON instead of returning a half-decoded pull request", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(Effect.succeed(apiOutput("not json")));

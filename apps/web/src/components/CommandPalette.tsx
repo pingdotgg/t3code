@@ -1559,6 +1559,7 @@ function OpenCommandPaletteDialog(props: {
       "bitbucket",
       "azure",
       "devops",
+      "gitea",
       "url",
       "environment",
     ],

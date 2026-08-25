@@ -64,7 +64,6 @@ it.effect("maps Gitea PR summaries into provider-neutral change requests", () =>
 it.effect("adds repository context while retaining Gitea CLI causes", () =>
   Effect.gen(function* () {
     const cause = new GiteaCli.GiteaCliCommandError({
-      operation: "execute",
       command: "tea",
       cwd: "/repo",
       cause: new Error("raw upstream detail that should remain in the cause"),
@@ -101,7 +100,6 @@ it.effect("adds repository context while retaining Gitea CLI causes", () =>
 it.effect("reports the right operation for each failing Gitea call", () =>
   Effect.gen(function* () {
     const cause = new GiteaCli.GiteaCliAuthenticationError({
-      operation: "execute",
       command: "tea",
       cwd: "/repo",
       cause: new Error("http 401"),
@@ -348,6 +346,28 @@ it("does not refine a host tea knows nothing about", () => {
     auth: {
       exitCode: ChildProcessSpawner.ExitCode(0),
       stdout: loginsJson([SELF_HOSTED_LOGIN]),
+      stderr: "",
+    },
+  });
+
+  assert.strictEqual(provider, null);
+});
+
+it("does not refine a login with null user", () => {
+  const provider = GiteaSourceControlProvider.discovery.refineUnknownRemote?.({
+    cwd: "/repo",
+    context: {
+      provider: {
+        kind: "unknown",
+        name: "git.example.com",
+        baseUrl: "https://git.example.com",
+      },
+      remoteName: "origin",
+      remoteUrl: "git@git.example.com:owner/repo.git",
+    },
+    auth: {
+      exitCode: ChildProcessSpawner.ExitCode(0),
+      stdout: loginsJson([{ ...SELF_HOSTED_LOGIN, user: "" }]),
       stderr: "",
     },
   });

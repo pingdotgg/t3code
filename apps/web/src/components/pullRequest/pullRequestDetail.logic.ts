@@ -852,7 +852,7 @@ const OPERATION_PREFIX = /^Pull request operation \w+ failed:\s*/iu;
  * host says is worth more than what this page could invent, so only these are replaced.
  */
 const TOOL_NOISE = [
-  /^(github|gitlab|bitbucket|azure devops)?\s*(cli|api)?\s*(command\s*)?failed\.?$/iu,
+  /^(github|gitlab|bitbucket|azure devops|gitea)?\s*(cli|api)?\s*(command\s*)?failed\.?$/iu,
   /^exited? with (code|status) \d+\.?$/iu,
   /^unknown error\.?$/iu,
 ];

@@ -70,4 +70,21 @@ describe("parsePullRequestReference", () => {
   it("rejects non-pull-request input", () => {
     expect(parsePullRequestReference("feature/my-branch")).toBeNull();
   });
+
+  it("accepts Gitea pull request URLs", () => {
+    expect(parsePullRequestReference("https://git.example.com/owner/repo/pulls/42")).toBe(
+      "https://git.example.com/owner/repo/pulls/42",
+    );
+    expect(parsePullRequestReference("https://gitea.com/foo/bar/pulls/1")).toBe(
+      "https://gitea.com/foo/bar/pulls/1",
+    );
+  });
+
+  it("accepts tea pulls checkout commands", () => {
+    expect(parsePullRequestReference("tea pulls checkout 42")).toBe("42");
+    expect(parsePullRequestReference("tea pulls checkout #42")).toBe("42");
+    expect(
+      parsePullRequestReference("tea pulls checkout https://git.example.com/owner/repo/pulls/42"),
+    ).toBe("https://git.example.com/owner/repo/pulls/42");
+  });
 });

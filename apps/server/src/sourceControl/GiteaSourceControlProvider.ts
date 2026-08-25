@@ -90,7 +90,7 @@ function refineUnknownGiteaRemote(input: SourceControlUnknownRemoteRefinementInp
     parseGiteaLogins(input.auth.stdout),
     input.context.provider.name,
   );
-  if (!login) {
+  if (!login || login.user === null) {
     return null;
   }
 
