@@ -103,10 +103,12 @@ describe("ManagedEndpointAllocations", () => {
       const query = new PgDialect().sqlToQuery(condition as never);
       expect(query.sql).toContain('"relay_managed_endpoint_allocations"."tunnel_id"');
       expect(query.sql).toContain('"relay_environment_links"."environment_public_key"');
+      expect(query.sql).toContain('"relay_environment_links"."endpoint_provider_kind"');
       expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
       expect(query.sql).toContain("for update");
       expect(query.params).toContain("tunnel-1");
       expect(query.params).toContain("public-key");
+      expect(query.params).toContain("cloudflare_tunnel");
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
 

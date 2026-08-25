@@ -709,7 +709,19 @@ describe("relay managed tunnel recovery", () => {
     );
   });
 
-  it.effect("removes a recovered tunnel when its link disappears before registration", () => {
+  it.effect.each([
+    { state: "removed", currentLink: null },
+    {
+      state: "publish-only",
+      currentLink: {
+        ...linkedEnvironmentRecord,
+        endpoint: {
+          ...linkedEnvironmentRecord.endpoint,
+          providerKind: "manual" as const,
+        },
+      },
+    },
+  ])("removes a recovered tunnel when its link becomes $state", ({ currentLink }) => {
     let lookups = 0;
     const cleaned: Array<string> = [];
     const target = {
@@ -739,7 +751,8 @@ describe("relay managed tunnel recovery", () => {
       Effect.provide(
         Layer.merge(
           relayUnlinkTestLayer({
-            getForUser: () => Effect.sync(() => (++lookups === 1 ? linkedEnvironmentRecord : null)),
+            getForUser: () =>
+              Effect.sync(() => (++lookups === 1 ? linkedEnvironmentRecord : currentLink)),
             provision: () =>
               Effect.succeed({
                 endpoint: linkedEnvironmentRecord.endpoint,

@@ -463,7 +463,7 @@ const cloudLinkProofHandler = Effect.fn("environment.cloud.linkProof")(
 const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(function* (
   dependencies: CloudHttpDependencies,
   payload: RelayEnvironmentConfigRequest,
-  options?: { readonly requestRecovery?: boolean; readonly lockHeld?: boolean },
+  options?: { readonly lockHeld?: boolean },
 ) {
   const apply = Effect.gen(function* () {
     yield* validateRelayConfigPayload(payload);
@@ -504,16 +504,19 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
         CLOUD_ENDPOINT_RUNTIME_CONFIG,
         stringToBytes(endpointRuntimeJson),
       );
-      const registered = yield* registerManagedCloudTunnelRecovery().pipe(
+      yield* registerManagedCloudTunnelRecovery().pipe(
+        Effect.retry({
+          times: 2,
+          while: (error) =>
+            error._tag !== "EnvironmentHttpUnauthorizedError" &&
+            error._tag !== "EnvironmentHttpConflictError",
+        }),
         Effect.catch((cause) =>
           Effect.logWarning("Failed to register T3 Connect managed tunnel recovery", {
             cause,
-          }).pipe(Effect.as(false)),
+          }),
         ),
       );
-      if (!registered && options?.requestRecovery !== false) {
-        yield* dependencies.endpointRuntime.requestRecovery(payload.endpointRuntime);
-      }
     } else {
       yield* dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
     }
@@ -639,7 +642,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
         cloudMintPublicKey: link.cloudMintPublicKey,
         endpointRuntime: link.endpointRuntime,
       },
-      { requestRecovery: false, lockHeld: true },
+      { lockHeld: true },
     );
   },
   Effect.catchIf(

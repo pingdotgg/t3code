@@ -400,6 +400,7 @@ export const make = Effect.gen(function* () {
                     eq(relayEnvironmentLinks.userId, input.userId),
                     eq(relayEnvironmentLinks.environmentId, input.environmentId),
                     eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+                    eq(relayEnvironmentLinks.endpointProviderKind, "cloudflare_tunnel"),
                     isNull(relayEnvironmentLinks.revokedAt),
                   ),
                 )

@@ -628,10 +628,14 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
   if (!enabled) {
     const owner = { userId: input.userId, environmentId: input.environmentId };
     const target = yield* managedEndpointProvider.prepareDeprovision(owner);
-    if (target !== null && (yield* links.getForUser(input)) === null) {
+    const currentLink = target === null ? null : yield* links.getForUser(input);
+    if (
+      target !== null &&
+      (currentLink === null || currentLink.endpoint.providerKind !== "cloudflare_tunnel")
+    ) {
       yield* managedEndpointProvider.deprovision({ ...owner, target }).pipe(
         Effect.catch((cause) =>
-          Effect.logWarning("Failed to clean up a tunnel after its link was removed", {
+          Effect.logWarning("Failed to clean up a tunnel after its managed link was removed", {
             userId: input.userId,
             environmentId: input.environmentId,
             cause,
