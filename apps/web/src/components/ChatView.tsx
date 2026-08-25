@@ -360,6 +360,7 @@ import {
   reconcileMountedTerminalThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
+  resolveInteractionModeProviderSelection,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -2308,9 +2309,16 @@ function ChatViewContent(props: ChatViewProps) {
   const preferredInteractionMode = settings.planModeEnabled
     ? (composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE)
     : DEFAULT_INTERACTION_MODE;
-  const interactionModeSelection = composerActiveProvider
-    ? { instanceId: composerActiveProvider }
-    : activeThread?.modelSelection;
+  const interactionModeSelection = resolveInteractionModeProviderSelection({
+    providers: providerStatuses,
+    candidates: [
+      composerActiveProvider,
+      activeThread?.session?.providerInstanceId,
+      activeThread?.modelSelection.instanceId,
+      activeProject?.defaultModelSelection?.instanceId,
+    ],
+    lockedProvider,
+  });
   const interactionMode = normalizeProviderInteractionMode(
     providerStatuses,
     interactionModeSelection,

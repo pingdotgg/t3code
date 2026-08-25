@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -29,6 +30,7 @@ import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftPromotionNavigationTarget,
   resolveThreadMetadataUpdateForNextTurn,
+  resolveInteractionModeProviderSelection,
   resolveSendEnvMode,
   resolveDraftHeroState,
   scheduleEnvironmentReconnectWarning,
@@ -43,6 +45,34 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("interaction mode provider selection", () => {
+  it("skips a stale unavailable composer provider", () => {
+    const ompInstanceId = ProviderInstanceId.make("omp");
+    const codexInstanceId = ProviderInstanceId.make("codex");
+
+    expect(
+      resolveInteractionModeProviderSelection({
+        providers: [
+          {
+            instanceId: ompInstanceId,
+            driver: ProviderDriverKind.make("omp"),
+            enabled: false,
+            availability: "unavailable",
+          },
+          {
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            enabled: true,
+            availability: "available",
+          },
+        ],
+        candidates: [ompInstanceId, codexInstanceId],
+        lockedProvider: null,
+      }),
+    ).toEqual({ instanceId: codexInstanceId });
+  });
+});
 
 describe("draft hero submission transition", () => {
   it("does not dock the composer before a background submission", () => {

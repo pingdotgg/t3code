@@ -195,6 +195,7 @@ export function selectOmpPermissionOptionId(
 export interface OmpElicitationQuestion {
   readonly key: string;
   readonly otherKey?: string;
+  readonly otherSchema?: EffectAcpSchema.ElicitationPropertySchema;
   readonly required: boolean;
   readonly schema: EffectAcpSchema.ElicitationPropertySchema;
   readonly question: UserInputQuestion;
@@ -258,7 +259,12 @@ export function ompElicitationQuestions(
       `Question ${index + 1}`;
     return {
       key,
-      ...(properties[`${key}__other`] ? { otherKey: `${key}__other` } : {}),
+      ...(properties[`${key}__other`]
+        ? {
+            otherKey: `${key}__other`,
+            otherSchema: properties[`${key}__other`],
+          }
+        : {}),
       required: requiredKeys.has(key),
       schema,
       question: {
@@ -313,6 +319,22 @@ export function buildOmpElicitationContent(
   const content: Record<string, EffectAcpSchema.ElicitationContentValue> = {};
   for (const question of questions) {
     const rawAnswer = answers[question.key];
+    if (question.schema.type === "array" && Array.isArray(rawAnswer)) {
+      const selectedValues = normalizeElicitationAnswer(rawAnswer, question.schema);
+      if (selectedValues !== undefined) {
+        content[question.key] = selectedValues;
+      }
+      const customValues = rawAnswer.flatMap((answer) => {
+        if (typeof answer !== "string") return [];
+        const value = answer.trim();
+        return value && selectedChoiceValue(question.schema, value) === undefined ? [value] : [];
+      });
+      if (question.otherKey && customValues.length > 0) {
+        content[question.otherKey] =
+          question.otherSchema?.type === "array" ? customValues : customValues.join(", ");
+      }
+      continue;
+    }
     const normalized = normalizeElicitationAnswer(rawAnswer, question.schema);
     const scalarAnswer = Array.isArray(rawAnswer) ? rawAnswer[0] : rawAnswer;
     if (

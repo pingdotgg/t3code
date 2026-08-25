@@ -369,428 +369,437 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
       });
 
     const startSession: OmpAdapterShape["startSession"] = (input) =>
-      withThreadLock(
-        input.threadId,
-        Effect.gen(function* () {
-          if (input.provider !== undefined && input.provider !== PROVIDER) {
-            return yield* new ProviderAdapterValidationError({
-              provider: PROVIDER,
-              operation: "startSession",
-              issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
-            });
-          }
-          if (!input.cwd?.trim()) {
-            return yield* new ProviderAdapterValidationError({
-              provider: PROVIDER,
-              operation: "startSession",
-              issue: "cwd is required and must be non-empty.",
-            });
-          }
-
-          const cwd = path.resolve(input.cwd.trim());
-          const ompModelSelection =
-            input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
-          const existing = sessions.get(input.threadId);
-          if (existing && !existing.stopped) {
-            yield* stopSessionInternal(existing);
-          }
-
-          const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
-          const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
-          const sessionScope = yield* Scope.make("sequential");
-          let sessionScopeTransferred = false;
-          yield* Effect.addFinalizer(() =>
-            sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
-          );
-          let ctx!: OmpSessionContext;
-
-          const resumeSessionId = parseOmpResume(input.resumeCursor)?.sessionId;
-          const acpNativeLoggers = makeAcpNativeLoggers({
-            nativeEventLogger,
+      Effect.gen(function* () {
+        if (input.provider !== undefined && input.provider !== PROVIDER) {
+          return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
-            threadId: input.threadId,
+            operation: "startSession",
+            issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
           });
+        }
+        if (!input.cwd?.trim()) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue: "cwd is required and must be non-empty.",
+          });
+        }
+        const cwd = path.resolve(input.cwd.trim());
 
-          const effectiveOmpSettings = options?.resolveSettings
-            ? yield* options.resolveSettings
-            : ompSettings;
+        const activeSession = sessions.get(input.threadId);
+        if (activeSession && !activeSession.stopped) {
+          yield* stopSessionInternal(activeSession);
+        }
 
-          const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-          const acp = yield* makeOmpAcpRuntime({
-            ompSettings: effectiveOmpSettings,
-            ...(options?.environment ? { environment: options.environment } : {}),
-            childProcessSpawner,
-            cwd,
-            runtimeMode: input.runtimeMode,
-            ...(resumeSessionId ? { resumeSessionId } : {}),
-            clientInfo: { name: "t3-code", version: "0.0.0" },
-            ...(mcpSession
-              ? {
-                  mcpServers: [
-                    {
-                      type: "http" as const,
-                      name: "t3-code",
-                      url: mcpSession.endpoint,
-                      headers: [
-                        {
-                          name: "Authorization",
-                          value: mcpSession.authorizationHeader,
-                        },
-                      ],
-                    },
-                  ],
-                }
-              : {}),
-            ...acpNativeLoggers,
-          }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
-            Effect.provideService(Scope.Scope, sessionScope),
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapterProcessError({
-                  provider: PROVIDER,
-                  threadId: input.threadId,
-                  detail: cause.message,
-                  cause,
-                }),
-            ),
-          );
-          const started = yield* Effect.gen(function* () {
-            yield* acp.handleElicitation((params) =>
-              mapAcpCallbackFailure(
-                Effect.gen(function* () {
-                  yield* logNative(input.threadId, "session/elicitation", params, "acp.jsonrpc");
-                  if (params.mode !== "form") {
-                    return { action: { action: "cancel" as const } };
+        return yield* withThreadLock(
+          input.threadId,
+          Effect.gen(function* () {
+            const ompModelSelection =
+              input.modelSelection?.instanceId === boundInstanceId
+                ? input.modelSelection
+                : undefined;
+            const existing = sessions.get(input.threadId);
+            if (existing && !existing.stopped) {
+              yield* stopSessionInternal(existing);
+            }
+
+            const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
+            const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
+            const sessionScope = yield* Scope.make("sequential");
+            let sessionScopeTransferred = false;
+            yield* Effect.addFinalizer(() =>
+              sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
+            );
+            let ctx!: OmpSessionContext;
+
+            const resumeSessionId = parseOmpResume(input.resumeCursor)?.sessionId;
+            const acpNativeLoggers = makeAcpNativeLoggers({
+              nativeEventLogger,
+              provider: PROVIDER,
+              threadId: input.threadId,
+            });
+
+            const effectiveOmpSettings = options?.resolveSettings
+              ? yield* options.resolveSettings
+              : ompSettings;
+
+            const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+            const acp = yield* makeOmpAcpRuntime({
+              ompSettings: effectiveOmpSettings,
+              ...(options?.environment ? { environment: options.environment } : {}),
+              childProcessSpawner,
+              cwd,
+              runtimeMode: input.runtimeMode,
+              ...(resumeSessionId ? { resumeSessionId } : {}),
+              clientInfo: { name: "t3-code", version: "0.0.0" },
+              ...(mcpSession
+                ? {
+                    mcpServers: [
+                      {
+                        type: "http" as const,
+                        name: "t3-code",
+                        url: mcpSession.endpoint,
+                        headers: [
+                          {
+                            name: "Authorization",
+                            value: mcpSession.authorizationHeader,
+                          },
+                        ],
+                      },
+                    ],
                   }
-                  const questions = ompElicitationQuestions(params);
-                  if (questions.length === 0) {
-                    return { action: { action: "cancel" as const } };
-                  }
-                  const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
-                  const runtimeRequestId = RuntimeRequestId.make(requestId);
-                  const answers = yield* Deferred.make<ProviderUserInputAnswers>();
-                  pendingUserInputs.set(requestId, { answers });
-                  yield* offerRuntimeEvent({
-                    type: "user-input.requested",
-                    ...(yield* makeEventStamp()),
+                : {}),
+              ...acpNativeLoggers,
+            }).pipe(
+              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(Scope.Scope, sessionScope),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterProcessError({
                     provider: PROVIDER,
                     threadId: input.threadId,
-                    turnId: ctx?.activeTurnId,
-                    requestId: runtimeRequestId,
-                    payload: { questions: questions.map((entry) => entry.question) },
-                    raw: {
-                      source: "acp.jsonrpc",
-                      method: "session/elicitation",
-                      payload: params,
-                    },
-                  });
-                  const resolved = yield* Deferred.await(answers);
-                  pendingUserInputs.delete(requestId);
-                  yield* offerRuntimeEvent({
-                    type: "user-input.resolved",
-                    ...(yield* makeEventStamp()),
-                    provider: PROVIDER,
-                    threadId: input.threadId,
-                    turnId: ctx?.activeTurnId,
-                    requestId: runtimeRequestId,
-                    payload: { answers: resolved },
-                  });
-                  const content = buildOmpElicitationContent(questions, resolved);
-                  const isMissingRequiredAnswer = questions.some(
-                    (question) =>
-                      question.required &&
-                      !Object.hasOwn(content, question.key) &&
-                      !(question.otherKey && Object.hasOwn(content, question.otherKey)),
-                  );
-                  if (isMissingRequiredAnswer) {
-                    return { action: { action: "cancel" as const } };
-                  }
-                  return { action: { action: "accept" as const, content } };
-                }),
+                    detail: "Failed to create the Oh My Pi ACP runtime.",
+                    cause,
+                  }),
               ),
             );
-            yield* acp.handleRequestPermission((params) =>
-              mapAcpCallbackFailure(
-                Effect.gen(function* () {
-                  yield* logNative(
-                    input.threadId,
-                    "session/request_permission",
-                    params,
-                    "acp.jsonrpc",
-                  );
-                  const permissionRequest = parsePermissionRequest(params);
-                  if (shouldAutoApproveOmpPermission(input.runtimeMode, permissionRequest)) {
-                    const autoApprovedOptionId = selectAutoApprovedOmpPermissionOption(params);
-                    if (autoApprovedOptionId !== undefined) {
-                      return {
-                        outcome: {
-                          outcome: "selected" as const,
-                          optionId: autoApprovedOptionId,
-                        },
-                      };
+            const started = yield* Effect.gen(function* () {
+              yield* acp.handleElicitation((params) =>
+                mapAcpCallbackFailure(
+                  Effect.gen(function* () {
+                    yield* logNative(input.threadId, "session/elicitation", params, "acp.jsonrpc");
+                    if (params.mode !== "form") {
+                      return { action: { action: "cancel" as const } };
                     }
-                  }
-                  const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
-                  const runtimeRequestId = RuntimeRequestId.make(requestId);
-                  const decision = yield* Deferred.make<ProviderApprovalDecision>();
-                  pendingApprovals.set(requestId, { decision });
-                  yield* offerRuntimeEvent(
-                    makeAcpRequestOpenedEvent({
-                      stamp: yield* makeEventStamp(),
-                      provider: PROVIDER,
-                      threadId: input.threadId,
-                      turnId: ctx?.activeTurnId,
-                      requestId: runtimeRequestId,
-                      permissionRequest,
-                      detail:
-                        permissionRequest.detail ??
-                        encodeJsonStringForDiagnostics(params)?.slice(0, 2000) ??
-                        "[unserializable params]",
-                      args: params,
-                      source: "acp.jsonrpc",
-                      method: "session/request_permission",
-                      rawPayload: params,
-                    }),
-                  );
-                  const resolved = yield* Deferred.await(decision);
-                  pendingApprovals.delete(requestId);
-                  yield* offerRuntimeEvent(
-                    makeAcpRequestResolvedEvent({
-                      stamp: yield* makeEventStamp(),
-                      provider: PROVIDER,
-                      threadId: input.threadId,
-                      turnId: ctx?.activeTurnId,
-                      requestId: runtimeRequestId,
-                      permissionRequest,
-                      decision: resolved,
-                    }),
-                  );
-                  if (resolved === "cancel") {
-                    return { outcome: { outcome: "cancelled" as const } };
-                  }
-                  const optionId = selectOmpPermissionOptionId(params, resolved);
-                  return {
-                    outcome: optionId
-                      ? { outcome: "selected" as const, optionId }
-                      : { outcome: "cancelled" as const },
-                  };
-                }),
-              ),
-            );
-            return yield* acp.start();
-          }).pipe(
-            Effect.mapError((error) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, "session/start", error),
-            ),
-          );
-
-          const defaultModel = getOmpAcpCurrentModel(yield* acp.getConfigOptions);
-
-          yield* applyOmpRequestedSessionConfiguration({
-            runtime: acp,
-            modelSelection: ompModelSelection,
-            defaultModel,
-            mapError: ({ cause, method }) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
-          });
-
-          const now = yield* nowIso;
-          const session: ProviderSession = {
-            provider: PROVIDER,
-            providerInstanceId: boundInstanceId,
-            status: "ready",
-            runtimeMode: input.runtimeMode,
-            cwd,
-            model: ompModelSelection?.model,
-            threadId: input.threadId,
-            resumeCursor: {
-              schemaVersion: OMP_RESUME_VERSION,
-              sessionId: started.sessionId,
-            },
-            createdAt: now,
-            updatedAt: now,
-          };
-
-          ctx = {
-            threadId: input.threadId,
-            session,
-            scope: sessionScope,
-            acp,
-            defaultModel,
-            notificationFiber: undefined,
-            exitFiber: undefined,
-            pendingApprovals,
-            pendingUserInputs,
-            turns: [],
-            lastPlanFingerprint: undefined,
-            activeTurnId: undefined,
-            stopped: false,
-          };
-
-          const nf = yield* Stream.runDrain(
-            Stream.mapEffect(acp.getEvents(), (event) =>
-              Effect.gen(function* () {
-                switch (event._tag) {
-                  case "EventStreamBarrier":
-                    yield* Deferred.succeed(event.acknowledge, undefined);
-                    return;
-                  case "ModeChanged":
-                    return;
-                  case "UsageUpdated":
+                    const questions = ompElicitationQuestions(params);
+                    if (questions.length === 0) {
+                      return { action: { action: "cancel" as const } };
+                    }
+                    const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+                    const runtimeRequestId = RuntimeRequestId.make(requestId);
+                    const answers = yield* Deferred.make<ProviderUserInputAnswers>();
+                    pendingUserInputs.set(requestId, { answers });
                     yield* offerRuntimeEvent({
-                      type: "thread.token-usage.updated",
+                      type: "user-input.requested",
                       ...(yield* makeEventStamp()),
                       provider: PROVIDER,
-                      threadId: ctx.threadId,
-                      turnId: ctx.activeTurnId,
-                      payload: {
-                        usage: {
-                          usedTokens: event.payload.used,
-                          ...(event.payload.size > 0 ? { maxTokens: event.payload.size } : {}),
-                        },
-                      },
+                      threadId: input.threadId,
+                      turnId: ctx?.activeTurnId,
+                      requestId: runtimeRequestId,
+                      payload: { questions: questions.map((entry) => entry.question) },
                       raw: {
                         source: "acp.jsonrpc",
-                        method: "session/update",
-                        payload: event.rawPayload,
+                        method: "session/elicitation",
+                        payload: params,
                       },
                     });
-                    return;
-                  case "AssistantItemStarted":
-                    yield* offerRuntimeEvent(
-                      makeAcpAssistantItemEvent({
-                        stamp: yield* makeEventStamp(),
-                        provider: PROVIDER,
-                        threadId: ctx.threadId,
-                        turnId: ctx.activeTurnId,
-                        itemId: event.itemId,
-                        lifecycle: "item.started",
-                      }),
+                    const resolved = yield* Deferred.await(answers);
+                    pendingUserInputs.delete(requestId);
+                    yield* offerRuntimeEvent({
+                      type: "user-input.resolved",
+                      ...(yield* makeEventStamp()),
+                      provider: PROVIDER,
+                      threadId: input.threadId,
+                      turnId: ctx?.activeTurnId,
+                      requestId: runtimeRequestId,
+                      payload: { answers: resolved },
+                    });
+                    const content = buildOmpElicitationContent(questions, resolved);
+                    const isMissingRequiredAnswer = questions.some(
+                      (question) =>
+                        question.required &&
+                        !Object.hasOwn(content, question.key) &&
+                        !(question.otherKey && Object.hasOwn(content, question.otherKey)),
                     );
-                    return;
-                  case "AssistantItemCompleted":
-                    yield* offerRuntimeEvent(
-                      makeAcpAssistantItemEvent({
-                        stamp: yield* makeEventStamp(),
-                        provider: PROVIDER,
-                        threadId: ctx.threadId,
-                        turnId: ctx.activeTurnId,
-                        itemId: event.itemId,
-                        lifecycle: "item.completed",
-                      }),
-                    );
-                    return;
-                  case "PlanUpdated":
-                    yield* logNative(
-                      ctx.threadId,
-                      "session/update",
-                      event.rawPayload,
-                      "acp.jsonrpc",
-                    );
-                    yield* emitPlanUpdate(
-                      ctx,
-                      event.payload,
-                      event.rawPayload,
-                      "acp.jsonrpc",
-                      "session/update",
-                    );
-                    return;
-                  case "ToolCallUpdated":
-                    yield* logNative(
-                      ctx.threadId,
-                      "session/update",
-                      event.rawPayload,
-                      "acp.jsonrpc",
-                    );
-                    yield* offerRuntimeEvent(
-                      makeAcpToolCallEvent({
-                        stamp: yield* makeEventStamp(),
-                        provider: PROVIDER,
-                        threadId: ctx.threadId,
-                        turnId: ctx.activeTurnId,
-                        toolCall: event.toolCall,
-                        rawPayload: event.rawPayload,
-                      }),
-                    );
-                    return;
-                  case "ContentDelta":
-                    yield* logNative(
-                      ctx.threadId,
-                      "session/update",
-                      event.rawPayload,
-                      "acp.jsonrpc",
-                    );
-                    yield* offerRuntimeEvent(
-                      makeAcpContentDeltaEvent({
-                        stamp: yield* makeEventStamp(),
-                        provider: PROVIDER,
-                        threadId: ctx.threadId,
-                        turnId: ctx.activeTurnId,
-                        ...(event.itemId ? { itemId: event.itemId } : {}),
-                        text: event.text,
-                        rawPayload: event.rawPayload,
-                      }),
-                    );
-                    return;
-                }
-              }).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logError("Failed to process an OMP runtime notification.", {
-                    cause: Cause.pretty(cause),
+                    if (isMissingRequiredAnswer) {
+                      return { action: { action: "cancel" as const } };
+                    }
+                    return { action: { action: "accept" as const, content } };
                   }),
                 ),
+              );
+              yield* acp.handleRequestPermission((params) =>
+                mapAcpCallbackFailure(
+                  Effect.gen(function* () {
+                    yield* logNative(
+                      input.threadId,
+                      "session/request_permission",
+                      params,
+                      "acp.jsonrpc",
+                    );
+                    const permissionRequest = parsePermissionRequest(params);
+                    if (shouldAutoApproveOmpPermission(input.runtimeMode, permissionRequest)) {
+                      const autoApprovedOptionId = selectAutoApprovedOmpPermissionOption(params);
+                      if (autoApprovedOptionId !== undefined) {
+                        return {
+                          outcome: {
+                            outcome: "selected" as const,
+                            optionId: autoApprovedOptionId,
+                          },
+                        };
+                      }
+                    }
+                    const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+                    const runtimeRequestId = RuntimeRequestId.make(requestId);
+                    const decision = yield* Deferred.make<ProviderApprovalDecision>();
+                    pendingApprovals.set(requestId, { decision });
+                    yield* offerRuntimeEvent(
+                      makeAcpRequestOpenedEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId: ctx?.activeTurnId,
+                        requestId: runtimeRequestId,
+                        permissionRequest,
+                        detail:
+                          permissionRequest.detail ??
+                          encodeJsonStringForDiagnostics(params)?.slice(0, 2000) ??
+                          "[unserializable params]",
+                        args: params,
+                        source: "acp.jsonrpc",
+                        method: "session/request_permission",
+                        rawPayload: params,
+                      }),
+                    );
+                    const resolved = yield* Deferred.await(decision);
+                    pendingApprovals.delete(requestId);
+                    yield* offerRuntimeEvent(
+                      makeAcpRequestResolvedEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId: ctx?.activeTurnId,
+                        requestId: runtimeRequestId,
+                        permissionRequest,
+                        decision: resolved,
+                      }),
+                    );
+                    if (resolved === "cancel") {
+                      return { outcome: { outcome: "cancelled" as const } };
+                    }
+                    const optionId = selectOmpPermissionOptionId(params, resolved);
+                    return {
+                      outcome: optionId
+                        ? { outcome: "selected" as const, optionId }
+                        : { outcome: "cancelled" as const },
+                    };
+                  }),
+                ),
+              );
+              return yield* acp.start();
+            }).pipe(
+              Effect.mapError((error) =>
+                mapAcpToAdapterError(PROVIDER, input.threadId, "session/start", error),
               ),
-            ),
-          ).pipe(Effect.forkIn(ctx.scope));
+            );
 
-          ctx.notificationFiber = nf;
-          sessions.set(input.threadId, ctx);
-          const exitFiber = yield* acp.awaitExit.pipe(
-            Effect.flatMap((exitCode) =>
-              handleUnexpectedExit(ctx, `OMP ACP process exited with code ${exitCode}.`),
-            ),
-            Effect.catchCause((cause) =>
-              handleUnexpectedExit(
-                ctx,
-                `Failed to observe OMP ACP process exit: ${Cause.pretty(cause)}`,
+            const defaultModel = getOmpAcpCurrentModel(yield* acp.getConfigOptions);
+
+            yield* applyOmpRequestedSessionConfiguration({
+              runtime: acp,
+              modelSelection: ompModelSelection,
+              defaultModel,
+              mapError: ({ cause, method }) =>
+                mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+            });
+
+            const now = yield* nowIso;
+            const session: ProviderSession = {
+              provider: PROVIDER,
+              providerInstanceId: boundInstanceId,
+              status: "ready",
+              runtimeMode: input.runtimeMode,
+              cwd,
+              model: ompModelSelection?.model,
+              threadId: input.threadId,
+              resumeCursor: {
+                schemaVersion: OMP_RESUME_VERSION,
+                sessionId: started.sessionId,
+              },
+              createdAt: now,
+              updatedAt: now,
+            };
+
+            ctx = {
+              threadId: input.threadId,
+              session,
+              scope: sessionScope,
+              acp,
+              defaultModel,
+              notificationFiber: undefined,
+              exitFiber: undefined,
+              pendingApprovals,
+              pendingUserInputs,
+              turns: [],
+              lastPlanFingerprint: undefined,
+              activeTurnId: undefined,
+              stopped: false,
+            };
+
+            const nf = yield* Stream.runDrain(
+              Stream.mapEffect(acp.getEvents(), (event) =>
+                Effect.gen(function* () {
+                  switch (event._tag) {
+                    case "EventStreamBarrier":
+                      yield* Deferred.succeed(event.acknowledge, undefined);
+                      return;
+                    case "ModeChanged":
+                      return;
+                    case "UsageUpdated":
+                      yield* offerRuntimeEvent({
+                        type: "thread.token-usage.updated",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        payload: {
+                          usage: {
+                            usedTokens: event.payload.used,
+                            ...(event.payload.size > 0 ? { maxTokens: event.payload.size } : {}),
+                          },
+                        },
+                        raw: {
+                          source: "acp.jsonrpc",
+                          method: "session/update",
+                          payload: event.rawPayload,
+                        },
+                      });
+                      return;
+                    case "AssistantItemStarted":
+                      yield* offerRuntimeEvent(
+                        makeAcpAssistantItemEvent({
+                          stamp: yield* makeEventStamp(),
+                          provider: PROVIDER,
+                          threadId: ctx.threadId,
+                          turnId: ctx.activeTurnId,
+                          itemId: event.itemId,
+                          lifecycle: "item.started",
+                        }),
+                      );
+                      return;
+                    case "AssistantItemCompleted":
+                      yield* offerRuntimeEvent(
+                        makeAcpAssistantItemEvent({
+                          stamp: yield* makeEventStamp(),
+                          provider: PROVIDER,
+                          threadId: ctx.threadId,
+                          turnId: ctx.activeTurnId,
+                          itemId: event.itemId,
+                          lifecycle: "item.completed",
+                        }),
+                      );
+                      return;
+                    case "PlanUpdated":
+                      yield* logNative(
+                        ctx.threadId,
+                        "session/update",
+                        event.rawPayload,
+                        "acp.jsonrpc",
+                      );
+                      yield* emitPlanUpdate(
+                        ctx,
+                        event.payload,
+                        event.rawPayload,
+                        "acp.jsonrpc",
+                        "session/update",
+                      );
+                      return;
+                    case "ToolCallUpdated":
+                      yield* logNative(
+                        ctx.threadId,
+                        "session/update",
+                        event.rawPayload,
+                        "acp.jsonrpc",
+                      );
+                      yield* offerRuntimeEvent(
+                        makeAcpToolCallEvent({
+                          stamp: yield* makeEventStamp(),
+                          provider: PROVIDER,
+                          threadId: ctx.threadId,
+                          turnId: ctx.activeTurnId,
+                          toolCall: event.toolCall,
+                          rawPayload: event.rawPayload,
+                        }),
+                      );
+                      return;
+                    case "ContentDelta":
+                      yield* logNative(
+                        ctx.threadId,
+                        "session/update",
+                        event.rawPayload,
+                        "acp.jsonrpc",
+                      );
+                      yield* offerRuntimeEvent(
+                        makeAcpContentDeltaEvent({
+                          stamp: yield* makeEventStamp(),
+                          provider: PROVIDER,
+                          threadId: ctx.threadId,
+                          turnId: ctx.activeTurnId,
+                          ...(event.itemId ? { itemId: event.itemId } : {}),
+                          text: event.text,
+                          rawPayload: event.rawPayload,
+                        }),
+                      );
+                      return;
+                  }
+                }).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logError("Failed to process an OMP runtime notification.", {
+                      cause: Cause.pretty(cause),
+                    }),
+                  ),
+                ),
               ),
-            ),
-            Effect.catchCause((cause) =>
-              Effect.logError("Failed to settle an exited OMP ACP process.", {
-                cause: Cause.pretty(cause),
-              }),
-            ),
-            Effect.forkIn(adapterScope),
-          );
-          ctx.exitFiber = exitFiber;
-          sessionScopeTransferred = true;
+            ).pipe(Effect.forkIn(ctx.scope));
 
-          yield* offerRuntimeEvent({
-            type: "session.started",
-            ...(yield* makeEventStamp()),
-            provider: PROVIDER,
-            threadId: input.threadId,
-            payload: { resume: started.initializeResult },
-          });
-          yield* offerRuntimeEvent({
-            type: "session.state.changed",
-            ...(yield* makeEventStamp()),
-            provider: PROVIDER,
-            threadId: input.threadId,
-            payload: { state: "ready", reason: "OMP ACP session ready" },
-          });
-          yield* offerRuntimeEvent({
-            type: "thread.started",
-            ...(yield* makeEventStamp()),
-            provider: PROVIDER,
-            threadId: input.threadId,
-            payload: { providerThreadId: started.sessionId },
-          });
+            ctx.notificationFiber = nf;
+            sessions.set(input.threadId, ctx);
+            const exitFiber = yield* acp.awaitExit.pipe(
+              Effect.flatMap((exitCode) =>
+                handleUnexpectedExit(ctx, `OMP ACP process exited with code ${exitCode}.`),
+              ),
+              Effect.catchCause((cause) =>
+                handleUnexpectedExit(
+                  ctx,
+                  `Failed to observe OMP ACP process exit: ${Cause.pretty(cause)}`,
+                ),
+              ),
+              Effect.catchCause((cause) =>
+                Effect.logError("Failed to settle an exited OMP ACP process.", {
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+              Effect.forkIn(adapterScope),
+            );
+            ctx.exitFiber = exitFiber;
+            sessionScopeTransferred = true;
 
-          return session;
-        }).pipe(Effect.scoped),
-      );
+            yield* offerRuntimeEvent({
+              type: "session.started",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              payload: { resume: started.initializeResult },
+            });
+            yield* offerRuntimeEvent({
+              type: "session.state.changed",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              payload: { state: "ready", reason: "OMP ACP session ready" },
+            });
+            yield* offerRuntimeEvent({
+              type: "thread.started",
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.threadId,
+              payload: { providerThreadId: started.sessionId },
+            });
+
+            return session;
+          }).pipe(Effect.scoped),
+        );
+      });
 
     const sendTurn: OmpAdapterShape["sendTurn"] = (input) =>
       withThreadLock(
@@ -819,7 +828,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
                   new ProviderAdapterRequestError({
                     provider: PROVIDER,
                     method: "session/prompt",
-                    detail: cause.message,
+                    detail: `Failed to read attachment '${attachment.id}'.`,
                     cause,
                   }),
               ),
@@ -1019,13 +1028,21 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
       });
 
     const stopSession: OmpAdapterShape["stopSession"] = (threadId) =>
-      withThreadLock(
-        threadId,
-        Effect.gen(function* () {
-          const ctx = yield* requireSession(threadId);
-          yield* stopSessionInternal(ctx);
-        }),
-      );
+      Effect.gen(function* () {
+        const activeSession = sessions.get(threadId);
+        if (activeSession && !activeSession.stopped) {
+          yield* stopSessionInternal(activeSession);
+          return;
+        }
+
+        yield* withThreadLock(
+          threadId,
+          Effect.gen(function* () {
+            const ctx = yield* requireSession(threadId);
+            yield* stopSessionInternal(ctx);
+          }),
+        );
+      });
 
     const listSessions: OmpAdapterShape["listSessions"] = () =>
       Effect.sync(() => Array.from(sessions.values(), (c) => ({ ...c.session })));

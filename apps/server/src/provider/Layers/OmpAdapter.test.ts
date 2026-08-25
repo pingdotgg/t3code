@@ -178,6 +178,42 @@ describe("OMP elicitation mapping", () => {
     });
   });
 });
+describe("OMP multi-select elicitation", () => {
+  it("preserves predefined and custom multi-select answers", () => {
+    const questions = ompElicitationQuestions({
+      mode: "form",
+      sessionId: "session-1",
+      message: "Choose scopes",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          scopes: {
+            type: "array",
+            title: "Scopes",
+            items: {
+              anyOf: [
+                { const: "workspace", title: "Workspace" },
+                { const: "session", title: "Session" },
+              ],
+            },
+          },
+          scopes__other: { type: "string", title: "Other" },
+        },
+        required: ["scopes"],
+      },
+    });
+
+    assert.deepStrictEqual(
+      buildOmpElicitationContent(questions, {
+        scopes: ["Custom scope", "Workspace", "Session"],
+      }),
+      {
+        scopes: ["workspace", "session"],
+        scopes__other: "Custom scope",
+      },
+    );
+  });
+});
 
 describe("OMP permission mapping", () => {
   it("returns the option ID that OMP supplied for each decision", () => {
@@ -294,6 +330,92 @@ ompAdapterTestLayer("OmpAdapterLive", (it) => {
         assert.include(eventTypes, eventType);
       }
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("stops a session while its turn awaits approval", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OmpAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_EMIT_EDIT_PERMISSION: "1",
+        }),
+      );
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      const threadId = ThreadId.make("omp-stop-pending-approval");
+      const requestFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "request.opened"),
+        Stream.take(1),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const turnFiber = yield* adapter
+        .sendTurn({ threadId, input: "request approval", attachments: [] })
+        .pipe(Effect.result, Effect.forkChild);
+
+      const request = yield* Fiber.join(requestFiber);
+      assert.equal(request._tag, "Some");
+      yield* adapter.stopSession(threadId).pipe(Effect.timeout("2 seconds"));
+      const turnResult = yield* Fiber.join(turnFiber);
+      assert.equal(turnResult._tag, "Failure");
+      assert.isFalse(yield* adapter.hasSession(threadId));
+    }),
+  );
+
+  it.effect("replaces a session while its turn awaits approval", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OmpAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_EMIT_EDIT_PERMISSION: "1",
+        }),
+      );
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      const threadId = ThreadId.make("omp-replace-pending-approval");
+      const requestFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "request.opened"),
+        Stream.take(1),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const turnFiber = yield* adapter
+        .sendTurn({ threadId, input: "request approval", attachments: [] })
+        .pipe(Effect.result, Effect.forkChild);
+
+      const request = yield* Fiber.join(requestFiber);
+      assert.equal(request._tag, "Some");
+      const replacement = yield* adapter
+        .startSession({
+          threadId,
+          provider: ProviderDriverKind.make("omp"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.timeout("2 seconds"));
+      assert.equal(replacement.status, "ready");
+      const turnResult = yield* Fiber.join(turnFiber);
+      assert.equal(turnResult._tag, "Failure");
       yield* adapter.stopSession(threadId);
     }),
   );

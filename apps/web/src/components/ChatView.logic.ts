@@ -30,6 +30,31 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
+type InteractionModeProviderSnapshot = Pick<
+  ServerProvider,
+  "instanceId" | "driver" | "enabled" | "availability"
+>;
+
+export function resolveInteractionModeProviderSelection(input: {
+  readonly providers: ReadonlyArray<InteractionModeProviderSnapshot>;
+  readonly candidates: ReadonlyArray<string | null | undefined>;
+  readonly lockedProvider: ProviderDriverKind | null;
+}): { readonly instanceId: InteractionModeProviderSnapshot["instanceId"] } | null {
+  const selectableProviders = input.providers.filter(
+    (provider) =>
+      provider.enabled &&
+      provider.availability !== "unavailable" &&
+      (input.lockedProvider === null || provider.driver === input.lockedProvider),
+  );
+  for (const candidate of input.candidates) {
+    if (!candidate) continue;
+    const provider = selectableProviders.find((entry) => entry.instanceId === candidate);
+    if (provider) return { instanceId: provider.instanceId };
+  }
+  const fallback = selectableProviders[0];
+  return fallback ? { instanceId: fallback.instanceId } : null;
+}
+
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
 export function shouldDockDraftHeroForSubmission(input: {
