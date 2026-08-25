@@ -11,6 +11,7 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import type { ProviderInstanceEntry } from "../providerInstances";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadShell } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -31,8 +32,8 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 type InteractionModeProviderSnapshot = Pick<
-  ServerProvider,
-  "instanceId" | "driver" | "enabled" | "availability" | "status"
+  ProviderInstanceEntry,
+  "instanceId" | "driverKind" | "enabled" | "isAvailable" | "status"
 >;
 
 export function resolveInteractionModeProviderSelection(input: {
@@ -43,8 +44,8 @@ export function resolveInteractionModeProviderSelection(input: {
   const selectableProviders = input.providers.filter(
     (provider) =>
       provider.enabled &&
-      provider.availability !== "unavailable" &&
-      (input.lockedProvider === null || provider.driver === input.lockedProvider),
+      provider.isAvailable &&
+      (input.lockedProvider === null || provider.driverKind === input.lockedProvider),
   );
   for (const candidate of input.candidates) {
     if (!candidate) continue;

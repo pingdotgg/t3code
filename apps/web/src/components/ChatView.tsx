@@ -2310,7 +2310,10 @@ function ChatViewContent(props: ChatViewProps) {
     ? (composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE)
     : DEFAULT_INTERACTION_MODE;
   const interactionModeSelection = resolveInteractionModeProviderSelection({
-    providers: providerStatuses,
+    providers: applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(providerStatuses),
+      settings,
+    ),
     candidates: [
       composerActiveProvider,
       activeThread?.session?.providerInstanceId,
