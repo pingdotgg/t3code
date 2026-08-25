@@ -23,8 +23,10 @@ export interface ThreadDeletionReactorShape {
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
 
   /**
-   * Resolves when the internal processing queue is empty and idle.
-   * Intended for test use to replace timing-sensitive sleeps.
+   * Resolves once every thread.deleted published up to now has been handed
+   * to the worker and the worker's queue is empty and idle. Callers that
+   * re-create a deleted thread id wait on this so the old incarnation's
+   * cleanup cannot run against the new one.
    */
   readonly drain: Effect.Effect<void>;
 }
