@@ -3419,12 +3419,10 @@ function ChatViewContent(props: ChatViewProps) {
       if (!supportsPullRequests || !activeThreadRef || !activeProject) {
         return;
       }
-      const linkedPullRequest =
-        linkedThreadPullRequest?.number === number ? linkedThreadPullRequest : null;
-      const repository = linkedPullRequest?.repository ?? activeProjectRepository;
+      const repository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
       if (repository === null) return;
       useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-        projectId: linkedPullRequest?.projectId ?? activeProject.id,
+        projectId: linkedThreadPullRequest?.projectId ?? activeProject.id,
         repository,
         number,
       });
@@ -3436,6 +3434,24 @@ function ChatViewContent(props: ChatViewProps) {
       linkedThreadPullRequest,
       supportsPullRequests,
     ],
+  );
+  const openProjectPullRequest = useCallback(
+    (number: number) => {
+      if (
+        !supportsPullRequests ||
+        !activeThreadRef ||
+        !activeProject ||
+        activeProjectRepository === null
+      ) {
+        return;
+      }
+      useRightPanelStore.getState().openPullRequest(activeThreadRef, {
+        projectId: activeProject.id,
+        repository: activeProjectRepository,
+        number,
+      });
+    },
+    [activeProject, activeProjectRepository, activeThreadRef, supportsPullRequests],
   );
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
@@ -6634,9 +6650,9 @@ function ChatViewContent(props: ChatViewProps) {
         >
           {!rightPanelOpen ? panelLayoutControls : null}
           <ChatHeader
-            {...(!supportsPullRequests || threadRepository === null
+            {...(!supportsPullRequests || activeProjectRepository === null
               ? {}
-              : { onOpenPullRequest: openThreadPullRequest })}
+              : { onOpenPullRequest: openProjectPullRequest })}
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
