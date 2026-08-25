@@ -59,8 +59,6 @@ function ConnectedReportsPage({
   const reports = reportsQuery.data?.reports ?? [];
   const selectedReport =
     reports.find((report) => report.id === selectedReportId) ?? reports[0] ?? null;
-  const selectReport = (reportId: string) =>
-    void navigate({ to: "/reports", search: { reportId }, replace: true });
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
