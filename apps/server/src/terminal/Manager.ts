@@ -499,7 +499,13 @@ function shellCandidateFromCommand(
 ): ShellCandidate | null {
   if (!command || command.length === 0) return null;
   const shellName = basenameForPlatform(command, platform).toLowerCase();
-  if (platform === "win32" && (shellName === "pwsh.exe" || shellName === "powershell.exe")) {
+  if (
+    platform === "win32" &&
+    (shellName === "pwsh" ||
+      shellName === "pwsh.exe" ||
+      shellName === "powershell" ||
+      shellName === "powershell.exe")
+  ) {
     return { shell: command, args: ["-NoLogo"] };
   }
   if (platform !== "win32" && shellName === "zsh") {
@@ -550,15 +556,25 @@ const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(func
   env: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ShellCandidate[], never, FileSystem.FileSystem | Path.Path> {
   const requestedCommand = normalizeShellCommand(shellResolver(), platform);
-  const resolvedRequestedCommand =
-    platform === "win32" && requestedCommand !== null
-      ? yield* resolveCommandPath(requestedCommand, { env }).pipe(
-          Effect.provideService(HostProcessPlatform, platform),
-          Effect.catchTags({
-            CommandResolutionError: () => Effect.succeed(requestedCommand),
-          }),
-        )
-      : requestedCommand;
+  // `resolveCommandPath` checks explicit paths relative to the server process,
+  // while PTY spawns resolve them relative to the session cwd. Only resolve
+  // bare command names through PATH so a relative configured path keeps its
+  // normal PTY semantics.
+  const isPathLikeCommand =
+    requestedCommand?.includes("/") === true ||
+    requestedCommand?.includes("\\") === true ||
+    requestedCommand?.includes(":") === true ||
+    /\s/u.test(requestedCommand ?? "");
+  const canResolveFromPath =
+    platform === "win32" && requestedCommand !== null && !isPathLikeCommand;
+  const resolvedRequestedCommand = canResolveFromPath
+    ? yield* resolveCommandPath(requestedCommand, { env }).pipe(
+        Effect.provideService(HostProcessPlatform, platform),
+        Effect.catchTags({
+          CommandResolutionError: () => Effect.succeed(requestedCommand),
+        }),
+      )
+    : requestedCommand;
   const requested = shellCandidateFromCommand(resolvedRequestedCommand, platform);
 
   if (platform === "win32") {

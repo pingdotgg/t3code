@@ -1525,6 +1525,24 @@ it.layer(
     }),
   );
 
+  it.effect("adds no-logo when a configured Windows PowerShell alias is unresolved", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "pwsh",
+        env: { SystemRoot: "C:\\Windows" },
+      }).pipe(Effect.provide(withHostPlatform("win32")));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]).toEqual(
+        expect.objectContaining({
+          shell: "pwsh",
+          args: ["-NoLogo"],
+        }),
+      );
+    }),
+  );
+
   it.effect("resolves configured Windows shells against the effective environment", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
