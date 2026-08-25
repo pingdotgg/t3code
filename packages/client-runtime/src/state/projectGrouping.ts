@@ -74,10 +74,30 @@ export function derivePhysicalProjectKey(
   return derivePhysicalProjectKeyFromPath(project.environmentId, project.workspaceRoot);
 }
 
+export function deriveProjectGroupingOverrideKeys(
+  project: Pick<EnvironmentProject, "environmentId" | "id" | "workspaceRoot">,
+): readonly [string, string] {
+  return [
+    scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+    derivePhysicalProjectKey(project),
+  ];
+}
+
 export function deriveProjectGroupingOverrideKey(
-  project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
+  project: Pick<EnvironmentProject, "environmentId" | "id" | "workspaceRoot">,
 ): string {
-  return derivePhysicalProjectKey(project);
+  return deriveProjectGroupingOverrideKeys(project)[0];
+}
+
+export function resolveProjectGroupingOverride(
+  project: Pick<EnvironmentProject, "environmentId" | "id" | "workspaceRoot">,
+  settings: ProjectGroupingSettings,
+): SidebarProjectGroupingMode | null {
+  for (const key of deriveProjectGroupingOverrideKeys(project)) {
+    const override = settings.sidebarProjectGroupingOverrides?.[key];
+    if (override !== undefined) return override;
+  }
+  return null;
 }
 
 export function getProjectOrderKey(
@@ -87,13 +107,10 @@ export function getProjectOrderKey(
 }
 
 export function resolveProjectGroupingMode(
-  project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot">,
+  project: Pick<EnvironmentProject, "environmentId" | "id" | "workspaceRoot">,
   settings: ProjectGroupingSettings,
 ): SidebarProjectGroupingMode {
-  return (
-    settings.sidebarProjectGroupingOverrides?.[deriveProjectGroupingOverrideKey(project)] ??
-    settings.sidebarProjectGroupingMode
-  );
+  return resolveProjectGroupingOverride(project, settings) ?? settings.sidebarProjectGroupingMode;
 }
 
 function deriveRepositoryScopedKey(

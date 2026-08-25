@@ -9,7 +9,8 @@ import {
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
-  deriveProjectGroupingOverrideKey,
+  deriveProjectGroupingOverrideKeys,
+  resolveProjectGroupingOverride,
   selectProjectGroupingSettings,
 } from "../../logicalProject";
 import type {
@@ -488,6 +489,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       savingPathRef.current = true;
       setIsSavingPath(true);
       try {
+        const existingOverrides = projectGroupingSettings.sidebarProjectGroupingOverrides ?? {};
+        const [overrideKey, legacyOverrideKey] = deriveProjectGroupingOverrideKeys(checkout);
+        const groupingOverride = resolveProjectGroupingOverride(checkout, projectGroupingSettings);
         const result = mapAtomCommandResult(
           await updateProject({
             environmentId: checkout.environmentId,
@@ -496,13 +500,25 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           () => undefined,
         );
         reportFailure("Failed to update checkout path", result);
+        if (
+          result._tag === "Success" &&
+          Object.prototype.hasOwnProperty.call(existingOverrides, legacyOverrideKey)
+        ) {
+          const nextOverrides = { ...existingOverrides };
+          delete nextOverrides[overrideKey];
+          delete nextOverrides[legacyOverrideKey];
+          if (groupingOverride !== null) {
+            nextOverrides[overrideKey] = groupingOverride;
+          }
+          updateClientSettings({ sidebarProjectGroupingOverrides: nextOverrides });
+        }
         return result._tag === "Success";
       } finally {
         savingPathRef.current = false;
         setIsSavingPath(false);
       }
     },
-    [reportFailure, updateProject],
+    [projectGroupingSettings, reportFailure, updateClientSettings, updateProject],
   );
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
@@ -692,11 +708,11 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   // ----- checkouts -----
   const updateGroupingPreference = useCallback(
     (member: SidebarProjectGroupMember, selection: SidebarProjectGroupingMode | "inherit") => {
-      const overrideKey = deriveProjectGroupingOverrideKey(member);
+      const [overrideKey, legacyOverrideKey] = deriveProjectGroupingOverrideKeys(member);
       const nextOverrides = { ...projectGroupingSettings.sidebarProjectGroupingOverrides };
-      if (selection === "inherit") {
-        delete nextOverrides[overrideKey];
-      } else {
+      delete nextOverrides[overrideKey];
+      delete nextOverrides[legacyOverrideKey];
+      if (selection !== "inherit") {
         nextOverrides[overrideKey] = selection;
       }
       updateClientSettings({ sidebarProjectGroupingOverrides: nextOverrides });
@@ -790,9 +806,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
 
   const selectedCheckoutThreadCount = threadCountByMember.get(memberKey(selectedCheckout)) ?? 0;
   const selectedCheckoutGrouping =
-    projectGroupingSettings.sidebarProjectGroupingOverrides?.[
-      deriveProjectGroupingOverrideKey(selectedCheckout)
-    ] ?? "inherit";
+    resolveProjectGroupingOverride(selectedCheckout, projectGroupingSettings) ?? "inherit";
   const selectedCheckoutLabel = selectedCheckout.environmentLabel ?? "This machine";
 
   return (
@@ -1009,10 +1023,14 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                       }
                     }}
                   />
-                  {!isEditingPath && !isSavingPath ? (
+                  {!isSavingPath ? (
                     <InputGroupAddon
                       align="inline-end"
-                      className="pointer-events-none opacity-0 group-hover/path:pointer-events-auto group-hover/path:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100"
+                      className={
+                        isEditingPath
+                          ? "pointer-events-none opacity-0"
+                          : "pointer-events-none opacity-0 group-hover/path:pointer-events-auto group-hover/path:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100"
+                      }
                     >
                       <Tooltip>
                         <TooltipTrigger
@@ -1043,7 +1061,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                       <Button
                         aria-label="Choose checkout path"
                         disabled={isSavingPath}
-                        size="icon-sm"
+                        size="icon"
                         type="button"
                         variant="outline"
                         onClick={() =>
@@ -1055,7 +1073,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                           })
                         }
                       >
-                        <FolderIcon className="size-4" />
+                        <FolderIcon />
                       </Button>
                     }
                   />

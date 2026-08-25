@@ -20,11 +20,12 @@ export const ADDON_ICON_CLASS = "size-4";
 export function browseInputEndPaddingClass(input: {
   readonly willCreateProjectPath: boolean;
   readonly hasHighlightedBrowseItem: boolean;
+  readonly isDirectoryPicker: boolean;
 }): string {
   if (input.willCreateProjectPath) {
     return "*:data-[slot=autocomplete-input]:pe-38!";
   }
-  if (input.hasHighlightedBrowseItem) {
+  if (input.hasHighlightedBrowseItem || input.isDirectoryPicker) {
     return "*:data-[slot=autocomplete-input]:pe-30!";
   }
   return "*:data-[slot=autocomplete-input]:pe-24!";

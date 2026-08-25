@@ -2125,7 +2125,7 @@ function OpenCommandPaletteDialog(props: {
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
   const hasHighlightedBrowseItem = highlightedItemValue?.startsWith("browse:") ?? false;
   const selectedDirectoryExists = hasTrailingPathSeparator(query)
-    ? browseResult !== undefined
+    ? browseResult !== null
     : exactBrowseEntry !== null;
   const canSubmitBrowsePath =
     isBrowsing &&
@@ -2389,6 +2389,16 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       if (directoryPicker) {
+        if (selection.environmentId !== directoryPicker.environmentId) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not select folder",
+              description: "The selected folder belongs to another environment.",
+            }),
+          );
+          return;
+        }
         await handleSelectDirectory(selection.linuxPath);
         return;
       }
@@ -2530,6 +2540,7 @@ function OpenCommandPaletteDialog(props: {
               ? browseInputEndPaddingClass({
                   willCreateProjectPath,
                   hasHighlightedBrowseItem,
+                  isDirectoryPicker: directoryPicker !== null,
                 })
               : undefined,
         placeholder: inputPlaceholder,
@@ -2550,7 +2561,7 @@ function OpenCommandPaletteDialog(props: {
               ),
             }
           : isBrowsing
-            ? { startAddon: <FolderPlusIcon /> }
+            ? { startAddon: directoryPicker ? <FolderIcon /> : <FolderPlusIcon /> }
             : {}),
         onKeyDown: handleKeyDown,
       }}

@@ -196,8 +196,9 @@ import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings"
 import { primaryServerKeybindingsAtom } from "../state/server";
 import {
   derivePhysicalProjectKey,
-  deriveProjectGroupingOverrideKey,
+  deriveProjectGroupingOverrideKeys,
   getProjectOrderKey,
+  resolveProjectGroupingOverride,
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import type { SidebarThreadSummary } from "../types";
@@ -1440,13 +1441,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
   const openProjectGroupingDialog = useCallback(
     (member: SidebarProjectGroupMember) => {
-      const overrideKey = deriveProjectGroupingOverrideKey(member);
       setProjectGroupingTarget(member);
       setProjectGroupingSelection(
-        projectGroupingSettings.sidebarProjectGroupingOverrides?.[overrideKey] ?? "inherit",
+        resolveProjectGroupingOverride(member, projectGroupingSettings) ?? "inherit",
       );
     },
-    [projectGroupingSettings.sidebarProjectGroupingOverrides],
+    [projectGroupingSettings],
   );
 
   const removeProject = useCallback(
@@ -2107,13 +2107,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       return;
     }
 
-    const overrideKey = deriveProjectGroupingOverrideKey(projectGroupingTarget);
+    const [overrideKey, legacyOverrideKey] =
+      deriveProjectGroupingOverrideKeys(projectGroupingTarget);
     const nextOverrides = {
       ...projectGroupingSettings.sidebarProjectGroupingOverrides,
     };
-    if (projectGroupingSelection === "inherit") {
-      delete nextOverrides[overrideKey];
-    } else {
+    delete nextOverrides[overrideKey];
+    delete nextOverrides[legacyOverrideKey];
+    if (projectGroupingSelection !== "inherit") {
       nextOverrides[overrideKey] = projectGroupingSelection;
     }
     updateSettings({

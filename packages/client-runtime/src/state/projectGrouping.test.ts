@@ -5,6 +5,8 @@ import type { EnvironmentProject } from "./models.ts";
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
+  deriveProjectGroupingOverrideKey,
+  resolveProjectGroupingMode,
   type ProjectGroupingSettings,
 } from "./projectGrouping.ts";
 
@@ -123,6 +125,16 @@ describe("buildProjectGroups", () => {
       "t3code-3",
       "t3code-2",
     ]);
+  });
+
+  it("keeps a project override when its workspace root changes", () => {
+    const project = makeProject("t3code", "/work/t3code");
+    const movedProject = { ...project, workspaceRoot: "/work/moved-t3code" };
+    const overrideKey = deriveProjectGroupingOverrideKey(project);
+    const groupingSettings = settings("repository", { [overrideKey]: "separate" });
+
+    expect(deriveProjectGroupingOverrideKey(movedProject)).toBe(overrideKey);
+    expect(resolveProjectGroupingMode(movedProject, groupingSettings)).toBe("separate");
   });
 
   it("dedupes stale registrations at one physical path using the freshest project", () => {

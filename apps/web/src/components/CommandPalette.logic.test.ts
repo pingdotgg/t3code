@@ -18,6 +18,7 @@ describe("browseInputEndPaddingClass", () => {
       browseInputEndPaddingClass({
         willCreateProjectPath: true,
         hasHighlightedBrowseItem: false,
+        isDirectoryPicker: false,
       }),
     ).toContain("pe-38");
   });
@@ -27,6 +28,7 @@ describe("browseInputEndPaddingClass", () => {
       browseInputEndPaddingClass({
         willCreateProjectPath: false,
         hasHighlightedBrowseItem: true,
+        isDirectoryPicker: false,
       }),
     ).toContain("pe-30");
   });
@@ -36,8 +38,19 @@ describe("browseInputEndPaddingClass", () => {
       browseInputEndPaddingClass({
         willCreateProjectPath: false,
         hasHighlightedBrowseItem: false,
+        isDirectoryPicker: false,
       }),
     ).toContain("pe-24");
+  });
+
+  it("reserves space for the directory picker action", () => {
+    expect(
+      browseInputEndPaddingClass({
+        willCreateProjectPath: false,
+        hasHighlightedBrowseItem: false,
+        isDirectoryPicker: true,
+      }),
+    ).toContain("pe-30");
   });
 });
 
