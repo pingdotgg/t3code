@@ -1,12 +1,18 @@
 import { formatWorkspaceRelativePath } from "./filePathDisplay";
-import { resolvePathLinkTarget, splitPathAndPosition } from "./terminal-links";
+import {
+  isTerminalLinkActivation,
+  resolvePathLinkTarget,
+  splitPathAndPosition,
+} from "./terminal-links";
 
 const WINDOWS_DRIVE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
 const WINDOWS_UNC_PATH_PATTERN = /^\\\\/;
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
-const RELATIVE_FILE_PATH_PATTERN = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}$/;
-const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+const RELATIVE_FILE_PATH_PATTERN =
+  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
+const RELATIVE_FILE_NAME_PATTERN =
+  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
 // Standard OS and dev-container roots; deliberately excludes app-route-ish
@@ -37,6 +43,8 @@ const POSIX_FILE_ROOT_PREFIXES = [
   "/workspace/",
   "/workspaces/",
 ] as const;
+const MARKDOWN_LINK_HREF_PATTERN =
+  /\[[^\]]*]\(\s*(?:<([^>\n]+)>|([^\s)]+))(?:\s+["'][^"']*["'])?\s*\)/g;
 
 export interface MarkdownFileLinkMeta {
   filePath: string;
@@ -46,6 +54,26 @@ export interface MarkdownFileLinkMeta {
   basename: string;
   line?: number;
   column?: number;
+}
+
+export function extractMarkdownLinkHrefs(markdown: string): string[] {
+  const hrefs: string[] = [];
+  for (const match of markdown.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
+    const href = (match[1] ?? match[2])?.trim();
+    if (href) hrefs.push(href);
+  }
+  return hrefs;
+}
+
+export function shouldOpenMarkdownFileLinkInEditor(
+  event: Pick<MouseEvent, "metaKey" | "ctrlKey">,
+  platform?: string,
+): boolean {
+  return isTerminalLinkActivation(event, platform);
+}
+
+export function shouldOpenMarkdownFileLinkInBrowserByDefault(path: string): boolean {
+  return /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 }
 
 function safeDecode(value: string): string {
@@ -85,7 +113,10 @@ function parseFileUrlHref(
     const parsed = new URL(href);
     if (parsed.protocol.toLowerCase() !== "file:") return null;
 
-    const rawPath = parsed.pathname;
+    const uncHostname = parsed.hostname.toLowerCase() === "localhost" ? "" : parsed.hostname;
+    const rawPath = uncHostname
+      ? `\\\\${uncHostname}${parsed.pathname.replaceAll("/", "\\")}`
+      : parsed.pathname;
     if (rawPath.length === 0) return null;
 
     // Browser URL parser encodes "C:/foo" as "/C:/foo" for file URLs.
