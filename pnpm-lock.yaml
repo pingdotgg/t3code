@@ -569,6 +569,9 @@ importers:
       '@pierre/trees':
         specifier: 1.0.0-beta.4
         version: 1.0.0-beta.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@posthog/brand':
+        specifier: 0.10.2
+        version: 0.10.2(react@19.2.6)
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
@@ -3612,6 +3615,15 @@ packages:
 
   '@polka/url@1.0.0-next.29':
     resolution: {integrity: sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==}
+
+  '@posthog/brand@0.10.2':
+    resolution: {integrity: sha512-qdqJvt+h0m9ap26IPAtmKmqEN7aywyMwF1jQbIZg/g010w8DP6C88uczOWKiQ8Z+SxS8oEjcwYEkVgfueMejoA==}
+    engines: {node: '>=22.18'}
+    peerDependencies:
+      react: '>=18'
+    peerDependenciesMeta:
+      react:
+        optional: true
 
   '@preact/signals-core@1.14.2':
     resolution: {integrity: sha512-RZHdBj9ZF4n40Rp4jS052EHHjBWf96P9oNdXPfhQTovCuWY9iQn3Gq+gOTJSgBO9A/JBuPfMOWsSX/lIU9Pc/A==}
@@ -13635,6 +13647,10 @@ snapshots:
       react-dom: 19.2.6(react@19.2.6)
 
   '@polka/url@1.0.0-next.29': {}
+
+  '@posthog/brand@0.10.2(react@19.2.6)':
+    optionalDependencies:
+      react: 19.2.6
 
   '@preact/signals-core@1.14.2': {}
 

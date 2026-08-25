@@ -1,5 +1,5 @@
 /**
- * Integrations settings - preferences for surfaces T3 Code embeds rather than
+ * Integrations settings - preferences for surfaces the app embeds rather than
  * owns. Browser is the first section: the defaults a preview tab opens at,
  * applied to both hand-opened tabs and agent `preview_open` calls that don't
  * state their own size.
@@ -20,6 +20,7 @@ import {
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
+import { SelfDrivingCrest } from "@posthog/brand/crests";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { InfoIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -480,7 +481,7 @@ function PostHogSettingsSection() {
     posthog.apiKeyConfigured && posthog.projectId.length > 0 ? "Connected" : "Not configured";
 
   return (
-    <SettingsSection id="posthog" title="PostHog">
+    <SettingsSection id="posthog" title="PostHog" icon={<SelfDrivingCrest.Mini size={20} />}>
       <SettingsRow
         title="Host"
         description="The PostHog instance the reports inbox reads from."

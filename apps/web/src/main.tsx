@@ -16,7 +16,10 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
+import { installBrandFonts } from "./brand/fonts";
 import { clerkAppearance } from "./components/clerk/clerkAppearance";
+
+installBrandFonts();
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
 const history = isElectron ? createHashHistory() : createBrowserHistory();
