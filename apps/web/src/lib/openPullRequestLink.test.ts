@@ -3,11 +3,13 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   changeRequestRepositoryUrl,
   findProjectForChangeRequest,
+  matchesLinkedPullRequestUrl,
   openPullRequestLink,
   parseChangeRequestUrl,
   PullRequestLinkOpenError,
   shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
+import { ProjectId } from "@t3tools/contracts";
 
 describe("changeRequestRepositoryUrl", () => {
   it("preserves repository path casing", () => {
@@ -24,6 +26,36 @@ describe("changeRequestRepositoryUrl", () => {
         "https://gitlab.example.test/group/pull/123/repo/-/merge_requests/42",
       ),
     ).toBe("https://gitlab.example.test/group/pull/123/repo");
+  });
+});
+
+describe("matchesLinkedPullRequestUrl", () => {
+  const linkedPullRequest = {
+    projectId: ProjectId.make("project-1"),
+    repository: "pingdotgg/t3code",
+    number: 42,
+    url: "https://github.com/pingdotgg/t3code/pull/42",
+  };
+
+  it("matches the same pull request without looking up its project", () => {
+    expect(
+      matchesLinkedPullRequestUrl(
+        linkedPullRequest,
+        "https://github.com/PingDotGG/T3Code/pull/42/files",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a different pull request or host", () => {
+    expect(
+      matchesLinkedPullRequestUrl(linkedPullRequest, "https://github.com/pingdotgg/t3code/pull/43"),
+    ).toBe(false);
+    expect(
+      matchesLinkedPullRequestUrl(
+        linkedPullRequest,
+        "https://github.example.com/pingdotgg/t3code/pull/42",
+      ),
+    ).toBe(false);
   });
 });
 
