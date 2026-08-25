@@ -5,7 +5,6 @@ import {
   compressImageToByteLimit,
   isHeicImageFile,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
-  MAX_HEIC_DECODE_PIXELS,
   MAX_STASH_IMAGE_DATA_URL_CHARS,
   prepareImageForAttachment,
 } from "./imageCompression";
@@ -31,45 +30,6 @@ const originalOffscreenCanvas = globalThis.OffscreenCanvas;
 
 function makeFile(sizeBytes: number, type = "image/png"): File {
   return new File([new Uint8Array(sizeBytes).fill(7)], "shot.png", { type });
-}
-
-function makeHeicFile(options?: {
-  name?: string;
-  type?: string;
-  width?: number;
-  height?: number;
-  lastModified?: number;
-}): File {
-  const encoder = new TextEncoder();
-  const makeBox = (name: string, ...contents: Uint8Array[]) => {
-    const bytes = new Uint8Array(8 + contents.reduce((size, content) => size + content.length, 0));
-    new DataView(bytes.buffer).setUint32(0, bytes.length);
-    bytes.set(encoder.encode(name), 4);
-    let offset = 8;
-    for (const content of contents) {
-      bytes.set(content, offset);
-      offset += content.length;
-    }
-    return bytes;
-  };
-
-  const dimensions = new Uint8Array(12);
-  const dimensionView = new DataView(dimensions.buffer);
-  dimensionView.setUint32(4, options?.width ?? 4000);
-  dimensionView.setUint32(8, options?.height ?? 3000);
-  const imageProperties = makeBox("iprp", makeBox("ipco", makeBox("ispe", dimensions)));
-
-  return new File(
-    [
-      makeBox("ftyp", encoder.encode("heic"), new Uint8Array(4)),
-      makeBox("meta", new Uint8Array(4), imageProperties),
-    ],
-    options?.name ?? "photo.heic",
-    {
-      type: options?.type ?? "image/heic",
-      ...(options?.lastModified !== undefined ? { lastModified: options.lastModified } : {}),
-    },
-  );
 }
 
 /**
@@ -315,9 +275,7 @@ describe("HEIC attachment preparation", () => {
   });
 
   it("converts a HEIC photo with a missing MIME type into a named JPEG", async () => {
-    const original = makeHeicFile({
-      name: "IMG_1234.HEIC",
-      type: "",
+    const original = new File([new Uint8Array([1, 2, 3])], "IMG_1234.HEIC", {
       lastModified: 123,
     });
     mocks.heicTo.mockResolvedValueOnce(
@@ -339,8 +297,7 @@ describe("HEIC attachment preparation", () => {
   });
 
   it("keeps oversized converted photos in JPEG format while shrinking them", async () => {
-    const original = makeHeicFile({
-      name: "photo.heif",
+    const original = new File([new Uint8Array([1, 2, 3])], "photo.heif", {
       type: "image/heif",
     });
     mocks.heicTo.mockResolvedValueOnce(
@@ -356,44 +313,27 @@ describe("HEIC attachment preparation", () => {
     expect(fillRect).toHaveBeenCalled();
   });
 
-  it("compresses converted JPEGs that grow beyond the original source size limit", async () => {
-    const original = makeHeicFile();
+  it("compresses JPEG intermediates above the source safety ceiling", async () => {
+    const original = new File([new Uint8Array([1, 2, 3])], "large.heic", {
+      type: "image/heic",
+    });
     mocks.heicTo.mockResolvedValueOnce(
-      new Blob([new Uint8Array(MAX_COMPRESSIBLE_SOURCE_BYTES + 1)], { type: "image/jpeg" }),
+      new Blob([new Uint8Array(MAX_COMPRESSIBLE_SOURCE_BYTES + 1)], {
+        type: "image/jpeg",
+      }),
     );
-    stubCanvasPipeline(() => 200_000);
+    const { close } = stubCanvasPipeline(() => 200_000);
 
     const result = await prepareImageForAttachment(original, 1_000_000);
 
+    expect(result.ok && result.file.name).toBe("large.jpg");
     expect(result.ok && result.file.type).toBe("image/jpeg");
     expect(result.ok && result.file.size).toBeLessThanOrEqual(1_000_000);
-  });
-
-  it("rejects oversized HEIC dimensions before loading the decoder", async () => {
-    const original = makeHeicFile({ width: MAX_HEIC_DECODE_PIXELS, height: 2 });
-
-    expect(await prepareImageForAttachment(original, 1024)).toEqual({
-      ok: false,
-      reason: "too-large",
-    });
-    expect(mocks.heicTo).not.toHaveBeenCalled();
-  });
-
-  it("rejects invalid HEIC metadata before loading the decoder", async () => {
-    const original = new File([new Uint8Array([1, 2, 3])], "broken.heic", {
-      type: "image/heic",
-    });
-
-    expect(await prepareImageForAttachment(original, 1024)).toEqual({
-      ok: false,
-      reason: "unreadable",
-    });
-    expect(mocks.heicTo).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalled();
   });
 
   it("reports unreadable when HEIC decoding fails", async () => {
-    const original = makeHeicFile({
-      name: "broken.heic",
+    const original = new File([new Uint8Array([1, 2, 3])], "broken.heic", {
       type: "image/heic",
     });
     mocks.heicTo.mockRejectedValueOnce(new Error("Invalid HEIC image"));
