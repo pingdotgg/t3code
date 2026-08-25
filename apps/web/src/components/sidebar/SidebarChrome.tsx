@@ -2,6 +2,7 @@ import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
+  InboxIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -155,7 +156,9 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           ? "usage"
           : location.pathname === "/pull-requests"
             ? "pull-requests"
-            : null,
+            : location.pathname === "/reports"
+              ? "reports"
+              : null,
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
@@ -171,6 +174,10 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handlePullRequestsClick = useCallback(() => {
     closeMobileSidebar();
     void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
+  }, [closeMobileSidebar, navigate]);
+  const handleReportsClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/reports" });
   }, [closeMobileSidebar, navigate]);
   const handleSettingsClick = useCallback(() => {
     closeMobileSidebar();
@@ -216,6 +223,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
+          <SidebarUtilityItem icon={<InboxIcon />} label="Reports" onClick={handleReportsClick} />
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"
