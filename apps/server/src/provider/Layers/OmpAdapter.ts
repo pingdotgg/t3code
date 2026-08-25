@@ -317,7 +317,8 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
           yield* Fiber.interrupt(ctx.exitFiber);
         }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
-        if (sessions.get(ctx.threadId) === ctx) sessions.delete(ctx.threadId);
+        if (sessions.get(ctx.threadId) !== ctx) return;
+        sessions.delete(ctx.threadId);
         yield* offerRuntimeEvent({
           type: "session.exited",
           ...(yield* makeEventStamp()),
@@ -329,7 +330,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
 
     const handleUnexpectedExit = (ctx: OmpSessionContext, reason: string) =>
       Effect.gen(function* () {
-        if (ctx.stopped) return;
+        if (ctx.stopped || sessions.get(ctx.threadId) !== ctx) return;
         ctx.stopped = true;
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
@@ -760,12 +761,18 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             sessions.set(input.threadId, ctx);
             const exitFiber = yield* acp.awaitExit.pipe(
               Effect.flatMap((exitCode) =>
-                handleUnexpectedExit(ctx, `OMP ACP process exited with code ${exitCode}.`),
+                withThreadLock(
+                  ctx.threadId,
+                  handleUnexpectedExit(ctx, `OMP ACP process exited with code ${exitCode}.`),
+                ),
               ),
               Effect.catchCause((cause) =>
-                handleUnexpectedExit(
-                  ctx,
-                  `Failed to observe OMP ACP process exit: ${Cause.pretty(cause)}`,
+                withThreadLock(
+                  ctx.threadId,
+                  handleUnexpectedExit(
+                    ctx,
+                    `Failed to observe OMP ACP process exit: ${Cause.pretty(cause)}`,
+                  ),
                 ),
               ),
               Effect.catchCause((cause) =>

@@ -32,7 +32,7 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 type InteractionModeProviderSnapshot = Pick<
   ServerProvider,
-  "instanceId" | "driver" | "enabled" | "availability"
+  "instanceId" | "driver" | "enabled" | "availability" | "status"
 >;
 
 export function resolveInteractionModeProviderSelection(input: {
@@ -51,7 +51,9 @@ export function resolveInteractionModeProviderSelection(input: {
     const provider = selectableProviders.find((entry) => entry.instanceId === candidate);
     if (provider) return { instanceId: provider.instanceId };
   }
-  const fallback = selectableProviders[0];
+  const fallback =
+    selectableProviders.find((provider) => provider.status === "ready") ??
+    selectableProviders.find((provider) => provider.status !== "error");
   return fallback ? { instanceId: fallback.instanceId } : null;
 }
 

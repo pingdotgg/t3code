@@ -150,7 +150,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Oh My Pi snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build the Oh My Pi provider snapshot.",
               cause,
             }),
         ),

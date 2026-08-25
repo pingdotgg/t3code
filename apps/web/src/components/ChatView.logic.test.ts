@@ -55,6 +55,7 @@ describe("interaction mode provider selection", () => {
       resolveInteractionModeProviderSelection({
         providers: [
           {
+            status: "error",
             instanceId: ompInstanceId,
             driver: ProviderDriverKind.make("omp"),
             enabled: false,
@@ -62,12 +63,43 @@ describe("interaction mode provider selection", () => {
           },
           {
             instanceId: codexInstanceId,
+            status: "ready",
             driver: ProviderDriverKind.make("codex"),
             enabled: true,
             availability: "available",
           },
         ],
         candidates: [ompInstanceId, codexInstanceId],
+        lockedProvider: null,
+      }),
+    ).toEqual({ instanceId: codexInstanceId });
+  });
+});
+
+describe("interaction mode fallback readiness", () => {
+  it("does not invent an errored provider as the fallback", () => {
+    const ompInstanceId = ProviderInstanceId.make("omp");
+    const codexInstanceId = ProviderInstanceId.make("codex");
+
+    expect(
+      resolveInteractionModeProviderSelection({
+        providers: [
+          {
+            instanceId: ompInstanceId,
+            driver: ProviderDriverKind.make("omp"),
+            enabled: true,
+            availability: "available",
+            status: "error",
+          },
+          {
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            enabled: true,
+            availability: "available",
+            status: "ready",
+          },
+        ],
+        candidates: [],
         lockedProvider: null,
       }),
     ).toEqual({ instanceId: codexInstanceId });
