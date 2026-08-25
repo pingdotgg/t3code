@@ -7,6 +7,8 @@ import { Link, useLocation } from "@tanstack/react-router";
 import { CheckCheckIcon, GitPullRequestIcon, InboxIcon, SettingsIcon } from "lucide-react";
 import { memo, type ReactElement } from "react";
 
+import { AppLogomark } from "../brand/AppMark";
+import { APP_BASE_NAME } from "../branding";
 import { isElectron } from "../env";
 import { cn } from "../lib/utils";
 import { useEnvironments } from "../state/environments";
@@ -50,6 +52,13 @@ export const InboxRail = memo(function InboxRail() {
         )}
       />
       <div className="flex flex-col items-center gap-1">
+        <Link
+          to="/inbox"
+          aria-label={APP_BASE_NAME}
+          className="mb-1 flex size-8 items-center justify-center rounded-[var(--control-radius)] text-sidebar-foreground outline-hidden ring-ring focus-visible:ring-2"
+        >
+          <AppLogomark size={22} />
+        </Link>
         <RailItem
           label="Inbox"
           link={
