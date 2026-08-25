@@ -20,6 +20,7 @@ import { useEnvironments } from "../../state/environments";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { projectWorkspaceEnvironment, type WorkspaceEnvironment } from "../../state/workspaceModel";
+import { relayManagedEnvironmentIds } from "./environmentSections";
 
 export interface RelayEnvironmentView {
   readonly environment: RelayClientEnvironmentRecord;
@@ -49,7 +50,7 @@ export function useConnectionController() {
     [environments],
   );
   const registeredIds = useMemo(
-    () => new Set(connectedEnvironments.map((environment) => environment.environmentId)),
+    () => relayManagedEnvironmentIds(connectedEnvironments),
     [connectedEnvironments],
   );
   const relayEnvironments = useMemo<ReadonlyArray<RelayEnvironmentView>>(
