@@ -509,7 +509,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     height: state.height,
     isVisible: state.isVisible,
   }));
-  const { isQuarantined: isKeyboardStateQuarantined } = useAndroidKeyboardRecovery();
+  const { isQuarantined: isKeyboardStateQuarantined, markInputFocused } =
+    useAndroidKeyboardRecovery();
   const isKeyboardAnimationUsable = isAndroidKeyboardAnimationUsable({
     isKeyboardVisible: keyboardState.isVisible,
     isQuarantined: isKeyboardStateQuarantined,
@@ -1090,8 +1091,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }, []);
 
   const handleShowKeyboard = useCallback(() => {
+    markInputFocused();
     setKeyboardFocusRequest((current) => current + 1);
-  }, []);
+  }, [markInputFocused]);
   const handleRetryEnvironment = useCallback(() => {
     if (routeEnvironmentId !== null) {
       void retryEnvironment(routeEnvironmentId);
