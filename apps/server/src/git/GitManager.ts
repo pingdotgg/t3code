@@ -538,6 +538,7 @@ function toStatusPr(pr: PullRequestInfo): {
   baseRef: string;
   headRef: string;
   state: "open" | "closed" | "merged";
+  updatedAt: string | null;
 } {
   return {
     number: pr.number,
@@ -546,6 +547,10 @@ function toStatusPr(pr: PullRequestInfo): {
     baseRef: pr.baseRefName,
     headRef: pr.headRefName,
     state: pr.state,
+    updatedAt: Option.match(pr.updatedAt, {
+      onNone: () => null,
+      onSome: (updatedAt) => DateTime.formatIso(updatedAt),
+    }),
   };
 }
 
@@ -904,11 +909,24 @@ export const make = Effect.gen(function* () {
         prLookupEpochByCwd.set(cacheKey, prLookupEpoch(cacheKey) + 1);
       }),
     );
-  // Cache keys are NUL-joined [cwd, branch, upstreamRef, epoch] — none of the
+  // Cache keys are NUL-joined [cwd, branch, upstreamRef, defaultBranch, epoch] — none of the
   // segments can contain a NUL byte, and refs are never empty, so "" decodes
-  // back to a null upstreamRef.
-  const prLookupCacheKey = (cwd: string, details: { branch: string; upstreamRef: string | null }) =>
-    [cwd, details.branch, details.upstreamRef ?? "", String(prLookupEpoch(cwd))].join("\u0000");
+  // back to a null ref.
+  const prLookupCacheKey = (
+    cwd: string,
+    details: {
+      branch: string;
+      upstreamRef: string | null;
+      defaultBranch: string | null;
+    },
+  ) =>
+    [
+      cwd,
+      details.branch,
+      details.upstreamRef ?? "",
+      details.defaultBranch ?? "",
+      String(prLookupEpoch(cwd)),
+    ].join("\u0000");
   // Consecutive failures per cache key, so a branch that keeps failing waits
   // longer before the next attempt. Cleared as soon as a lookup succeeds.
   const prLookupFailureStreakByKey = new Map<string, number>();
@@ -928,13 +946,29 @@ export const make = Effect.gen(function* () {
   };
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", branch = "", upstreamRef = ""] = key.split("\u0000");
+      const [cwd = "", branch = "", upstreamRef = "", defaultBranch = ""] = key.split("\u0000");
       const details = {
         branch,
         upstreamRef: upstreamRef.length > 0 ? upstreamRef : null,
+        defaultBranch: defaultBranch.length > 0 ? defaultBranch : null,
       };
       return Effect.gen(function* () {
         const headContext = yield* resolveBranchHeadContext(cwd, details);
+        const upstreamHeadIsDefault =
+          headContext.headBranch === details.defaultBranch ||
+          (details.defaultBranch === null &&
+            (headContext.headBranch === "main" || headContext.headBranch === "master"));
+        // `git worktree add -b feature origin/main` makes the new local branch
+        // track origin/main. That upstream is the branch's base, not its
+        // published PR head. Looking up PRs for it can attach an old reverse
+        // merge from main and auto-settle an unrelated feature thread.
+        if (
+          headContext.headBranch !== details.branch &&
+          upstreamHeadIsDefault &&
+          !headContext.isCrossRepository
+        ) {
+          return { latest: null, headContext };
+        }
         // Only skip when the branch is untracked as well: anything carrying an
         // upstream keeps the old behaviour.
         if (details.upstreamRef === null && (yield* isUnpublishedBranch(cwd, headContext))) {
@@ -1015,7 +1049,12 @@ export const make = Effect.gen(function* () {
   };
   const lookupStatusPr = Effect.fn("lookupStatusPr")(function* (
     cwd: string,
-    details: { branch: string; upstreamRef: string | null; isDefaultBranch: boolean },
+    details: {
+      branch: string;
+      upstreamRef: string | null;
+      defaultBranch: string | null;
+      isDefaultBranch: boolean;
+    },
   ) {
     // Keyed by (cwd, branch) only: the upstream ref changing (e.g. a first
     // `push -u`) must not orphan the fallback value for the same branch.
@@ -1089,6 +1128,7 @@ export const make = Effect.gen(function* () {
         ? yield* lookupStatusPr(cwd, {
             branch: details.branch,
             upstreamRef: details.upstreamRef,
+            defaultBranch: details.defaultBranch,
             isDefaultBranch: details.isDefaultBranch,
           })
         : null;
@@ -1228,15 +1268,17 @@ export const make = Effect.gen(function* () {
    * cannot exist for it and asking the provider is a guaranteed-empty API call.
    *
    * `git push` writes the remote-tracking ref even without `-u` (how most
-   * terminal and agent pushes land), which makes this a safer "did it ever
-   * reach the host" test than looking for upstream config, and the glob spans
-   * every remote so a fork branch still counts. A repository that tracks no
-   * remotes at all cannot answer the question, because then every branch looks
-   * unpublished; it, and any failed probe, keeps the lookup.
+   * terminal and agent pushes land), and configured upstream metadata survives
+   * when a merged change request's remote branch is deleted. Together they
+   * distinguish branches known to have reached a host from genuinely local
+   * branches. The ref glob spans every remote so a fork branch still counts. A
+   * repository that tracks no remotes at all cannot answer the question,
+   * because then every branch looks unpublished; it, and any failed probe,
+   * keeps the lookup.
    */
   const isUnpublishedBranch = Effect.fn("isUnpublishedBranch")(function* (
     cwd: string,
-    headContext: Pick<BranchHeadContext, "headBranch">,
+    headContext: Pick<BranchHeadContext, "headBranch" | "localBranch">,
   ) {
     if (headContext.headBranch.length === 0) {
       return false;
@@ -1251,13 +1293,24 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.map((result) => result.stdout.trim().length > 0));
 
-    return yield* Effect.all(
-      [matchesRef("refs/remotes"), matchesRef(`refs/remotes/*/${headContext.headBranch}`)],
-      { concurrency: "unbounded" },
-    ).pipe(
-      Effect.map(([tracksAnyRemote, tracksThisBranch]) => tracksAnyRemote && !tracksThisBranch),
-      Effect.orElseSucceed(() => false),
-    );
+    return yield* Effect.gen(function* () {
+      const [configuredRemote, configuredMerge] = yield* Effect.all(
+        [
+          gitCore.readConfigValue(cwd, `branch.${headContext.localBranch}.remote`),
+          gitCore.readConfigValue(cwd, `branch.${headContext.localBranch}.merge`),
+        ],
+        { concurrency: "unbounded" },
+      );
+      if (configuredRemote !== null && configuredMerge !== null) {
+        return false;
+      }
+
+      const [tracksAnyRemote, tracksThisBranch] = yield* Effect.all(
+        [matchesRef("refs/remotes"), matchesRef(`refs/remotes/*/${headContext.headBranch}`)],
+        { concurrency: "unbounded" },
+      );
+      return tracksAnyRemote && !tracksThisBranch;
+    }).pipe(Effect.orElseSucceed(() => false));
   });
 
   const findOpenPr = Effect.fn("findOpenPr")(function* (
@@ -1447,6 +1500,18 @@ export const make = Effect.gen(function* () {
     );
     if (defaultFromProvider) {
       return defaultFromProvider;
+    }
+
+    // The provider lookup can fail for reasons unrelated to the branch, so fall
+    // back to what the remote itself records before assuming a name. A repository
+    // whose default branch is master would otherwise get a base branch that does
+    // not exist.
+    const defaultFromRemote = yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(
+      Effect.flatMap((remoteName) => gitCore.resolveDefaultBranchName(cwd, remoteName)),
+      Effect.orElseSucceed(() => null),
+    );
+    if (defaultFromRemote) {
+      return defaultFromRemote;
     }
 
     return "main";

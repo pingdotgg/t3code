@@ -1,4 +1,5 @@
 import * as React from "react";
+import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
@@ -14,7 +15,7 @@ import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
-export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
+export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription. Each prewarmed
 // thread holds a live, fully hydrated detail subscription (all messages and
@@ -22,6 +23,12 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // so this limit is a direct renderer-heap and server-load multiplier — keep
 // it small; cold opens still render instantly from the cached snapshot.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
+
+// The list already reaches its destination through sortable transforms while
+// the pointer is down. dnd-kit's default also animates the committed DOM order
+// after release, replaying the same movement across every affected row.
+export const animatePinnedLayoutChanges: AnimateLayoutChanges = (args) =>
+  args.isSorting ? defaultAnimateLayoutChanges(args) : false;
 
 type SidebarProject = {
   id: string;

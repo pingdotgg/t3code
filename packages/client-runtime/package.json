@@ -15,6 +15,10 @@
       "types": "./src/environment/index.ts",
       "default": "./src/environment/index.ts"
     },
+    "./markdown-images": {
+      "types": "./src/markdownImages.ts",
+      "default": "./src/markdownImages.ts"
+    },
     "./errors": {
       "types": "./src/errors/index.ts",
       "default": "./src/errors/index.ts"
@@ -34,6 +38,10 @@
     "./platform": {
       "types": "./src/platform/index.ts",
       "default": "./src/platform/index.ts"
+    },
+    "./providerSkills": {
+      "types": "./src/providerSkills.ts",
+      "default": "./src/providerSkills.ts"
     },
     "./relay": {
       "types": "./src/relay/index.ts",
