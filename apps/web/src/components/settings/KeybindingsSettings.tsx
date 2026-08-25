@@ -833,10 +833,8 @@ function KeybindingKeyControl({
           aria-label={`Keybinding for ${commandLabel(row.command)}`}
           value={isRecording ? "" : keyDraft}
           placeholder={isRecording ? "Press shortcut" : "Unassigned"}
-          className={cn(
-            "h-7 w-44 rounded-md font-mono text-[12px] sm:h-7",
-            isRecording && "border-primary/70 bg-primary/5",
-          )}
+          size="compact"
+          className={cn("w-44 font-mono", isRecording && "border-primary/70 bg-primary/5")}
           onFocus={() => setDraft({ isRecording: true })}
           onBlur={() => setDraft({ isRecording: false })}
           onChange={(event) => setDraft({ keyDraft: event.currentTarget.value })}
@@ -856,14 +854,7 @@ function KeybindingKeyControl({
   );
 }
 
-const WHEN_TRIGGER_CLASS = {
-  field:
-    "inline-flex h-7 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-left font-mono text-[12px] text-foreground shadow-xs/5 outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24",
-  inline:
-    "inline-flex h-6 max-w-full items-center gap-1 rounded-sm px-1 font-mono text-[12px] outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/24",
-} as const;
-
-/** Popover trigger showing the when clause, styled as a field or as quiet inline text. */
+/** Quiet inline trigger showing the when clause; opens the expression builder. */
 function WhenClauseControl({
   label,
   expression,
@@ -871,8 +862,6 @@ function WhenClauseControl({
   variables,
   onChange,
   onValidityChange,
-  variant = "field",
-  className,
 }: {
   label: string;
   expression: string;
@@ -880,16 +869,13 @@ function WhenClauseControl({
   variables: ReadonlyArray<WhenVariableOption>;
   onChange: (value: KeybindingWhenNode | undefined) => void;
   onValidityChange: (valid: boolean) => void;
-  variant?: keyof typeof WHEN_TRIGGER_CLASS | undefined;
-  className?: string | undefined;
 }) {
   return (
     <Popover>
       <PopoverTrigger
         className={cn(
-          WHEN_TRIGGER_CLASS[variant],
+          "inline-flex h-6 max-w-full items-center gap-1 rounded-sm px-1 font-mono text-[12px] outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/24",
           !expression && "text-muted-foreground",
-          className,
         )}
         aria-label={`Edit when clause for ${label}`}
       >
@@ -982,7 +968,6 @@ function KeybindingSettingsRow(props: KeybindingRowProps) {
         <span className="flex h-6 items-center gap-1.5">
           <span className="text-[12px] leading-none text-muted-foreground/70">When</span>
           <WhenClauseControl
-            variant="inline"
             label={commandLabel(row.command)}
             expression={editor.whenDraftExpression}
             value={editor.whenDraft}
@@ -1137,13 +1122,9 @@ function NewKeybindingKeyInput({
 function NewKeybindingWhen({
   draft,
   variables,
-  variant,
-  className,
 }: {
   draft: NewKeybindingDraft;
   variables: ReadonlyArray<WhenVariableOption>;
-  variant?: keyof typeof WHEN_TRIGGER_CLASS | undefined;
-  className?: string | undefined;
 }) {
   return (
     <WhenClauseControl
@@ -1153,8 +1134,6 @@ function NewKeybindingWhen({
       variables={variables}
       onChange={(whenDraft) => draft.setDraft({ whenDraft })}
       onValidityChange={(isWhenDraftValid) => draft.setDraft({ isWhenDraftValid })}
-      variant={variant}
-      className={className}
     />
   );
 }
@@ -1206,18 +1185,18 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
       description={
         <span className="flex h-6 items-center gap-1.5">
           <span className="text-[12px] leading-none text-muted-foreground/70">When</span>
-          <NewKeybindingWhen draft={draft} variables={variables} variant="inline" />
+          <NewKeybindingWhen draft={draft} variables={variables} />
         </span>
       }
       control={
-        <>
+        <div className="flex flex-wrap items-center gap-2">
           <KeybindingConflictWarning labels={draft.conflictLabels} />
           <NewKeybindingKeyInput draft={draft} className="w-44" />
           <Button size="compact" disabled={isSaving || !draft.canSave} onClick={draft.save}>
             {isSaving ? "Saving" : "Save"}
           </Button>
           <NewKeybindingCancelIcon isSaving={isSaving} onCancel={onCancel} />
-        </>
+        </div>
       }
     />
   );
@@ -1272,7 +1251,8 @@ function BrowserKeybindingNotice() {
           render={
             <span
               tabIndex={0}
-              className="inline-flex size-4.5 items-center justify-center rounded-sm text-warning outline-none hover:bg-warning/10 focus-visible:ring-[3px] focus-visible:ring-warning/25"
+              aria-label="Browser keybinding limitations"
+              className="inline-flex size-4.5 shrink-0 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-[3px] focus-visible:ring-warning/25"
             />
           }
         >
