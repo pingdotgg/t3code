@@ -199,7 +199,7 @@ export function ReportDetailPanel({
             projectCwd: selectedProject.workspaceRoot,
             baseBranch: defaultBranch,
             branch: reportBranchName(report.id),
-            startFromOrigin: true,
+            startFromOrigin: false,
           },
           runSetupScript: true,
         },
