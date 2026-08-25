@@ -19,6 +19,10 @@
       "types": "./src/markdownImages.ts",
       "default": "./src/markdownImages.ts"
     },
+    "./markdown-frontmatter": {
+      "types": "./src/markdownFrontmatter.ts",
+      "default": "./src/markdownFrontmatter.ts"
+    },
     "./errors": {
       "types": "./src/errors/index.ts",
       "default": "./src/errors/index.ts"

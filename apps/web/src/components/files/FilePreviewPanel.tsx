@@ -12,6 +12,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { parseMarkdownFrontmatter } from "@t3tools/client-runtime/markdown-frontmatter";
 import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -58,6 +59,7 @@ import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRev
 import { fileBreadcrumbs } from "./filePath";
 import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
+import { MarkdownFrontmatterTable } from "./MarkdownFrontmatterTable";
 import {
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
@@ -724,24 +726,34 @@ function RenderedMarkdownSurface({
     relativePath,
     onPendingChange,
   });
+  const frontmatter = useMemo(() => parseMarkdownFrontmatter(contents), [contents]);
 
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <ChatMarkdown
-        text={contents}
-        cwd={cwd}
-        threadRef={threadRef}
-        className="mx-auto max-w-4xl px-6 py-5"
-        onTaskListChange={({ markerOffset, checked }) => {
-          const currentContents =
-            getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
-            contents;
-          const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
-          if (nextContents === currentContents) return;
-          setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-          saveCoordinator.change(nextContents);
-        }}
-      />
+      <div className="mx-auto max-w-4xl px-6 py-5">
+        {frontmatter.entries.length > 0 ? (
+          <MarkdownFrontmatterTable entries={frontmatter.entries} />
+        ) : null}
+        <ChatMarkdown
+          text={frontmatter.body}
+          cwd={cwd}
+          threadRef={threadRef}
+          className={frontmatter.entries.length > 0 ? "mt-8" : ""}
+          onTaskListChange={({ markerOffset, checked }) => {
+            const currentContents =
+              getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
+              contents;
+            const nextContents = setMarkdownTaskChecked(
+              currentContents,
+              frontmatter.bodyOffset + markerOffset,
+              checked,
+            );
+            if (nextContents === currentContents) return;
+            setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+            saveCoordinator.change(nextContents);
+          }}
+        />
+      </div>
     </ScrollArea>
   );
 }
