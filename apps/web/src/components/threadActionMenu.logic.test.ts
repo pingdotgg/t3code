@@ -67,6 +67,9 @@ describe("buildThreadActionMenuItems", () => {
       archive: "archive",
       delete: "trash",
     });
+    expect(items.find((item) => item.id === "snooze")?.children).toEqual([
+      expect.objectContaining({ id: "snooze:hour", icon: "clock" }),
+    ]);
     const copyItem = items.find((item) => item.id === "copy");
     expect(copyItem?.children?.map((child) => ({ id: child.id, icon: child.icon }))).toEqual([
       { id: "copy-path", icon: "folder" },
@@ -84,8 +87,8 @@ describe("buildThreadActionMenuItems", () => {
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "unpin", icon: "pin-off" }),
-        expect.objectContaining({ id: "unsettle", icon: "circle-check" }),
-        expect.objectContaining({ id: "unsnooze", icon: "clock" }),
+        expect.objectContaining({ id: "unsettle", icon: "undo-2" }),
+        expect.objectContaining({ id: "unsnooze", icon: "alarm-clock-off" }),
       ]),
     );
   });

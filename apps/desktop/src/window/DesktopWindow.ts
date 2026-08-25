@@ -524,10 +524,16 @@ export const make = Effect.gen(function* () {
           menuTemplate.pop();
         }
         void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
+        // Electron-exclusive entries own this gesture.
+        event.preventDefault();
+        return;
       }
 
-      // Always suppress the default native menu so the web-side themed menu
-      // can handle standard text operations (Cut, Copy, Paste, Select All).
+      // Preserve the native editing menu for text selections and editable
+      // controls, while keeping empty-space right-clicks dismissed.
+      if (params.isEditable || params.selectionText.length > 0) {
+        return;
+      }
       event.preventDefault();
     });
 

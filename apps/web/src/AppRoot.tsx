@@ -15,6 +15,9 @@ import type { AppRouter } from "./router";
  */
 export function AppRoot({ router }: { readonly router: AppRouter }) {
   useEffect(() => {
+    if (typeof window !== "undefined" && window.desktopBridge) {
+      return;
+    }
     return installGlobalTextContextMenu();
   }, []);
 

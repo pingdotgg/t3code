@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
+import {
+  dismissContextMenu,
+  resolveItemTone,
+  showContextMenuFallback,
+} from "./contextMenuFallback";
 
 type FakeListener = (event: FakeDomEvent) => void;
 
@@ -76,6 +80,10 @@ class FakeElement {
       listener(event);
     }
     return true;
+  }
+
+  click() {
+    this.dispatchEvent(new FakeDomEvent("click", { bubbles: true }));
   }
 
   focus() {
@@ -180,6 +188,13 @@ class FakeDocument {
     }
   }
 
+  dispatchEvent(event: FakeDomEvent) {
+    for (const listener of this.listeners.get(event.type) ?? []) {
+      listener(event);
+    }
+    return true;
+  }
+
   querySelectorAll(tagName: string) {
     return this.body.querySelectorAll(tagName);
   }
@@ -270,6 +285,7 @@ describe("showContextMenuFallback", () => {
     expect(deleteSvg).toBeTruthy();
     expect(deleteSvg?.className).toContain("text-destructive-foreground");
     expect(disabledSvg).toBeTruthy();
+    expect(disabledSvg?.className).toContain("text-muted-foreground");
 
     expect(archiveButton?.style.color).toBe("var(--warning-foreground)");
     expect(deleteButton?.style.color).toBe("var(--destructive-foreground)");
@@ -278,6 +294,11 @@ describe("showContextMenuFallback", () => {
 
     dismissContextMenu();
     await expect(selectionPromise).resolves.toBeNull();
+  });
+
+  it("does not infer a warning tone from an archive-like id", () => {
+    expect(resolveItemTone({ id: "archive", label: "Archive" })).toBe("neutral");
+    expect(resolveItemTone({ id: "archive", label: "Archive", tone: "warning" })).toBe("warning");
   });
 
   it("resolves a clicked flat menu item", async () => {
@@ -291,6 +312,25 @@ describe("showContextMenuFallback", () => {
     renameButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 
     await expect(selectionPromise).resolves.toBe("rename");
+  });
+
+  it("supports keyboard navigation and activation", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "rename", label: "Rename" },
+      { id: "delete", label: "Delete", destructive: true },
+    ]);
+
+    const renameButton = findButton("Rename");
+    const deleteButton = findButton("Delete");
+    expect(renameButton?.focused).toBe(true);
+
+    (document as unknown as FakeDocument).dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown" }),
+    );
+    expect(deleteButton?.focused).toBe(true);
+
+    deleteButton?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    await expect(selectionPromise).resolves.toBe("delete");
   });
 
   it("ignores a click from the gesture that opened the menu", async () => {

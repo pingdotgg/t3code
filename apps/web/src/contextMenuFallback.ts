@@ -173,14 +173,11 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
 export type ContextMenuTone = "neutral" | "destructive" | "warning";
 
 export function resolveItemTone<T extends string>(item: ContextMenuItem<T>): ContextMenuTone {
-  if (item.destructive === true || item.id === "delete") {
+  if (item.destructive === true || item.tone === "destructive" || item.id === "delete") {
     return "destructive";
   }
-  if (item.tone === "warning" || item.id === "archive") {
+  if (item.tone === "warning") {
     return "warning";
-  }
-  if (item.tone === "destructive") {
-    return "destructive";
   }
   return "neutral";
 }
@@ -255,6 +252,18 @@ function isNodeWithinMenuStack(target: EventTarget | null, menuStack: readonly H
   return false;
 }
 
+function findContentEditableHost(element: HTMLElement): HTMLElement | null {
+  for (let current: HTMLElement | null = element; current; current = current.parentElement) {
+    const contentEditable = current.getAttribute("contenteditable");
+    if (contentEditable !== null) {
+      return contentEditable.toLowerCase() === "false" || !current.isContentEditable
+        ? null
+        : current;
+    }
+  }
+  return null;
+}
+
 // Only one fallback menu exists at a time in the renderer; the active one is
 // tracked so a state change (for example a terminal selection clearing) can
 // dismiss it with the same result as an outside click or Escape.
@@ -288,6 +297,30 @@ export function showContextMenuFallback<T extends string>(
 
     const dismiss = () => cleanup(null);
 
+    const focusMenuItem = (direction: 1 | -1): boolean => {
+      const menu = menuStack.at(-1);
+      if (!menu) {
+        return false;
+      }
+      const buttons = [...menu.querySelectorAll<HTMLButtonElement>("button")].filter(
+        (button) => !button.disabled,
+      );
+      if (buttons.length === 0) {
+        return false;
+      }
+      const currentIndex = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const nextIndex =
+        currentIndex < 0
+          ? direction === 1
+            ? 0
+            : buttons.length - 1
+          : (currentIndex + direction + buttons.length) % buttons.length;
+      buttons[nextIndex]?.focus({
+        preventScroll: true,
+      });
+      return true;
+    };
+
     const cleanup = (result: T | null) => {
       if (isDisposed) {
         return;
@@ -313,6 +346,15 @@ export function showContextMenuFallback<T extends string>(
       if (event.key === "Escape") {
         event.preventDefault();
         cleanup(null);
+      } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        if (focusMenuItem(event.key === "ArrowDown" ? 1 : -1)) {
+          event.preventDefault();
+        }
+      } else if (event.key === "ArrowLeft" && menuStack.length > 1) {
+        const parentTrigger = submenuTriggerStack.at(-1);
+        closeMenusFromLevel(menuStack.length - 1);
+        parentTrigger?.focus({ preventScroll: true });
+        event.preventDefault();
       }
     };
 
@@ -349,9 +391,9 @@ export function showContextMenuFallback<T extends string>(
 
       const menu = document.createElement("div");
       menu.className =
-        "dropdown-glass fixed z-[10000] min-w-32 max-w-sm overflow-hidden rounded-lg bg-clip-padding text-popover-foreground outline-none";
+        "dropdown-glass fixed z-[10000] min-w-32 max-w-sm overflow-hidden rounded-lg bg-clip-padding text-popover-foreground shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] outline-none dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]";
       menu.style.cssText =
-        "position:fixed;z-index:10000;min-width:8rem;max-width:24rem;overflow:hidden;border-radius:var(--radius-lg);background-clip:padding-box;color:var(--contrast-popover-foreground);background:color-mix(in srgb, var(--popover) 18%, color-mix(in srgb, var(--popover) var(--glass-opacity,80%), transparent));-webkit-backdrop-filter:blur(var(--glass-blur,12px)) saturate(var(--glass-saturation,1.14));backdrop-filter:blur(var(--glass-blur,12px)) saturate(var(--glass-saturation,1.14));border:1px solid color-mix(in srgb, var(--contrast-foreground) 10%, transparent);box-shadow:0 16px 40px -18px rgb(0 0 0 / 55%);outline:none;pointer-events:auto;";
+        "position:fixed;z-index:10000;min-width:8rem;max-width:24rem;overflow:hidden;border-radius:var(--radius-lg);background-clip:padding-box;color:var(--contrast-popover-foreground);outline:none;pointer-events:auto;";
       menu.style.left = `${preferredLeft}px`;
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
@@ -411,7 +453,7 @@ export function showContextMenuFallback<T extends string>(
         }
 
         if (typeof item.icon === "string") {
-          const icon = createIconElement(item.icon, itemTone);
+          const icon = createIconElement(item.icon, isDisabled ? "neutral" : itemTone);
           if (icon) {
             button.appendChild(icon);
           }
@@ -483,6 +525,12 @@ export function showContextMenuFallback<T extends string>(
             isFocused = false;
             updateHighlight();
           });
+          button.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              button.click();
+            }
+          });
 
           if (hasChildren) {
             const openSubmenu = (focusFirstItem = false) => {
@@ -506,6 +554,13 @@ export function showContextMenuFallback<T extends string>(
                   ?.focus();
               }
             };
+            button.addEventListener("keydown", (event) => {
+              if (event.key !== "ArrowRight") {
+                return;
+              }
+              event.preventDefault();
+              openSubmenu(true);
+            });
             button.addEventListener("mouseenter", () => {
               openSubmenu();
             });
@@ -553,6 +608,10 @@ export function showContextMenuFallback<T extends string>(
     }
     activeContextMenuDismiss = dismiss;
 
+    Array.from(menuStack[0]?.querySelectorAll<HTMLButtonElement>("button") ?? [])
+      .find((button) => !button.disabled)
+      ?.focus({ preventScroll: true });
+
     requestAnimationFrame(() => {
       canDismissFromPointer = true;
     });
@@ -578,19 +637,38 @@ export function installGlobalTextContextMenu(): () => void {
     const target = event.target;
     const isInputElement =
       target instanceof HTMLInputElement &&
-      !["hidden", "file", "checkbox", "radio", "button", "submit", "reset", "image"].includes(
-        target.type,
-      );
+      ["text", "search", "url", "tel", "password"].includes(target.type);
+    if (target instanceof HTMLInputElement && !isInputElement) {
+      return;
+    }
     const isTextAreaElement = target instanceof HTMLTextAreaElement;
-    const isContentEditable = target instanceof HTMLElement && target.isContentEditable;
+    const contentEditableHost =
+      target instanceof HTMLElement ? findContentEditableHost(target) : null;
+    const isContentEditable = contentEditableHost !== null;
     const isEditable = isInputElement || isTextAreaElement || isContentEditable;
 
     const selection = window.getSelection();
-    const hasWindowSelection = (selection?.toString() ?? "").trim().length > 0;
+    const selectedText = selection?.toString() ?? "";
+    const selectionRanges = selection
+      ? Array.from({ length: selection.rangeCount }, (_, index) =>
+          selection.getRangeAt(index).cloneRange(),
+        )
+      : [];
+    const restoreWindowSelection = () => {
+      if (!selection || selectionRanges.length === 0) {
+        return;
+      }
+      selection.removeAllRanges();
+      for (const range of selectionRanges) {
+        selection.addRange(range);
+      }
+    };
+    const hasWindowSelection = selectedText.trim().length > 0;
 
     let hasInputSelection = false;
     let isReadOnly = false;
     let hasValue = false;
+    let inputSelection: { start: number; end: number } | null = null;
 
     if (isInputElement || isTextAreaElement) {
       const input = target as HTMLInputElement | HTMLTextAreaElement;
@@ -599,13 +677,14 @@ export function installGlobalTextContextMenu(): () => void {
       try {
         const start = input.selectionStart ?? 0;
         const end = input.selectionEnd ?? 0;
+        inputSelection = { start, end };
         hasInputSelection = end > start;
       } catch {
         hasInputSelection = false;
       }
       hasValue = input.value.length > 0;
-    } else if (isContentEditable && target instanceof HTMLElement) {
-      hasValue = (target.textContent ?? "").length > 0;
+    } else if (contentEditableHost) {
+      hasValue = (contentEditableHost.textContent ?? "").length > 0;
     }
 
     const hasSelection = isEditable
@@ -685,8 +764,8 @@ export function installGlobalTextContextMenu(): () => void {
         if (isInputElement || isTextAreaElement) {
           const input = target as HTMLInputElement | HTMLTextAreaElement;
           try {
-            const start = input.selectionStart ?? 0;
-            const end = input.selectionEnd ?? 0;
+            const start = inputSelection?.start ?? input.selectionStart ?? 0;
+            const end = inputSelection?.end ?? input.selectionEnd ?? 0;
             const text = input.value.slice(start, end);
             if (text) {
               try {
@@ -701,13 +780,16 @@ export function installGlobalTextContextMenu(): () => void {
             document.execCommand("cut");
           }
         } else {
+          restoreWindowSelection();
           document.execCommand("cut");
         }
       } else if (clicked === "copy") {
         if (isInputElement || isTextAreaElement) {
           const input = target as HTMLInputElement | HTMLTextAreaElement;
           try {
-            const text = input.value.slice(input.selectionStart ?? 0, input.selectionEnd ?? 0);
+            const start = inputSelection?.start ?? input.selectionStart ?? 0;
+            const end = inputSelection?.end ?? input.selectionEnd ?? 0;
+            const text = input.value.slice(start, end);
             if (text) {
               try {
                 await navigator.clipboard.writeText(text);
@@ -719,7 +801,8 @@ export function installGlobalTextContextMenu(): () => void {
             document.execCommand("copy");
           }
         } else {
-          const text = selection?.toString() ?? "";
+          restoreWindowSelection();
+          const text = selectedText;
           if (text) {
             try {
               await navigator.clipboard.writeText(text);
@@ -734,8 +817,8 @@ export function installGlobalTextContextMenu(): () => void {
           if (isInputElement || isTextAreaElement) {
             const input = target as HTMLInputElement | HTMLTextAreaElement;
             try {
-              const start = input.selectionStart ?? input.value.length;
-              const end = input.selectionEnd ?? input.value.length;
+              const start = inputSelection?.start ?? input.selectionStart ?? input.value.length;
+              const end = inputSelection?.end ?? input.selectionEnd ?? input.value.length;
               input.setRangeText(text, start, end, "end");
             } catch {
               // Fallback for inputs that don't support setRangeText.
@@ -751,10 +834,10 @@ export function installGlobalTextContextMenu(): () => void {
       } else if (clicked === "select-all") {
         if (isInputElement || isTextAreaElement) {
           (target as HTMLInputElement | HTMLTextAreaElement).select();
-        } else if (isContentEditable && target instanceof HTMLElement) {
+        } else if (contentEditableHost) {
           // Scope selection to the contenteditable container, not the whole page.
           const range = document.createRange();
-          range.selectNodeContents(target);
+          range.selectNodeContents(contentEditableHost);
           selection?.removeAllRanges();
           selection?.addRange(range);
         } else {
