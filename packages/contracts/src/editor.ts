@@ -73,7 +73,7 @@ export const EDITORS = [
     label: "Antigravity",
     commands: ["agy"],
     launchStyle: "goto",
-    macAppName: "Antigravity",
+    macAppName: "Antigravity IDE",
     macRequiresAppBundle: true,
   },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },

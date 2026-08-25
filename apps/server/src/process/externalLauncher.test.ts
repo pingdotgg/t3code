@@ -280,7 +280,7 @@ it.effect("launches Antigravity through its bundle even when agy is on PATH", ()
     const path = yield* Path.Path;
     const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
     const homeDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-mac-home-" });
-    yield* fileSystem.makeDirectory(path.join(homeDir, "Applications", "Antigravity.app"), {
+    yield* fileSystem.makeDirectory(path.join(homeDir, "Applications", "Antigravity IDE.app"), {
       recursive: true,
     });
     for (const name of ["agy", "open"]) {
@@ -307,7 +307,7 @@ it.effect("launches Antigravity through its bundle even when agy is on PATH", ()
 
     assert.ok(spawned);
     assert.equal(spawned.command, "open");
-    assert.deepEqual(spawned.args, ["-a", "Antigravity", "/tmp/workspace"]);
+    assert.deepEqual(spawned.args, ["-a", "Antigravity IDE", "/tmp/workspace"]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
