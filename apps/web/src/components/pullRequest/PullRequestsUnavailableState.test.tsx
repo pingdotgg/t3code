@@ -15,12 +15,12 @@ describe("PullRequestsUnavailableState", () => {
     const text = textOf(
       PullRequestsUnavailableState({
         title: "Pull requests unavailable",
-        error: "Update this environment's T3 Code server to browse pull requests.",
+        error: "Update this environment's PostHog Inbox server to browse pull requests.",
       }),
     );
 
     expect(text).toContain("Pull requests unavailable");
-    expect(text).toContain("Update this environment's T3 Code server");
+    expect(text).toContain("Update this environment's PostHog Inbox server");
     expect(text).not.toContain("Retry");
   });
 
