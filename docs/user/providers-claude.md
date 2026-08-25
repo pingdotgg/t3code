@@ -41,9 +41,10 @@ In Settings, open your Claude provider and set **Auto-compact after** to a token
 summarizes older messages once the conversation reaches about 300,000 tokens. Leave the field
 empty to keep Claude Code's default behavior.
 
-When you return to an older Claude thread with a large context, T3 Code offers to compact the
-conversation before you continue. You can also select **Compact context** from the context meter
-or enter `/compact` in the message composer.
+On web and desktop, when you return to an older Claude thread with a large context, T3 Code
+offers to compact the conversation before you continue. You can also select **Compact context**
+from the context meter. On every client, you can enter `/compact` in the message composer, and
+Claude can show its own resume prompt when you continue an old session.
 
 ## Where Claude Skills Are Loaded
 

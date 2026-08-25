@@ -57,6 +57,10 @@ import {
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
+import {
+  CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
+  formatClaudeResumeCompactionQuestion,
+} from "@t3tools/shared/claudeCompaction";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -3959,6 +3963,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         callbackOptions.signal.addEventListener("abort", onAbort, {
           once: true,
         });
+        // The signal may have aborted during the awaited event emissions
+        // above, before the listener existed; settle now so the dialog
+        // cannot hang with a lingering pending question.
+        if (callbackOptions.signal.aborted) {
+          yield* settleAsAborted;
+        }
 
         // Block until the user provides answers.
         const answers = yield* Deferred.await(answersDeferred);
@@ -4020,13 +4030,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           return { behavior: "cancelled" as const };
         }
 
-        const estimatedTokens = finiteNonNegativeInteger(request.payload.estimatedTokens) ?? 0;
-        const ageMinutes = finiteNonNegativeInteger(request.payload.sessionAgeMinutes) ?? 0;
-        const ageLabel =
-          ageMinutes >= 60
-            ? `${Math.floor(ageMinutes / 60)}h ${ageMinutes % 60}m`
-            : `${ageMinutes}m`;
-        const question = `This session is ${ageLabel} old and uses ${estimatedTokens.toLocaleString("en-US")} tokens. Compact it before continuing?`;
+        // The question copy lives in @t3tools/shared/claudeCompaction because
+        // the web client recognizes this exact text (and the "never" answer)
+        // to mirror a permanent dismissal.
+        const question = formatClaudeResumeCompactionQuestion({
+          ageMinutes: finiteNonNegativeInteger(request.payload.sessionAgeMinutes) ?? 0,
+          estimatedTokens: finiteNonNegativeInteger(request.payload.estimatedTokens) ?? 0,
+        });
         const result = yield* handleAskUserQuestion(
           context,
           {
@@ -4044,7 +4054,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                     description: "Resume without changing the conversation.",
                   },
                   {
-                    label: "Don't ask again",
+                    label: CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
                     description: "Keep full history and skip future resume prompts.",
                   },
                 ],
@@ -4070,7 +4080,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const action =
           selection === "Compact and continue"
             ? "compact"
-            : selection === "Don't ask again"
+            : selection === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER
               ? "never"
               : "continue";
 
@@ -4182,6 +4192,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         callbackOptions.signal.addEventListener("abort", onAbort, {
           once: true,
         });
+        // Same late-listener race as handleAskUserQuestion: the signal may
+        // have aborted while the request event emissions were awaited.
+        if (callbackOptions.signal.aborted) {
+          onAbort();
+        }
 
         const decision = yield* Deferred.await(decisionDeferred);
         pendingApprovals.delete(requestId);

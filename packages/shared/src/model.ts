@@ -362,7 +362,11 @@ export function applyClaudePromptEffortPrefix(
   if (!trimmed) {
     return trimmed;
   }
-  if (effort !== "ultrathink" || trimmed.startsWith("/")) {
+  // Prefixing a slash command turns it into plain prose, so Claude never
+  // runs it. The pattern matches command-shaped first tokens ("/compact",
+  // "/security-review", "/plugin:skill args") without catching absolute
+  // paths like "/home/theo/app.ts", whose first token has more slashes.
+  if (effort !== "ultrathink" || /^\/[a-z0-9][\w:-]*(?:\s|$)/iu.test(trimmed)) {
     return trimmed;
   }
   if (trimmed.startsWith("Ultrathink:")) {

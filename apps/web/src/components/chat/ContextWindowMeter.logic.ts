@@ -1,5 +1,9 @@
 import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 import {
+  CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
+  isClaudeResumeCompactionQuestion,
+} from "@t3tools/shared/claudeCompaction";
+import {
   resolveSelectableProviderInstanceEntry,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -7,9 +11,6 @@ import { getTriggerDisplayModelName, type ModelEsque } from "./providerIconUtils
 
 export const CLAUDE_RESUME_COMPACTION_MINUTES = 70;
 export const CLAUDE_RESUME_COMPACTION_TOKENS = 100_000;
-export const CLAUDE_RESUME_COMPACTION_NEVER_ANSWER = "Don't ask again";
-const CLAUDE_RESUME_COMPACTION_QUESTION_PATTERN =
-  /^This session is (?:\d+h \d+m|\d+m) old and uses \d{1,3}(?:,\d{3})* tokens\. Compact it before continuing\?$/u;
 
 export function hasAvailableClaudeCompactionProvider(input: {
   readonly providers: ReadonlyArray<ProviderInstanceEntry>;
@@ -47,7 +48,7 @@ export function hasDismissedResumeCompaction(
 
     return Object.entries(answers).some(
       ([question, answer]) =>
-        CLAUDE_RESUME_COMPACTION_QUESTION_PATTERN.test(question) &&
+        isClaudeResumeCompactionQuestion(question) &&
         answer === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
     );
   });

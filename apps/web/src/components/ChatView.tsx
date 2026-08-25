@@ -4775,9 +4775,12 @@ function ChatViewContent(props: ChatViewProps) {
     isUnsnoozing,
     isUnsettling,
   ]);
-  const [dismissedResumeCompactionKey, setDismissedResumeCompactionKey] = useState<string | null>(
-    null,
-  );
+  // Session-scoped dismissals, one key per (thread, snapshot). A set rather
+  // than a single slot so dismissing the banner on one thread does not
+  // resurface it on another thread dismissed earlier.
+  const [dismissedResumeCompactionKeys, setDismissedResumeCompactionKeys] = useState<
+    ReadonlySet<string>
+  >(new Set());
   const resumeCompactionKey =
     activeThread && activeContextWindow
       ? `${activeThread.id}:${activeContextWindow.updatedAt}`
@@ -4811,7 +4814,7 @@ function ChatViewContent(props: ChatViewProps) {
       !activeThread ||
       !activeContextWindow ||
       resumeCompactionKey === null ||
-      dismissedResumeCompactionKey === resumeCompactionKey ||
+      dismissedResumeCompactionKeys.has(resumeCompactionKey) ||
       resumeCompactionPermanentlyDismissed ||
       nativeResumeCompactionDismissed ||
       pendingUserInputs.length > 0 ||
@@ -4826,7 +4829,8 @@ function ChatViewContent(props: ChatViewProps) {
       return null;
     }
 
-    const dismiss = () => setDismissedResumeCompactionKey(resumeCompactionKey);
+    const dismiss = () =>
+      setDismissedResumeCompactionKeys((keys) => new Set(keys).add(resumeCompactionKey));
     const compactAction = (
       <Button
         size="xs"
@@ -4863,7 +4867,7 @@ function ChatViewContent(props: ChatViewProps) {
     compactDisabled,
     compactDisabledReason,
     composerRef,
-    dismissedResumeCompactionKey,
+    dismissedResumeCompactionKeys,
     nativeResumeCompactionDismissed,
     nowMinute,
     pendingUserInputs.length,
