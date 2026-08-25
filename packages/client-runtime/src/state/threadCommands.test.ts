@@ -76,31 +76,24 @@ describe("applyCodexGoalStreamEvent", () => {
   });
 
   it("applies native updated and cleared notifications", () => {
-    const initial = { goal: null, hasNativeUpdate: false };
-    const updated = applyCodexGoalStreamEvent(initial, {
+    const updated = applyCodexGoalStreamEvent({
       type: "updated",
       threadId,
       goal: goal("Updated asynchronously"),
     });
-    expect(updated.goal?.objective).toBe("Updated asynchronously");
-    expect(applyCodexGoalStreamEvent(updated, { type: "cleared", threadId }).goal).toBeNull();
+    expect(updated?.objective).toBe("Updated asynchronously");
+    expect(applyCodexGoalStreamEvent({ type: "cleared", threadId })).toBeNull();
   });
 
-  it("does not let a late snapshot overwrite a live native update", () => {
-    const updated = applyCodexGoalStreamEvent(
-      { goal: null, hasNativeUpdate: false },
-      {
-        type: "updated",
-        threadId,
-        goal: goal("Live update"),
-      },
-    );
-    const lateSnapshot: CodexGoalStreamEvent = {
+  it("accepts the authoritative snapshot after reconnect", () => {
+    const reconnectSnapshot: CodexGoalStreamEvent = {
       type: "snapshot",
       threadId,
-      goal: goal("Stale snapshot"),
+      goal: goal("Changed while disconnected"),
     };
-    expect(applyCodexGoalStreamEvent(updated, lateSnapshot).goal?.objective).toBe("Live update");
+    expect(applyCodexGoalStreamEvent(reconnectSnapshot)?.objective).toBe(
+      "Changed while disconnected",
+    );
   });
 });
 
