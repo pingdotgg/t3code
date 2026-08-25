@@ -124,6 +124,7 @@ describe("theme files", () => {
       expect(asHex(colors.terminalCursor)).toBe(DESKTOP_SYSTEM_THEME.colors.cyan);
       expect(asHex(colors.sidebarRowSelected)).not.toBe(DESKTOP_SYSTEM_THEME.colors.selection);
       expect(asHex(colors.terminalSelection)).not.toBe(DESKTOP_SYSTEM_THEME.colors.selection);
+      expect(contrastRatio(colors.focus, colors.canvas)).toBeGreaterThanOrEqual(3);
       expect(contrastRatio(colors.sidebarForeground, colors.sidebarRowSelected)).toBeGreaterThan(
         4.5,
       );
@@ -143,6 +144,18 @@ describe("theme files", () => {
       expect(
         contrastRatio(inverseSelection.terminalForeground, inverseSelection.terminalSelection),
       ).toBeGreaterThan(4.5);
+      const lowContrastFocus = createDesktopSystemThemeColors({
+        ...DESKTOP_SYSTEM_THEME,
+        colors: {
+          ...DESKTOP_SYSTEM_THEME.colors,
+          background: "#282a36",
+          accent: "#33353f",
+          blue: "#33353f",
+        },
+      });
+      expect(contrastRatio(lowContrastFocus.focus, lowContrastFocus.canvas)).toBeGreaterThanOrEqual(
+        3,
+      );
       expect(
         resolveThemeAppearance(DESKTOP_SYSTEM_THEME_ID, false, false, "light", {
           light: T3_CHAT_THEME.id,

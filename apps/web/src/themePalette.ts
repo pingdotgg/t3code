@@ -1470,6 +1470,14 @@ export function createDesktopSystemThemeColors(systemTheme: DesktopSystemTheme):
   const terminalSelection = themeRgbToThemeColor(
     mixThemeRgbColors(terminalBackground, selection, appearance === "dark" ? 0.32 : 0.16),
   );
+  const focus = themeOklchToThemeColor(
+    solveOklchLightness(
+      themeRgbToOklch(parseThemeRgbColor(colors.accent, canvas)),
+      canvas,
+      3.1,
+      themeRelativeLuminance(canvas) < 0.179 ? "lighter" : "darker",
+    ),
+  );
 
   return {
     ...colors,
@@ -1478,7 +1486,7 @@ export function createDesktopSystemThemeColors(systemTheme: DesktopSystemTheme):
     toolbarControlForeground: semantic.foreground,
     codeForeground: semantic.foreground,
     terminalForeground: semantic.foreground,
-    focus: semantic.blue,
+    focus,
     update: greenFamily.update,
     updateForeground: greenFamily.updateForeground,
     updateSurface: greenFamily.updateSurface,
