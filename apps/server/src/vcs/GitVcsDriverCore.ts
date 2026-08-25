@@ -5120,6 +5120,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     status,
     statusDetails,
     statusDetailsLocal,
+    resolveBaseRef: (cwd, branch) => resolveBaseBranchForNoUpstream(cwd, branch),
     statusDetailsRemote,
     prepareCommitContext,
     commit: Effect.fnUntraced(function* (cwd, subject, body, options) {

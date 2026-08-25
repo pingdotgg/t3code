@@ -312,6 +312,10 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       options?: GitLocalStatusOptions,
     ) => Effect.Effect<GitStatusDetails, GitCommandError>;
+    readonly resolveBaseRef: (
+      cwd: string,
+      branch: string,
+    ) => Effect.Effect<string | null, GitCommandError>;
     readonly statusDetailsRemote: (
       cwd: string,
       options?: GitRemoteStatusOptions,

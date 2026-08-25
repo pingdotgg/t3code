@@ -931,6 +931,52 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("excludes base branch merges after rebasing unpublished commits", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+
+      yield* runGit(repoDir, ["checkout", "-b", "feature/rebased-messages"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.txt"), "alpha\n");
+      yield* runGit(repoDir, ["add", "alpha.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature alpha"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "beta.txt"), "beta\n");
+      yield* runGit(repoDir, ["add", "beta.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature beta"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/rebased-messages"]);
+
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "merged-change"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "base.txt"), "base\n");
+      yield* runGit(repoDir, ["add", "base.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Base change"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, [
+        "merge",
+        "--no-ff",
+        "merged-change",
+        "-m",
+        "Merge branch 'merged-change' into 'main'",
+      ]);
+      yield* runGit(repoDir, ["push", "origin", "main"]);
+
+      yield* runGit(repoDir, ["checkout", "feature/rebased-messages"]);
+      yield* runGit(repoDir, ["rebase", "main"]);
+
+      const { manager } = yield* makeManager();
+      const candidates = yield* manager.listRewriteableCommits({ cwd: repoDir });
+
+      expect(candidates.commits.map((commit) => commit.subject)).toEqual([
+        "Feature alpha",
+        "Feature beta",
+      ]);
+    }),
+  );
+
   it.effect("rewrites one earlier message while preserving descendant messages", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

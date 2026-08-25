@@ -3538,22 +3538,24 @@ export const make = Effect.gen(function* () {
       args: ["rev-parse", "HEAD"],
     });
     const headSha = headResult.stdout.trim();
-    const fallbackCount = Math.min(
+    const baseRef = yield* gitCore.resolveBaseRef(cwd, status.branch);
+    const excludedRefs = Array.from(
+      new Set([status.upstreamRef, baseRef].filter((ref): ref is string => ref !== null)),
+    );
+    const rewriteableCount = Math.min(
       MAX_REWRITEABLE_COMMITS,
       status.aheadOfDefaultCount > 0 ? status.aheadOfDefaultCount : status.aheadCount,
     );
-    const args = status.upstreamRef
-      ? [
-          "rev-list",
-          "--first-parent",
-          "--reverse",
-          `--max-count=${MAX_REWRITEABLE_COMMITS}`,
-          "HEAD",
-          "--not",
-          status.upstreamRef,
-        ]
-      : fallbackCount > 0
-        ? ["rev-list", "--first-parent", "--reverse", `--max-count=${fallbackCount}`, "HEAD"]
+    const args =
+      rewriteableCount > 0
+        ? [
+            "rev-list",
+            "--first-parent",
+            "--reverse",
+            `--max-count=${rewriteableCount}`,
+            "HEAD",
+            ...(excludedRefs.length > 0 ? ["--not", ...excludedRefs] : []),
+          ]
         : null;
     const shas = args
       ? yield* gitCore
