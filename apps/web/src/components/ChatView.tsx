@@ -135,6 +135,10 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { ReportHeader } from "./reports/ReportHeader";
+import { ReportStarters } from "./reports/ReportStarters";
+import { useReportThreadContext } from "./reports/useReportThreadContext";
+
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
@@ -1825,6 +1829,16 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId],
   );
   const activeProject = useProject(activeProjectRef);
+
+  // Threads about a PostHog report carry the report as context and name their
+  // worktree branch after it.
+  const activeThreadReportId = activeServerThread?.reportId ?? null;
+  const reportThreadContext = useReportThreadContext({
+    environmentId: activeServerThread?.environmentId ?? null,
+    reportId: activeThreadReportId,
+    projectCwd: activeProject?.workspaceRoot ?? null,
+  });
+
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -5334,6 +5348,9 @@ function ChatViewContent(props: ChatViewProps) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    // Set by callers that supply the message themselves, such as the report
+    // starters, instead of reading what the user typed.
+    promptOverride?: string,
   ) => {
     e?.preventDefault();
     const notifyDirectAnnotationAttached = () => {
@@ -5412,7 +5429,7 @@ function ChatViewContent(props: ChatViewProps) {
             },
           ]
         : sendContextPreviewAnnotations;
-    const promptForSend = promptRef.current;
+    const promptForSend = promptOverride ?? promptRef.current;
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -5623,12 +5640,18 @@ function ChatViewContent(props: ChatViewProps) {
       messageTextWithPreviewAnnotations,
       composerReviewCommentsSnapshot,
     );
+    // The report is context for the whole conversation, so it rides along with
+    // the first message. The bubble collapses it, since it is long.
+    const messageTextWithReport =
+      isFirstMessage && reportThreadContext.reportPrompt
+        ? `${reportThreadContext.reportPrompt}\n---\n\n${messageTextForSend}`
+        : messageTextForSend;
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      text: messageTextWithReport || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
       return;
@@ -5840,7 +5863,9 @@ function ChatViewContent(props: ChatViewProps) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(randomHex),
+                      branch:
+                        reportThreadContext.worktreeBranchName ??
+                        buildTemporaryWorktreeBranchName(randomHex),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,
@@ -6909,6 +6934,15 @@ function ChatViewContent(props: ChatViewProps) {
             </div>
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col">
+              {activeThreadReportId && activeServerThread ? (
+                <ReportHeader
+                  environmentId={activeServerThread.environmentId}
+                  reportId={activeThreadReportId}
+                  threadId={activeServerThread.id}
+                  threadHasMessages={timelineEntries.length > 0}
+                  onOpenTerminal={() => setTerminalOpen(true)}
+                />
+              ) : null}
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 agentPanelModel={agentPanelModel}
@@ -7002,6 +7036,11 @@ function ChatViewContent(props: ChatViewProps) {
                   ) : (
                     <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   )}
+                  {activeThreadReportId && timelineEntries.length === 0 && !isWorking ? (
+                    <ReportStarters
+                      onStart={(text) => void onSend(undefined, "foreground", undefined, text)}
+                    />
+                  ) : null}
                   {threadSyncPhase && !activeEnvironmentUnavailable ? (
                     <ThreadSyncStatusPill phase={threadSyncPhase} />
                   ) : null}

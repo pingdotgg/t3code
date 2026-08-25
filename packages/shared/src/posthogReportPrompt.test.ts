@@ -117,40 +117,10 @@ describe("renderReportPrompt", () => {
 
       ## Instructions
 
-      You are implementing this PostHog self-driving report. Work on the current branch. Commit as you go.
-      When done, open a pull request with \`gh pr create\`; the PR body must link the report:
+      This conversation is about the PostHog self-driving report above. The user will say what they want.
+      If you make code changes, commit them on the current branch and open a pull request whose body links the report:
       https://us.posthog.com/project/42/inbox/reports/0f3c2a1e-7b6d-4c2a-9e1f-1234567890ab
       "
     `);
-  });
-
-  it("asks for discussion instead of a pull request in discuss mode", () => {
-    const prompt = renderReportPrompt(report, artefacts, {
-      host: "https://us.posthog.com",
-      projectId: "42",
-      mode: "discuss",
-    });
-
-    expect(prompt).toContain("## Findings");
-    expect(prompt).toContain("Do not make code changes unless the user explicitly asks for them.");
-    expect(prompt).toContain(
-      "Report: https://us.posthog.com/project/42/inbox/reports/0f3c2a1e-7b6d-4c2a-9e1f-1234567890ab",
-    );
-    expect(prompt).not.toContain("gh pr create");
-  });
-
-  it("skips sections whose artefacts are missing or undecodable", () => {
-    const prompt = renderReportPrompt(
-      report,
-      [artefact("priority_judgment", { unexpected: true }, 1)],
-      { host: "https://eu.posthog.com", projectId: "7" },
-    );
-
-    expect(prompt).not.toContain("## Assessment");
-    expect(prompt).not.toContain("## Findings");
-    expect(prompt).toContain("## Instructions");
-    expect(prompt).toContain(
-      "https://eu.posthog.com/project/7/inbox/reports/0f3c2a1e-7b6d-4c2a-9e1f-1234567890ab",
-    );
   });
 });

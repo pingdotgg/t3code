@@ -1,7 +1,7 @@
 /**
- * Renders a PostHog self-driving report and its artefacts as the first
- * message of an implementation or discussion thread. Pure: the same report
- * always yields the same markdown, so the prompt can be reviewed before it is sent.
+ * Renders a PostHog self-driving report and its artefacts as the context the
+ * agent reads before the user's first message. Pure: the same report always
+ * yields the same markdown, so the prompt can be reviewed before it is sent.
  */
 import {
   PostHogActionabilityAssessment,
@@ -17,13 +17,9 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-export type ReportPromptMode = "implement" | "discuss";
-
 export interface RenderReportPromptOptions {
   readonly host: string;
   readonly projectId: string;
-  /** "implement" asks for a PR on a worktree; "discuss" is read-only Q&A. Defaults to "implement". */
-  readonly mode?: ReportPromptMode;
 }
 
 const decodeFinding = Schema.decodeUnknownOption(PostHogSignalFinding);
@@ -158,22 +154,11 @@ export function renderReportPrompt(
     reportId: report.id,
   });
   push("## Instructions", "");
-  if ((options.mode ?? "implement") === "discuss") {
-    push(
-      "The user wants to discuss this PostHog self-driving report, not implement it yet.",
-      "Help them understand the evidence, look at the referenced code, and answer their questions.",
-      "Do not make code changes unless the user explicitly asks for them.",
-      `Report: ${reportUrl}`,
-      "",
-    );
-  } else {
-    push(
-      "You are implementing this PostHog self-driving report. Work on the current branch. Commit as you go.",
-      "When done, open a pull request with `gh pr create`; the PR body must link the report:",
-      reportUrl,
-      "",
-    );
-  }
-
+  push(
+    "This conversation is about the PostHog self-driving report above. The user will say what they want.",
+    "If you make code changes, commit them on the current branch and open a pull request whose body links the report:",
+    reportUrl,
+    "",
+  );
   return lines.join("\n");
 }
