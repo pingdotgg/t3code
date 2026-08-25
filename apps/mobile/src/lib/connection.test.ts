@@ -3,10 +3,10 @@ import { EnvironmentId } from "@t3tools/contracts";
 
 import {
   isRelayManagedConnection,
-  authClientMetadata,
   redactPairingCredential,
   toStableSavedRemoteConnection,
 } from "./connection";
+import { authClientMetadata } from "./authClientMetadata";
 
 const mobilePlatform = vi.hoisted(() => ({ OS: "ios" as "ios" | "android" }));
 const mobileDevice = vi.hoisted(() => ({
