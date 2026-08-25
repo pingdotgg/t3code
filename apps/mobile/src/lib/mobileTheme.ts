@@ -196,6 +196,57 @@ function readableMessageAccent(accent: string, surface: string): string {
   return `#${readable.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
+export interface HsvColor {
+  readonly h: number;
+  readonly s: number;
+  readonly v: number;
+}
+
+/** Parses a #rrggbb color into HSV (h in degrees, s and v in 0..1). */
+export function hexToHsv(color: string): HsvColor | null {
+  const channels = rgbChannels(color);
+  if (!channels) return null;
+  const [red, green, blue] = channels.map((channel) => channel / 255) as [number, number, number];
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  let h = 0;
+  if (delta !== 0) {
+    if (max === red) h = ((green - blue) / delta) % 6;
+    else if (max === green) h = (blue - red) / delta + 2;
+    else h = (red - green) / delta + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return { h, s: max === 0 ? 0 : delta / max, v: max };
+}
+
+export function hsvToHex(color: HsvColor): string {
+  const h = ((color.h % 360) + 360) % 360;
+  const s = Math.min(1, Math.max(0, color.s));
+  const v = Math.min(1, Math.max(0, color.v));
+  const chroma = v * s;
+  const x = chroma * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - chroma;
+  const [red, green, blue] =
+    h < 60
+      ? [chroma, x, 0]
+      : h < 120
+        ? [x, chroma, 0]
+        : h < 180
+          ? [0, chroma, x]
+          : h < 240
+            ? [0, x, chroma]
+            : h < 300
+              ? [x, 0, chroma]
+              : [chroma, 0, x];
+  const channel = (value: number) =>
+    Math.round((value + m) * 255)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${channel(red)}${channel(green)}${channel(blue)}`;
+}
+
 const HEX_COLOR_PATTERN = /^#(?:[\da-f]{3}|[\da-f]{6})$/i;
 
 /**

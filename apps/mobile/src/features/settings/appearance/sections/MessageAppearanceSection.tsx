@@ -12,6 +12,7 @@ import { useThemeColor } from "../../../../lib/useThemeColor";
 import { SettingsSection } from "../../components/SettingsSection";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import { AppearancePreviewSeparator } from "../components/AppearancePreviews";
+import { HsvColorPicker } from "../components/HsvColorPicker";
 
 type SymbolName = ComponentProps<typeof SymbolView>["name"];
 
@@ -155,18 +156,25 @@ function ColorSwatchRow(props: {
         />
       </View>
       {isCustom ? (
-        <AppTextInput
-          accessibilityLabel={`Custom ${props.label.toLowerCase()} hex value`}
-          autoCapitalize="none"
-          autoComplete="off"
-          autoCorrect={false}
-          defaultValue={props.value ?? ""}
-          key={props.value}
-          onEndEditing={(event) => commitCustom(event.nativeEvent.text)}
-          onSubmitEditing={(event) => commitCustom(event.nativeEvent.text)}
-          placeholder="#4F46E5"
-          returnKeyType="done"
-        />
+        <View className="gap-3">
+          <HsvColorPicker
+            disabled={props.disabled}
+            onChange={props.onChange}
+            value={props.value ?? props.defaultColor}
+          />
+          <AppTextInput
+            accessibilityLabel={`Custom ${props.label.toLowerCase()} hex value`}
+            autoCapitalize="none"
+            autoComplete="off"
+            autoCorrect={false}
+            defaultValue={props.value ?? ""}
+            key={props.value}
+            onEndEditing={(event) => commitCustom(event.nativeEvent.text)}
+            onSubmitEditing={(event) => commitCustom(event.nativeEvent.text)}
+            placeholder="#4F46E5"
+            returnKeyType="done"
+          />
+        </View>
       ) : null}
     </View>
   );

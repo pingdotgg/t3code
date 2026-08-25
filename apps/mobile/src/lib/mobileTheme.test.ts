@@ -12,6 +12,8 @@ import {
   DEFAULT_MOBILE_THEME_ID,
   getMobileThemePreviewColors,
   getMobileThemeVariables,
+  hexToHsv,
+  hsvToHex,
   MOBILE_THEME_IDS,
   normalizeMobileThemeId,
   normalizeMobileThemeMode,
@@ -274,5 +276,20 @@ describe("mobile themes", () => {
     const base = getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "light");
     const overrides = createUserBubbleOverrides(base, "#ffe066", "#ffffff")!;
     expect(overrides["--color-user-bubble-foreground"]).toBe("#ffffff");
+  });
+
+  it("converts between hex and HSV for the color picker", () => {
+    expect(hsvToHex({ h: 0, s: 1, v: 1 })).toBe("#ff0000");
+    expect(hsvToHex({ h: 120, s: 1, v: 1 })).toBe("#00ff00");
+    expect(hsvToHex({ h: 240, s: 1, v: 1 })).toBe("#0000ff");
+    expect(hsvToHex({ h: 300, s: 0, v: 1 })).toBe("#ffffff");
+    expect(hsvToHex({ h: 45, s: 0.6, v: 0 })).toBe("#000000");
+
+    expect(hexToHsv("#ff0000")).toEqual({ h: 0, s: 1, v: 1 });
+    expect(hexToHsv("not-a-color")).toBe(null);
+
+    for (const hex of ["#34c759", "#af52de", "#ff9500", "#007aff", "#123456"]) {
+      expect(hsvToHex(hexToHsv(hex)!)).toBe(hex);
+    }
   });
 });
