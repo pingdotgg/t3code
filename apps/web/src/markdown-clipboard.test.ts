@@ -44,6 +44,14 @@ class FakeElement {
   hasAttribute(): boolean {
     return false;
   }
+
+  closest(): FakeElement | null {
+    return null;
+  }
+
+  querySelector(): FakeElement | null {
+    return null;
+  }
 }
 
 function asNode(element: FakeElement): Node {
@@ -53,6 +61,21 @@ function asNode(element: FakeElement): Node {
 function shikiCodeLine(text: string): FakeElement {
   const token = new FakeElement("SPAN").append(new FakeText(text));
   return new FakeElement("SPAN", ["line"]).append(token);
+}
+
+/** Mirrors a rendered code block: select-none header chrome plus a shiki pre. */
+function renderedCodeBlock(lines: ReadonlyArray<string>): FakeElement {
+  const code = new FakeElement("CODE");
+  lines.forEach((line, index) => {
+    if (index > 0) code.append(new FakeText("\n"));
+    code.append(shikiCodeLine(line));
+  });
+  return new FakeElement("DIV", ["chat-markdown-codeblock"]).append(
+    new FakeElement("DIV", ["chat-markdown-codeblock-header", "select-none"]).append(
+      new FakeText("sh"),
+    ),
+    new FakeElement("DIV", ["chat-markdown-shiki"]).append(new FakeElement("PRE").append(code)),
+  );
 }
 
 describe("serializeRenderedMarkdownFragment", () => {
@@ -91,5 +114,30 @@ describe("serializeRenderedMarkdownFragment", () => {
     const container = new FakeElement("DIV").append(code);
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
+  });
+
+  it("omits fences when a selection past the last line drags in the whole code block", () => {
+    // Dragging over the final newline ends the range after the pre, so the
+    // fragment carries the block plus the empty head of the next paragraph.
+    const container = new FakeElement("DIV").append(
+      renderedCodeBlock(["printf '%s' 'TOKEN' | gh secret set CLOUDFLARE_API_TOKEN"]),
+      new FakeText("\n"),
+      new FakeElement("P").append(new FakeText("")),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "printf '%s' 'TOKEN' | gh secret set CLOUDFLARE_API_TOKEN",
+    );
+  });
+
+  it("still fences a code block copied alongside prose", () => {
+    const container = new FakeElement("DIV").append(
+      new FakeElement("P").append(new FakeText("Run this:")),
+      renderedCodeBlock(["gh workflow run Deploy --ref main"]),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "Run this:\n\n```\ngh workflow run Deploy --ref main\n```",
+    );
   });
 });
