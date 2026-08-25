@@ -14,9 +14,9 @@ hosted app for the first time. Existing workspaces skip this flow.
 
 ## Check your agents
 
-T3 Code checks the selected computer for Claude Code, Codex, and Cursor. If an
-agent is not installed or signed in, select its action to open a terminal with
-the correct command ready to run. Other providers are available in Settings.
+T3 Code checks the selected computer for Claude Code and Codex. If an agent is
+not installed or signed in, select its action to open a terminal with the
+correct command ready to run. Other providers can be enabled in Settings.
 
 ## Import your projects
 

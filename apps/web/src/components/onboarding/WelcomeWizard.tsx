@@ -27,8 +27,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
-import { APP_BASE_NAME } from "../../branding";
-import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
@@ -57,7 +55,6 @@ import { getProviderSummary } from "../settings/providerStatus";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
-import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -129,22 +126,6 @@ export function WelcomeWizard({
 
   return (
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-black text-white [--accent-foreground:#fff] [--accent:#171717] [--background:#000] [--border:#262626] [--card-foreground:#fff] [--card:#000] [--foreground:#fff] [--input:#262626] [--muted-foreground:#a1a1aa] [--muted:#171717] [--placeholder:#71717a] [--popover-foreground:#fff] [--popover:#171717] [--ring:#737373] [--secondary-foreground:#fff] [--secondary:#171717] [--terminal-background:#000] [--terminal-cursor:#fff] [--terminal-foreground:#fff] [--terminal-selection-background:rgb(255_255_255_/_0.2)] [color-scheme:dark]">
-      <WorkspacePageHeader
-        electron={isElectron}
-        className={cn(
-          "justify-between border-b border-white/10 px-6 sm:px-10",
-          isElectron ? "wco:pl-[calc(env(titlebar-area-x)+1.5rem)]" : "h-16 min-h-16",
-        )}
-      >
-        <div className="flex items-center gap-2.5">
-          <span className="font-mono text-lg font-semibold text-white">t3</span>
-          <span className="text-sm font-medium text-white/85">{APP_BASE_NAME}</span>
-        </div>
-        <span className="font-mono text-xs text-white/45">
-          {stageIndex + 1} / {ONBOARDING_STAGES.length}
-        </span>
-      </WorkspacePageHeader>
-
       <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         <div className="mx-auto grid min-h-full w-full max-w-5xl content-center gap-10 px-6 py-12 sm:grid-cols-[170px_minmax(0,1fr)] sm:gap-14 sm:px-10 lg:px-12">
           <aside className="flex min-w-0 flex-col justify-between sm:min-h-72">
@@ -567,24 +548,21 @@ function PairDirectStep({
 
 // ── Step 3: agents ───────────────────────────────────────────
 
-const PRIMARY_AGENT_DRIVERS = ["claudeAgent", "codex", "cursor"] as const;
+const PRIMARY_AGENT_DRIVERS = ["claudeAgent", "codex"] as const;
 
 const AGENT_INSTALL_COMMANDS: Record<string, string> = {
   claudeAgent: "npm install -g @anthropic-ai/claude-code",
   codex: "npm install -g @openai/codex",
-  cursor: "curl https://cursor.com/install -fsS | bash",
 };
 
 // Claude has no `login` subcommand — running it interactively prompts OAuth.
 const AGENT_LOGIN_COMMANDS: Record<string, string> = {
   claudeAgent: "claude",
   codex: "codex login",
-  cursor: "agent login",
 };
 
 /**
- * Claude Code, Codex, and Cursor use live probe status; the remaining
- * drivers are listed below. Install opens the built-in terminal inline
+ * Claude Code and Codex use live probe status. Install opens the built-in terminal inline
  * with the command pre-typed — the update RPC can't install a binary that
  * isn't there yet (it infers the package manager from the installed binary's
  * path), and the terminal also handles the interactive login that follows.
@@ -663,10 +641,6 @@ function ConnectedAgentsStep({
   const readyCount = primaryAgents.filter(
     ({ provider }) => getOnboardingProviderState(provider) === "ready",
   ).length;
-  const otherAgents = [...byDriver.keys()].filter(
-    (driver) => !PRIMARY_AGENT_DRIVERS.includes(driver as (typeof PRIMARY_AGENT_DRIVERS)[number]),
-  );
-
   return (
     <StepShell title="Your agents" description={`Detected on ${machineLabel}.`} onBack={onBack}>
       <div className="mt-7 border-t border-white/12">
@@ -691,15 +665,6 @@ function ConnectedAgentsStep({
             void refreshProviders({ environmentId, input: {} });
           }}
         />
-      ) : null}
-      {otherAgents.length > 0 ? (
-        <p className="mt-4 text-xs text-white/45">
-          Also available in Settings:{" "}
-          {otherAgents
-            .map((driver) => getDriverOption(driver as never)?.label ?? driver)
-            .join(", ")}
-          .
-        </p>
       ) : null}
       <div className="mt-7 flex items-center justify-between gap-3">
         <Button className="text-white/60" variant="ghost" onClick={onSkip}>
