@@ -182,6 +182,16 @@ jobs:
           PREVIEW_VERSION: ${{ steps.version.outputs.version }}
         with:
           script: |
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            if (pullRequest.head.sha !== process.env.HEAD_SHA) {
+              core.info("Skipping the outdated macOS preview comment.");
+              return;
+            }
+
             const marker = "<!-- desktop-macos-preview -->";
             const body = [
               marker,
