@@ -7055,12 +7055,7 @@ export default function ChatView(props: ChatViewProps) {
         );
         return;
       }
-      if (
-        !isServerThread ||
-        activeThreadId === null ||
-        activeThread.session === null ||
-        activeThread.session.status === "stopped"
-      ) {
+      if (!isServerThread || activeThreadId === null || activeThread.session === null) {
         toastManager.add(
           stackedThreadToast({
             type: "warning",
@@ -7089,6 +7084,16 @@ export default function ChatView(props: ChatViewProps) {
       });
       try {
         if (codexGoalCommand.action === "status") {
+          if (activeThread.session.status === "stopped") {
+            toastManager.add(
+              stackedThreadToast({
+                type: "warning",
+                title: "Wake the Codex thread first",
+                description: "/goal status does not wake a stopped provider session.",
+              }),
+            );
+            return;
+          }
           const result = await getCodexGoal(target);
           if (result._tag === "Failure") {
             if (!isAtomCommandInterrupted(result) && stillOnSubmittedThread()) {
