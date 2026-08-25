@@ -3,6 +3,7 @@ import {
   type CodexGoalSetInput,
   type CodexGoalStatus,
   type CodexGoalStreamEvent,
+  type CodexGoalThreadInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -134,6 +135,14 @@ export function parseCodexGoalCommand(value: string): CodexGoalCommand | null {
   return { action: "set", objective: argument, status: "active" };
 }
 
+export function toCodexGoalSetInput(
+  threadId: CodexGoalSetInput["threadId"],
+  command: Extract<CodexGoalCommand, { readonly action: "set" }>,
+): CodexGoalSetInput {
+  const { action: _action, ...input } = command;
+  return { threadId, ...input };
+}
+
 export function applyCodexGoalStreamEvent(event: CodexGoalStreamEvent): CodexGoal | null {
   if (event.type === "snapshot" || event.type === "updated") return event.goal;
   return null;
@@ -168,7 +177,7 @@ export function createThreadEnvironmentAtoms<R, E>(
   const scheduler = createAtomCommandScheduler();
   const concurrency = {
     mode: "serial" as const,
-    key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
+    key: ({ environmentId, input }: { environmentId: string; input: CodexGoalThreadInput }) =>
       JSON.stringify([environmentId, input.threadId]),
   };
   const codexGoal = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
@@ -188,11 +197,7 @@ export function createThreadEnvironmentAtoms<R, E>(
       label: "environment-data:codex-goal:set",
       tag: WS_METHODS.codexGoalSet,
       scheduler,
-      concurrency: {
-        mode: "serial",
-        key: ({ environmentId, input }: { environmentId: string; input: CodexGoalSetInput }) =>
-          JSON.stringify([environmentId, input.threadId]),
-      },
+      concurrency,
     }),
     clearCodexGoal: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:codex-goal:clear",

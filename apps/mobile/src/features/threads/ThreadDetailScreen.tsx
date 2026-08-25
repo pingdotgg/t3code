@@ -9,6 +9,7 @@ import {
   formatCodexGoalStatus,
   formatCodexGoalUsage,
   parseCodexGoalCommand,
+  toCodexGoalSetInput,
   type EnvironmentThreadStatus,
 } from "@t3tools/client-runtime/state/threads";
 import {
@@ -710,13 +711,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           ? await clearCodexGoal(target)
           : await setCodexGoal({
               environmentId: props.environmentId,
-              input: {
-                threadId: props.selectedThread.id,
-                ...(goalCommand.objective === undefined
-                  ? {}
-                  : { objective: goalCommand.objective }),
-                ...(goalCommand.status === undefined ? {} : { status: goalCommand.status }),
-              },
+              input: toCodexGoalSetInput(props.selectedThread.id, goalCommand),
             });
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result) && stillOnSubmittedThread()) {

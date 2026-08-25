@@ -2535,6 +2535,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     return session;
   });
 
+  const mapSessionRuntimeError = (threadId: ThreadId, method: string) =>
+    Effect.mapError((cause: CodexSessionRuntimeError | ProviderAdapterSessionNotFoundError) =>
+      cause._tag === "ProviderAdapterSessionNotFoundError"
+        ? cause
+        : mapCodexRuntimeError(threadId, method, cause),
+    );
+
   const interruptTurn: CodexAdapterShape["interruptTurn"] = (threadId, turnId) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.interruptTurn(turnId)),
@@ -2619,32 +2626,20 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       requireSession(threadId).pipe(
         Effect.flatMap((session) => session.runtime.getGoal),
         Effect.map((response) => (response.goal ? toCodexGoal(response.goal) : null)),
-        Effect.mapError((cause) =>
-          cause._tag === "ProviderAdapterSessionNotFoundError"
-            ? cause
-            : mapCodexRuntimeError(threadId, "thread/goal/get", cause),
-        ),
+        mapSessionRuntimeError(threadId, "thread/goal/get"),
       ),
     set: (input) => {
       const { threadId, ...params } = input;
       return requireSession(threadId).pipe(
         Effect.flatMap((session) => session.runtime.setGoal(params)),
         Effect.map((response) => toCodexGoal(response.goal)),
-        Effect.mapError((cause) =>
-          cause._tag === "ProviderAdapterSessionNotFoundError"
-            ? cause
-            : mapCodexRuntimeError(threadId, "thread/goal/set", cause),
-        ),
+        mapSessionRuntimeError(threadId, "thread/goal/set"),
       );
     },
     clear: (threadId) =>
       requireSession(threadId).pipe(
         Effect.flatMap((session) => session.runtime.clearGoal),
-        Effect.mapError((cause) =>
-          cause._tag === "ProviderAdapterSessionNotFoundError"
-            ? cause
-            : mapCodexRuntimeError(threadId, "thread/goal/clear", cause),
-        ),
+        mapSessionRuntimeError(threadId, "thread/goal/clear"),
       ),
   };
 

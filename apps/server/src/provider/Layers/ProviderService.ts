@@ -2060,22 +2060,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       operation: input.operation,
       allowRecovery: false,
     });
-    if (!routed.adapter.codexGoal) {
-      return yield* toValidationError(
+    const unsupported = () =>
+      toValidationError(
         input.operation,
         `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
       );
-    }
+    if (!routed.adapter.codexGoal) return yield* unsupported();
     if (!routed.isActive && input.allowRecovery) {
       routed = yield* resolveRoutableSession({ ...input, allowRecovery: true });
     }
     const goal = routed.adapter.codexGoal;
-    if (!goal) {
-      return yield* toValidationError(
-        input.operation,
-        `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
-      );
-    }
+    if (!goal) return yield* unsupported();
     return { routed, goal } as const;
   });
 
