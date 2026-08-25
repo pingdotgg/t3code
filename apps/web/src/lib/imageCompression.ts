@@ -8,7 +8,8 @@
  *   `PROVIDER_SEND_TURN_MAX_IMAGE_BYTES` wire cap and shrinks them to fit
  *   via `compressImageToByteLimit` instead of rejecting the paste.
  *
- * Images already within budget pass through untouched.
+ * Supported images already within budget pass through untouched. HEIC/HEIF
+ * photos are decoded to JPEG first because providers cannot consume them.
  */
 
 /**
@@ -32,6 +33,8 @@ export const MAX_COMPRESSIBLE_SOURCE_BYTES = 50 * 1024 * 1024;
 const QUALITY_STEPS = [0.92, 0.85, 0.78, 0.68] as const;
 /** Extra downscale passes applied when even the lowest quality overflows. */
 const FALLBACK_SCALE_STEPS = [0.75, 0.55] as const;
+const HEIC_IMAGE_MIME_TYPE = /^image\/hei(?:c|f)(?:-sequence)?$/i;
+const HEIC_IMAGE_EXTENSION = /\.(?:heic|heif)$/i;
 
 export interface CompressedStashImage {
   dataUrl: string;
@@ -54,6 +57,11 @@ export type CompressStashImageResult =
 export type CompressImageFileResult =
   | { ok: true; file: File; recompressed: boolean }
   | { ok: false; reason: ImageCompressionFailureReason };
+
+/** Finder and some browsers omit the MIME type when dragging HEIC photos. */
+export function isHeicImageFile(file: Pick<File, "name" | "type">): boolean {
+  return HEIC_IMAGE_MIME_TYPE.test(file.type) || HEIC_IMAGE_EXTENSION.test(file.name);
+}
 
 /** Chunked so a large image can't blow the argument limit of `fromCharCode`. */
 const BASE64_CHUNK_SIZE = 0x8000;
@@ -167,6 +175,7 @@ async function encodeWithinBudget(
   bitmap: ImageBitmap,
   maxDimension: number,
   budgetChars: number,
+  preferredMimeType?: "image/jpeg",
 ): Promise<{ dataUrl: string; mimeType: string } | null> {
   const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
   const width = Math.max(1, Math.round(bitmap.width * scale));
@@ -176,8 +185,11 @@ async function encodeWithinBudget(
 
   // Probe WebP once; JPEG (no alpha) needs a white matte, so the fill has to
   // happen before drawing and depends on which codec we end up using.
-  const probe = await encodeCanvas(target.canvas, QUALITY_STEPS[0], "image/webp", 0);
-  const mimeType = probe ? "image/webp" : "image/jpeg";
+  const mimeType =
+    preferredMimeType ??
+    ((await encodeCanvas(target.canvas, QUALITY_STEPS[0], "image/webp", 0))
+      ? "image/webp"
+      : "image/jpeg");
 
   if (mimeType === "image/jpeg") {
     target.context.fillStyle = "#ffffff";
@@ -203,7 +215,11 @@ type ReencodeResult =
  * Shared re-encode loop: decodes `file`, then walks the quality ladder and
  * fallback downscale passes until an encoding fits `budgetChars`.
  */
-async function reencodeWithinBudget(file: File, budgetChars: number): Promise<ReencodeResult> {
+async function reencodeWithinBudget(
+  file: File,
+  budgetChars: number,
+  preferredMimeType?: "image/jpeg",
+): Promise<ReencodeResult> {
   if (!canRecompress()) {
     return { ok: false, reason: "too-large" };
   }
@@ -229,7 +245,7 @@ async function reencodeWithinBudget(file: File, budgetChars: number): Promise<Re
       const targetDimension = Math.max(1, Math.round(baseDimension * dimensionScale));
       let encoded: { dataUrl: string; mimeType: string } | null;
       try {
-        encoded = await encodeWithinBudget(bitmap, targetDimension, budgetChars);
+        encoded = await encodeWithinBudget(bitmap, targetDimension, budgetChars, preferredMimeType);
       } catch {
         // Canvas allocation, drawing, or the codec itself can throw — often
         // precisely *because* the target is too big (OOM on a large bitmap).
@@ -305,6 +321,7 @@ export async function compressImageForStash(
 export async function compressImageToByteLimit(
   file: File,
   maxBytes: number,
+  options?: { preferredMimeType?: "image/jpeg" },
 ): Promise<CompressImageFileResult> {
   if (file.size <= maxBytes) {
     return { ok: true, file, recompressed: false };
@@ -316,7 +333,7 @@ export async function compressImageToByteLimit(
   // into 4 chars; flooring keeps the budget a hair conservative instead of
   // admitting an encoding right at the byte cap.
   const budgetChars = Math.floor(maxBytes / 3) * 4;
-  const reencoded = await reencodeWithinBudget(file, budgetChars);
+  const reencoded = await reencodeWithinBudget(file, budgetChars, options?.preferredMimeType);
   if (!reencoded.ok) {
     return reencoded;
   }
@@ -329,4 +346,39 @@ export async function compressImageToByteLimit(
     ),
     recompressed: true,
   };
+}
+
+/**
+ * Converts HEIC/HEIF photos to provider-compatible JPEG before applying the
+ * attachment size limit. The decoder is loaded only when such a photo arrives.
+ */
+export async function prepareImageForAttachment(
+  file: File,
+  maxBytes: number,
+): Promise<CompressImageFileResult> {
+  if (!isHeicImageFile(file)) {
+    return compressImageToByteLimit(file, maxBytes);
+  }
+
+  if (file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) {
+    return { ok: false, reason: "too-large" };
+  }
+
+  let converted: Blob;
+  try {
+    const { heicTo } = await import("heic-to/csp");
+    converted = await heicTo({ blob: file, type: "image/jpeg", quality: QUALITY_STEPS[0] });
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
+
+  const jpeg = new File([converted], fileNameForMimeType(file.name || "image", "image/jpeg"), {
+    type: "image/jpeg",
+    lastModified: file.lastModified,
+  });
+  const result = await compressImageToByteLimit(jpeg, maxBytes, {
+    preferredMimeType: "image/jpeg",
+  });
+
+  return result.ok ? { ...result, recompressed: true } : result;
 }
