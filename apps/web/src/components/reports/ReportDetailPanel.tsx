@@ -39,6 +39,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
 import { Button } from "../ui/button";
+import { ReportOpenActions } from "./ReportOpenActions";
 import { usePostHogQuery } from "./reportsQuery";
 
 const decodeFinding = Schema.decodeUnknownOption(PostHogSignalFinding);
@@ -270,6 +271,14 @@ export function ReportDetailPanel({
           ) : null}
         </div>
         {implementError ? <p className="text-xs text-destructive">{implementError}</p> : null}
+        <ReportOpenActions
+          environmentId={environmentId}
+          report={report}
+          artefacts={artefacts}
+          project={selectedProject}
+          defaultBranch={defaultBranch}
+          branchName={reportBranchName(report.id)}
+        />
         {linkedThreads.length > 0 ? (
           <ul className="space-y-1">
             {linkedThreads.map((thread) => (
