@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as PlatformError from "effect/PlatformError";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({
@@ -13,6 +15,7 @@ vi.mock("electron", () => ({
 }));
 
 import {
+  desktopSystemThemeDirectoryExists,
   desktopSystemThemePaths,
   normalizeSystemThemePalette,
   parseFlatColorsToml,
@@ -55,6 +58,24 @@ afterEach(() => {
 });
 
 describe("desktop system theme", () => {
+  it.effect("treats an inaccessible Omarchy state directory as unavailable", () => {
+    const path = "/home/user/.local/state/omarchy/current";
+    const cause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "exists",
+      pathOrDescriptor: path,
+    });
+    return desktopSystemThemeDirectoryExists(path).pipe(
+      Effect.provide(
+        FileSystem.layerNoop({
+          exists: () => Effect.fail(cause),
+        }),
+      ),
+      Effect.tap((exists) => Effect.sync(() => expect(exists).toBe(false))),
+    );
+  });
+
   it("keeps the filesystem root when it is the home directory", () => {
     expect(desktopSystemThemePaths("/")).toEqual({
       currentDirectory: "/.local/state/omarchy/current",

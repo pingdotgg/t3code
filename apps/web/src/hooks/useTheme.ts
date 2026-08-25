@@ -5,6 +5,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   applyThemePalette,
   CUSTOM_THEMES_STORAGE_KEY,
+  DESKTOP_SYSTEM_THEME_ID,
   invalidateCustomThemes,
   canonicalThemePreference,
   getDesktopSystemTheme,
@@ -65,6 +66,61 @@ function readStoredThemeHalves(): ThemeHalves | null {
 
 function themeHalvesSignature(halves: ThemeHalves | null): string {
   return `${halves?.light ?? ""}|${halves?.dark ?? ""}`;
+}
+
+function readStoredThemeHalfIds(): ThemeHalves | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(THEME_HALVES_STORAGE_KEY);
+    if (!raw) return null;
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const record = value as Readonly<Record<string, unknown>>;
+    const halves: { light?: string; dark?: string } = {};
+    if (typeof record.light === "string") halves.light = record.light;
+    if (typeof record.dark === "string") halves.dark = record.dark;
+    return halves.light === undefined && halves.dark === undefined ? null : halves;
+  } catch {
+    return null;
+  }
+}
+
+function alignDesktopSystemThemeHalf(theme: DesktopSystemTheme | null): boolean {
+  if (theme === null || typeof window === "undefined") return false;
+  const current = readStoredThemeHalfIds();
+  if (
+    current === null ||
+    (current.light !== DESKTOP_SYSTEM_THEME_ID && current.dark !== DESKTOP_SYSTEM_THEME_ID)
+  ) {
+    return false;
+  }
+  const previousAppearance: ThemeAppearance =
+    current.light === DESKTOP_SYSTEM_THEME_ID ? "light" : "dark";
+  const displacedTheme = current[theme.appearance];
+  const next: { light?: string; dark?: string } = { ...current };
+  if (next.light === DESKTOP_SYSTEM_THEME_ID) delete next.light;
+  if (next.dark === DESKTOP_SYSTEM_THEME_ID) delete next.dark;
+  if (previousAppearance !== theme.appearance && displacedTheme !== undefined) {
+    next[previousAppearance] = displacedTheme;
+  }
+  next[theme.appearance] = DESKTOP_SYSTEM_THEME_ID;
+  if (themeHalvesSignature(current) === themeHalvesSignature(next)) return false;
+  try {
+    window.localStorage.setItem(THEME_HALVES_STORAGE_KEY, JSON.stringify(next));
+    return true;
+  } catch (cause) {
+    const error = new ThemeStorageError({
+      operation: "write",
+      storageKey: THEME_HALVES_STORAGE_KEY,
+      cause,
+    });
+    console.error(error.message, {
+      operation: error.operation,
+      storageKey: error.storageKey,
+      ...safeErrorLogAttributes(error),
+    });
+    return false;
+  }
 }
 const THEME_COLOR_META_NAME = "theme-color";
 const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data-dynamic-theme-color="true"]`;
@@ -385,6 +441,7 @@ export function syncDesktopTheme(
 
 // Apply immediately on module load to prevent flash
 if (typeof document !== "undefined" && typeof window !== "undefined") {
+  alignDesktopSystemThemeHalf(getDesktopSystemTheme());
   applyTheme(getStored());
 }
 
@@ -455,7 +512,9 @@ function handleStorageChange(e: StorageEvent) {
 }
 
 function handleDesktopSystemThemeChange(theme: DesktopSystemTheme | null) {
-  if (!setDesktopSystemTheme(theme)) return;
+  const themeChanged = setDesktopSystemTheme(theme);
+  const halfChanged = alignDesktopSystemThemeHalf(theme);
+  if (!themeChanged && !halfChanged) return;
   lastAppliedTheme = null;
   applyTheme(getStored(), true);
   emitChange();
@@ -474,7 +533,9 @@ function subscribe(listener: () => void): () => void {
     const removeSystemThemeListener = window.desktopBridge?.onSystemThemeChange?.(
       handleDesktopSystemThemeChange,
     );
-    if (refreshDesktopSystemTheme()) {
+    const desktopSystemThemeChanged = refreshDesktopSystemTheme();
+    const desktopSystemThemeHalfChanged = alignDesktopSystemThemeHalf(getDesktopSystemTheme());
+    if (desktopSystemThemeChanged || desktopSystemThemeHalfChanged) {
       lastAppliedTheme = null;
       applyTheme(getStored(), true);
       snapshotStale = true;

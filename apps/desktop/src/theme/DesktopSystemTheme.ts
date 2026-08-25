@@ -128,6 +128,13 @@ export class DesktopSystemTheme extends Context.Service<
   { readonly current: Effect.Effect<DesktopSystemThemeValue | null> }
 >()("@t3tools/desktop/theme/DesktopSystemTheme") {}
 
+export const desktopSystemThemeDirectoryExists = Effect.fn("desktop.systemTheme.directoryExists")(
+  function* (path: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
+  },
+);
+
 export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -150,7 +157,10 @@ export const make = Effect.gen(function* () {
     yield* electronWindow.sendAll(IpcChannels.SYSTEM_THEME_CHANGED_CHANNEL, next);
   });
 
-  if (input.platform === "linux" && (yield* fileSystem.exists(paths.currentDirectory))) {
+  if (
+    input.platform === "linux" &&
+    (yield* desktopSystemThemeDirectoryExists(paths.currentDirectory))
+  ) {
     yield* fileSystem.watch(paths.currentDirectory).pipe(
       Stream.debounce(WATCH_DEBOUNCE),
       Stream.runForEach(() => refresh.pipe(Effect.ignoreCause({ log: true }))),

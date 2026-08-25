@@ -206,7 +206,7 @@ describe("theme failure handling", () => {
 
   it("reads and subscribes to the optional desktop system palette", async () => {
     const initial = {
-      appearance: "dark" as const,
+      appearance: "light" as const,
       colors: {
         background: "#101010",
         foreground: "#f0f0f0",
@@ -222,10 +222,16 @@ describe("theme failure handling", () => {
     };
     const updated = {
       ...initial,
+      appearance: "dark" as const,
       colors: { ...initial.colors, background: "#202020" },
     };
-    let systemThemeListener: ((theme: typeof initial | null) => void) | undefined;
+    let systemThemeListener: ((theme: typeof initial | typeof updated | null) => void) | undefined;
     let removeSystemThemeListener: ReturnType<typeof vi.fn> | undefined;
+    const storage = createStorage();
+    storage.setItem(
+      "t3code:theme-halves:v1",
+      JSON.stringify({ light: "grove", dark: "desktop:system" }),
+    );
     vi.doMock("react", () => ({
       useCallback: <A>(callback: A) => callback,
       useEffect: () => undefined,
@@ -241,14 +247,16 @@ describe("theme failure handling", () => {
       addEventListener: () => undefined,
       desktopBridge: {
         getSystemTheme: () => initial,
-        onSystemThemeChange: (listener: (theme: typeof initial | null) => void) => {
+        onSystemThemeChange: (
+          listener: (theme: typeof initial | typeof updated | null) => void,
+        ) => {
           systemThemeListener = listener;
           removeSystemThemeListener = vi.fn();
           return removeSystemThemeListener;
         },
         setTheme: vi.fn().mockResolvedValue(undefined),
       },
-      localStorage: createStorage(),
+      localStorage: storage,
       matchMedia: () => ({
         matches: false,
         addEventListener: () => undefined,
@@ -259,9 +267,17 @@ describe("theme failure handling", () => {
 
     const { useTheme } = await import("./useTheme");
     expect(useTheme().desktopSystemTheme).toEqual(initial);
+    expect(JSON.parse(storage.getItem("t3code:theme-halves:v1") ?? "null")).toEqual({
+      light: "desktop:system",
+      dark: "grove",
+    });
 
     systemThemeListener?.(updated);
     expect(useTheme().desktopSystemTheme).toEqual(updated);
+    expect(JSON.parse(storage.getItem("t3code:theme-halves:v1") ?? "null")).toEqual({
+      light: "grove",
+      dark: "desktop:system",
+    });
     expect(removeSystemThemeListener).toBeDefined();
   });
 });
