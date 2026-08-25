@@ -12,10 +12,10 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildWslNodeEnvPreamble,
+  buildWslRuntimeInstallScript,
   buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
-  buildWslRuntimeInstallScript,
-  buildWslNodeEnvPreamble,
   DesktopWslDistroListError,
   formatMissingToolsReason,
   formatNodePtyProbeFailureReason,
@@ -496,25 +496,26 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
 
     const work = readField(result.stdout, "work");
     fixtures.push(work);
+    const archivePath = `${work}/wsl-runtime.tar.gz`;
+    const archiveSha = readField(result.stdout, "archiveSha");
+    // The script reads $HOME, and WSL does not inherit the parent process's
+    // environment, so the home override rides in the script itself.
+    const installScript = (archive = archivePath, sha = archiveSha, contentId = EXEC_CONTENT_ID) =>
+      [
+        `HOME=${sh(`${work}/home`)}`,
+        "export HOME",
+        buildWslRuntimeInstallScript(archive, EXEC_RUNTIME_ID, sha, contentId),
+      ].join("\n");
     return {
       work,
-      archivePath: `${work}/wsl-runtime.tar.gz`,
+      archivePath,
+      archiveSha,
+      runtimeParent: `${work}/home/.t3/runtime`,
+      runtimeRoot: `${work}/home/.t3/runtime/${EXEC_RUNTIME_ID}`,
       serverEntry: `${work}/home/.t3/runtime/${EXEC_RUNTIME_ID}/apps/server/dist/bin.mjs`,
-      // The script reads $HOME, and WSL does not inherit the parent process's
-      // environment, so the home override rides in the script itself.
-      install: () =>
-        runShell(
-          [
-            `HOME=${sh(`${work}/home`)}`,
-            "export HOME",
-            buildWslRuntimeInstallScript(
-              `${work}/wsl-runtime.tar.gz`,
-              EXEC_RUNTIME_ID,
-              readField(result.stdout, "archiveSha"),
-              EXEC_CONTENT_ID,
-            ),
-          ].join("\n"),
-        ),
+      installScript,
+      install: (archive?: string, sha?: string, contentId?: string) =>
+        runShell(installScript(archive, sha, contentId)),
     };
   };
 
@@ -561,6 +562,117 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     // server, fail to become ready, and do it again on every restart.
     expect(broken.status).not.toBe(0);
     expect(parseWslRuntimeRoot(broken.stdout)).toBeNull();
+  });
+
+  it("extracts once when two installs race for the same cache", () => {
+    const fixture = createFixture();
+    // A tar shim counts extractions and holds the critical section open long
+    // enough that the second install is certain to arrive while the first is
+    // still inside it. One extraction is the answer either way the runs
+    // interleave: whoever waits for the lock re-checks readiness before
+    // spending an extract, so a broken lock shows up as two.
+    const raced = runShell(
+      [
+        "set -eu",
+        `work=${sh(fixture.work)}`,
+        'mkdir -p "$work/bin"',
+        "real_tar=$(command -v tar)",
+        `printf '#!/bin/sh\\nprintf x >> "%s/tar-calls"\\nsleep 1\\nexec %s "$@"\\n' "$work" "$real_tar" > "$work/bin/tar"`,
+        'chmod +x "$work/bin/tar"',
+        ': > "$work/tar-calls"',
+        'PATH="$work/bin:$PATH"',
+        "export PATH",
+        `cat > "$work/install.sh" <<'T3CODE_INSTALL_SCRIPT'`,
+        fixture.installScript(),
+        "T3CODE_INSTALL_SCRIPT",
+        // Both racers run the same file, and neither file path contains the
+        // runtime root, so the script's own /proc scan cannot see them.
+        'sh "$work/install.sh" > "$work/first.out" 2>&1 &',
+        "first=$!",
+        'sh "$work/install.sh" > "$work/second.out" 2>&1 &',
+        "second=$!",
+        "if wait $first; then first_status=0; else first_status=$?; fi",
+        "if wait $second; then second_status=0; else second_status=$?; fi",
+        `printf 'firstStatus:%s\\n' "$first_status"`,
+        `printf 'secondStatus:%s\\n' "$second_status"`,
+        `printf 'extractions:%s\\n' "$(wc -c < "$work/tar-calls" | tr -d ' ')"`,
+        `printf 'firstRoot:%s\\n' "$(sed -n 's/^runtimeRoot://p' "$work/first.out")"`,
+        `printf 'secondRoot:%s\\n' "$(sed -n 's/^runtimeRoot://p' "$work/second.out")"`,
+      ].join("\n"),
+    );
+
+    expect(raced.status, raced.stderr).toBe(0);
+    expect(readField(raced.stdout, "firstStatus")).toBe("0");
+    expect(readField(raced.stdout, "secondStatus")).toBe("0");
+    expect(readField(raced.stdout, "extractions")).toBe("1");
+    expect(readField(raced.stdout, "firstRoot")).toBe(fixture.runtimeRoot);
+    expect(readField(raced.stdout, "secondRoot")).toBe(fixture.runtimeRoot);
+  });
+
+  it("leaves no half-built cache when extraction fails", () => {
+    const fixture = createFixture();
+    // Truncating the archive and re-recording its digest gets the install past
+    // the digest gate and into a tar that dies mid-stream, which is what a full
+    // disk or an interrupted write looks like from inside the distro.
+    const truncated = runShell(
+      [
+        "set -eu",
+        `work=${sh(fixture.work)}`,
+        'size=$(wc -c < "$work/wsl-runtime.tar.gz")',
+        'head -c $((size / 2)) "$work/wsl-runtime.tar.gz" > "$work/truncated.tar.gz"',
+        `printf 'sha:%s\\n' "$(sha256sum "$work/truncated.tar.gz" | cut -d ' ' -f 1)"`,
+      ].join("\n"),
+    );
+    expect(truncated.status, truncated.stderr).toBe(0);
+
+    const failed = fixture.install(
+      `${fixture.work}/truncated.tar.gz`,
+      readField(truncated.stdout, "sha"),
+    );
+
+    expect(failed.status).not.toBe(0);
+    expect(parseWslRuntimeRoot(failed.stdout)).toBeNull();
+    // A partial extract that survived under the cache name would be promoted by
+    // the next launch's readiness check; scratch that survived would sit there
+    // until the pruner's age sweep. Neither is left behind. Only directories
+    // are counted: the empty flock file stays on purpose, which is what keeps
+    // the lock from carrying stale state across a killed install.
+    const leftovers = runShell(
+      `set -eu\nfind ${sh(fixture.runtimeParent)} -mindepth 1 -maxdepth 1 -type d`,
+    );
+    expect(leftovers.stdout.trim()).toBe("");
+  });
+
+  // The archive and the identity recorded beside it can diverge — a partial
+  // download, or a rebuilt archive dropped next to an older sidecar. Either
+  // gate firing means the bytes never reach the cache under a name that claims
+  // to describe something else.
+  it("refuses an archive whose bytes do not match the digest recorded for it", () => {
+    const fixture = createFixture();
+
+    const refused = fixture.install(fixture.archivePath, "e".repeat(64));
+
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toContain("does not match its recorded SHA-256");
+    expect(parseWslRuntimeRoot(refused.stdout)).toBeNull();
+    const leftovers = runShell(
+      `set -eu\nfind ${sh(fixture.runtimeParent)} -mindepth 1 -maxdepth 1 -type d`,
+    );
+    expect(leftovers.stdout.trim()).toBe("");
+  });
+
+  it("refuses an archive whose content id does not name the cache it would fill", () => {
+    const fixture = createFixture();
+
+    const refused = fixture.install(fixture.archivePath, fixture.archiveSha, "f".repeat(64));
+
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toContain("does not match its recorded content id");
+    expect(parseWslRuntimeRoot(refused.stdout)).toBeNull();
+    const leftovers = runShell(
+      `set -eu\nfind ${sh(fixture.runtimeParent)} -mindepth 1 -maxdepth 1 -type d`,
+    );
+    expect(leftovers.stdout.trim()).toBe("");
   });
 });
 
