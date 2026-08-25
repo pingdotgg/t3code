@@ -107,7 +107,7 @@ it("escapes XML in host paths", () => {
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
   usePinnedLauncher = false,
-  installerPath: string | undefined = macInstallerPath,
+  installerPath = macInstallerPath,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -146,31 +146,33 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         };
       }),
   });
-  const service = yield* BootService.make({
-    baseDir,
-    logsDir: path.join(baseDir, "userdata", "logs"),
-    cliVersion: "1.2.3",
-    host: {
-      execPath: "/usr/bin/node",
-      ...(usePinnedLauncher ? {} : { launcherSourcePath: sourceLauncher }),
-    },
-  }).pipe(
-    Effect.provideService(ProcessRunner.ProcessRunner, runner),
-    Effect.provide(
-      Layer.mergeAll(
-        Layer.succeed(HostProcessPlatform, platform),
-        Layer.succeed(HostProcessUserId, 501),
-        Layer.succeed(HostProcessExecutablePath, "/usr/bin/node"),
-        Layer.succeed(HostProcessArguments, ["/usr/bin/node", path.join(home, "bin.mjs")]),
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({
-            env: { HOME: home, ...(installerPath === "" ? {} : { PATH: installerPath }) },
-          }),
+  const makeService = (environmentPath = installerPath) =>
+    BootService.make({
+      baseDir,
+      logsDir: path.join(baseDir, "userdata", "logs"),
+      cliVersion: "1.2.3",
+      host: {
+        execPath: "/usr/bin/node",
+        ...(usePinnedLauncher ? {} : { launcherSourcePath: sourceLauncher }),
+      },
+    }).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(HostProcessPlatform, platform),
+          Layer.succeed(HostProcessUserId, 501),
+          Layer.succeed(HostProcessExecutablePath, "/usr/bin/node"),
+          Layer.succeed(HostProcessArguments, ["/usr/bin/node", path.join(home, "bin.mjs")]),
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: { HOME: home, ...(environmentPath === "" ? {} : { PATH: environmentPath }) },
+            }),
+          ),
         ),
       ),
-    ),
-  );
-  return { service, fs, statePath, commands, timeouts, control };
+    );
+  const service = yield* makeService();
+  return { service, makeService, fs, statePath, commands, timeouts, control };
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
@@ -329,6 +331,34 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
         "    <key>PATH</key>\n    <string>/usr/bin:/opt/homebrew/bin:/usr/local/bin:/bin:/usr/sbin:/sbin</string>",
       );
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("keeps an installed launch agent current when the process PATH changes", () =>
+    Effect.gen(function* () {
+      const { service, makeService } = yield* makeHarness("darwin");
+      yield* service.install;
+
+      const restartedService = yield* makeService("/usr/local/bin:/usr/bin:/bin");
+      expect((yield* restartedService.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("drops PATH directories that cannot be represented in a launch agent plist", () =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness(
+        "darwin",
+        false,
+        "/opt/homebrew/bin:/Users/theo/\u0001invalid:/usr/bin",
+      );
+      const plan = yield* service.install;
+      const plist = yield* fs.readFileString(plan.unitPath);
+
+      expect(plist).toContain(
+        "    <key>PATH</key>\n    <string>/opt/homebrew/bin:/usr/bin</string>",
+      );
+      expect(plist).not.toContain("\u0001");
       expect((yield* service.status).current).toBe(true);
     }),
   );

@@ -459,8 +459,17 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
+  const xmlSafeInstallerPath = installerPath
+    .split(":")
+    .filter((directory) =>
+      Array.from(directory).every((character) => {
+        const code = character.charCodeAt(0);
+        return code >= 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
+      }),
+    )
+    .join(":");
   const environmentPath =
-    installerPath ||
+    xmlSafeInstallerPath ||
     Array.from(
       new Set([
         path.dirname(host.execPath),
@@ -697,11 +706,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         fs.readFileString(statePath).pipe(Effect.option),
       ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
+    const normalizeUnit = (contents: string) =>
+      detectedManager.kind === "launchd"
+        ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
+        : contents;
     return {
       supported: true,
       installed: true,
       current:
-        unit === detectedManager.render(plan) &&
+        normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
         launcherExists &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
