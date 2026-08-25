@@ -20,7 +20,7 @@ function MarkdownFrontmatterList({
 
         return (
           <View
-            key={`${item}:${occurrence}`}
+            key={JSON.stringify([item, occurrence])}
             className="max-w-full rounded-full border border-secondary-border bg-secondary px-2.5 py-1"
           >
             <NativeText className="font-t3-regular text-sm" style={{ color: textColor }}>
@@ -55,7 +55,7 @@ export function MarkdownFrontmatterTable({
             key={entry.key}
             className={index === 0 ? "flex-row" : "flex-row border-t border-border"}
           >
-            <View className="w-40 shrink-0 items-end justify-center border-r border-border bg-card px-3 py-2">
+            <View className="min-w-40 shrink-0 items-end justify-center border-r border-border bg-card px-3 py-2">
               <NativeText
                 numberOfLines={1}
                 className="font-t3-bold text-sm"

@@ -2365,6 +2365,7 @@ code {
   white-space: nowrap;
 }
 
+.chat-markdown tbody th,
 .chat-markdown tbody td {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
 }

@@ -1,5 +1,8 @@
 import type { MarkdownFrontmatterEntry } from "@t3tools/client-runtime/markdown-frontmatter";
 
+import { Badge } from "~/components/ui/badge";
+import { ScrollArea } from "~/components/ui/scroll-area";
+
 function MarkdownFrontmatterList({ items }: { readonly items: ReadonlyArray<string> }) {
   const occurrences = new Map<string, number>();
 
@@ -10,12 +13,9 @@ function MarkdownFrontmatterList({ items }: { readonly items: ReadonlyArray<stri
         occurrences.set(item, occurrence + 1);
 
         return (
-          <span
-            key={`${item}:${occurrence}`}
-            className="rounded-sm border border-border bg-muted/30 px-2.5 py-0.5"
-          >
+          <Badge key={JSON.stringify([item, occurrence])} variant="outline">
             {item}
-          </span>
+          </Badge>
         );
       })}
     </span>
@@ -28,18 +28,23 @@ export function MarkdownFrontmatterTable({
   readonly entries: ReadonlyArray<MarkdownFrontmatterEntry>;
 }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-sm text-foreground/80">
+    <ScrollArea
+      chainVerticalScroll
+      scrollFade
+      hideScrollbars
+      className="chat-markdown w-full max-w-full rounded-none"
+    >
+      <table>
         <tbody>
           {entries.map((entry) => (
             <tr key={entry.key}>
               <th
                 scope="row"
-                className="w-px whitespace-nowrap border border-border bg-muted/30 px-4 py-2 text-right align-top font-semibold text-foreground"
+                className="w-px whitespace-nowrap bg-muted/30 !text-right align-middle font-semibold text-foreground"
               >
                 {entry.key}
               </th>
-              <td className="border border-border px-4 py-2 align-top">
+              <td className="align-top text-foreground/80">
                 {entry.value.kind === "text" ? (
                   <span className="whitespace-pre-wrap">{entry.value.text}</span>
                 ) : entry.value.kind === "list" ? (
@@ -54,6 +59,6 @@ export function MarkdownFrontmatterTable({
           ))}
         </tbody>
       </table>
-    </div>
+    </ScrollArea>
   );
 }
