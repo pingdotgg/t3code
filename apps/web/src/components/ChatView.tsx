@@ -6188,6 +6188,7 @@ export default function ChatView(props: ChatViewProps) {
         sendCtx !== undefined &&
         !directAnnotation &&
         sendCtx.images.length === 0 &&
+        selectedProvider === "codex" &&
         parseCodexGoalCommand(promptRef.current) !== null
       ) {
         toastManager.add(

@@ -225,7 +225,6 @@ export function createThreadEnvironmentAtoms<R, E>(
       tag: WS_METHODS.codexGoalGet,
       scheduler,
       concurrency,
-      onSuccess: refreshCodexGoal,
     }),
     setCodexGoal: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:codex-goal:set",
