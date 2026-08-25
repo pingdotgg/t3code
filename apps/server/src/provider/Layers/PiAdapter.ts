@@ -218,8 +218,9 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
   const instanceId = options.instanceId ?? ProviderInstanceId.make(provider);
   const createClient = options.createClient ?? defaultCreateClient;
   const now = options.now ?? (() => new Date().toISOString());
-  let turnSequence = 0;
-  const nextTurnId = options.nextTurnId ?? (() => `${provider}-turn-${++turnSequence}`);
+  const randomUUIDv4 = crypto.randomUUIDv4.pipe(Effect.orDie);
+  const runtimeIdNamespace = yield* randomUUIDv4;
+  let runtimeIdSequence = 0;
   const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, PiSessionContext>();
 
@@ -440,7 +441,8 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         providerInstanceId: instanceId,
         threadId: input.threadId,
         now,
-        nextId: (prefix) => `${input.threadId}-${prefix}-${++turnSequence}`,
+        nextId: (prefix) =>
+          `${input.threadId}-${runtimeIdNamespace}-${prefix}-${++runtimeIdSequence}`,
       });
       const context: PiSessionContext = {
         session,
@@ -502,7 +504,11 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (
         issue: `Thread '${input.threadId}' already has an active turn.`,
       });
     }
-    const turnId = TurnId.make(nextTurnId());
+    let nextTurnId = options.nextTurnId?.();
+    if (nextTurnId === undefined) {
+      nextTurnId = `${provider}-turn-${yield* randomUUIDv4}`;
+    }
+    const turnId = TurnId.make(nextTurnId);
     const modelSelection =
       input.modelSelection?.instanceId === instanceId ? input.modelSelection : undefined;
     const selectedModel = modelSelection?.model;

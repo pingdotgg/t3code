@@ -51,6 +51,7 @@ const makeHarness = Effect.fn("makePiAdapterTestHarness")(function* (options?: {
   readonly binaryPath?: string;
   readonly skillFlag?: "--skill" | "--skills";
   readonly promptResponseData?: unknown;
+  readonly useDefaultIds?: boolean;
 }) {
   const provider = options?.provider ?? ProviderDriverKind.make("piAgent");
   const instanceId = options?.instanceId ?? INSTANCE_ID;
@@ -124,7 +125,7 @@ const makeHarness = Effect.fn("makePiAdapterTestHarness")(function* (options?: {
           return client;
         }),
       now: () => "2026-07-12T00:00:00.000Z",
-      nextTurnId: () => `turn-pi-${++turnSequence}`,
+      ...(options?.useDefaultIds ? {} : { nextTurnId: () => `turn-pi-${++turnSequence}` }),
       nativeEventLogger: {
         filePath: "memory://pi-native-events",
         write: (event, threadId) =>
@@ -218,6 +219,60 @@ describe("PiAdapter", () => {
           status: "ready",
         });
         expect(harness.factoryInputs[0]).toMatchObject({ binaryPath: "fake-omp" });
+      }),
+    ),
+  );
+
+  it.effect("keeps Pi runtime ids unique across adapter restarts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const omp = ProviderDriverKind.make("omp");
+        const ompInstance = ProviderInstanceId.make("omp");
+        const start = Effect.fn(function* () {
+          const harness = yield* makeHarness({
+            provider: omp,
+            providerName: "Oh My Pi",
+            instanceId: ompInstance,
+            useDefaultIds: true,
+          });
+          yield* harness.adapter.startSession({
+            threadId: THREAD_ID,
+            provider: omp,
+            providerInstanceId: ompInstance,
+            cwd: "/tmp/project",
+            runtimeMode: "full-access",
+          });
+          const turn = yield* harness.adapter.sendTurn({
+            threadId: THREAD_ID,
+            input: "Check ids",
+          });
+          yield* harness.emit({
+            type: "tool_execution_start",
+            toolCallId: "web-search-1",
+            toolName: "web_search",
+            args: { query: "weather" },
+          });
+          const events = [
+            ...(yield* harness.adapter.streamEvents.pipe(Stream.take(9), Stream.runCollect)),
+          ];
+          return { turn, events };
+        });
+
+        const first = yield* start();
+        const second = yield* start();
+
+        expect(first.turn.turnId).toMatch(/^omp-turn-[0-9a-f-]{36}$/u);
+        expect(second.turn.turnId).toMatch(/^omp-turn-[0-9a-f-]{36}$/u);
+        expect(second.turn.turnId).not.toBe(first.turn.turnId);
+        const firstEventIds = new Set(first.events.map((event) => event.eventId));
+        expect(second.events.every((event) => !firstEventIds.has(event.eventId))).toBe(true);
+        const itemIds = (events: typeof first.events) =>
+          events.flatMap((event) =>
+            event.type === "item.started" && event.itemId !== undefined ? [event.itemId] : [],
+          );
+        const firstItemIds = new Set(itemIds(first.events));
+        expect(firstItemIds.size).toBe(1);
+        expect(itemIds(second.events).every((itemId) => !firstItemIds.has(itemId))).toBe(true);
       }),
     ),
   );

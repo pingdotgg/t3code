@@ -376,6 +376,12 @@ export function deriveActiveWorkStartedAt(
   const runningTurnId = session?.status === "running" ? session.activeTurnId : null;
   if (runningTurnId !== null) {
     if (latestTurn?.turnId === runningTurnId) {
+      // Older Pi/OMP builds reused turn ids after a desktop restart. A
+      // completed row with the same id belongs to the old turn, so its start
+      // time must not make fresh work appear hours old.
+      if (latestTurn.completedAt !== null) {
+        return sendStartedAt ?? latestUserMessageAt ?? latestTurn.startedAt;
+      }
       return latestTurn.startedAt ?? sendStartedAt ?? latestUserMessageAt;
     }
     return sendStartedAt ?? latestUserMessageAt;

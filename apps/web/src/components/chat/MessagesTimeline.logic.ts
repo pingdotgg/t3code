@@ -810,7 +810,11 @@ export function deriveMessagesTimelineRows(input: {
     : [];
   const activeTurnHasVisibleContent = activeEntries.some((entry) => {
     if (entry.kind === "message") {
-      return entry.message.role === "assistant" && (entry.message.text?.trim().length ?? 0) > 0;
+      return (
+        entry.message.role === "assistant" &&
+        entry.message.phase !== "commentary" &&
+        (entry.message.text?.trim().length ?? 0) > 0
+      );
     }
     if (entry.kind === "work") {
       return (

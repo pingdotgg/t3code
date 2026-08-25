@@ -1310,6 +1310,94 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("keeps thinking visible after commentary until the next tool starts", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "assistant-commentary-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:05Z",
+          message: {
+            id: "assistant-commentary" as never,
+            role: "assistant",
+            text: "Planning weather search for Hangzhou",
+            phase: "commentary",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:05Z",
+            updatedAt: "2026-01-01T00:00:05Z",
+            streaming: false,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["working", "message"]);
+    expect(rows[0]).toMatchObject({ kind: "working", showThinking: true });
+  });
+
+  it("keeps the running tool visible after commentary", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "assistant-commentary-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:05Z",
+          message: {
+            id: "assistant-commentary" as never,
+            role: "assistant",
+            text: "Planning weather search for Hangzhou",
+            phase: "commentary",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:05Z",
+            updatedAt: "2026-01-01T00:00:05Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "web-search-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:06Z",
+          entry: {
+            id: "web-search",
+            createdAt: "2026-01-01T00:00:06Z",
+            turnId: "turn-1" as never,
+            label: "web_search started",
+            toolTitle: "web_search",
+            itemType: "web_search",
+            tone: "tool",
+            toolLifecycleStatus: "inProgress",
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-1" as never,
+        state: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["working", "message", "work-live"]);
+    expect(rows.at(-1)).toMatchObject({
+      kind: "work-live",
+      entry: { id: "web-search", toolLifecycleStatus: "inProgress" },
+    });
+  });
+
   it("keeps adjacent active tool calls in one replacing row", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

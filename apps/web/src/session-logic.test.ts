@@ -2053,7 +2053,7 @@ describe("deriveActiveWorkStartedAt", () => {
   it("prefers the in-flight turn start when the latest turn is not settled", () => {
     expect(
       deriveActiveWorkStartedAt(
-        latestTurn,
+        { ...latestTurn, completedAt: null },
         {
           status: "running",
           activeTurnId: TurnId.make("turn-1"),
@@ -2061,6 +2061,20 @@ describe("deriveActiveWorkStartedAt", () => {
         "2026-02-27T21:11:00.000Z",
       ),
     ).toBe("2026-02-27T21:10:00.000Z");
+  });
+
+  it("ignores a completed turn row whose id was reused by the running session", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        latestTurn,
+        {
+          status: "running",
+          activeTurnId: TurnId.make("turn-1"),
+        },
+        null,
+        "2026-02-27T21:11:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:11:00.000Z");
   });
 
   it("uses the new send start while the session is running a different turn", () => {
