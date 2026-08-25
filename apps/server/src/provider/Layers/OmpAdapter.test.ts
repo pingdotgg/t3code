@@ -215,6 +215,38 @@ describe("OMP multi-select elicitation", () => {
   });
 });
 
+describe("OMP duplicate choice titles", () => {
+  it("maps duplicate choice titles to their corresponding constants", () => {
+    const questions = ompElicitationQuestions({
+      mode: "form",
+      sessionId: "session-1",
+      message: "Choose a target",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          target: {
+            type: "string",
+            title: "Target",
+            oneOf: [
+              { const: "preview", title: "Default" },
+              { const: "production", title: "Default" },
+            ],
+          },
+        },
+        required: ["target"],
+      },
+    });
+
+    assert.deepStrictEqual(
+      questions[0]?.question.options.map((option) => option.label),
+      ["Default (preview)", "Default (production)"],
+    );
+    assert.deepStrictEqual(
+      buildOmpElicitationContent(questions, { target: "Default (production)" }),
+      { target: "production" },
+    );
+  });
+});
 describe("OMP permission mapping", () => {
   it("returns the option ID that OMP supplied for each decision", () => {
     const request = {
@@ -416,6 +448,7 @@ ompAdapterTestLayer("OmpAdapterLive", (it) => {
       assert.equal(replacement.status, "ready");
       const turnResult = yield* Fiber.join(turnFiber);
       assert.equal(turnResult._tag, "Failure");
+      assert.isTrue(yield* adapter.hasSession(threadId));
       yield* adapter.stopSession(threadId);
     }),
   );

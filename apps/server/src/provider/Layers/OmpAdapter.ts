@@ -249,11 +249,13 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
         );
       }).pipe(
         Effect.catchCause((cause) =>
-          Effect.logError("Failed to write an OMP native notification log.", {
-            cause: Cause.pretty(cause),
-            method,
-            threadId,
-          }),
+          Cause.hasInterrupts(cause)
+            ? Effect.interrupt
+            : Effect.logError("Failed to write an OMP native notification log.", {
+                cause: Cause.pretty(cause),
+                method,
+                threadId,
+              }),
         ),
       );
 
@@ -315,7 +317,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
           yield* Fiber.interrupt(ctx.exitFiber);
         }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
-        sessions.delete(ctx.threadId);
+        if (sessions.get(ctx.threadId) === ctx) sessions.delete(ctx.threadId);
         yield* offerRuntimeEvent({
           type: "session.exited",
           ...(yield* makeEventStamp()),
@@ -332,7 +334,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         if (ctx.notificationFiber) yield* Fiber.interrupt(ctx.notificationFiber);
-        sessions.delete(ctx.threadId);
+        if (sessions.get(ctx.threadId) === ctx) sessions.delete(ctx.threadId);
         const activeTurnId = ctx.activeTurnId ?? ctx.session.activeTurnId;
         const { activeTurnId: _activeTurnId, ...inactiveSession } = ctx.session;
         ctx.activeTurnId = undefined;
@@ -744,9 +746,11 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
                   }
                 }).pipe(
                   Effect.catchCause((cause) =>
-                    Effect.logError("Failed to process an OMP runtime notification.", {
-                      cause: Cause.pretty(cause),
-                    }),
+                    Cause.hasInterrupts(cause)
+                      ? Effect.interrupt
+                      : Effect.logError("Failed to process an OMP runtime notification.", {
+                          cause: Cause.pretty(cause),
+                        }),
                   ),
                 ),
               ),

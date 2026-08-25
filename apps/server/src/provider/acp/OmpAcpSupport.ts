@@ -221,13 +221,25 @@ function enumChoices(
     : schema.items.enum.map((value) => ({ value, label: value }));
 }
 
+function choiceDisplayLabel(
+  choices: ReadonlyArray<{ readonly value: string; readonly label: string }>,
+  choice: { readonly value: string; readonly label: string },
+): string {
+  const label = choice.label.trim() || choice.value;
+  const duplicateCount = choices.filter(
+    (candidate) => (candidate.label.trim() || candidate.value) === label,
+  ).length;
+  return duplicateCount > 1 ? `${label} (${choice.value})` : label;
+}
+
 function selectedChoiceValue(
   schema: EffectAcpSchema.ElicitationPropertySchema,
   answer: string,
 ): string | undefined {
   const normalized = answer.trim();
-  return enumChoices(schema).find(
-    (choice) => choice.value === normalized || choice.label === normalized,
+  const choices = enumChoices(schema);
+  return choices.find(
+    (choice) => choice.value === normalized || choiceDisplayLabel(choices, choice) === normalized,
   )?.value;
 }
 
@@ -246,10 +258,10 @@ export function ompElicitationQuestions(
             { label: "No", description: "Do not confirm this action." },
           ]
         : choices.length > 0
-          ? choices.map((choice) => ({
-              label: choice.label.trim() || choice.value,
-              description: choice.label.trim() || choice.value,
-            }))
+          ? choices.map((choice) => {
+              const label = choiceDisplayLabel(choices, choice);
+              return { label, description: label };
+            })
           : [CUSTOM_ANSWER_OPTION];
     const title = schema.title?.trim();
     const description = schema.description?.trim();
