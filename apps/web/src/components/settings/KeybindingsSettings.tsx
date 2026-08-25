@@ -34,6 +34,7 @@ import {
 
 import { isElectron } from "../../env";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
+import { formatShortcutLabel } from "../../keybindings";
 import { cn } from "../../lib/utils";
 import {
   primaryServerAvailableEditorsAtom,
@@ -818,7 +819,7 @@ function KeybindingKeyControl({
         <button
           type="button"
           onClick={() => setDraft({ isRecording: true })}
-          aria-label={`Edit shortcut for ${commandLabel(row.command)}`}
+          aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
           className="group inline-flex h-7 items-center gap-1.5 rounded-md border border-transparent px-1.5 outline-none transition-colors hover:border-border/70 hover:bg-background focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/24"
         >
           <KeybindingPill value={row.key} />
@@ -1175,13 +1176,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
   return (
     <SettingsRow
       className="rounded-none bg-muted/15"
-      title={
-        <NewKeybindingCommandSelect
-          draft={draft}
-          commandOptions={commandOptions}
-          className="w-56"
-        />
-      }
+      title="New keybinding"
       description={
         <span className="flex h-6 items-center gap-1.5">
           <span className="text-[12px] leading-none text-muted-foreground/70">When</span>
@@ -1190,6 +1185,11 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
       }
       control={
         <div className="flex flex-wrap items-center gap-2">
+          <NewKeybindingCommandSelect
+            draft={draft}
+            commandOptions={commandOptions}
+            className="w-56"
+          />
           <KeybindingConflictWarning labels={draft.conflictLabels} />
           <NewKeybindingKeyInput draft={draft} className="w-44" />
           <Button size="compact" disabled={isSaving || !draft.canSave} onClick={draft.save}>
