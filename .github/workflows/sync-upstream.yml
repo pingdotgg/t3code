@@ -1,0 +1,198 @@
+name: sync-upstream
+
+on:
+  schedule:
+    # Every 2 days at 00:00 UTC
+    - cron: "0 0 */2 * *"
+  workflow_dispatch:
+
+# Single sync at a time; don't cancel in-progress syncs
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+  id-token: write
+
+env:
+  UPSTREAM_REPOSITORY: pingdotgg/t3code
+  UPSTREAM_BRANCH: main
+  TARGET_BRANCH: main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+      - name: Add upstream remote
+        run: |
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          else
+            git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          fi
+          git fetch upstream "${UPSTREAM_BRANCH}"
+
+      - name: Check if sync needed
+        id: check
+        run: |
+          if git merge-base --is-ancestor "upstream/${UPSTREAM_BRANCH}" HEAD; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream already merged — nothing to do."
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "Upstream has new commits:"
+            git log --oneline HEAD.."upstream/${UPSTREAM_BRANCH}" | head -n 20
+          fi
+
+      - name: Attempt merge on sync branch
+        if: steps.check.outputs.needed == 'true'
+        id: merge
+        run: |
+          set +e
+          SYNC_BRANCH="sync/upstream-$(date +%Y%m%d-%H%M%S)"
+          echo "branch=${SYNC_BRANCH}" >> "$GITHUB_OUTPUT"
+          git checkout -b "${SYNC_BRANCH}"
+
+          git merge --no-edit "upstream/${UPSTREAM_BRANCH}"
+          status=$?
+
+          if [ $status -eq 0 ]; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+            echo "Auto-merge succeeded."
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "Auto-merge failed with conflicts — will delegate to opencode."
+            # Keep conflicted working tree for the AI step (don't abort)
+            git status --porcelain | head -n 30
+            git diff --name-only --diff-filter=U | head -n 30
+          fi
+          exit 0
+
+      - name: Push clean merge to target branch
+        if: steps.check.outputs.needed == 'true' && steps.merge.outputs.conflict == 'false'
+        env:
+          SYNC_BRANCH: ${{ steps.merge.outputs.branch }}
+        run: |
+          # Option 1: push sync branch and fast-forward target via PR-less direct push.
+          # Keeping a PR path would be safer if you want review; swap this block for `gh pr create` if needed.
+          git push origin "${SYNC_BRANCH}:${TARGET_BRANCH}"
+          echo "Pushed upstream merge directly to ${TARGET_BRANCH}."
+
+          # Optionally also push the sync branch for history
+          # git push origin "${SYNC_BRANCH}" || true
+
+      - name: Resolve conflicts with opencode
+        if: steps.check.outputs.needed == 'true' && steps.merge.outputs.conflict == 'true'
+        uses: anomalyco/opencode/github@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          META_MODEL_API_KEY: ${{ secrets.META_MODEL_API_KEY }}
+        with:
+          model: meta/muse-spark-1.2-contributor
+          use_github_token: true
+          prompt: |
+            Resolve git merge conflicts from an upstream sync (upstream/${{ env.UPSTREAM_BRANCH }} into ${{ env.TARGET_BRANCH }}).
+
+            Current branch is a sync branch with conflict markers (<<<<<<<, =======, >>>>>>>) in the working tree from `git merge --no-edit upstream/${{ env.UPSTREAM_BRANCH }}`.
+
+            Your tasks:
+            1. Find all conflicted files: `git diff --name-only --diff-filter=U` and files containing `<<<<<<<`.
+            2. For each conflict, understand BOTH sides:
+               - HEAD side = our fork's customizations (keep intentional fork changes such as fork-specific workflows, configs, or branding).
+               - upstream side = the canonical T3 Code changes (prefer upstream for core logic, providers, orchestration, and client code unless it would revert an intentional fork divergence).
+            3. Resolve each file to a correct merged state. Do not leave any conflict markers. Combine logic where both sides added code (e.g., imports, lists, dependencies). Preserve formatting and existing conventions.
+            4. After editing, run `git add -A` and verify no unmerged paths remain: `git ls-files --unmerged` should be empty and `grep -r "<<<<<<<" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.json" --include="*.yml" --include="*.yaml" --include="*.md" .` should return nothing.
+            5. Commit the resolution with message `chore: resolve upstream sync conflicts` if not already committed. Do not push yet — the workflow will create the PR.
+
+            Constraints:
+            - Keep the code auditable and minimal. Do not add new dependencies or bloat.
+            - Do not revert upstream fixes to keep local style.
+            - If a file was deleted on one side and modified on the other, keep the deletion unless the fork explicitly needs the file.
+
+      - name: Commit and push AI-resolved branch + open PR
+        if: steps.check.outputs.needed == 'true' && steps.merge.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SYNC_BRANCH: ${{ steps.merge.outputs.branch }}
+        run: |
+          set -e
+
+          # Opencode should have resolved and staged changes; if not, check status
+          if git ls-files --unmerged | grep -q .; then
+            echo "::error::Conflicts still present after opencode step:"
+            git ls-files --unmerged
+            grep -rn "<<<<<<<" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.json" --include="*.yml" --include="*.yaml" . | head -n 20 || true
+            exit 1
+          fi
+
+          # If opencode already committed, there will be no staged changes; otherwise commit now
+          if ! git diff --cached --quiet || ! git diff --quiet; then
+            git add -A
+            git commit -m "chore: resolve upstream sync conflicts" || true
+          fi
+
+          # Ensure we have something to push (branch may already be ahead)
+          if git diff --quiet "origin/${TARGET_BRANCH}" 2>/dev/null; then
+            # Compare sync branch tip to target — if identical, skip
+            :
+          fi
+
+          git push origin HEAD:"${SYNC_BRANCH}"
+
+          # Create PR if one doesn't already exist for this branch
+          if gh pr view "${SYNC_BRANCH}" --json number >/dev/null 2>&1; then
+            echo "PR already exists for ${SYNC_BRANCH}"
+            gh pr view "${SYNC_BRANCH}" --json url --jq .url
+          else
+            gh pr create \
+              --base "${TARGET_BRANCH}" \
+              --head "${SYNC_BRANCH}" \
+              --title "chore: sync upstream ${UPSTREAM_REPOSITORY} $(date +%Y-%m-%d)" \
+              --body "$(cat <<'EOF'
+          Automated upstream sync from `${{ env.UPSTREAM_REPOSITORY }}`:`${{ env.UPSTREAM_BRANCH }}`.
+
+          - Auto-merge failed — conflicts were resolved by opencode (model: \`meta/muse-spark-1.2-contributor\`, logic based on \`opencode-review.yml\`).
+          - Please review the resolution before merging. CI must pass.
+
+          Upstream commits:
+
+          EOF
+          )" \
+              --label "automated" 2>/dev/null || gh pr create \
+              --base "${TARGET_BRANCH}" \
+              --head "${SYNC_BRANCH}" \
+              --title "chore: sync upstream ${UPSTREAM_REPOSITORY} $(date +%Y-%m-%d)" \
+              --body "Automated upstream sync — conflicts auto-resolved by AI. Review required."
+
+            # Append upstream log to PR body
+            UPSTREAM_LOG="$(git log --oneline "origin/${TARGET_BRANCH}".."upstream/${UPSTREAM_BRANCH}" | head -n 30)"
+            if [ -n "${UPSTREAM_LOG}" ]; then
+              gh pr edit "${SYNC_BRANCH}" --body "$(gh pr view "${SYNC_BRANCH}" --json body --jq .body)
+
+          ---
+
+          <details><summary>Upstream commits in this sync</summary>
+
+          \`\`\`
+          ${UPSTREAM_LOG}
+          \`\`\`
+
+          </details>"
+            fi
+          fi
