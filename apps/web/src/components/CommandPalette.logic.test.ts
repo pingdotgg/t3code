@@ -91,6 +91,23 @@ describe("reduceCommandPaletteUiState", () => {
       mode: "command",
       openIntent: { kind: "new-thread-in" },
     });
+
+    const directoryIntent = {
+      kind: "select-directory",
+      environmentId: EnvironmentId.make("test-environment"),
+      initialPath: "/projects/current",
+      onSelect: vi.fn(async () => true),
+    } as const;
+    expect(
+      reduceCommandPaletteUiState(filesOpen, {
+        _tag: "OpenDirectoryPicker",
+        intent: directoryIntent,
+      }),
+    ).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: directoryIntent,
+    });
   });
 
   it("preserves the mode on close and resets it on open", () => {

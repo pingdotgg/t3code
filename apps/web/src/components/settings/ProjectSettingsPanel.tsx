@@ -25,7 +25,14 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  CopyIcon,
+  FolderIcon,
+  PlusIcon,
+  SettingsIcon,
+  Trash2Icon,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -36,6 +43,7 @@ import {
 } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
+import { openCommandPalette } from "../../commandPaletteBus";
 import { isElectron } from "../../env";
 import {
   useClientSettings,
@@ -84,6 +92,7 @@ import {
 } from "../projectScriptEditor";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import {
   Menu,
   MenuGroup,
@@ -253,7 +262,7 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
     if (!selected) return;
     lastSelectionRef.current = {
       key: selected.projectKey,
-      memberKeys: selected.memberProjects.map((member) => member.physicalProjectKey),
+      memberKeys: selected.memberProjects.map(memberKey),
     };
   }, [selected]);
 
@@ -264,7 +273,7 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
     const last = lastSelectionRef.current;
     if (last?.key !== projectKey) return;
     const successor = groups.find((group) =>
-      group.memberProjects.some((member) => last.memberKeys.includes(member.physicalProjectKey)),
+      group.memberProjects.some((member) => last.memberKeys.includes(memberKey(member))),
     );
     if (successor) {
       void navigate({
@@ -459,10 +468,42 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   );
 
   // ----- checkout selection and scripts -----
-  const [selectedCheckoutKey, setSelectedCheckoutKey] = useState(representative.physicalProjectKey);
+  const [selectedCheckoutKey, setSelectedCheckoutKey] = useState(memberKey(representative));
   const selectedCheckout =
-    group.memberProjects.find((member) => member.physicalProjectKey === selectedCheckoutKey) ??
+    group.memberProjects.find((member) => memberKey(member) === selectedCheckoutKey) ??
     representative;
+  const [isSavingPath, setIsSavingPath] = useState(false);
+  const [isEditingPath, setIsEditingPath] = useState(false);
+  const savingPathRef = useRef(false);
+  const setCheckoutPath = useCallback(
+    async (checkout: SidebarProjectGroupMember, nextWorkspaceRoot: string): Promise<boolean> => {
+      const workspaceRoot = nextWorkspaceRoot.trim();
+      if (!workspaceRoot) {
+        toastManager.add({ type: "warning", title: "Project path cannot be empty" });
+        return false;
+      }
+      if (workspaceRoot === checkout.workspaceRoot) return true;
+      if (savingPathRef.current) return false;
+
+      savingPathRef.current = true;
+      setIsSavingPath(true);
+      try {
+        const result = mapAtomCommandResult(
+          await updateProject({
+            environmentId: checkout.environmentId,
+            input: { projectId: checkout.id, workspaceRoot },
+          }),
+          () => undefined,
+        );
+        reportFailure("Failed to update checkout path", result);
+        return result._tag === "Success";
+      } finally {
+        savingPathRef.current = false;
+        setIsSavingPath(false);
+      }
+    },
+    [reportFailure, updateProject],
+  );
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
   );
@@ -914,7 +955,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           title="Checkout"
           headerAction={
             <Select
-              value={selectedCheckout.physicalProjectKey}
+              value={memberKey(selectedCheckout)}
               onValueChange={(value) => setSelectedCheckoutKey(String(value))}
             >
               <SelectTrigger className="max-w-64" aria-label="Selected checkout">
@@ -922,11 +963,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {group.memberProjects.map((member) => (
-                  <SelectItem
-                    key={member.physicalProjectKey}
-                    hideIndicator
-                    value={member.physicalProjectKey}
-                  >
+                  <SelectItem key={memberKey(member)} hideIndicator value={memberKey(member)}>
                     {member.environmentLabel ?? "This machine"} · {member.workspaceRoot}
                   </SelectItem>
                 ))}
@@ -934,37 +971,99 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             </Select>
           }
         >
-          <div className="px-3 py-2 sm:px-4">
-            <div className="flex min-w-0 items-center rounded-lg bg-muted/30 p-1 text-base text-muted-foreground sm:text-sm">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      aria-label="Copy checkout path"
-                      className="group flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                      type="button"
-                      onClick={() =>
-                        copyPathToClipboard(selectedCheckout.workspaceRoot, {
-                          path: selectedCheckout.workspaceRoot,
-                        })
+          <SettingsRow
+            title="Path"
+            description={
+              selectedCheckoutThreadCount === 1
+                ? "1 thread stays attached when this folder changes."
+                : `${selectedCheckoutThreadCount} threads stay attached when this folder changes.`
+            }
+            control={
+              <div className="flex w-full min-w-0 gap-1 sm:w-96">
+                <InputGroup className="group/path min-w-0 flex-1">
+                  <InputGroupInput
+                    key={`${memberKey(selectedCheckout)}:${selectedCheckout.workspaceRoot}`}
+                    aria-label={`Path for ${selectedCheckoutLabel}`}
+                    autoCapitalize="off"
+                    autoComplete="off"
+                    className="font-mono"
+                    defaultValue={selectedCheckout.workspaceRoot}
+                    disabled={isSavingPath}
+                    spellCheck={false}
+                    onFocus={() => setIsEditingPath(true)}
+                    onBlur={(event) => {
+                      setIsEditingPath(false);
+                      const input = event.currentTarget;
+                      void setCheckoutPath(selectedCheckout, input.value).then((saved) => {
+                        if (!saved) input.value = selectedCheckout.workspaceRoot;
+                      });
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.currentTarget.blur();
+                      } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        event.currentTarget.value = selectedCheckout.workspaceRoot;
+                        event.currentTarget.blur();
                       }
+                    }}
+                  />
+                  {!isEditingPath && !isSavingPath ? (
+                    <InputGroupAddon
+                      align="inline-end"
+                      className="pointer-events-none opacity-0 group-hover/path:pointer-events-auto group-hover/path:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100"
                     >
-                      <code className="min-w-0 flex-1 truncate font-mono">
-                        {selectedCheckout.workspaceRoot}
-                      </code>
-                      <CopyIcon className="size-4 shrink-0 opacity-60 group-hover:opacity-100" />
-                    </button>
-                  }
-                />
-                <TooltipPopup side="top">Copy path</TooltipPopup>
-              </Tooltip>
-              <div className="shrink-0 border-l border-border/60 px-2 tabular-nums">
-                {selectedCheckoutThreadCount === 1
-                  ? "1 thread"
-                  : `${selectedCheckoutThreadCount} threads`}
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              aria-label="Copy checkout path"
+                              size="icon-xs"
+                              type="button"
+                              variant="ghost"
+                              onClick={() =>
+                                copyPathToClipboard(selectedCheckout.workspaceRoot, {
+                                  path: selectedCheckout.workspaceRoot,
+                                })
+                              }
+                            >
+                              <CopyIcon />
+                            </Button>
+                          }
+                        />
+                        <TooltipPopup side="top">Copy path</TooltipPopup>
+                      </Tooltip>
+                    </InputGroupAddon>
+                  ) : null}
+                </InputGroup>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        aria-label="Choose checkout path"
+                        disabled={isSavingPath}
+                        size="icon-sm"
+                        type="button"
+                        variant="outline"
+                        onClick={() =>
+                          openCommandPalette({
+                            open: "select-directory",
+                            environmentId: selectedCheckout.environmentId,
+                            initialPath: selectedCheckout.workspaceRoot,
+                            onSelect: (path) => setCheckoutPath(selectedCheckout, path),
+                          })
+                        }
+                      >
+                        <FolderIcon className="size-4" />
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top">Choose folder</TooltipPopup>
+                </Tooltip>
               </div>
-            </div>
-          </div>
+            }
+          />
           <SettingsRow
             title="Project grouping"
             description="How this checkout joins project groups in the sidebar. Changing it can move you to a different project group."

@@ -477,6 +477,16 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
           openAddProject();
+        } else if (detail.open === "select-directory") {
+          dispatch({
+            _tag: "OpenDirectoryPicker",
+            intent: {
+              kind: "select-directory",
+              environmentId: detail.environmentId,
+              initialPath: detail.initialPath,
+              onSelect: detail.onSelect,
+            },
+          });
         } else {
           setOpen(true);
         }
@@ -638,6 +648,10 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectEnvironmentId, setAddProjectEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
+  const [directoryPicker, setDirectoryPicker] = useState<Extract<
+    CommandPaletteOpenIntent,
+    { kind: "select-directory" }
+  > | null>(null);
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
@@ -1180,6 +1194,7 @@ function OpenCommandPaletteDialog(props: {
     browseNavigation.invalidate();
     setAddProjectCloneFlow(null);
     if (viewStack.length <= 1) {
+      setDirectoryPicker(null);
       setAddProjectEnvironmentId(null);
     }
     setViewStack((previousViews) => previousViews.slice(0, -1));
@@ -1213,6 +1228,7 @@ function OpenCommandPaletteDialog(props: {
             ? prefetchBrowsePath(initialBrowsePath, environmentId, browseCwd)
             : Promise.resolve(),
         () => {
+          setDirectoryPicker(null);
           setAddProjectEnvironmentId(environmentId);
           setAddProjectCloneFlow(null);
           pushPaletteView(view);
@@ -1230,6 +1246,7 @@ function OpenCommandPaletteDialog(props: {
 
   const startAddProjectClone = useCallback(
     (environmentId: EnvironmentId, source: AddProjectRemoteSource): void => {
+      setDirectoryPicker(null);
       setAddProjectEnvironmentId(environmentId);
       setAddProjectCloneFlow({ step: "repository", environmentId, source });
       pushPaletteView({
@@ -1408,6 +1425,7 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const openAddProjectFlow = useCallback(() => {
+    setDirectoryPicker(null);
     if (addProjectEnvironmentOptions.length > 1 || defaultAddProjectEnvironmentId === null) {
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
@@ -1438,6 +1456,33 @@ function OpenCommandPaletteDialog(props: {
   ]);
 
   useLayoutEffect(() => {
+    if (openIntent?.kind !== "select-directory") {
+      return;
+    }
+
+    const intent = openIntent;
+    const initialQuery = ensureBrowseDirectoryPath(intent.initialPath);
+    const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
+    clearOpenIntent();
+    void browseNavigation.run(
+      () =>
+        initialBrowsePath.length > 0
+          ? prefetchBrowsePath(initialBrowsePath, intent.environmentId, null)
+          : Promise.resolve(),
+      () => {
+        setDirectoryPicker(intent);
+        setAddProjectEnvironmentId(intent.environmentId);
+        setAddProjectCloneFlow(null);
+        pushPaletteView({
+          addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+          groups: [],
+          initialQuery,
+        });
+      },
+    );
+  }, [browseNavigation, clearOpenIntent, openIntent, prefetchBrowsePath, pushPaletteView]);
+
+  useLayoutEffect(() => {
     if (openIntent?.kind !== "add-project") {
       return;
     }
@@ -1451,6 +1496,7 @@ function OpenCommandPaletteDialog(props: {
     }
     clearOpenIntent();
     browseNavigation.invalidate();
+    setDirectoryPicker(null);
     setAddProjectCloneFlow(null);
     setViewStack([]);
     setQuery("");
@@ -2025,11 +2071,11 @@ function OpenCommandPaletteDialog(props: {
     );
   }, [browseNavigation, browsePath.parentPath, pinnedCloneDirectoryName, prefetchBrowsePath]);
 
-  // Resolve the add-project path from browse data when available. When the
+  // Resolve the selected path from browse data when available. When the
   // query has a trailing separator (e.g. "~/projects/foo/"), parentPath is the
   // directory itself. Otherwise the user typed a partial leaf name, so we need
   // the exact browse entry's fullPath or fall back to the raw query.
-  const resolvedAddProjectPath = hasTrailingPathSeparator(query)
+  const resolvedBrowsePath = hasTrailingPathSeparator(query)
     ? (browseResult?.parentPath ?? query.trim())
     : (exactBrowseEntry?.fullPath ?? query.trim());
 
@@ -2078,11 +2124,16 @@ function OpenCommandPaletteDialog(props: {
     getCommandPaletteInputPlaceholder(paletteMode);
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
   const hasHighlightedBrowseItem = highlightedItemValue?.startsWith("browse:") ?? false;
+  const selectedDirectoryExists = hasTrailingPathSeparator(query)
+    ? browseResult !== undefined
+    : exactBrowseEntry !== null;
   const canSubmitBrowsePath =
     isBrowsing &&
     !relativePathNeedsActiveProject &&
-    canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
+    canCreateProjectInEnvironment(browseEnvironment?.connection.phase) &&
+    (directoryPicker === null || (!isBrowsePending && selectedDirectoryExists));
   const willCreateProjectPath =
+    directoryPicker === null &&
     canSubmitBrowsePath &&
     !isBrowsePending &&
     query.trim().length > 0 &&
@@ -2091,13 +2142,15 @@ function OpenCommandPaletteDialog(props: {
   const useMetaForMod = isMacPlatform(navigator.platform);
   const submitModifierLabel = useMetaForMod ? "\u2318" : "Ctrl";
   const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
-  const submitActionLabel = isCloneDestinationStep
-    ? willCreateProjectPath
-      ? "Create & Clone"
-      : "Clone"
-    : willCreateProjectPath
-      ? "Create & Add"
-      : "Add";
+  const submitActionLabel = directoryPicker
+    ? "Select"
+    : isCloneDestinationStep
+      ? willCreateProjectPath
+        ? "Create & Clone"
+        : "Clone"
+      : willCreateProjectPath
+        ? "Create & Add"
+        : "Add";
   const addShortcutLabel = hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter";
   const remoteProjectButtonLabel = addProjectCloneFlow
     ? addProjectCloneFlow.source === "url"
@@ -2151,6 +2204,31 @@ function OpenCommandPaletteDialog(props: {
     return useMetaForMod ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   }
 
+  const handleSelectDirectory = useCallback(
+    async (rawPath: string): Promise<void> => {
+      if (!directoryPicker) return;
+      const path = resolveProjectPathForDispatch(rawPath, currentProjectCwdForBrowse);
+      if (!path) return;
+
+      try {
+        const selected = await directoryPicker.onSelect(path);
+        if (selected) {
+          setDirectoryPicker(null);
+          setOpen(false);
+        }
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to select folder",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [currentProjectCwdForBrowse, directoryPicker, setOpen],
+  );
+
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
     const command = resolveShortcutCommand(event, keybindings, {
       platform: navigator.platform,
@@ -2181,10 +2259,12 @@ function OpenCommandPaletteDialog(props: {
 
     if (shouldSubmitBrowsePath) {
       event.preventDefault();
-      if (isCloneDestinationStep) {
-        void submitAddProjectCloneFlow(resolvedAddProjectPath);
+      if (directoryPicker) {
+        void handleSelectDirectory(resolvedBrowsePath);
+      } else if (isCloneDestinationStep) {
+        void submitAddProjectCloneFlow(resolvedBrowsePath);
       } else {
-        void handleAddProject(resolvedAddProjectPath);
+        void handleAddProject(resolvedBrowsePath);
       }
       return;
     }
@@ -2308,12 +2388,20 @@ function OpenCommandPaletteDialog(props: {
         );
         return;
       }
+      if (directoryPicker) {
+        await handleSelectDirectory(selection.linuxPath);
+        return;
+      }
       await handleAddProjectForEnvironment({
         environmentId: selection.environmentId,
         rawCwd: selection.linuxPath,
         platform: "Linux",
         currentProjectCwd: null,
       });
+      return;
+    }
+    if (directoryPicker) {
+      await handleSelectDirectory(pickedPath);
       return;
     }
     await handleAddProject(pickedPath);
@@ -2327,7 +2415,9 @@ function OpenCommandPaletteDialog(props: {
     fileManagerInitialPath,
     handleAddProject,
     handleAddProjectForEnvironment,
+    handleSelectDirectory,
     isPickingProjectFolder,
+    directoryPicker,
     primaryEnvironmentId,
   ]);
 
@@ -2372,11 +2462,7 @@ function OpenCommandPaletteDialog(props: {
                 hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
               )}
               aria-label={`${submitActionLabel} (${addShortcutLabel})`}
-              disabled={
-                !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
-                relativePathNeedsActiveProject ||
-                (isCloneDestinationStep && isRemoteProjectPending)
-              }
+              disabled={!canSubmitBrowsePath || (isCloneDestinationStep && isRemoteProjectPending)}
               onMouseDown={(event) => {
                 event.preventDefault();
               }}
@@ -2384,10 +2470,12 @@ function OpenCommandPaletteDialog(props: {
                 if (relativePathNeedsActiveProject) {
                   return;
                 }
-                if (isCloneDestinationStep) {
-                  void submitAddProjectCloneFlow(resolvedAddProjectPath);
+                if (directoryPicker) {
+                  void handleSelectDirectory(resolvedBrowsePath);
+                } else if (isCloneDestinationStep) {
+                  void submitAddProjectCloneFlow(resolvedBrowsePath);
                 } else {
-                  void handleAddProject(resolvedAddProjectPath);
+                  void handleAddProject(resolvedBrowsePath);
                 }
               }}
             />

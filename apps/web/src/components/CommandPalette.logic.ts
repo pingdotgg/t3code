@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   type FilesystemBrowseEntry,
   type KeybindingCommand,
   THREAD_JUMP_KEYBINDING_COMMANDS,
@@ -37,9 +38,14 @@ export function browseInputEndPaddingClass(input: {
  */
 export type SearchOverlayMode = "command" | "files" | "content";
 
-export interface CommandPaletteOpenIntent {
-  readonly kind: "add-project" | "new-thread-in";
-}
+export type CommandPaletteOpenIntent =
+  | { readonly kind: "add-project" | "new-thread-in" }
+  | {
+      readonly kind: "select-directory";
+      readonly environmentId: EnvironmentId;
+      readonly initialPath: string;
+      readonly onSelect: (path: string) => boolean | Promise<boolean>;
+    };
 
 export interface CommandPaletteUiState {
   readonly open: boolean;
@@ -52,6 +58,10 @@ export type CommandPaletteUiAction =
   | { readonly _tag: "ToggleMode"; readonly mode: SearchOverlayMode }
   | { readonly _tag: "OpenAddProject" }
   | { readonly _tag: "OpenNewThreadIn" }
+  | {
+      readonly _tag: "OpenDirectoryPicker";
+      readonly intent: Extract<CommandPaletteOpenIntent, { kind: "select-directory" }>;
+    }
   | { readonly _tag: "ClearOpenIntent" };
 
 export function reduceCommandPaletteUiState(
@@ -71,6 +81,8 @@ export function reduceCommandPaletteUiState(
       return { open: true, mode: "command", openIntent: { kind: "add-project" } };
     case "OpenNewThreadIn":
       return { open: true, mode: "command", openIntent: { kind: "new-thread-in" } };
+    case "OpenDirectoryPicker":
+      return { open: true, mode: "command", openIntent: action.intent };
     case "ClearOpenIntent":
       return state.openIntent ? { ...state, openIntent: null } : state;
   }

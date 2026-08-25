@@ -1,4 +1,17 @@
-# Customize a project icon
+# Project settings
+
+## Change a project folder
+
+To point an existing project at a different folder:
+
+1. Open **Settings** and select **Projects**.
+2. Select the project.
+3. Under **Checkout**, edit **Path** or use the folder picker.
+
+The folder must exist in the selected environment. Existing threads and project settings stay
+attached to the project.
+
+## Customize a project icon
 
 T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon
 paths, and icon links in project HTML files.
