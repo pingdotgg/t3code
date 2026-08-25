@@ -281,6 +281,146 @@ it.effect("rescans after an interrupted discovery instead of caching the interru
   );
 });
 
+function launchEditorAndCapture(input: {
+  readonly editor: "idea" | "clion" | "vscode" | "zed";
+  readonly cwd: string;
+  readonly projectRoot?: string;
+  readonly binaries: ReadonlyArray<string>;
+}) {
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    for (const binary of input.binaries) {
+      const binaryPath = path.join(binDir, binary);
+      yield* fileSystem.writeFileString(binaryPath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(binaryPath, 0o755);
+    }
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({
+        editor: input.editor,
+        cwd: input.cwd,
+        ...(input.projectRoot === undefined ? {} : { projectRoot: input.projectRoot }),
+      });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "linux",
+          env: { PATH: binDir },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    return spawned;
+  });
+}
+
+it.effect("intellij positioned file includes project root before --line", () =>
+  Effect.gen(function* () {
+    const spawned = yield* launchEditorAndCapture({
+      editor: "idea",
+      cwd: "/abs/worktree-b/src/File.java:168:4",
+      projectRoot: "/abs/worktree-b",
+      binaries: ["idea"],
+    });
+
+    assert.equal(spawned.command, "idea");
+    assert.deepEqual(spawned.args, [
+      "/abs/worktree-b",
+      "--line",
+      "168",
+      "--column",
+      "4",
+      "/abs/worktree-b/src/File.java",
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("clion positioned file includes project root and omits --column when absent", () =>
+  Effect.gen(function* () {
+    const spawned = yield* launchEditorAndCapture({
+      editor: "clion",
+      cwd: "/abs/worktree-b/src/main.cpp:42",
+      projectRoot: "/abs/worktree-b",
+      binaries: ["clion"],
+    });
+
+    assert.equal(spawned.command, "clion");
+    assert.deepEqual(spawned.args, [
+      "/abs/worktree-b",
+      "--line",
+      "42",
+      "/abs/worktree-b/src/main.cpp",
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("jetbrains positioned file without project root keeps the old arg shape", () =>
+  Effect.gen(function* () {
+    const spawned = yield* launchEditorAndCapture({
+      editor: "idea",
+      cwd: "/abs/worktree-b/src/File.java:168:4",
+      binaries: ["idea"],
+    });
+
+    assert.deepEqual(spawned.args, [
+      "--line",
+      "168",
+      "--column",
+      "4",
+      "/abs/worktree-b/src/File.java",
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("jetbrains unpositioned targets stay a single path argument", () =>
+  Effect.gen(function* () {
+    const spawned = yield* launchEditorAndCapture({
+      editor: "idea",
+      cwd: "/abs/worktree-b",
+      projectRoot: "/abs/worktree-b",
+      binaries: ["idea"],
+    });
+
+    assert.deepEqual(spawned.args, ["/abs/worktree-b"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("vscode goto launches stay --goto even when a project root is known", () =>
+  Effect.gen(function* () {
+    const spawned = yield* launchEditorAndCapture({
+      editor: "vscode",
+      cwd: "/abs/worktree-b/src/index.ts:12:4",
+      projectRoot: "/abs/worktree-b",
+      binaries: ["code"],
+    });
+
+    assert.equal(spawned.command, "code");
+    assert.deepEqual(spawned.args, ["--goto", "/abs/worktree-b/src/index.ts:12:4"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("zed direct-path launches stay a single path argument", () =>
+  Effect.gen(function* () {
+    const spawned = yield* launchEditorAndCapture({
+      editor: "zed",
+      cwd: "/abs/worktree-b/src/lib.rs:10:2",
+      projectRoot: "/abs/worktree-b",
+      binaries: ["zed"],
+    });
+
+    assert.equal(spawned.command, "zed");
+    assert.deepEqual(spawned.args, ["/abs/worktree-b/src/lib.rs:10:2"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("rejects unknown editors through the service API", () =>
   Effect.gen(function* () {
     const launcher = yield* ExternalLauncher.ExternalLauncher;
