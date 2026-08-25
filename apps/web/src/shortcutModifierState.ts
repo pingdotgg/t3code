@@ -36,14 +36,21 @@ export function useShortcutModifierState(): ShortcutModifierState {
     const onPointerDown = (event: PointerEvent) => {
       setState((current) => {
         const nextState = {
-          metaKey: current.metaKey && event.metaKey,
-          ctrlKey: current.ctrlKey && event.ctrlKey,
-          altKey: current.altKey && event.altKey,
-          shiftKey: current.shiftKey && event.shiftKey,
+          metaKey: event.metaKey,
+          ctrlKey: event.ctrlKey,
+          altKey: event.altKey,
+          shiftKey: event.shiftKey,
         };
 
         return areShortcutModifierStatesEqual(current, nextState) ? current : nextState;
       });
+    };
+    const onTextInput = () => {
+      setState((current) =>
+        current.metaKey || current.ctrlKey
+          ? { ...current, metaKey: false, ctrlKey: false }
+          : current,
+      );
     };
     const resetModifierState = () => {
       setState((current) =>
@@ -56,8 +63,8 @@ export function useShortcutModifierState(): ShortcutModifierState {
     window.addEventListener("keydown", onKeyboardEvent, true);
     window.addEventListener("keyup", onKeyboardEvent, true);
     window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("paste", resetModifierState, true);
-    window.addEventListener("input", resetModifierState, true);
+    window.addEventListener("paste", onTextInput, true);
+    window.addEventListener("input", onTextInput, true);
     window.addEventListener("blur", resetModifierState);
     window.addEventListener("focus", resetModifierState);
     document.addEventListener("visibilitychange", resetModifierState);
@@ -65,8 +72,8 @@ export function useShortcutModifierState(): ShortcutModifierState {
       window.removeEventListener("keydown", onKeyboardEvent, true);
       window.removeEventListener("keyup", onKeyboardEvent, true);
       window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("paste", resetModifierState, true);
-      window.removeEventListener("input", resetModifierState, true);
+      window.removeEventListener("paste", onTextInput, true);
+      window.removeEventListener("input", onTextInput, true);
       window.removeEventListener("blur", resetModifierState);
       window.removeEventListener("focus", resetModifierState);
       document.removeEventListener("visibilitychange", resetModifierState);
