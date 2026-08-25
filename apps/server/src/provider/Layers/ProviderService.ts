@@ -2050,42 +2050,50 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
+  const resolveCodexGoalRoute = Effect.fn("resolveCodexGoalRoute")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly operation: string;
+    readonly allowRecovery: boolean;
+  }) {
+    let routed = yield* resolveRoutableSession({
+      threadId: input.threadId,
+      operation: input.operation,
+      allowRecovery: false,
+    });
+    if (!routed.adapter.codexGoal) {
+      return yield* toValidationError(
+        input.operation,
+        `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
+      );
+    }
+    if (!routed.isActive && input.allowRecovery) {
+      routed = yield* resolveRoutableSession({ ...input, allowRecovery: true });
+    }
+    const goal = routed.adapter.codexGoal;
+    if (!goal) {
+      return yield* toValidationError(
+        input.operation,
+        `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
+      );
+    }
+    return { routed, goal } as const;
+  });
+
   const getCodexGoal: ProviderServiceMethod<"getCodexGoal"> = Effect.fn("getCodexGoal")(
     function* (threadId, options) {
-      let routed = yield* resolveRoutableSession({
+      const { routed, goal } = yield* resolveCodexGoalRoute({
         threadId,
         operation: "ProviderService.getCodexGoal",
-        allowRecovery: false,
+        allowRecovery: options?.allowRecovery !== false,
       });
-      let goal = routed.adapter.codexGoal;
-      if (!goal) {
-        return yield* toValidationError(
-          "ProviderService.getCodexGoal",
-          `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
-        );
-      }
       if (!routed.isActive) {
-        if (options?.allowRecovery === false) {
-          if (options.failIfInactive === true) {
-            return yield* toValidationError(
-              "ProviderService.getCodexGoal",
-              `Cannot read the native Codex Goal for inactive thread '${threadId}' without recovering its provider session.`,
-            );
-          }
-          return null;
-        }
-        routed = yield* resolveRoutableSession({
-          threadId,
-          operation: "ProviderService.getCodexGoal",
-          allowRecovery: true,
-        });
-        goal = routed.adapter.codexGoal;
-        if (!goal) {
+        if (options?.failIfInactive === true) {
           return yield* toValidationError(
             "ProviderService.getCodexGoal",
-            `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
+            `Cannot read the native Codex Goal for inactive thread '${threadId}' without recovering its provider session.`,
           );
         }
+        return null;
       }
       return yield* goal.get(routed.threadId);
     },
@@ -2093,64 +2101,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const setCodexGoal: ProviderServiceMethod<"setCodexGoal"> = Effect.fn("setCodexGoal")(
     function* (input) {
-      let routed = yield* resolveRoutableSession({
+      const { goal } = yield* resolveCodexGoalRoute({
         threadId: input.threadId,
         operation: "ProviderService.setCodexGoal",
-        allowRecovery: false,
+        allowRecovery: true,
       });
-      let goal = routed.adapter.codexGoal;
-      if (!goal) {
-        return yield* toValidationError(
-          "ProviderService.setCodexGoal",
-          `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
-        );
-      }
-      if (!routed.isActive) {
-        routed = yield* resolveRoutableSession({
-          threadId: input.threadId,
-          operation: "ProviderService.setCodexGoal",
-          allowRecovery: true,
-        });
-        goal = routed.adapter.codexGoal;
-        if (!goal) {
-          return yield* toValidationError(
-            "ProviderService.setCodexGoal",
-            `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
-          );
-        }
-      }
       return yield* goal.set(input);
     },
   );
 
   const clearCodexGoal: ProviderServiceMethod<"clearCodexGoal"> = Effect.fn("clearCodexGoal")(
     function* (threadId) {
-      let routed = yield* resolveRoutableSession({
+      const { routed, goal } = yield* resolveCodexGoalRoute({
         threadId,
         operation: "ProviderService.clearCodexGoal",
-        allowRecovery: false,
+        allowRecovery: true,
       });
-      let goal = routed.adapter.codexGoal;
-      if (!goal) {
-        return yield* toValidationError(
-          "ProviderService.clearCodexGoal",
-          `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
-        );
-      }
-      if (!routed.isActive) {
-        routed = yield* resolveRoutableSession({
-          threadId,
-          operation: "ProviderService.clearCodexGoal",
-          allowRecovery: true,
-        });
-        goal = routed.adapter.codexGoal;
-        if (!goal) {
-          return yield* toValidationError(
-            "ProviderService.clearCodexGoal",
-            `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
-          );
-        }
-      }
       return yield* goal.clear(routed.threadId);
     },
   );
