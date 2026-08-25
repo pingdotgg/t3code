@@ -102,8 +102,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     markdownFontSize?: number;
     codeFontSize?: number | null;
     codeWordBreak?: boolean;
-    userBubbleColor?: string;
-    userBubbleTextColor?: string;
+    userBubbleColor?: string | null;
+    userBubbleTextColor?: string | null;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
     projectGroupingEnabled?: boolean;
@@ -152,10 +152,15 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.codeFontSize = parsed.codeFontSize;
   }
   if (typeof parsed.codeWordBreak === "boolean") preferences.codeWordBreak = parsed.codeWordBreak;
+  // Explicit null (cleared back to theme/auto) must survive sanitizing, or the
+  // session's initial stored snapshot bleeds the old color back through the
+  // optimistic-merge in state/preferences until the next app restart.
   const userBubbleColor = normalizeUserBubbleColor(parsed.userBubbleColor);
   if (userBubbleColor !== null) preferences.userBubbleColor = userBubbleColor;
+  else if (parsed.userBubbleColor === null) preferences.userBubbleColor = null;
   const userBubbleTextColor = normalizeUserBubbleColor(parsed.userBubbleTextColor);
   if (userBubbleTextColor !== null) preferences.userBubbleTextColor = userBubbleTextColor;
+  else if (parsed.userBubbleTextColor === null) preferences.userBubbleTextColor = null;
   if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
     preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
       (account): account is string => typeof account === "string",
