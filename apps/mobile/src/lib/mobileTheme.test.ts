@@ -272,6 +272,17 @@ describe("mobile themes", () => {
     expect(overrides["--color-md-user-fence-text"]).toBe("#000000");
   });
 
+  it("keeps fenced code readable on custom bubbles", () => {
+    const base = getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "dark");
+    for (const bubble of ["#34c759", "#af52de", "#ff9500", "#ffe066", "#1c1c1e", "#808080"]) {
+      const overrides = createUserBubbleOverrides(base, bubble, null)!;
+      const fenceSurface = compositeOver(overrides["--color-md-user-fence-bg"]!, bubble);
+      expect(
+        contrastRatio(overrides["--color-md-user-fence-text"]!, fenceSurface),
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("prefers an explicit text color over the derived one", () => {
     const base = getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "light");
     const overrides = createUserBubbleOverrides(base, "#ffe066", "#ffffff")!;

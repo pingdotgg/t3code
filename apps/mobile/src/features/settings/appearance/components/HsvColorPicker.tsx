@@ -68,26 +68,22 @@ export function HsvColorPicker(props: {
     huePosition.value = hsv.h / 360;
   }, [brightness, hsv, huePosition, saturation]);
 
-  const latest = useRef({ hsv, onChange: props.onChange });
-  latest.current = { hsv, onChange: props.onChange };
+  const latest = useRef({ onChange: props.onChange });
+  latest.current = { onChange: props.onChange };
 
-  const commitPad = (s: number, v: number) => {
-    const next = quantize({ h: latest.current.hsv.h, s, v });
+  // Commits carry a full HSV snapshot taken from the shared values at gesture
+  // time, so a queued callback cannot mix stale state with newer selections.
+  const commitColor = (huePos: number, s: number, v: number) => {
+    const next = quantize({ h: huePos * 360, s, v });
     setHsv(next);
     latest.current.onChange(hsvToHex(next));
   };
-  const commitHue = (position: number) => {
-    const next = quantize({ ...latest.current.hsv, h: position * 360 });
-    setHsv(next);
-    latest.current.onChange(hsvToHex(next));
-  };
-  const commitPadRef = useRef(commitPad);
-  commitPadRef.current = commitPad;
-  const commitHueRef = useRef(commitHue);
-  commitHueRef.current = commitHue;
-
-  const runCommitPad = useMemo(() => (s: number, v: number) => commitPadRef.current(s, v), []);
-  const runCommitHue = useMemo(() => (position: number) => commitHueRef.current(position), []);
+  const commitRef = useRef(commitColor);
+  commitRef.current = commitColor;
+  const runCommit = useMemo(
+    () => (huePos: number, s: number, v: number) => commitRef.current(huePos, s, v),
+    [],
+  );
 
   const padGesture = useMemo(() => {
     const track = (x: number, y: number) => {
@@ -103,16 +99,16 @@ export function HsvColorPicker(props: {
       .minDistance(6)
       .onUpdate((event) => track(event.x, event.y))
       .onEnd(() => {
-        runOnJS(runCommitPad)(saturation.value, brightness.value);
+        runOnJS(runCommit)(huePosition.value, saturation.value, brightness.value);
       });
     const tap = Gesture.Tap()
       .enabled(!props.disabled)
       .onEnd((event) => {
         track(event.x, event.y);
-        runOnJS(runCommitPad)(saturation.value, brightness.value);
+        runOnJS(runCommit)(huePosition.value, saturation.value, brightness.value);
       });
     return Gesture.Race(pan, tap);
-  }, [brightness, padHeight, padWidth, props.disabled, runCommitPad, saturation]);
+  }, [brightness, huePosition, padHeight, padWidth, props.disabled, runCommit, saturation]);
 
   const hueGesture = useMemo(() => {
     const track = (x: number) => {
@@ -126,16 +122,16 @@ export function HsvColorPicker(props: {
       .failOffsetY([-12, 12])
       .onUpdate((event) => track(event.x))
       .onEnd(() => {
-        runOnJS(runCommitHue)(huePosition.value);
+        runOnJS(runCommit)(huePosition.value, saturation.value, brightness.value);
       });
     const tap = Gesture.Tap()
       .enabled(!props.disabled)
       .onEnd((event) => {
         track(event.x);
-        runOnJS(runCommitHue)(huePosition.value);
+        runOnJS(runCommit)(huePosition.value, saturation.value, brightness.value);
       });
     return Gesture.Race(pan, tap);
-  }, [hueWidth, huePosition, props.disabled, runCommitHue]);
+  }, [brightness, hueWidth, huePosition, props.disabled, runCommit, saturation]);
 
   const padThumbStyle = useAnimatedStyle(() => ({
     transform: [

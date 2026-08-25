@@ -288,6 +288,9 @@ export function createUserBubbleOverrides(
   const text =
     textColor ??
     (bubbleColor === null ? base["--color-user-bubble-foreground"] : readableForegroundFor(bubble));
+  // Fence surfaces shift the bubble away from the text's pole (dark text gets
+  // a lightening overlay and vice versa), so composited contrast only improves.
+  const fenceOverlay = readableForegroundFor(text);
   return {
     "--color-user-bubble": bubble,
     "--color-user-bubble-foreground": text,
@@ -298,6 +301,7 @@ export function createUserBubbleOverrides(
     ),
     "--color-md-user-code-bg": withAlpha(text, 0.18),
     "--color-md-user-code-text": text,
+    "--color-md-user-fence-bg": withAlpha(fenceOverlay, 0.22),
     "--color-md-user-fence-text": text,
   };
 }
