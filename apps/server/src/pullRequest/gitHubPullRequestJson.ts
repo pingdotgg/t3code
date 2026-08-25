@@ -1890,6 +1890,20 @@ function toCanWrite(viewerPermission: string | null | undefined): boolean {
   }
 }
 
+/**
+ * Whether the viewer's role is the one GitHub lets step over a protected branch. ADMIN alone:
+ * MAINTAIN can push and merge like any other writer and is refused by branch protection exactly
+ * as a writer is, so treating it as an override would offer a button the host always refuses.
+ *
+ * Nothing softer than an outright ADMIN counts, and an install that reports no permission counts
+ * as no. A repository whose administrators are themselves held to the rules — GitHub's "do not
+ * allow bypassing" setting — still answers ADMIN here, and refuses the merge; that refusal is the
+ * host's to give, and is carried back with its own words rather than guessed at from here.
+ */
+function toCanAdminister(viewerPermission: string | null | undefined): boolean {
+  return viewerPermission?.trim().toUpperCase() === "ADMIN";
+}
+
 export function decodeRepositoryAccessJson(
   raw: string,
 ): Result.Result<GitHubRepositoryAccess, DecodeFailure> {
@@ -2125,6 +2139,8 @@ export function buildReviewerRequestJson(
  */
 export interface GitHubViewerAccess {
   readonly canWrite: boolean;
+  /** The viewer is an administrator of the repository, which is what an override merge takes. */
+  readonly canAdminister: boolean;
   /** GitHub's own `viewerCanUpdate`, true for the author as well as for anyone with write. */
   readonly canUpdate: boolean;
   readonly didAuthor: boolean;
@@ -2171,6 +2187,7 @@ export function decodeViewerPermissionsJson(
   const repository = decoded.success.data.repository;
   return Result.succeed({
     canWrite: toCanWrite(repository.viewerPermission),
+    canAdminister: toCanAdminister(repository.viewerPermission),
     ...toPullRequestViewerFields(repository.pullRequest),
   });
 }

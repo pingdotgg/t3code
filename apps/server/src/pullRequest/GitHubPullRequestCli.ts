@@ -485,6 +485,8 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly action: PullRequestAction;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
+      /** Only read for `merge`, where it merges without waiting for the branch's requirements. */
+      readonly adminMerge?: boolean;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
 
     readonly commentOnPullRequest: (input: {
@@ -805,10 +807,14 @@ function actionArgs(
   action: PullRequestAction,
   mergeMethod: PullRequestMergeMethod | undefined,
   updateMethod: PullRequestUpdateMethod | undefined,
+  adminMerge: boolean | undefined,
 ): ReadonlyArray<string> {
   switch (action) {
+    // `--admin` merges without waiting for what the branch's protection asks for. Only here:
+    // `gh` refuses it alongside `--auto`, and an auto-merge that skipped the requirements it
+    // exists to wait for would be a standing instruction to do nothing.
     case "merge":
-      return ["merge", `--${mergeMethod ?? "merge"}`];
+      return ["merge", `--${mergeMethod ?? "merge"}`, ...(adminMerge === true ? ["--admin"] : [])];
     // `--auto` arms the same command instead of running it, and still needs the strategy: GitHub
     // stores the strategy with the standing instruction rather than choosing one at merge time.
     case "enable-auto-merge":
@@ -1701,6 +1707,7 @@ export const make = Effect.gen(function* () {
         input.action,
         input.mergeMethod,
         input.updateMethod,
+        input.adminMerge,
       );
       return github
         .execute({

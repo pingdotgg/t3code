@@ -92,12 +92,8 @@ export function pullRequestComposerTarget<T>(
 }
 
 /** Whether the open pull-request action group contains at least one action. */
-export function pullRequestActionMenuHasGroup(
-  showsDraftToggle: boolean,
-  showsAutoMerge: boolean,
-  showsMergeMethods: boolean,
-): boolean {
-  return showsDraftToggle || showsAutoMerge || showsMergeMethods;
+export function pullRequestActionMenuHasGroup(...shown: ReadonlyArray<boolean>): boolean {
+  return shown.some((entry) => entry);
 }
 
 export function isStackedPullRequestBase(
@@ -914,6 +910,33 @@ export function resolveBaseFreshness(detail: {
     behindBy: detail.behindBy ?? null,
     methods: offered.filter((method) => allowed.includes(method)),
   };
+}
+
+/**
+ * Whether the override merge is on offer: the host can step over what a branch requires, this
+ * viewer is one of the few it will do that for, and there is an ordinary merge for it to be an
+ * override of — a strategy nobody may use makes an override of nothing.
+ *
+ * Withheld on a draft and on a conflicting branch for the reasons the Merge button itself is:
+ * no standing resolves a collision, and a draft is not asking to be merged at all. What it does
+ * not look at is the checks, which is the whole point — this is the control for the moment the
+ * host says no.
+ */
+export function canAdminMergePullRequest(
+  detail: {
+    readonly state: PullRequestState;
+    readonly isDraft: boolean;
+    readonly mergeability: PullRequestMergeability;
+    readonly capabilities: { readonly adminMerge?: boolean | undefined };
+    readonly viewerPermissions: { readonly adminMerge?: boolean | undefined };
+  },
+  /** Whether an ordinary merge is offered here at all, which the panel has already worked out. */
+  mergeOnOffer: boolean,
+): boolean {
+  if (!mergeOnOffer) return false;
+  if (detail.state !== "open" || detail.isDraft) return false;
+  if (detail.mergeability === "conflicting") return false;
+  return detail.capabilities.adminMerge === true && detail.viewerPermissions.adminMerge === true;
 }
 
 /**

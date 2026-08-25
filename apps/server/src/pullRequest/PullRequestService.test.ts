@@ -1072,6 +1072,132 @@ it.effect("gates arming a merge for later exactly as it gates merging now", () =
   }),
 );
 
+it.effect("refuses an override merge to a host that has no override to ask for", () =>
+  Effect.gen(function* () {
+    let ran = false;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["merge"],
+            mergeMethods: ["merge", "squash"],
+            search: true,
+            reactions: true,
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: ["merge"],
+              comment: true,
+              resolve: true,
+              verdicts: ["comment"],
+              requestReviewers: true,
+              adminMerge: true,
+            }),
+          runAction: () => {
+            ran = true;
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    // Standing on the repository is not the question here. A host with no override would have
+    // merged the ordinary way and reported a bypass that never happened — and on a branch whose
+    // protection is what stopped the merge, it would not have merged at all.
+    const refused = yield* Effect.flip(
+      service.runAction({
+        ...reference,
+        action: "merge",
+        mergeMethod: "squash",
+        adminMerge: true,
+      }),
+    );
+    assert.strictEqual(refused._tag, "PullRequestOperationError");
+    assert.include(refused.message, "cannot merge past the requirements it enforces");
+    assert.isFalse(ran);
+
+    // The merge this host does have is still the reader's to make.
+    yield* service.runAction({ ...reference, action: "merge", mergeMethod: "squash" });
+    assert.isTrue(ran);
+  }),
+);
+
+it.effect("hands on an override merge only where the viewer administers the repository", () =>
+  Effect.gen(function* () {
+    let ranWith: { readonly action: string; readonly adminMerge?: boolean } | null = null;
+    let administers = false;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["merge"],
+            mergeMethods: ["merge", "squash"],
+            adminMerge: true,
+            search: true,
+            reactions: true,
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: ["merge"],
+              comment: true,
+              resolve: true,
+              verdicts: ["comment"],
+              requestReviewers: true,
+              ...(administers ? { adminMerge: true } : {}),
+            }),
+          runAction: (input) => {
+            ranWith = {
+              action: input.action,
+              ...(input.adminMerge === undefined ? {} : { adminMerge: input.adminMerge }),
+            };
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    // A writer asking for the bypass is told what it would take, rather than being handed the
+    // host's own refusal a moment later with nothing said about why.
+    const refused = yield* Effect.flip(
+      service.runAction({
+        ...reference,
+        action: "merge",
+        mergeMethod: "squash",
+        adminMerge: true,
+      }),
+    );
+    assert.strictEqual(refused._tag, "PullRequestOperationError");
+    assert.include(refused.message, "administrator access");
+    assert.strictEqual(ranWith, null);
+
+    // The permissions are read at the moment of the write, so the answer follows the role.
+    administers = true;
+    yield* service.runAction({
+      ...reference,
+      action: "merge",
+      mergeMethod: "squash",
+      adminMerge: true,
+    });
+    assert.deepStrictEqual(ranWith, { action: "merge", adminMerge: true });
+
+    // And an ordinary merge from the same administrator carries no override with it.
+    yield* service.runAction({ ...reference, action: "merge", mergeMethod: "squash" });
+    assert.deepStrictEqual(ranWith, { action: "merge" });
+  }),
+);
+
 it.effect("hands the host the strategy an armed merge was asked for", () =>
   Effect.gen(function* () {
     let ranWith: { readonly action: string; readonly mergeMethod?: string } | null = null;

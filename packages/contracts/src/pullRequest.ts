@@ -366,6 +366,13 @@ export const PullRequestCapabilities = Schema.Struct({
   /** Merge strategies the provider itself offers, before repository settings narrow them. */
   mergeMethods: Schema.Array(PullRequestMergeMethod),
   /**
+   * The host can merge past the requirements it would otherwise enforce — a protected branch, an
+   * approval nobody has given, a check still running — for a viewer whose standing allows it.
+   * Optional for the same reason as `updateMethods`: a server that says nothing about it cannot
+   * do it, which is what every server before this field was.
+   */
+  adminMerge: Schema.optional(Schema.Boolean),
+  /**
    * How this host can bring a stale branch up to date. Absent where it cannot at all, which is
    * every host that has not said otherwise — so a provider that says nothing offers nothing.
    */
@@ -421,6 +428,18 @@ export const PullRequestViewerPermissions = Schema.Struct({
    * Absent or empty means they may not, which is also what a host with no such action says.
    */
   updateMethods: Schema.optional(Schema.Array(PullRequestUpdateMethod)),
+  /**
+   * This viewer may merge past the requirements the host enforces, which is a stronger thing than
+   * being allowed to merge at all: on GitHub it is the repository's administrators and nobody
+   * else.
+   *
+   * The one permission here withheld rather than granted when the host says nothing. The granting
+   * default exists so a control is never hidden from somebody who could have used it, and it is
+   * the wrong default for this one: an override offered to a viewer who does not have it promises
+   * that branch protection will be stepped over, and the host answers that promise with the same
+   * refusal the ordinary merge already gave them.
+   */
+  adminMerge: Schema.optional(Schema.Boolean),
 });
 export type PullRequestViewerPermissions = typeof PullRequestViewerPermissions.Type;
 
@@ -811,6 +830,14 @@ export const PullRequestActionInput = Schema.Struct({
   mergeMethod: Schema.optional(PullRequestMergeMethod),
   /** Only read for `update-branch`, where absent means the host's own default. */
   updateMethod: Schema.optional(PullRequestUpdateMethod),
+  /**
+   * Merge past the requirements the host would otherwise enforce, which only a viewer the host
+   * calls an administrator may ask for. Only read for `merge`: an auto-merge exists to wait for
+   * exactly the requirements this steps over, so arming one that skipped them is a contradiction.
+   *
+   * Absent is the ordinary merge, which is what every request before this field asked for.
+   */
+  adminMerge: Schema.optional(Schema.Boolean),
 });
 export type PullRequestActionInput = typeof PullRequestActionInput.Type;
 

@@ -763,7 +763,7 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canUpdate: true, didAuthor: true });
+    ).toEqual({ canWrite: false, canUpdate: true, didAuthor: true, canAdminister: false });
   });
 
   it("says no to a passer-by on a repository they can only read", () => {
@@ -776,7 +776,26 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canUpdate: false, didAuthor: false });
+    ).toEqual({ canWrite: false, canUpdate: false, didAuthor: false, canAdminister: false });
+  });
+
+  it("calls an administrator one, and stops there", () => {
+    const administers = (permission: string) =>
+      expectSuccess(
+        decodeViewerPermissionsJson(
+          viewerJson({
+            viewerPermission: permission,
+            pullRequest: { viewerCanUpdate: true, viewerDidAuthor: false },
+          }),
+        ),
+      ).canAdminister;
+
+    expect(administers("ADMIN")).toBe(true);
+    // A maintainer pushes and merges like any other writer, and branch protection refuses them
+    // exactly as it refuses a writer. Reading MAINTAIN as an override would offer a bypass the
+    // host never grants.
+    expect(administers("MAINTAIN")).toBe(false);
+    expect(administers("WRITE")).toBe(false);
   });
 
   it("reads silence as permission, but not as authorship", () => {
@@ -787,6 +806,7 @@ describe("viewer permission decoding", () => {
       canWrite: false,
       canUpdate: true,
       didAuthor: false,
+      canAdminister: false,
     });
   });
 });

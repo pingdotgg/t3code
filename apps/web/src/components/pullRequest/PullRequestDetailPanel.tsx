@@ -34,6 +34,7 @@ import {
   PencilIcon,
   RefreshCwIcon,
   ServerIcon,
+  ShieldIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import {
@@ -105,6 +106,7 @@ import {
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildResolveConflictsPrompt,
+  canAdminMergePullRequest,
   handoffPrompt,
   handoffReviewComments,
   latestPullRequestReviewOutcomes,
@@ -199,6 +201,15 @@ const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
  */
 const UPDATE_BRANCH_REBASE_FAILURE_HINT =
   "The host refused it. A rebase stops at the first commit that does not apply cleanly; updating with a merge commit may still work.";
+
+/**
+ * Said instead of the merge hint when the override was the thing that was refused. Everything the
+ * ordinary hint offers to check has already been stepped over, so repeating it would send the
+ * reader after the checks they just chose to skip. What is left is the one rule an administrator
+ * does not outrank: a repository can be set to hold its administrators to its own protections.
+ */
+const ADMIN_MERGE_FAILURE_HINT =
+  "The host refused it even with administrator privileges. Check that this repository allows its rules to be bypassed, and that the branch is not conflicting.";
 
 const TABS: ReadonlyArray<{ value: DetailTab; label: string }> = [
   { value: "summary", label: "Summary" },
@@ -456,7 +467,7 @@ export function PullRequestDetailPanel({
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>("merge");
   const [confirmation, setConfirmation] = useState<{
     readonly open: boolean;
-    readonly action: "merge" | "close" | "enable-auto-merge";
+    readonly action: "merge" | "admin-merge" | "close" | "enable-auto-merge";
   }>({ open: false, action: "merge" });
   const confirmAction = confirmation.action;
   // Which handoff is preparing, keyed so a per-finding button can say "Preparing..." on itself
@@ -625,6 +636,8 @@ export function PullRequestDetailPanel({
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
+    /** Only sent when it is true: an explicit false would claim an override was considered. */
+    adminMerge?: boolean,
   ) => {
     if (pendingAction !== null) return;
     setPendingAction(action);
@@ -635,6 +648,7 @@ export function PullRequestDetailPanel({
         action,
         ...(method ? { mergeMethod: method } : {}),
         ...(updateMethod ? { updateMethod } : {}),
+        ...(adminMerge === true ? { adminMerge: true } : {}),
       },
     });
     setPendingAction(null);
@@ -649,7 +663,9 @@ export function PullRequestDetailPanel({
       const hint =
         updateMethod === "rebase"
           ? UPDATE_BRANCH_REBASE_FAILURE_HINT
-          : ACTION_FAILURE_HINTS[action];
+          : adminMerge === true
+            ? ADMIN_MERGE_FAILURE_HINT
+            : ACTION_FAILURE_HINTS[action];
       toastManager.add({
         type: "error",
         title: ACTION_FAILURE_LABELS[action],
@@ -1084,6 +1100,12 @@ export function PullRequestDetailPanel({
     !detail.isDraft &&
     !conflicting &&
     allowedMergeMethods.length > 1;
+  // The same merge, with the host told not to wait for what the branch requires. Offered beside
+  // the ordinary one rather than instead of it: the reader who wants the rules and the reader who
+  // has decided to step over them are the same person, and which one they are is today's answer.
+  const showsAdminMerge =
+    detail !== null &&
+    canAdminMergePullRequest(detail, can("merge") && allowedMergeMethods.length > 0);
   // The pull request number carries this state in the overview and the right-panel tab mirrors
   // it. The conflict action is separate from this state: an open pull request remains green.
   const statePresentation = detail
@@ -1405,6 +1427,25 @@ export function PullRequestDetailPanel({
                           Enable auto-merge
                         </MenuItem>
                       ) : null}
+                      {/* The same merge again, with the host told not to wait for what the
+                          branch requires. Its own item rather than a modifier welded to the
+                          Merge button: pressing the control you always press and getting a
+                          different promise is how a protected branch gets stepped over by
+                          somebody who did not mean to. */}
+                      {showsAdminMerge ? (
+                        <MenuItem
+                          disabled={actionPending}
+                          onClick={() => setConfirmation({ open: true, action: "admin-merge" })}
+                        >
+                          <ShieldIcon className="mt-0.5 size-3.5 shrink-0 self-start" />
+                          <span className="flex min-w-0 flex-col">
+                            <span>Merge as administrator</span>
+                            <span className="text-xs text-muted-foreground">
+                              Merges past the checks and approvals this branch requires.
+                            </span>
+                          </span>
+                        </MenuItem>
+                      ) : null}
                       {/* A preference for the merge action rather than a second action, so it
                           is a radio group here instead of a chevron welded to the Merge pill.
                           Hidden while conflicting: every method would fail. */}
@@ -1438,6 +1479,7 @@ export function PullRequestDetailPanel({
                       {pullRequestActionMenuHasGroup(
                         showsDraftToggle,
                         showsAutoMerge,
+                        showsAdminMerge,
                         showsMergeMethods,
                       ) ? (
                         <MenuSeparator />
@@ -1981,19 +2023,26 @@ export function PullRequestDetailPanel({
             <AlertDialogTitle>
               {confirmAction === "merge"
                 ? "Merge pull request?"
-                : confirmAction === "enable-auto-merge"
-                  ? "Enable auto-merge?"
-                  : "Close pull request?"}
+                : confirmAction === "admin-merge"
+                  ? "Merge past this branch's requirements?"
+                  : confirmAction === "enable-auto-merge"
+                    ? "Enable auto-merge?"
+                    : "Close pull request?"}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirmAction === "merge"
                 ? `This merges #${reference.number} using ${selectedMergeMethod}.`
-                : confirmAction === "enable-auto-merge"
-                  ? // The host merges this as soon as it considers the pull request ready, which
-                    // may be immediately — there is no telling from here whether anything is
-                    // still outstanding.
-                    `This merges #${reference.number} using ${selectedMergeMethod} as soon as the host considers it ready, which may be immediately.`
-                  : `This closes #${reference.number} without merging it.`}
+                : confirmAction === "admin-merge"
+                  ? // Said as what is being skipped rather than as the privilege being used: the
+                    // reader knows they are an administrator, and what they are deciding is
+                    // whether this change goes in without what the branch asks of everyone else.
+                    `This merges #${reference.number} using ${selectedMergeMethod} without waiting for the checks, approvals and protections this branch requires.`
+                  : confirmAction === "enable-auto-merge"
+                    ? // The host merges this as soon as it considers the pull request ready, which
+                      // may be immediately — there is no telling from here whether anything is
+                      // still outstanding.
+                      `This merges #${reference.number} using ${selectedMergeMethod} as soon as the host considers it ready, which may be immediately.`
+                    : `This closes #${reference.number} without merging it.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -2002,12 +2051,20 @@ export function PullRequestDetailPanel({
             </AlertDialogClose>
             <Button
               size="sm"
-              variant={confirmAction === "close" ? "destructive" : "default"}
+              // The override wears the same red as the close: both are the button on this page
+              // whose result nobody else asked for.
+              variant={
+                confirmAction === "close" || confirmAction === "admin-merge"
+                  ? "destructive"
+                  : "default"
+              }
               disabled={actionPending}
               onClick={() => {
                 const action = confirmAction;
                 setConfirmation((current) => ({ ...current, open: false }));
                 if (action === "merge") void perform("merge", selectedMergeMethod);
+                if (action === "admin-merge")
+                  void perform("merge", selectedMergeMethod, undefined, true);
                 if (action === "enable-auto-merge")
                   void perform("enable-auto-merge", selectedMergeMethod);
                 if (action === "close") void perform("close");
@@ -2015,9 +2072,11 @@ export function PullRequestDetailPanel({
             >
               {confirmAction === "merge"
                 ? selectedMergeMethodLabel
-                : confirmAction === "enable-auto-merge"
-                  ? "Enable auto-merge"
-                  : "Close"}
+                : confirmAction === "admin-merge"
+                  ? `${selectedMergeMethodLabel} as administrator`
+                  : confirmAction === "enable-auto-merge"
+                    ? "Enable auto-merge"
+                    : "Close"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

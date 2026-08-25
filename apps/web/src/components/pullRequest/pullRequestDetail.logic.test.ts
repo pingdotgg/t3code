@@ -23,6 +23,7 @@ import {
   newestPullRequestCommitAt,
   mergePullRequestThreadComments,
   orderPullRequestComments,
+  canAdminMergePullRequest,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestComposerTarget,
@@ -125,6 +126,41 @@ describe("review thread comment pages", () => {
 describe("pull request action menu", () => {
   it("keeps the group divider when auto-merge is the only action", () => {
     expect(pullRequestActionMenuHasGroup(false, true, false)).toBe(true);
+  });
+});
+
+describe("administrator merge", () => {
+  const detail = {
+    state: "open" as const,
+    isDraft: false,
+    mergeability: "mergeable" as const,
+    capabilities: { adminMerge: true },
+    viewerPermissions: { adminMerge: true },
+  };
+
+  it("offers the override where the host and the viewer both allow it", () => {
+    expect(canAdminMergePullRequest(detail, true)).toBe(true);
+  });
+
+  it("withholds it from a viewer the host does not call an administrator", () => {
+    expect(canAdminMergePullRequest({ ...detail, viewerPermissions: {} }, true)).toBe(false);
+  });
+
+  it("withholds it on a host that cannot merge past its own requirements", () => {
+    expect(canAdminMergePullRequest({ ...detail, capabilities: {} }, true)).toBe(false);
+  });
+
+  it("withholds it where there is no ordinary merge for it to be an override of", () => {
+    // A repository that allows no strategy this viewer may use: an override of nothing.
+    expect(canAdminMergePullRequest(detail, false)).toBe(false);
+  });
+
+  it("withholds it from a draft and from a conflicting branch", () => {
+    // No standing resolves a collision, and a draft is not asking to be merged at all. Failing
+    // checks are the one thing it does not look at, which is the whole point of the control.
+    expect(canAdminMergePullRequest({ ...detail, isDraft: true }, true)).toBe(false);
+    expect(canAdminMergePullRequest({ ...detail, mergeability: "conflicting" }, true)).toBe(false);
+    expect(canAdminMergePullRequest({ ...detail, state: "merged" }, true)).toBe(false);
   });
 });
 

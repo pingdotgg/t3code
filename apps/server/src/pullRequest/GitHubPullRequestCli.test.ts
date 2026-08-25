@@ -1089,6 +1089,47 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("adds the administrator override to the merge, and to nothing else", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "merge",
+        mergeMethod: "squash",
+        adminMerge: true,
+      });
+
+      expect(callAt(0).args).toEqual([
+        "pr",
+        "merge",
+        "7",
+        "--repo",
+        "github.com/acme/web",
+        "--squash",
+        "--admin",
+      ]);
+
+      // `gh` refuses `--admin` beside `--auto`, and an armed merge that skipped the requirements
+      // it exists to wait for would be a standing instruction to do nothing.
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "enable-auto-merge",
+        mergeMethod: "squash",
+        adminMerge: true,
+      });
+
+      expect(callAt(1).args).not.toContain("--admin");
+    }),
+  );
+
   it.effect("arms auto-merge with the same strategy a merge would have used", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(Effect.succeed(output("")));
@@ -2300,7 +2341,12 @@ layer("GitHubPullRequestCli.layer", (it) => {
         // One request, because both answers hang off the same repository object.
         assert.strictEqual(mockedExecute.mock.calls.length, 1);
         expect(callAt(0).args).toContain("number=7");
-        expect(access).toEqual({ canWrite: false, canUpdate: true, didAuthor: true });
+        expect(access).toEqual({
+          canWrite: false,
+          canUpdate: true,
+          didAuthor: true,
+          canAdminister: false,
+        });
       }),
   );
 
@@ -2463,7 +2509,12 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
 
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
-      expect(access).toEqual({ canWrite: false, canUpdate: true, didAuthor: true });
+      expect(access).toEqual({
+        canWrite: false,
+        canUpdate: true,
+        didAuthor: true,
+        canAdminister: false,
+      });
       yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
     }),
   );

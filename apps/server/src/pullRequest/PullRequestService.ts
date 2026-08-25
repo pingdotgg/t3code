@@ -194,6 +194,15 @@ const ACTION_ACCESS_REFUSALS: Record<PullRequestAction, string> = {
 };
 
 /**
+ * Why an override merge is refused, said as the standing it takes rather than as the merge that
+ * did not happen. Separate from the merge refusal above because it is said to a reader who may
+ * merge perfectly well: they asked for more than that, and being told to get write access they
+ * already have would read as the app not knowing who they are.
+ */
+const ADMIN_MERGE_ACCESS_REFUSAL =
+  "You need administrator access on this repository to merge past the requirements it enforces.";
+
+/**
  * Why asking for a review is refused, and why the menu behind it is too. Write access is what the
  * hosts that state anything about this want; the ones that state nothing grant it, so this
  * sentence is only ever the answer where a host said no.
@@ -1315,6 +1324,17 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
+        // An override a host has no notion of is refused rather than dropped: quietly merging
+        // the ordinary way would report success for a merge that asked to step over the branch's
+        // requirements and did not, and the pull request would still be sitting there.
+        if (input.adminMerge === true && project.api.capabilities.adminMerge !== true) {
+          return Effect.fail(
+            new PullRequestOperationError({
+              operation: "runAction",
+              detail: "This host cannot merge past the requirements it enforces.",
+            }),
+          );
+        }
         // The same for the way a stale branch is brought up to date: a host that only merges
         // must not be asked to rebase and left to pick something else.
         if (
@@ -1352,6 +1372,17 @@ export const make = Effect.gen(function* () {
                 }),
               );
             }
+            // Asked of the permissions read a moment ago rather than of what the page was told
+            // when it loaded, which is the whole reason this read happens on the write path: an
+            // administrator who has since been demoted must not still be handed `--admin`.
+            if (input.adminMerge === true && viewer.adminMerge !== true) {
+              return Effect.fail(
+                new PullRequestOperationError({
+                  operation: "runAction",
+                  detail: ADMIN_MERGE_ACCESS_REFUSAL,
+                }),
+              );
+            }
             return project.api
               .runAction({
                 cwd: project.project.workspaceRoot,
@@ -1361,6 +1392,7 @@ export const make = Effect.gen(function* () {
                 action: input.action,
                 ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
                 ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
+                ...(input.adminMerge === undefined ? {} : { adminMerge: input.adminMerge }),
               })
               .pipe(Effect.mapError(toPullRequestError("runAction")));
           }),

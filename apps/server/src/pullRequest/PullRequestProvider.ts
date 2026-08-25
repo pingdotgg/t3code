@@ -363,6 +363,11 @@ export interface PullRequestProviderApi {
       readonly mergeMethod?: PullRequestMergeMethod;
       /** Only meaningful for `update-branch`; absent takes the host's own default. */
       readonly updateMethod?: PullRequestUpdateMethod;
+      /**
+       * Only meaningful for `merge`, and only reaches a provider whose `capabilities.adminMerge`
+       * says it can: merge without waiting for the requirements the host would otherwise enforce.
+       */
+      readonly adminMerge?: boolean;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
 

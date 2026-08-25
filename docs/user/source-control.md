@@ -45,6 +45,17 @@ T3 Code works with the platforms your team already uses:
 - Command-click (Control-click on Windows and Linux) a pull request number in the sidebar to open it in your browser instead of in T3 Code
 - Check out a teammate's branch to review code locally
 
+**Merge when it's ready**
+
+- Merge, squash, or rebase from the review's own actions, with the strategies your repository
+  allows and no others
+- Turn on auto-merge and let the host land the change once its requirements are met
+- If you administer the repository on GitHub, **Merge as administrator** merges past the checks
+  and approvals the branch requires — the same override GitHub offers its administrators, without
+  leaving T3 Code. It asks you to confirm, and it never appears for anyone the host would refuse
+  it to. A repository set to hold its administrators to its own rules still says no, and passes
+  that answer back in its own words.
+
 **Fix what you wrote, in place**
 
 - Rewrite a pull request's title and description from the review itself, in Markdown, with a

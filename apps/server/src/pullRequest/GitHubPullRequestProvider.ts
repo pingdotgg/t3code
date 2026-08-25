@@ -30,6 +30,8 @@ const CAPABILITIES: PullRequestCapabilities = {
     "disable-auto-merge",
   ],
   mergeMethods: ["merge", "squash", "rebase"],
+  // `gh pr merge --admin` merges without waiting for what the branch's protection asks for.
+  adminMerge: true,
   updateMethods: ["merge", "rebase"],
   search: true,
   reactions: true,
@@ -59,6 +61,9 @@ const CAPABILITIES: PullRequestCapabilities = {
  * Asking somebody else for a review needs write access, which is the one thing here an author
  * cannot do on their own pull request: GitHub shows an outside contributor the reviewer control
  * and refuses the request behind it.
+ *
+ * Merging past what the branch's protection asks for is narrower than merging: administrators
+ * only, which is why it is a permission of its own rather than another entry in `actions`.
  */
 export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequestViewerPermissions {
   return {
@@ -79,6 +84,9 @@ export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequest
     verdicts: access.didAuthor ? (["comment"] as const) : CAPABILITIES.review.verdicts,
     requestReviewers: access.canWrite,
     ...(access.canUpdateBranch === true ? { updateMethods: CAPABILITIES.updateMethods } : {}),
+    // Said only when it is true. The field is withheld by default, so an administrator who is
+    // also somehow without write access is offered neither merge — which is the honest answer.
+    ...(access.canAdminister && access.canWrite ? { adminMerge: true } : {}),
   };
 }
 
@@ -424,6 +432,7 @@ export const make = Effect.gen(function* () {
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
+          ...(input.adminMerge === undefined ? {} : { adminMerge: input.adminMerge }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
 
