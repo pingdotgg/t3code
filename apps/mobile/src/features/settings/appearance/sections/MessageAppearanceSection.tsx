@@ -162,7 +162,6 @@ function ColorSwatchRow(props: {
           autoCorrect={false}
           defaultValue={props.value ?? ""}
           key={props.value}
-          maxLength={7}
           onEndEditing={(event) => commitCustom(event.nativeEvent.text)}
           onSubmitEditing={(event) => commitCustom(event.nativeEvent.text)}
           placeholder="#4F46E5"
