@@ -16,6 +16,7 @@ import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
+import { Route as SettingsRepositoriesRouteImport } from './routes/settings.repositories'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsIntegrationsRouteImport } from './routes/settings.integrations'
@@ -28,6 +29,8 @@ import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$proje
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatReportsRouteImport } from './routes/_chat.reports'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
+import { Route as ChatInboxRouteImport } from './routes/_chat.inbox'
+import { Route as ChatDoneRouteImport } from './routes/_chat.done'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -63,6 +66,11 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
 const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   id: '/source-control',
   path: '/source-control',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsRepositoriesRoute = SettingsRepositoriesRouteImport.update({
+  id: '/repositories',
+  path: '/repositories',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
@@ -125,6 +133,16 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatInboxRoute = ChatInboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatDoneRoute = ChatDoneRouteImport.update({
+  id: '/done',
+  path: '/done',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -143,6 +161,8 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/done': typeof ChatDoneRoute
+  '/inbox': typeof ChatInboxRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/reports': typeof ChatReportsRoute
   '/connect/callback': typeof ConnectCallbackRoute
@@ -155,6 +175,7 @@ export interface FileRoutesByFullPath {
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/repositories': typeof SettingsRepositoriesRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -164,6 +185,8 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/done': typeof ChatDoneRoute
+  '/inbox': typeof ChatInboxRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/reports': typeof ChatReportsRoute
   '/connect/callback': typeof ConnectCallbackRoute
@@ -176,6 +199,7 @@ export interface FileRoutesByTo {
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/repositories': typeof SettingsRepositoriesRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -188,6 +212,8 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
+  '/_chat/done': typeof ChatDoneRoute
+  '/_chat/inbox': typeof ChatInboxRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/reports': typeof ChatReportsRoute
   '/connect_/callback': typeof ConnectCallbackRoute
@@ -200,6 +226,7 @@ export interface FileRoutesById {
   '/settings/integrations': typeof SettingsIntegrationsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/settings/repositories': typeof SettingsRepositoriesRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -213,6 +240,8 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/done'
+    | '/inbox'
     | '/pull-requests'
     | '/reports'
     | '/connect/callback'
@@ -225,6 +254,7 @@ export interface FileRouteTypes {
     | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/providers'
+    | '/settings/repositories'
     | '/settings/source-control'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -234,6 +264,8 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/done'
+    | '/inbox'
     | '/pull-requests'
     | '/reports'
     | '/connect/callback'
@@ -246,6 +278,7 @@ export interface FileRouteTypes {
     | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/providers'
+    | '/settings/repositories'
     | '/settings/source-control'
     | '/'
     | '/$environmentId/$threadId'
@@ -257,6 +290,8 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/usage'
+    | '/_chat/done'
+    | '/_chat/inbox'
     | '/_chat/pull-requests'
     | '/_chat/reports'
     | '/connect_/callback'
@@ -269,6 +304,7 @@ export interface FileRouteTypes {
     | '/settings/integrations'
     | '/settings/keybindings'
     | '/settings/providers'
+    | '/settings/repositories'
     | '/settings/source-control'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
@@ -334,6 +370,13 @@ declare module '@tanstack/react-router' {
       path: '/source-control'
       fullPath: '/settings/source-control'
       preLoaderRoute: typeof SettingsSourceControlRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/repositories': {
+      id: '/settings/repositories'
+      path: '/repositories'
+      fullPath: '/settings/repositories'
+      preLoaderRoute: typeof SettingsRepositoriesRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/providers': {
@@ -420,6 +463,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/inbox': {
+      id: '/_chat/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof ChatInboxRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/done': {
+      id: '/_chat/done'
+      path: '/done'
+      fullPath: '/done'
+      preLoaderRoute: typeof ChatDoneRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -438,6 +495,8 @@ declare module '@tanstack/react-router' {
 }
 
 interface ChatRouteChildren {
+  ChatDoneRoute: typeof ChatDoneRoute
+  ChatInboxRoute: typeof ChatInboxRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatReportsRoute: typeof ChatReportsRoute
   ChatIndexRoute: typeof ChatIndexRoute
@@ -446,6 +505,8 @@ interface ChatRouteChildren {
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
+  ChatDoneRoute: ChatDoneRoute,
+  ChatInboxRoute: ChatInboxRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatReportsRoute: ChatReportsRoute,
   ChatIndexRoute: ChatIndexRoute,
@@ -464,6 +525,7 @@ interface SettingsRouteChildren {
   SettingsIntegrationsRoute: typeof SettingsIntegrationsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
+  SettingsRepositoriesRoute: typeof SettingsRepositoriesRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
 }
 
@@ -476,6 +538,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsIntegrationsRoute: SettingsIntegrationsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
+  SettingsRepositoriesRoute: SettingsRepositoriesRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
 }
 

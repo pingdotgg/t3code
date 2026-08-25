@@ -17,8 +17,8 @@ function ChatIndexRouteView() {
     return <HostedStaticOnboardingState />;
   }
 
-  // Reports are the top-level object, so an empty index lands there.
-  return <Navigate to="/reports" replace />;
+  // The inbox is the app's home: reports are the only top-level object.
+  return <Navigate to="/inbox" replace />;
 }
 
 export const Route = createFileRoute("/_chat/")({

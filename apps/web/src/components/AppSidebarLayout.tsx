@@ -15,8 +15,8 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
+import { InboxRail } from "./InboxRail";
 import LegacyThreadSidebar from "./LegacySidebar";
-import ReportsSidebar from "./ReportsSidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import {
@@ -208,38 +208,44 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     };
   }, [navigate, pathname]);
 
+  // The icon rail is the default chrome. The wide sidebar stays for settings
+  // navigation and for the legacy project tree.
+  const showWideSidebar = isOnSettings || legacySidebarEnabled;
+
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
       <ProjectProjectionRetention />
-      <Sidebar
-        side="left"
-        collapsible="offcanvas"
-        data-app-sidebar=""
-        className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
-        resizable={{
-          maxWidth: sidebarMaximumWidth,
-          minWidth: THREAD_SIDEBAR_MIN_WIDTH,
-          shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-            nextWidth <= currentWidth ||
-            wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-          storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-          onResize: setSidebarWidth,
-        }}
-      >
-        {isOnSettings ? (
-          <>
-            <SidebarChromeHeader isElectron={isElectron} />
-            <SettingsSidebarNav pathname={pathname} />
-          </>
-        ) : legacySidebarEnabled ? (
-          <LegacyThreadSidebar />
-        ) : (
-          <ReportsSidebar />
-        )}
-        <SidebarRail onDoubleClick={resetSidebarWidth} />
-      </Sidebar>
+      {showWideSidebar ? (
+        <Sidebar
+          side="left"
+          collapsible="offcanvas"
+          data-app-sidebar=""
+          className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+          resizable={{
+            maxWidth: sidebarMaximumWidth,
+            minWidth: THREAD_SIDEBAR_MIN_WIDTH,
+            shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+              nextWidth <= currentWidth ||
+              wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+            storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+            onResize: setSidebarWidth,
+          }}
+        >
+          {isOnSettings ? (
+            <>
+              <SidebarChromeHeader isElectron={isElectron} />
+              <SettingsSidebarNav pathname={pathname} />
+            </>
+          ) : (
+            <LegacyThreadSidebar />
+          )}
+          <SidebarRail onDoubleClick={resetSidebarWidth} />
+        </Sidebar>
+      ) : (
+        <InboxRail />
+      )}
       {children}
-      <SidebarControl />
+      {showWideSidebar ? <SidebarControl /> : null}
     </SidebarProvider>
   );
 }
