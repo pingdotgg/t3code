@@ -24,10 +24,16 @@ vi.mock("../state/session", async (importOriginal) => ({
   usePreparedConnection: () => ({ _tag: "Loading" }),
 }));
 vi.mock("../state/entities", () => ({
+  readThreadShell: () => null,
   useActiveEnvironmentId: () => EnvironmentId.make("env-windows"),
+  useProjects: () => [],
 }));
 vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => vi.fn() }));
-vi.mock("~/lib/openPullRequestLink", () => ({ useOpenChangeRequestLink: () => vi.fn() }));
+vi.mock("~/lib/openPullRequestLink", () => ({
+  findProjectForChangeRequest: () => undefined,
+  parseChangeRequestUrl: () => null,
+  useOpenChangeRequestLink: () => vi.fn(),
+}));
 
 import ChatMarkdown from "./ChatMarkdown";
 
