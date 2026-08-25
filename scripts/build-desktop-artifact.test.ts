@@ -111,6 +111,9 @@ type WslRuntimeTreeFixture = Record<
   string,
   | { readonly kind: "file"; readonly contents: string; readonly mode: number }
   | { readonly kind: "link"; readonly target: string }
+  // Only needed where a directory's own mode is the subject; every other
+  // directory is implied by the paths below it and reports 0o755.
+  | { readonly kind: "directory"; readonly mode: number }
 >;
 
 const FIXTURE_ROOT = "/wsl-runtime-fixture";
@@ -150,7 +153,7 @@ const wslRuntimeTreeFixtureLayer = (
     let current = relative;
     for (let hops = 0; hops < 8; hops += 1) {
       const entry = tree[current];
-      if (entry === undefined) return null;
+      if (entry === undefined || entry.kind === "directory") return null;
       if (entry.kind === "file") return entry;
       const segments = current.split("/").slice(0, -1);
       for (const segment of entry.target.split("/")) {
@@ -188,6 +191,10 @@ const wslRuntimeTreeFixtureLayer = (
       if (relative === null) return missing("stat", candidate);
       const target = followLinks(relative);
       if (target !== null) return Effect.succeed(makeInfo("File", target.mode));
+      const described = tree[relative];
+      if (described?.kind === "directory") {
+        return Effect.succeed(makeInfo("Directory", described.mode));
+      }
       return Object.keys(tree).some((key) => key.startsWith(`${relative}/`))
         ? Effect.succeed(makeInfo("Directory", 0o755))
         : missing("stat", candidate);
@@ -215,6 +222,7 @@ const legacyWslRuntimeContentId = (tree: WslRuntimeTreeFixture) => {
     const entry = tree[key];
     if (entry === undefined) throw new Error(`fixture has no entry at ${key}`);
     if (entry.kind === "file") return entry.contents;
+    if (entry.kind === "directory") throw new Error(`fixture links at ${key} point at a directory`);
     const segments = key.split("/").slice(0, -1);
     for (const segment of entry.target.split("/")) {
       if (segment === "..") segments.pop();
@@ -224,21 +232,24 @@ const legacyWslRuntimeContentId = (tree: WslRuntimeTreeFixture) => {
   };
 
   const directories = new Set<string>();
-  for (const key of Object.keys(tree)) {
+  // The walk started inside the content roots, so the roots themselves and
+  // their ancestors never became directory lines, and no directory line
+  // carried a mode.
+  const belowARoot = (candidate: string) =>
+    WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS.some((root) => candidate.startsWith(`${root}/`));
+  for (const [key, entry] of Object.entries(tree)) {
+    if (entry.kind === "directory" && belowARoot(key)) directories.add(key);
     const segments = key.split("/");
     for (let depth = 1; depth < segments.length; depth += 1) {
       const candidate = segments.slice(0, depth).join("/");
-      // The walk starts inside the content roots, so they and their ancestors
-      // never became directory lines.
-      if (WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS.some((root) => candidate.startsWith(`${root}/`))) {
-        directories.add(candidate);
-      }
+      if (belowARoot(candidate)) directories.add(candidate);
     }
   }
 
   const hash = NodeCrypto.createHash("sha256");
   for (const directory of [...directories].sort()) hash.update(`d\0${directory}\0\n`);
   for (const key of Object.keys(tree).sort()) {
+    if (tree[key]?.kind === "directory") continue;
     const contents = NodeCrypto.createHash("sha256").update(resolveContents(key)).digest("hex");
     hash.update(`f\0${key}\0${contents}\n`);
   }
@@ -1612,6 +1623,38 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ),
         yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
           Effect.provide(wslRuntimeTreeFixtureLayer(executable)),
+        ),
+      );
+    }),
+  );
+
+  // tar names the content roots as members, so their permissions ship too. The
+  // walk seeds them rather than discovering them, which is how they slipped out
+  // of the id: a stage whose apps/server/dist lost its search bit looked
+  // identical to one that never had the problem.
+  it.effect("separates trees that differ only in a content root's mode", () =>
+    Effect.gen(function* () {
+      const searchable = {
+        "apps/server/dist": { kind: "directory", mode: 0o755 },
+        "apps/server/dist/bin.mjs": { kind: "file", contents: "serve", mode: 0o644 },
+        "node_modules/pkg/tool": { kind: "file", contents: "run", mode: 0o755 },
+      } as const satisfies WslRuntimeTreeFixture;
+      const unsearchable = {
+        ...searchable,
+        "apps/server/dist": { kind: "directory", mode: 0o644 },
+      } as const satisfies WslRuntimeTreeFixture;
+
+      assert.equal(
+        legacyWslRuntimeContentId(searchable),
+        legacyWslRuntimeContentId(unsearchable),
+        "the old id never recorded a root directory at all",
+      );
+      assert.notEqual(
+        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
+          Effect.provide(wslRuntimeTreeFixtureLayer(searchable)),
+        ),
+        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
+          Effect.provide(wslRuntimeTreeFixtureLayer(unsearchable)),
         ),
       );
     }),

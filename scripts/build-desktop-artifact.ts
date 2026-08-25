@@ -2398,9 +2398,16 @@ export const computeWslRuntimeContentId = Effect.fn("computeWslRuntimeContentId"
   // (see createStageWorkspaceConfig) and a plain walk cannot meet a symlink
   // loop. The manifest lives at the stage root, outside both content roots, so
   // a re-run over a dirty stage never folds a previous run's id into this one.
-  const pending: Array<string> = WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS.map((root) =>
-    path.join(sourceDir, root),
-  );
+  const pending: Array<string> = [];
+  for (const root of WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS) {
+    const rootPath = path.join(sourceDir, root);
+    // tar names these roots as members, so their own permissions ship with the
+    // runtime and have to reach the id like any other directory's. Their
+    // parents do not: tar never stores them, and extraction recreates them.
+    const info = yield* fs.stat(rootPath);
+    directories.push(`d\0${toRelativePosixPath(rootPath)}\0${wslRuntimeSemanticMode(info.mode)}\n`);
+    pending.push(rootPath);
+  }
   while (pending.length > 0) {
     const current = pending.pop();
     if (current === undefined) break;
