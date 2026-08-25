@@ -5,9 +5,10 @@
  */
 import type { EnvironmentId, PostHogReport } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { ArchiveRestoreIcon, ArchiveXIcon, PlugIcon } from "lucide-react";
+import { ArchiveRestoreIcon, ArchiveXIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { EmptyState } from "../../brand/EmptyState";
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { selectReportSeenMap, useReportSeenStore } from "../../reportSeenStore";
@@ -39,31 +40,37 @@ const VIEW_TITLES: Readonly<Record<InboxView, string>> = {
 
 function PostHogErrorState({ error }: { readonly error: PostHogQueryError }) {
   const navigate = useNavigate();
-  const title =
+  const state =
     error.tag === "not-configured"
-      ? "Connect PostHog to see your reports"
+      ? {
+          hoggie: "notConfigured" as const,
+          title: "Connect PostHog",
+          body: "Add your PostHog host, project, and personal API key in settings.",
+        }
       : error.tag === "unauthorized"
-        ? "PostHog rejected the API key"
-        : "PostHog request failed";
-  const description =
-    error.tag === "not-configured"
-      ? "Add your PostHog host, project, and personal API key in settings."
-      : error.tag === "unauthorized"
-        ? "Check the personal API key in settings. It may have expired or lost its scope."
-        : error.message;
+        ? {
+            hoggie: "notConfigured" as const,
+            title: "PostHog rejected the API key",
+            body: "Check the personal API key in settings. It may have expired or lost its scope.",
+          }
+        : {
+            hoggie: "requestFailed" as const,
+            title: "PostHog request failed",
+            body: error.message,
+          };
 
   return (
     <div className="flex flex-1 items-center justify-center p-8">
-      <div className="flex max-w-md flex-col items-center gap-3 text-center">
-        <div className="flex size-10 items-center justify-center rounded-xl border border-border/70 text-muted-foreground">
-          <PlugIcon className="size-5" />
-        </div>
-        <p className="text-sm font-medium">{title}</p>
-        <p className="text-sm text-muted-foreground">{description}</p>
-        <Button size="sm" onClick={() => void navigate({ to: "/settings/integrations" })}>
-          Open PostHog settings
-        </Button>
-      </div>
+      <EmptyState
+        hoggie={state.hoggie}
+        title={state.title}
+        body={state.body}
+        action={
+          <Button size="sm" onClick={() => void navigate({ to: "/settings/integrations" })}>
+            Open PostHog settings
+          </Button>
+        }
+      />
     </div>
   );
 }
@@ -318,12 +325,18 @@ function ConnectedInboxPage({
       {reportsQuery.error ? (
         <PostHogErrorState error={reportsQuery.error} />
       ) : total === 0 ? (
-        <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-          {reportsQuery.isPending
-            ? "Loading reports…"
-            : view === "done"
-              ? "Nothing archived yet."
-              : "Nothing to read. New reports land here."}
+        <div className="flex flex-1 items-center justify-center p-8">
+          {reportsQuery.isPending ? (
+            <EmptyState hoggie="loading" title="Loading reports" />
+          ) : view === "done" ? (
+            <EmptyState hoggie="done" title="Nothing archived yet" />
+          ) : (
+            <EmptyState
+              hoggie="inboxZero"
+              title="Inbox zero"
+              body="New reports show up here as PostHog finds them."
+            />
+          )}
         </div>
       ) : (
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
