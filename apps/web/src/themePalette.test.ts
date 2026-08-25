@@ -122,6 +122,16 @@ describe("theme files", () => {
       expect(asHex(colors.update)).toBe(DESKTOP_SYSTEM_THEME.colors.green);
       expect(asHex(colors.messageAction)).toBe(DESKTOP_SYSTEM_THEME.colors.magenta);
       expect(asHex(colors.terminalCursor)).toBe(DESKTOP_SYSTEM_THEME.colors.cyan);
+      expect(
+        resolveThemeAppearance(DESKTOP_SYSTEM_THEME_ID, false, false, "light", {
+          light: T3_CHAT_THEME.id,
+        }),
+      ).toBe("light");
+      expect(
+        resolveDesktopTheme(DESKTOP_SYSTEM_THEME_ID, false, "light", {
+          light: T3_CHAT_THEME.id,
+        }),
+      ).toBe("light");
     } finally {
       setDesktopSystemTheme(null);
     }

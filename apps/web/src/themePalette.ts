@@ -1952,9 +1952,6 @@ export function resolveThemeAppearance(
   appearanceMode?: ThemePreferenceMode,
   halves?: ThemeHalves | null,
 ): "light" | "dark" {
-  if (theme === DESKTOP_SYSTEM_THEME_ID && desktopSystemTheme !== null) {
-    return desktopSystemTheme.appearance;
-  }
   const systemAppearance = systemDark ? "dark" : "light";
   const mode = appearanceMode ?? ((followSystem ?? theme === "system") ? "system" : null);
   if (mode === "system") {
@@ -1982,9 +1979,6 @@ export function resolveDesktopTheme(
   appearanceMode?: ThemePreferenceMode,
   halves?: ThemeHalves | null,
 ): "light" | "dark" | "system" {
-  if (theme === DESKTOP_SYSTEM_THEME_ID && desktopSystemTheme !== null) {
-    return desktopSystemTheme.appearance;
-  }
   const mode = appearanceMode ?? ((followSystem ?? theme === "system") ? "system" : null);
   if (mode === "system") {
     const definition = getThemeDefinition(theme);
