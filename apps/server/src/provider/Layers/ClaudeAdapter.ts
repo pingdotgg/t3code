@@ -57,6 +57,10 @@ import {
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
+import {
+  CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
+  formatClaudeResumeCompactionQuestion,
+} from "@t3tools/shared/claudeCompaction";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -241,6 +245,32 @@ interface ClaudeTaskAgentState {
   effort: string | undefined;
 }
 
+/**
+ * How many racing snapshot models to buffer per session. A snapshot whose
+ * task_started never arrives would otherwise pin its entry for the session's
+ * lifetime; oldest entries evict first.
+ */
+const PENDING_TASK_MODEL_CAP = 64;
+
+/**
+ * Buffers a subagent snapshot's authoritative model under its
+ * parent_tool_use_id, for snapshots that beat their task_started to the
+ * stream. task_started consumes the entry when it registers the task.
+ */
+function rememberPendingTaskModel(
+  pending: Map<string, string>,
+  parentToolUseId: string,
+  model: string,
+): void {
+  pending.set(parentToolUseId, model);
+  if (pending.size > PENDING_TASK_MODEL_CAP) {
+    const oldest = pending.keys().next();
+    if (!oldest.done) {
+      pending.delete(oldest.value);
+    }
+  }
+}
+
 interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -262,6 +292,12 @@ interface ClaudeSessionContext {
   readonly inFlightTools: Map<number, ToolInFlight>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   readonly taskAgents: Map<string, ClaudeTaskAgentState>;
+  /**
+   * Authoritative subagent models from assistant snapshots that arrived before
+   * their task_started registered the task, keyed by parent_tool_use_id.
+   * Written through `rememberPendingTaskModel`, consumed by task_started.
+   */
+  readonly pendingTaskModels: Map<string, string>;
   /**
    * Last emitted workflow-member fingerprint per member slot. A coordinator
    * task_progress repeats the FULL member array every tick; without a
@@ -511,6 +547,7 @@ function makeClaudeTokenUsageSnapshot(input: {
   readonly totalProcessedTokens?: number;
   readonly lastUsedTokens?: number;
   readonly compactsAutomatically?: boolean;
+  readonly autoCompactThreshold?: number;
 }): ThreadTokenUsageSnapshot | undefined {
   const activeTokens = finiteNonNegativeInteger(input.activeTokens);
   if (activeTokens === undefined || activeTokens <= 0) {
@@ -537,6 +574,9 @@ function makeClaudeTokenUsageSnapshot(input: {
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(input.compactsAutomatically !== undefined
       ? { compactsAutomatically: input.compactsAutomatically }
+      : {}),
+    ...(input.autoCompactThreshold !== undefined
+      ? { autoCompactThreshold: input.autoCompactThreshold }
       : {}),
   };
 }
@@ -572,11 +612,13 @@ function normalizeClaudeContextUsageApiSnapshot(
   value: SDKControlGetContextUsageResponse,
   totalProcessedTokens?: number,
 ): ThreadTokenUsageSnapshot | undefined {
+  const autoCompactThreshold = finitePositiveInteger(value.autoCompactThreshold);
   return makeClaudeTokenUsageSnapshot({
     activeTokens: value.totalTokens,
     contextWindow: value.maxTokens,
     ...(totalProcessedTokens !== undefined ? { totalProcessedTokens } : {}),
     compactsAutomatically: value.isAutoCompactEnabled,
+    ...(autoCompactThreshold !== undefined ? { autoCompactThreshold } : {}),
   });
 }
 
@@ -2875,8 +2917,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const owningTaskId = agentIdForParentToolUse(context.taskAgents, assistantParentToolUseId);
       const snapshotModel = trimmedString(message.message.model);
       const owningAgent = owningTaskId ? context.taskAgents.get(owningTaskId) : undefined;
-      if (owningAgent && snapshotModel) {
-        owningAgent.model = snapshotModel;
+      if (snapshotModel) {
+        if (owningAgent) {
+          owningAgent.model = snapshotModel;
+        } else {
+          // The snapshot beat its task_started (or its tool_use_id was never
+          // recorded): hold the model until the task registers.
+          rememberPendingTaskModel(
+            context.pendingTaskModels,
+            assistantParentToolUseId,
+            snapshotModel,
+          );
+        }
       }
       context.lastAssistantUuid = message.uuid;
       yield* updateResumeCursor(context);
@@ -3190,12 +3242,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const owningAgentId = launchingTool?.agentId;
         // Model/effort: the Agent tool's input carries explicit overrides;
         // absent ones inherit the session's selection (SDK behavior).
-        // Subagent assistant snapshots later refine model with the
-        // authoritative API id. AgentInput.effort may be a named level or an
-        // integer.
+        // Subagent assistant snapshots refine model with the authoritative API
+        // id: one that already arrived is buffered and outranks the seed here,
+        // later ones refine the record in place. AgentInput.effort may be a
+        // named level or an integer.
         const launchInput = launchingTool?.input;
+        const toolUseId = message.tool_use_id;
+        const bufferedModel = toolUseId ? context.pendingTaskModels.get(toolUseId) : undefined;
+        if (toolUseId) {
+          context.pendingTaskModels.delete(toolUseId);
+        }
         const model =
-          trimmedString(launchInput?.model) ?? trimmedString(context.session.model ?? undefined);
+          bufferedModel ??
+          trimmedString(launchInput?.model) ??
+          trimmedString(context.session.model ?? undefined);
         const rawLaunchEffort = launchInput?.effort;
         const effort =
           trimmedString(rawLaunchEffort) ??
@@ -3807,6 +3867,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const inFlightTools = new Map<number, ToolInFlight>();
       const claudeTasks = new Map<string, ClaudeTaskState>();
       const taskAgents = new Map<string, ClaudeTaskAgentState>();
+      const pendingTaskModels = new Map<string, string>();
       const workflowMemberFingerprints = new Map<string, string>();
       const liveTaskIds = new Set<string>();
 
@@ -3902,6 +3963,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         callbackOptions.signal.addEventListener("abort", onAbort, {
           once: true,
         });
+        // The signal may have aborted during the awaited event emissions
+        // above, before the listener existed; settle now so the dialog
+        // cannot hang with a lingering pending question.
+        if (callbackOptions.signal.aborted) {
+          yield* settleAsAborted;
+        }
 
         // Block until the user provides answers.
         const answers = yield* Deferred.await(answersDeferred);
@@ -3948,6 +4015,76 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             answers,
           },
         } satisfies PermissionResult;
+      });
+
+      const handleResumeDialog = Effect.fn("handleResumeDialog")(function* (
+        request: Parameters<NonNullable<ClaudeQueryOptions["onUserDialog"]>>[0],
+        callbackOptions: Parameters<NonNullable<ClaudeQueryOptions["onUserDialog"]>>[1],
+      ) {
+        if (request.dialogKind !== "resume_return") {
+          return { behavior: "cancelled" as const };
+        }
+
+        const context = yield* Ref.get(contextRef);
+        if (!context) {
+          return { behavior: "cancelled" as const };
+        }
+
+        // The question copy lives in @t3tools/shared/claudeCompaction because
+        // the web client recognizes this exact text (and the "never" answer)
+        // to mirror a permanent dismissal.
+        const question = formatClaudeResumeCompactionQuestion({
+          ageMinutes: finiteNonNegativeInteger(request.payload.sessionAgeMinutes) ?? 0,
+          estimatedTokens: finiteNonNegativeInteger(request.payload.estimatedTokens) ?? 0,
+        });
+        const result = yield* handleAskUserQuestion(
+          context,
+          {
+            questions: [
+              {
+                header: "Resume session",
+                question,
+                options: [
+                  {
+                    label: "Compact and continue",
+                    description: "Resume with a summary and use fewer tokens.",
+                  },
+                  {
+                    label: "Keep full history",
+                    description: "Resume without changing the conversation.",
+                  },
+                  {
+                    label: CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
+                    description: "Keep full history and skip future resume prompts.",
+                  },
+                ],
+                multiSelect: false,
+              },
+            ],
+          },
+          {
+            signal: callbackOptions.signal,
+            ...(request.toolUseID ? { toolUseID: request.toolUseID } : {}),
+          },
+        );
+
+        if (result.behavior !== "allow") {
+          return { behavior: "cancelled" as const };
+        }
+
+        const answers = result.updatedInput.answers;
+        const selection =
+          answers && typeof answers === "object" && !Array.isArray(answers)
+            ? (answers as Record<string, unknown>)[question]
+            : undefined;
+        const action =
+          selection === "Compact and continue"
+            ? "compact"
+            : selection === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER
+              ? "never"
+              : "continue";
+
+        return { behavior: "completed" as const, result: action };
       });
 
       const canUseToolEffect = Effect.fn("canUseTool")(function* (
@@ -4055,6 +4192,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         callbackOptions.signal.addEventListener("abort", onAbort, {
           once: true,
         });
+        // Same late-listener race as handleAskUserQuestion: the signal may
+        // have aborted while the request event emissions were awaited.
+        if (callbackOptions.signal.aborted) {
+          onAbort();
+        }
 
         const decision = yield* Deferred.await(decisionDeferred);
         pendingApprovals.delete(requestId);
@@ -4110,6 +4252,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
         runPromise(canUseToolEffect(toolName, toolInput, callbackOptions));
+      const onUserDialog: NonNullable<ClaudeQueryOptions["onUserDialog"]> = (
+        request,
+        callbackOptions,
+      ) => runPromise(handleResumeDialog(request, callbackOptions));
 
       const claudeBinaryPath = claudeSdkExecutablePath;
       const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
@@ -4145,6 +4291,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
         ...(ultracode ? { ultracode: true } : {}),
+        ...(claudeSettings.autoCompactWindow
+          ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
+          : {}),
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
       // The attachments dir grant lets the agent Read/copy pasted images at
@@ -4177,6 +4326,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
+        onUserDialog,
+        supportedDialogKinds: ["resume_return"],
         env: claudeEnvironment,
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
@@ -4270,6 +4421,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         claudeTasks,
         taskAgents,
+        pendingTaskModels,
         workflowMemberFingerprints,
         liveTaskIds,
         turnState: undefined,

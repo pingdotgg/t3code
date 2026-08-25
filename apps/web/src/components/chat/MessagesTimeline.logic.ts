@@ -953,6 +953,8 @@ export function deriveMessagesTimelineRows(input: {
           }
 
           if (hiddenEntries.length > 0) {
+            const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
+
             nextRows.push({
               kind: "work-toggle",
               id: `work-toggle:${timelineEntry.id}`,
@@ -963,9 +965,10 @@ export function deriveMessagesTimelineRows(input: {
               onlyToolEntries: hiddenEntries.every(workLogEntryIsToolLike),
               summary: null,
               summaryKind: null,
-              hasFailure: hiddenEntries.some((entry) =>
-                workEntryDisplayIndicatesToolFailure(entry),
-              ),
+              hasFailure:
+                latestToolEntry !== undefined &&
+                workEntryDisplayIndicatesToolFailure(latestToolEntry) &&
+                hiddenEntries.some(workEntryDisplayIndicatesToolFailure),
             });
           }
         }

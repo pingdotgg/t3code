@@ -73,7 +73,10 @@ import {
   projectActivityEvent,
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
-import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
+import {
+  cleanupFailedUploadedAttachments,
+  normalizeDispatchCommand,
+} from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -92,6 +95,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
+import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
@@ -356,6 +360,7 @@ function toAuthAccessStreamEvent(
 
 const isClientSurface = Schema.is(ClientSurface);
 const MAX_CLIENT_APP_VERSION_LENGTH = 64;
+const MAX_CLIENT_DEVICE_MODEL_LENGTH = 80;
 
 // Optional client identity announced on the /ws upgrade URL next to wsTicket.
 // Lenient by design: absent or malformed values degrade to {} so a connection
@@ -381,6 +386,28 @@ const clientOriginAnalyticsProps = (origin: OrchestrationClientOrigin) => ({
   ...(origin.surface !== undefined ? { surface: origin.surface } : {}),
   ...(origin.appVersion !== undefined ? { appVersion: origin.appVersion } : {}),
 });
+
+function readMobileDeviceAnalyticsProps(request: HttpServerRequest.HttpServerRequest) {
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url) || url.value.searchParams.get("clientSurface") !== "mobile") {
+    return {};
+  }
+
+  const os = url.value.searchParams.get("clientOs");
+  const rawOsMajorVersion = url.value.searchParams.get("clientOsMajorVersion") ?? "";
+  const osMajorVersion = Number(rawOsMajorVersion);
+  const deviceModel = url.value.searchParams.get("clientDeviceModel")?.trim() ?? "";
+
+  return {
+    ...(os === "iOS" || os === "Android" ? { os } : {}),
+    ...(rawOsMajorVersion !== "" && Number.isInteger(osMajorVersion) && osMajorVersion > 0
+      ? { osMajorVersion }
+      : {}),
+    ...(deviceModel !== "" && deviceModel.length <= MAX_CLIENT_DEVICE_MODEL_LENGTH
+      ? { deviceModel }
+      : {}),
+  };
+}
 
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
@@ -1159,7 +1186,9 @@ const makeWsRpcLayer = (
                     ),
                   )
                 : false;
-              const result = yield* dispatchNormalizedCommand(normalizedCommand);
+              const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
+                Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
+              );
               yield* recordClientCommandAnalytics(normalizedCommand);
               if (parkingCommand) {
                 const parkingKind = parkingCommand.type === "thread.archive" ? "archive" : "settle";
@@ -1951,6 +1980,16 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.attachmentsCreateUploadUrl]: (input) =>
+          observeRpcEffect(WS_METHODS.attachmentsCreateUploadUrl, issueAttachmentUploadUrl(input), {
+            "rpc.aggregate": "workspace",
+          }),
+        [WS_METHODS.attachmentsDelete]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.attachmentsDelete,
+            deletePendingAttachment(input.attachmentId),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.assetsCreateUrl]: (input) =>
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
@@ -2418,7 +2457,10 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         );
         const clientOrigin = readClientConnectionOrigin(request);
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
-        yield* analytics.record("client.connected", clientOriginAnalyticsProps(clientOrigin));
+        yield* analytics.record("client.connected", {
+          ...clientOriginAnalyticsProps(clientOrigin),
+          ...readMobileDeviceAnalyticsProps(request),
+        });
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
         }).pipe(
