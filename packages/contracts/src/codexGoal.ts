@@ -1,6 +1,17 @@
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
+
+export const CODEX_GOAL_OBJECTIVE_MAX_CHARS = 4_000;
+
+const CodexGoalObjective = TrimmedNonEmptyString.check(
+  Schema.makeFilter(
+    (objective) =>
+      Array.from(objective).length <= CODEX_GOAL_OBJECTIVE_MAX_CHARS ||
+      `Goal objective must not exceed ${CODEX_GOAL_OBJECTIVE_MAX_CHARS} characters.`,
+  ),
+);
 
 export const CodexGoalStatus = Schema.Literals([
   "active",
@@ -29,11 +40,17 @@ export const CodexGoalThreadInput = Schema.Struct({
 });
 export type CodexGoalThreadInput = typeof CodexGoalThreadInput.Type;
 
+export const CodexGoalSubscriptionInput = Schema.Struct({
+  threadId: ThreadId,
+  providerInstanceId: ProviderInstanceId,
+});
+export type CodexGoalSubscriptionInput = typeof CodexGoalSubscriptionInput.Type;
+
 export const CodexGoalSetInput = Schema.Struct({
   threadId: ThreadId,
-  objective: Schema.optionalKey(TrimmedNonEmptyString),
+  objective: Schema.optionalKey(CodexGoalObjective),
   status: Schema.optionalKey(CodexGoalStatus),
-  tokenBudget: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
+  tokenBudget: Schema.optionalKey(Schema.NullOr(PositiveInt)),
 });
 export type CodexGoalSetInput = typeof CodexGoalSetInput.Type;
 

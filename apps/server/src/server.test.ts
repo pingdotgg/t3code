@@ -6189,6 +6189,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("routes native Codex Goal controls and notifications over websocket", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("goal-rpc-thread");
+      const providerInstanceId = ProviderInstanceId.make("codex");
       const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
       const setInputs: unknown[] = [];
       const getOptions: Array<{ readonly allowRecovery?: boolean } | undefined> = [];
@@ -6238,7 +6239,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             const cleared = yield* client[WS_METHODS.codexGoalClear]({ threadId });
             const snapshotSeen = yield* Deferred.make<void>();
             const updatedSeen = yield* Deferred.make<void>();
-            const streamed = yield* client[WS_METHODS.subscribeCodexGoal]({ threadId }).pipe(
+            const streamed = yield* client[WS_METHODS.subscribeCodexGoal]({
+              threadId,
+              providerInstanceId,
+            }).pipe(
               Stream.tap((event) =>
                 event.type === "snapshot"
                   ? Deferred.succeed(snapshotSeen, undefined).pipe(Effect.ignore)
@@ -6255,6 +6259,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               type: "thread.goal.updated",
               eventId: EventId.make("goal-updated-event"),
               provider: ProviderDriverKind.make("codex"),
+              providerInstanceId,
               createdAt: "2026-01-01T00:00:00.000Z",
               threadId,
               payload: { goal: steeredGoal },
@@ -6264,6 +6269,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               type: "thread.goal.cleared",
               eventId: EventId.make("goal-cleared-event"),
               provider: ProviderDriverKind.make("codex"),
+              providerInstanceId,
               createdAt: "2026-01-01T00:00:01.000Z",
               threadId,
               payload: {},
@@ -6284,6 +6290,53 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(
         Array.from(result.streamed).map((event) => event.type),
         ["snapshot", "updated", "cleared"],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("subscribeCodexGoal ignores events from a previous provider instance", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("goal-provider-instance-thread");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const initialGoal = {
+        objective: "Current Goal",
+        status: "active" as const,
+        tokenBudget: null,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 1_777_000_000,
+        updatedAt: 1_777_000_000,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerService: {
+            getCodexGoal: () => Effect.succeed(initialGoal),
+            streamEvents: Stream.make({
+              type: "thread.goal.updated",
+              eventId: EventId.make("goal-previous-instance-event"),
+              provider: ProviderDriverKind.make("codex"),
+              providerInstanceId: ProviderInstanceId.make("previous-codex"),
+              createdAt: "2026-01-01T00:00:00.000Z",
+              threadId,
+              payload: { goal: { ...initialGoal, objective: "Stale Goal" } },
+            }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const streamed = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.subscribeCodexGoal]({ threadId, providerInstanceId }).pipe(
+            Stream.runCollect,
+          ),
+        ),
+      );
+
+      assert.deepEqual(
+        Array.from(streamed).map((event) => event.type),
+        ["snapshot"],
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -6321,6 +6374,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("subscribeCodexGoal buffers the latest update during snapshot loading", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("goal-race-thread");
+      const providerInstanceId = ProviderInstanceId.make("codex");
       const events = yield* PubSub.unbounded<ProviderRuntimeEvent>({ replay: 1 });
       const snapshotRequested = yield* Deferred.make<void>();
       const releaseSnapshot = yield* Deferred.make<void>();
@@ -6369,16 +6423,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const streamed = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
-            const collected = yield* client[WS_METHODS.subscribeCodexGoal]({ threadId }).pipe(
-              Stream.take(2),
-              Stream.runCollect,
-              Effect.forkScoped,
-            );
+            const collected = yield* client[WS_METHODS.subscribeCodexGoal]({
+              threadId,
+              providerInstanceId,
+            }).pipe(Stream.take(2), Stream.runCollect, Effect.forkScoped);
             yield* Deferred.await(snapshotRequested);
             yield* PubSub.publish(events, {
               type: "thread.goal.updated",
               eventId: EventId.make("goal-race-updated-event"),
               provider: ProviderDriverKind.make("codex"),
+              providerInstanceId,
               createdAt: "2026-01-01T00:00:00.000Z",
               threadId,
               payload: { goal: steeredGoal },
@@ -6387,6 +6441,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               type: "thread.goal.cleared",
               eventId: EventId.make("goal-race-cleared-event"),
               provider: ProviderDriverKind.make("codex"),
+              providerInstanceId,
               createdAt: "2026-01-01T00:00:01.000Z",
               threadId,
               payload: {},
@@ -6395,6 +6450,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               type: "thread.goal.updated",
               eventId: EventId.make("goal-race-final-event"),
               provider: ProviderDriverKind.make("codex"),
+              providerInstanceId,
               createdAt: "2026-01-01T00:00:02.000Z",
               threadId,
               payload: { goal: finalGoal },

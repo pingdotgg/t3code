@@ -237,6 +237,7 @@ import {
   CodexGoalClearResult,
   CodexGoalOperationError,
   CodexGoalSetInput,
+  CodexGoalSubscriptionInput,
   CodexGoalStreamEvent,
   CodexGoalThreadInput,
 } from "./codexGoal.ts";
@@ -1098,7 +1099,7 @@ export const WsCodexGoalClearRpc = Rpc.make(WS_METHODS.codexGoalClear, {
 });
 
 export const WsSubscribeCodexGoalRpc = Rpc.make(WS_METHODS.subscribeCodexGoal, {
-  payload: CodexGoalThreadInput,
+  payload: CodexGoalSubscriptionInput,
   success: CodexGoalStreamEvent,
   error: Schema.Union([CodexGoalOperationError, EnvironmentAuthorizationError]),
   stream: true,

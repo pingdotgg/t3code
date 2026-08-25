@@ -2564,6 +2564,7 @@ export default function ChatView(props: ChatViewProps) {
   const codexGoal = useCodexGoal(
     hasActiveCodexGoalSession ? environmentId : null,
     hasActiveCodexGoalSession ? activeThreadId : null,
+    hasActiveCodexGoalSession ? (activeThread.session?.providerInstanceId ?? null) : null,
   );
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
