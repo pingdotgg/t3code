@@ -8,6 +8,14 @@ import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
+export type GitActionResultToastType = "success" | "warning";
+
+export function resolveGitActionResultToastType(
+  result: Pick<GitRunStackedActionResult, "pr">,
+): GitActionResultToastType {
+  return result.pr.status === "skipped_unsupported_provider" ? "warning" : "success";
+}
+
 export type GitDialogAction = "commit" | "push" | "create_pr";
 
 export interface GitActionMenuItem {

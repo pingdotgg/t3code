@@ -31,6 +31,8 @@ export function GitActionProgressOverlay(props: {
 
     if (prev === "running" && progress.phase === "success") {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else if (prev === "running" && progress.phase === "warning") {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     } else if (prev === "running" && progress.phase === "error") {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
@@ -41,7 +43,11 @@ export function GitActionProgressOverlay(props: {
       void tryOpenExternalUrl(progress.prUrl, "pull-request");
       return;
     }
-    if (progress.phase === "success" || progress.phase === "error") {
+    if (
+      progress.phase === "success" ||
+      progress.phase === "warning" ||
+      progress.phase === "error"
+    ) {
       onDismiss();
     }
   }, [onDismiss, progress.phase, progress.prUrl]);
@@ -133,7 +139,9 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
   const bgClass =
     progress.phase === "error"
       ? "bg-red-50 dark:bg-red-950/80 border-red-200 dark:border-red-800"
-      : "bg-card border-border";
+      : progress.phase === "warning"
+        ? "bg-amber-50 dark:bg-amber-950/80 border-amber-200 dark:border-amber-800"
+        : "bg-card border-border";
 
   return (
     <Animated.View
@@ -161,6 +169,17 @@ function OverlayIcon(props: {
     case "error":
       return (
         <View className="h-6 w-6 items-center justify-center rounded-full bg-red-500">
+          <SymbolView
+            name="exclamationmark.triangle"
+            size={12}
+            tintColor="white"
+            type="monochrome"
+          />
+        </View>
+      );
+    case "warning":
+      return (
+        <View className="h-6 w-6 items-center justify-center rounded-full bg-amber-500">
           <SymbolView
             name="exclamationmark.triangle"
             size={12}

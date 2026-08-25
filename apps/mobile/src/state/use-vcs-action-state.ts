@@ -11,7 +11,7 @@ export function useVcsActionState(target: VcsActionTarget): VcsActionState {
 }
 
 export interface GitActionResultNotification {
-  readonly type: "success" | "error";
+  readonly type: "success" | "warning" | "error";
   readonly title: string;
   readonly description?: string;
   readonly prUrl?: string;
@@ -52,7 +52,7 @@ export function useGitActionResultNotification(): {
   return { result, dismiss: dismissGitActionResult };
 }
 
-export type GitActionProgressPhase = "idle" | "running" | "success" | "error";
+export type GitActionProgressPhase = "idle" | "running" | "success" | "warning" | "error";
 
 export interface GitActionProgress {
   readonly phase: GitActionProgressPhase;

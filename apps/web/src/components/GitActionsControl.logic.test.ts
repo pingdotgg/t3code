@@ -1,4 +1,4 @@
-import type { VcsStatusResult } from "@t3tools/contracts";
+import type { GitRunStackedActionResult, VcsStatusResult } from "@t3tools/contracts";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
@@ -6,11 +6,43 @@ import {
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
+  resolveGitActionToastType,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
   resolveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
 } from "./GitActionsControl.logic";
+
+function stackedActionResult(
+  prStatus: GitRunStackedActionResult["pr"]["status"],
+): GitRunStackedActionResult {
+  return {
+    action: "commit_push_pr",
+    branch: { status: "skipped_not_requested" },
+    commit: { status: "skipped_not_requested" },
+    push: { status: "pushed", branch: "feature/test" },
+    pr: { status: prStatus },
+    toast: { title: "Changes pushed", cta: { kind: "none" } },
+  };
+}
+
+describe("Git stacked action result toast type", () => {
+  it("uses a warning for an unsupported change-request provider", () => {
+    assert.equal(
+      resolveGitActionToastType(stackedActionResult("skipped_unsupported_provider")),
+      "warning",
+    );
+  });
+
+  it("keeps success for other completed change-request states", () => {
+    assert.equal(resolveGitActionToastType(stackedActionResult("created")), "success");
+    assert.equal(resolveGitActionToastType(stackedActionResult("opened_existing")), "success");
+    assert.equal(
+      resolveGitActionToastType(stackedActionResult("skipped_not_requested")),
+      "success",
+    );
+  });
+});
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
