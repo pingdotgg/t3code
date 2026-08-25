@@ -1506,6 +1506,7 @@ function ChatViewContent(props: ChatViewProps) {
     preSendTurnId: TurnId | null;
     preSendLatestTurnCompletedAt: string | null;
     preSendSessionUpdatedAt: string | null;
+    preSendSessionStatus: NonNullable<Thread["session"]>["status"] | null;
   } | null>(null);
   // Bumped after a snapshot is armed so the recovery effect re-evaluates even
   // when `activeServerThread` has not changed since it last ran (e.g. the
@@ -5415,6 +5416,7 @@ function ChatViewContent(props: ChatViewProps) {
       preSendTurnId: pending.preSendTurnId,
       preSendLatestTurnCompletedAt: pending.preSendLatestTurnCompletedAt,
       preSendSessionUpdatedAt: pending.preSendSessionUpdatedAt,
+      preSendSessionStatus: pending.preSendSessionStatus,
       sessionStatus: session?.status ?? null,
       sessionUpdatedAt: session?.updatedAt ?? null,
       latestTurnId: latestTurn?.turnId ?? null,
@@ -5726,6 +5728,7 @@ function ChatViewContent(props: ChatViewProps) {
     const preSendLatestTurnId = activeThread.latestTurn?.turnId ?? null;
     const preSendLatestTurnCompletedAt = activeThread.latestTurn?.completedAt ?? null;
     const preSendSessionUpdatedAt = activeThread.session?.updatedAt ?? null;
+    const preSendSessionStatus = activeThread.session?.status ?? null;
     const messageTextWithContexts = appendElementContextsToPrompt(
       appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
@@ -6021,6 +6024,7 @@ function ChatViewContent(props: ChatViewProps) {
           preSendTurnId: preSendLatestTurnId,
           preSendLatestTurnCompletedAt,
           preSendSessionUpdatedAt,
+          preSendSessionStatus,
         };
         setRecoveryReevaluateTick((tick) => tick + 1);
         if (backgroundThreadRef) {

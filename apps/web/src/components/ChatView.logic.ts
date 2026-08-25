@@ -624,14 +624,19 @@ export function createLocalDispatchSnapshot(
 // The failure signal is `session.status === "error"`, not `lastError`:
 // `lastError` is carried forward across a fresh turn until the session next
 // reaches "ready", so keying on it would restore a stale prior-turn error.
-// `sessionUpdatedAt` must differ from the pre-send value so a session that was
-// already in "error" when the user sent (and has not yet transitioned) cannot
-// trigger a spurious restore before the new turn has begun.
+// Freshness (that the error is this send's, not a prior one still showing) is
+// established by any of: a changed `sessionUpdatedAt`, a changed `latestTurnId`,
+// or the pre-send session status not yet being "error". The last covers a
+// steered send, which keeps the running turn's id and can reuse the pre-send
+// millisecond, so neither of the first two advances on an accept-then-fail. A
+// session that was already "error" when the user sent (and has not transitioned)
+// is excluded from all three, so it cannot trigger a spurious restore.
 export function deriveTurnFailureRecoveryAction(input: {
   hasPendingSnapshot: boolean;
   preSendTurnId: TurnId | null;
   preSendLatestTurnCompletedAt: string | null;
   preSendSessionUpdatedAt: string | null;
+  preSendSessionStatus: NonNullable<Thread["session"]>["status"] | null;
   sessionStatus: NonNullable<Thread["session"]>["status"] | null;
   sessionUpdatedAt: string | null;
   latestTurnId: TurnId | null;
@@ -648,7 +653,15 @@ export function deriveTurnFailureRecoveryAction(input: {
   const sessionAdvanced =
     (input.sessionUpdatedAt !== null && input.sessionUpdatedAt !== input.preSendSessionUpdatedAt) ||
     (input.latestTurnId !== null && input.latestTurnId !== input.preSendTurnId);
-  if (input.sessionStatus === "error" && sessionAdvanced) {
+  // A steered send folds into the already-running turn, so its turn id does not
+  // change; if the accept-then-fail also reuses the pre-send millisecond,
+  // neither `sessionAdvanced` clause fires. The session status crossing into
+  // "error" from a non-error pre-send value is itself proof this send's turn
+  // failed: a stale prior-turn error would already have been "error" at send
+  // time (the case guarded below), so it cannot masquerade as this transition.
+  const failedSincePreSend =
+    input.preSendSessionStatus !== "error" && input.sessionStatus === "error";
+  if (input.sessionStatus === "error" && (sessionAdvanced || failedSincePreSend)) {
     // Never clobber text the user has started typing since the send; the
     // failed attempt is still in the transcript for them to copy from.
     return input.composerHasContent ? "drop" : "restore";

@@ -734,6 +734,7 @@ describe("deriveTurnFailureRecoveryAction", () => {
     preSendTurnId: TurnId.make("turn-1"),
     preSendLatestTurnCompletedAt: null,
     preSendSessionUpdatedAt: "2026-01-01T00:00:00.000Z",
+    preSendSessionStatus: "running" as const,
     sessionStatus: "running" as const,
     sessionUpdatedAt: "2026-01-01T00:00:01.000Z",
     latestTurnId: TurnId.make("turn-2"),
@@ -776,6 +777,7 @@ describe("deriveTurnFailureRecoveryAction", () => {
         ...base,
         preSendTurnId: TurnId.make("turn-1"),
         latestTurnId: TurnId.make("turn-1"),
+        preSendSessionStatus: "error",
         sessionStatus: "error",
         sessionUpdatedAt: base.preSendSessionUpdatedAt,
       }),
@@ -802,6 +804,37 @@ describe("deriveTurnFailureRecoveryAction", () => {
         ...base,
         sessionStatus: "idle",
         latestTurnCompletedAt: "2026-01-01T00:00:09.000Z",
+      }),
+    ).toBe("drop");
+  });
+
+  it("restores a steered accept-then-fail that reuses the pre-send turn id and millisecond", () => {
+    // Steering folds the message into the running turn, so the turn id does not
+    // change; a same-millisecond failure also leaves `sessionUpdatedAt` equal to
+    // the pre-send value. The status crossing from a non-error pre-send into
+    // "error" is what proves this send's turn failed, so the snapshot restores.
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        preSendTurnId: TurnId.make("turn-2"),
+        latestTurnId: TurnId.make("turn-2"),
+        preSendSessionStatus: "running",
+        sessionStatus: "error",
+        sessionUpdatedAt: base.preSendSessionUpdatedAt,
+      }),
+    ).toBe("restore");
+  });
+
+  it("drops a steered same-ms failure without clobbering text the user retyped", () => {
+    expect(
+      deriveTurnFailureRecoveryAction({
+        ...base,
+        preSendTurnId: TurnId.make("turn-2"),
+        latestTurnId: TurnId.make("turn-2"),
+        preSendSessionStatus: "running",
+        sessionStatus: "error",
+        sessionUpdatedAt: base.preSendSessionUpdatedAt,
+        composerHasContent: true,
       }),
     ).toBe("drop");
   });
