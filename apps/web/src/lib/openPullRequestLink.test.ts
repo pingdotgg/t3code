@@ -279,4 +279,18 @@ describe("pullRequestTargetOf", () => {
       number: 17,
     });
   });
+
+  it("keeps a GitLab nested path when linking a thread pull request", () => {
+    const project = {
+      id: "p2",
+      repositoryIdentity: {
+        provider: "gitlab",
+        displayName: "group/subgroup/service",
+        owner: "group",
+        name: "service",
+      },
+    } as never;
+
+    expect(pullRequestTargetOf(project, 9)?.repository).toBe("group/subgroup/service");
+  });
 });

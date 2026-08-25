@@ -111,6 +111,7 @@ import {
   findProjectForChangeRequest,
   matchesLinkedPullRequestUrl,
   parseChangeRequestUrl,
+  pullRequestTargetOf,
   useOpenChangeRequestLink,
 } from "~/lib/openPullRequestLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
@@ -1561,10 +1562,12 @@ function ChatMarkdown({
         parsed,
       );
       if (project === undefined) return null;
+      const target = pullRequestTargetOf(project, parsed.number);
+      if (target === null) return null;
       return {
-        projectId: project.id,
-        repository: project.repositoryIdentity?.displayName ?? parsed.repository,
-        number: parsed.number,
+        projectId: target.projectId as ThreadLinkedPullRequest["projectId"],
+        repository: target.repository,
+        number: target.number,
         url: href,
       };
     },
