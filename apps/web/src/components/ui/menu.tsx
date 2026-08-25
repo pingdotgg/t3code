@@ -2,6 +2,7 @@
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { ChevronRightIcon } from "lucide-react";
+import { useLayoutEffect, useRef } from "react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
@@ -9,6 +10,36 @@ import { cn } from "~/lib/utils";
 const MenuCreateHandle = MenuPrimitive.createHandle;
 
 const Menu = MenuPrimitive.Root;
+
+/**
+ * Focus the popup element itself on mount when `enabled.current` is true.
+ *
+ * Base UI's open-time autofocus lands on the first tabbable descendant, which
+ * mis-highlights rows whose first tabbable control is a nested button (e.g. a
+ * settings gear) rather than the row itself. React runs this child's layout
+ * effect before the popup's own focus manager effect (child-first), so
+ * focusing the popup makes the manager see focus already inside the popup and
+ * skip its autofocus. Keyboard-opened menus leave `enabled.current` false and
+ * keep Base UI's default pre-highlighted-row focus.
+ */
+function FocusPopupOnMount({
+  enabled,
+  popupRef,
+}: {
+  enabled: { current: boolean };
+  popupRef: { current: HTMLElement | null };
+}) {
+  useLayoutEffect(() => {
+    if (!enabled.current) {
+      return;
+    }
+    // preventScroll matches Base UI's own open-focus behavior: this runs
+    // before the positioner has positioned the popup, so a scrolling focus
+    // could jump ancestor scrollers.
+    popupRef.current?.focus({ preventScroll: true });
+  }, [enabled, popupRef]);
+  return null;
+}
 
 const MenuPortal = MenuPrimitive.Portal;
 
@@ -28,6 +59,7 @@ function MenuPopup({
   alignOffset,
   side = "bottom",
   anchor,
+  focusOnMountRef,
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
@@ -35,7 +67,14 @@ function MenuPopup({
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
   side?: MenuPrimitive.Positioner.Props["side"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
+  /**
+   * When `focusOnMountRef.current` is true at mount, focus the popup itself
+   * instead of letting Base UI autofocus the first tabbable item. Read inside
+   * a layout effect: pass the ref object, never read `.current` during render.
+   */
+  focusOnMountRef?: { current: boolean };
 }) {
+  const popupRef = useRef<HTMLDivElement | null>(null);
   const hasExplicitWidthClass =
     typeof className === "string" &&
     className.split(/\s+/).some((classToken) => {
@@ -61,9 +100,13 @@ function MenuPopup({
             className,
           )}
           data-slot="menu-popup"
+          ref={popupRef}
           {...props}
         >
           <div className="max-h-(--available-height) w-full overflow-y-auto p-1">{children}</div>
+          {focusOnMountRef ? (
+            <FocusPopupOnMount enabled={focusOnMountRef} popupRef={popupRef} />
+          ) : null}
         </MenuPrimitive.Popup>
       </MenuPrimitive.Positioner>
     </MenuPrimitive.Portal>

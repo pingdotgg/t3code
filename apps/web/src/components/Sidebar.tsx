@@ -59,7 +59,6 @@ import {
   memo,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -252,28 +251,6 @@ const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new M
 
 function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
-}
-
-/**
- * Focus the enclosing menu popup as soon as it mounts. Rendered only for
- * pointer-opened project-scope menus: Base UI's open-time autofocus would
- * otherwise land on the first tabbable descendant — the settings gear inside
- * the first project row — making that row render as highlighted without any
- * hover. React runs this sentinel's layout effect before the popup's own
- * focus manager effect (child-first), so the manager snapshots focus already
- * inside the popup and skips its autofocus entirely. Keyboard opens never
- * mount the sentinel and keep Base UI's default pre-highlighted-row focus.
- */
-function ProjectScopeOpenFocusRedirect({ enabled }: { enabled: boolean }) {
-  const sentinelRef = useRef<HTMLSpanElement | null>(null);
-  useLayoutEffect(() => {
-    if (!enabled) {
-      return;
-    }
-    const popup = sentinelRef.current?.closest<HTMLElement>("div[data-slot='menu-popup']");
-    popup?.focus();
-  }, [enabled]);
-  return <span ref={sentinelRef} hidden aria-hidden="true" />;
 }
 
 function SidebarThreadTooltip({
@@ -1814,8 +1791,10 @@ export default function Sidebar() {
     },
   });
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
-  // Whether the project-scope menu was last activated with a pointer; see
-  // ProjectScopeOpenFocusRedirect for why it matters.
+  // Whether the project-scope menu was last activated with a pointer. Read
+  // inside MenuPopup's mount layout effect: pointer opens focus the popup
+  // itself so Base UI's autofocus cannot highlight the first row's nested
+  // gear button without hover; keyboard opens keep the pre-highlighted row.
   const projectScopeOpenedWithPointerRef = useRef(false);
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
@@ -3537,10 +3516,11 @@ export default function Sidebar() {
                     </span>
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </MenuTrigger>
-                  <MenuPopup align="start" className="w-(--anchor-width)">
-                    <ProjectScopeOpenFocusRedirect
-                      enabled={projectScopeOpenedWithPointerRef.current}
-                    />
+                  <MenuPopup
+                    align="start"
+                    className="w-(--anchor-width)"
+                    focusOnMountRef={projectScopeOpenedWithPointerRef}
+                  >
                     <MenuRadioGroup
                       value={projectScopeKey ?? "all"}
                       onValueChange={(value) =>
