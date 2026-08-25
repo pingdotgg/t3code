@@ -2346,11 +2346,14 @@ code {
 .chat-markdown table,
 .markdown-table {
   width: 100%;
-  min-width: max-content;
   border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.chat-markdown table {
+  min-width: max-content;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
 }
 
 .chat-markdown th,
@@ -2358,6 +2361,11 @@ code {
 .markdown-table th,
 .markdown-table td {
   padding: 0.45rem 0.75rem;
+}
+
+.chat-markdown th,
+.chat-markdown td,
+.markdown-table td {
   text-align: left;
 }
 

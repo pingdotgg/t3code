@@ -40,7 +40,7 @@ export function MarkdownFrontmatterTable({
             <tr key={entry.key}>
               <th
                 scope="row"
-                className="w-px whitespace-nowrap bg-muted/30 !text-right align-middle font-semibold text-foreground"
+                className="w-px whitespace-nowrap bg-muted/30 text-right align-middle font-semibold text-foreground"
               >
                 {entry.key}
               </th>
