@@ -39,6 +39,29 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+### Status probes and timeouts
+
+Each instance runs its own health refresh through `makeManagedServerProvider`, which calls the
+driver's `checkProvider`. Those checks spawn CLI subprocesses under short deadlines, so on a busy
+host several instances can miss their deadlines at once.
+
+A status check must not report `error` when it merely ran out of time. Reporting `error` empties the
+snapshot and `ProviderRegistry` persists it to the on-disk status cache, so one busy moment would
+outlive itself and keep the provider unusable for new sessions. Instead, a probe that hits its
+deadline fails with `ProviderProbeTimeoutError`, and `makeManagedServerProvider` decides what to
+publish:
+
+- After at least one successful check, the last known status, auth, version, and models are carried
+  forward. Only `checkedAt` and `message` move, which is still a change, so clients and the cache
+  both see it and a manual refresh is never a silent no-op.
+- Before the first successful check there is nothing to carry forward, so the timeout is reported as
+  an `error` with the probe's own message.
+
+A definite failure, including a missing CLI, is unaffected and still reports `error` immediately.
+New drivers with a probe deadline should raise `ProviderProbeTimeoutError` rather than building a
+failure snapshot. A probe that reaches a real verdict, such as an unreachable configured server,
+should keep reporting that verdict.
+
 ## How provider work is requested
 
 Clients never call a provider directly. They dispatch orchestration commands over the RPC method
