@@ -12,10 +12,15 @@ vi.mock("../state/session", async (importOriginal) => ({
 }));
 vi.mock("../state/entities", () => ({
   readThreadShell: () => null,
-  useActiveEnvironmentId: () => EnvironmentId.make("env-windows"),
   useProjects: () => [],
 }));
-vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => vi.fn() }));
+vi.mock("../remoteOpen", () => ({
+  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
+}));
+vi.mock("../editorPreferences", () => ({
+  useOpenInPreferredEditor: () => vi.fn(),
+  usePreferredEditor: () => [null, vi.fn()],
+}));
 vi.mock("~/lib/openPullRequestLink", () => ({
   findProjectForChangeRequest: () => undefined,
   matchesLinkedPullRequestUrl: () => false,
@@ -23,7 +28,124 @@ vi.mock("~/lib/openPullRequestLink", () => ({
   useOpenChangeRequestLink: () => vi.fn(),
 }));
 
-import ChatMarkdown, { orderedListGutterStyle } from "./ChatMarkdown";
+import ChatMarkdown, {
+  canUseMarkdownFileShellActions,
+  hasMarkdownFilePrimaryAction,
+  orderedListGutterStyle,
+  shouldUseMarkdownFileBrowserPrimaryAction,
+} from "./ChatMarkdown";
+
+describe("canUseMarkdownFileShellActions", () => {
+  const environmentId = EnvironmentId.make("environment-1");
+
+  it("allows editor and file manager actions for local environments", () => {
+    expect(canUseMarkdownFileShellActions(environmentId, "local-exec", true)).toBe(true);
+  });
+
+  it("hides shell actions until the environment mode is resolved", () => {
+    expect(canUseMarkdownFileShellActions(environmentId, "local-exec", false)).toBe(false);
+  });
+
+  it("hides editor and file manager actions for remote environments", () => {
+    expect(canUseMarkdownFileShellActions(environmentId, "remote-links", true)).toBe(false);
+    expect(canUseMarkdownFileShellActions(environmentId, "remote-unavailable", true)).toBe(false);
+  });
+
+  it("hides shell actions when no environment owns the markdown", () => {
+    expect(canUseMarkdownFileShellActions(null, "local-exec", true)).toBe(false);
+  });
+});
+
+describe("hasMarkdownFilePrimaryAction", () => {
+  it("keeps the chip interactive when an editor, browser, or panel can open it", () => {
+    expect(
+      hasMarkdownFilePrimaryAction({
+        canOpenInEditor: true,
+        canOpenInBrowser: false,
+        canOpenInPanel: false,
+      }),
+    ).toBe(true);
+    expect(
+      hasMarkdownFilePrimaryAction({
+        canOpenInEditor: false,
+        canOpenInBrowser: true,
+        canOpenInPanel: false,
+      }),
+    ).toBe(true);
+    expect(
+      hasMarkdownFilePrimaryAction({
+        canOpenInEditor: false,
+        canOpenInBrowser: false,
+        canOpenInPanel: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("removes the link affordance when no primary action can open the file", () => {
+    expect(
+      hasMarkdownFilePrimaryAction({
+        canOpenInEditor: false,
+        canOpenInBrowser: false,
+        canOpenInPanel: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("ChatMarkdown file option chips", () => {
+  it("keeps the fallback button text selectable", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />,
+    );
+
+    expect(html).toContain("<button");
+    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).toContain("select-text");
+  });
+});
+
+describe("shouldUseMarkdownFileBrowserPrimaryAction", () => {
+  it("uses the browser when it is the only available primary action", () => {
+    expect(
+      shouldUseMarkdownFileBrowserPrimaryAction({
+        iconPath: "/tmp/report.html",
+        canOpenInEditor: false,
+        canOpenInBrowser: true,
+        canOpenInPanel: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("preserves the normal editor and panel defaults for HTML files", () => {
+    expect(
+      shouldUseMarkdownFileBrowserPrimaryAction({
+        iconPath: "/tmp/report.html",
+        canOpenInEditor: true,
+        canOpenInBrowser: true,
+        canOpenInPanel: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseMarkdownFileBrowserPrimaryAction({
+        iconPath: "/tmp/report.html",
+        canOpenInEditor: false,
+        canOpenInBrowser: true,
+        canOpenInPanel: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("continues to open PDF files in the browser by default", () => {
+    expect(
+      shouldUseMarkdownFileBrowserPrimaryAction({
+        iconPath: "/tmp/report.pdf",
+        canOpenInEditor: true,
+        canOpenInBrowser: true,
+        canOpenInPanel: true,
+      }),
+    ).toBe(true);
+  });
+});
 
 describe("orderedListGutterStyle", () => {
   it("leaves the default gutter alone for single-digit lists", () => {
@@ -67,10 +189,13 @@ describe("orderedListGutterStyle", () => {
 });
 
 describe("ChatMarkdown Windows file links", () => {
+  const environmentId = EnvironmentId.make("env-windows");
+
   it.each([true, false])("preserves drive paths with parseRawHtml=%s", (parseRawHtml) => {
     const html = renderToStaticMarkup(
       <ChatMarkdown
         cwd="C:/Users/shawn/project"
+        environmentId={environmentId}
         text="[Open](C:/Users/shawn/project/src/main.ts)"
         lineBreaks={!parseRawHtml}
         parseRawHtml={parseRawHtml}
@@ -85,6 +210,7 @@ describe("ChatMarkdown Windows file links", () => {
     const html = renderToStaticMarkup(
       <ChatMarkdown
         cwd="C:/Users/shawn/project"
+        environmentId={environmentId}
         text={String.raw`[Open](C:\Users\shawn\project\src\main.ts)`}
         lineBreaks={!parseRawHtml}
         parseRawHtml={parseRawHtml}
@@ -101,6 +227,7 @@ describe("ChatMarkdown Windows file links", () => {
       const html = renderToStaticMarkup(
         <ChatMarkdown
           cwd="C:/Users/shawn/project"
+          environmentId={environmentId}
           text={String.raw`[Source](C:\Users\shawn\project\src\index.ts) and [Test](C:\Users\shawn\project\test\index.ts)`}
           lineBreaks={!parseRawHtml}
           parseRawHtml={parseRawHtml}
@@ -119,6 +246,7 @@ describe("ChatMarkdown Windows file links", () => {
       const html = renderToStaticMarkup(
         <ChatMarkdown
           cwd="C:/Users/shawn/project"
+          environmentId={environmentId}
           text={`[Source](${path}) and \`${path}\``}
           lineBreaks={!parseRawHtml}
           parseRawHtml={parseRawHtml}
@@ -134,6 +262,7 @@ describe("ChatMarkdown Windows file links", () => {
     const html = renderToStaticMarkup(
       <ChatMarkdown
         cwd="C:/Users/shawn/project"
+        environmentId={environmentId}
         text={"[Open][source]\n\n[source]: C:/Users/shawn/project/src/main.ts"}
         lineBreaks={!parseRawHtml}
         parseRawHtml={parseRawHtml}
@@ -148,6 +277,7 @@ describe("ChatMarkdown Windows file links", () => {
     const html = renderToStaticMarkup(
       <ChatMarkdown
         cwd="C:/Users/shawn/project"
+        environmentId={environmentId}
         text="[unsafe](javascript:alert(1)) and [unknown](d:alert(1))"
         lineBreaks={!parseRawHtml}
         parseRawHtml={parseRawHtml}

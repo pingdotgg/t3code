@@ -70,6 +70,13 @@ The goal is not to minimize CSS or class counts at any cost. The goal is to put 
 - Do not treat a screenshot as proof of keyboard, overflow, scrollbar, responsive, or runtime-theme behavior. Pair visual evidence with source, computed-style, emitted-CSS, or interaction checks as appropriate.
 - Be alert to shared primitive color indirection. When a primitive routes icon color through a CSS variable, ensure migrated contextual icons retain their intended tone, including pressed and disabled states.
 
+## Environment routing in shared renderers
+
+- A shared renderer that performs an environment-scoped action — a server RPC such as opening or revealing a file, an environment-gated capability check, or an OS-derived label — must resolve its target environment from explicit scope: the bound thread's `environmentId`, or an `environmentId` prop threaded from the owning surface. Never let it silently fall back to the globally active environment. Multi-environment surfaces (pull request panels, review annotations, cross-environment listings) can render content from environment B while environment A is active; a silent fallback sends B's paths to A's server and presents A's platform wording.
+- When a call site cannot supply an explicit environment scope, suppress the environment-scoped actions at that call site rather than guessing. A hidden menu item is correct; an item that targets the wrong server is a concrete finding.
+- Capability gating, action dispatch, and user-facing labels must all read from the same environment's server config that the action will execute against. Flag a renderer whose label derives from one environment while its RPC targets another.
+- Flag new call sites of shared markdown, chip, or menu renderers that trigger environment actions without passing explicit scope, and flag new environment-action props whose default reintroduces an active-environment fallback.
+
 ## Change discipline
 
 - Review the pull request's changed scope and directly affected consumers. Do not turn a focused PR into a demand for unrelated legacy cleanup.

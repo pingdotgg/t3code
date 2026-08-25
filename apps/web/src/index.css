@@ -2271,13 +2271,13 @@ code {
   font-size: 0.75rem;
 }
 
-.chat-markdown a.chat-markdown-file-link,
-.chat-markdown a.chat-markdown-file-link:hover {
+.chat-markdown .chat-markdown-file-link,
+.chat-markdown .chat-markdown-file-link:hover {
   color: var(--contrast-foreground);
   text-decoration: none;
 }
 
-.chat-markdown a.chat-markdown-file-link:focus-visible {
+.chat-markdown .chat-markdown-file-link:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 70%, transparent);
 }
