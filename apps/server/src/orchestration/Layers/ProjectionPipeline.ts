@@ -130,6 +130,28 @@ function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
   );
 }
 
+function shouldRefreshThreadShellSummary(event: OrchestrationEvent): boolean {
+  if (event.type === "thread.message-sent") {
+    return event.payload.role === "user";
+  }
+
+  if (event.type !== "thread.activity-appended") {
+    return true;
+  }
+
+  switch (event.payload.activity.kind) {
+    case "approval.requested":
+    case "approval.resolved":
+    case "provider.approval.respond.failed":
+    case "user-input.requested":
+    case "user-input.resolved":
+    case "provider.user-input.respond.failed":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function derivePendingUserInputCountFromActivities(
   activities: ReadonlyArray<ProjectionThreadActivity>,
 ): number {
@@ -865,7 +887,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             updatedAt: event.occurredAt,
           });
-          yield* refreshThreadShellSummary(event.payload.threadId);
+          if (shouldRefreshThreadShellSummary(event)) {
+            yield* refreshThreadShellSummary(event.payload.threadId);
+          }
           return;
         }
 
