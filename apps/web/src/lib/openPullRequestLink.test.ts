@@ -228,3 +228,46 @@ describe("findProjectForChangeRequest", () => {
     ).toBeUndefined();
   });
 });
+
+describe("Gitea change request links", () => {
+  it("reads a Gitea PR URL on an arbitrary self-hosted host", () => {
+    expect(parseChangeRequestUrl("https://git.example.com/owner/repo/pulls/42")).toEqual({
+      host: "git.example.com",
+      repository: "owner/repo",
+      number: 42,
+    });
+    expect(parseChangeRequestUrl("https://gitea.com/foo/bar/pulls/1")).toEqual({
+      host: "gitea.com",
+      repository: "foo/bar",
+      number: 1,
+    });
+    expect(parseChangeRequestUrl("https://code.home.internal/team/project/pulls/999")).toEqual({
+      host: "code.home.internal",
+      repository: "team/project",
+      number: 999,
+    });
+  });
+
+  it("does not read a Gitea PR list or a non-numeric index", () => {
+    expect(parseChangeRequestUrl("https://git.example.com/owner/repo/pulls")).toBeNull();
+    expect(parseChangeRequestUrl("https://git.example.com/owner/repo/pulls/abc")).toBeNull();
+    expect(parseChangeRequestUrl("https://git.example.com/owner/repo/issues/42")).toBeNull();
+  });
+
+  // GitHub is checked first and returns early, so its singular /pull/ shape is unaffected by the
+  // plural rule that follows it.
+  it("leaves GitHub URLs on the GitHub rule", () => {
+    expect(parseChangeRequestUrl("https://github.com/owner/repo/pull/42")).toEqual({
+      host: "github.com",
+      repository: "owner/repo",
+      number: 42,
+    });
+    expect(parseChangeRequestUrl("https://github.com/owner/repo/pulls/42")).toBeNull();
+  });
+
+  it("finds the repository root behind a Gitea PR URL", () => {
+    expect(changeRequestRepositoryUrl("https://git.example.com/owner/repo/pulls/42")).toBe(
+      "https://git.example.com/owner/repo",
+    );
+  });
+});

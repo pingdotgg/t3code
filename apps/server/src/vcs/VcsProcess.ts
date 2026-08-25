@@ -64,7 +64,10 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
     normalized.includes("az devops login") ||
     normalized.includes("please run az login") ||
     normalized.includes("no oauth token") ||
-    normalized.includes("unauthorized")
+    normalized.includes("unauthorized") ||
+    // `tea` reports an unconfigured or unmatched instance this way, and it is by far the most
+    // common Gitea setup mistake. Scoped to tea so the phrase cannot misclassify another CLI.
+    (command === "tea" && normalized.includes("no available login"))
   ) {
     return "authentication";
   }

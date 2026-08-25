@@ -73,6 +73,9 @@ const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, I
   gitlab: GitLabIcon,
   "azure-devops": AzureDevOpsIcon,
   bitbucket: BitbucketIcon,
+  // No Gitea logo is bundled yet, so it takes the neutral change-request mark rather than
+  // another host's brand, matching the rest of the clients.
+  gitea: GitPullRequestIcon,
 };
 
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {

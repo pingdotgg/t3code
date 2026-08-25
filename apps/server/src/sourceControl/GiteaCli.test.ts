@@ -476,8 +476,96 @@ layer("GiteaCli.layer", (it) => {
     }),
   );
 
+  it.effect("creates under the user when the owner is the authenticated account", () =>
+    Effect.gen(function* () {
+      // The publish dialog prefills the signed-in account as the owner, so `<you>/name` is the
+      // ordinary input. Gitea's orgs endpoint 404s for a plain user, so this must not use it.
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiJson({ login: "mario" })));
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          apiJson({
+            full_name: "mario/widget",
+            clone_url: "https://git.example.com/mario/widget.git",
+            ssh_url: "git@git.example.com:mario/widget.git",
+          }),
+        ),
+      );
+
+      const tea = yield* GiteaCli.GiteaCli;
+      const result = yield* tea.createRepository({
+        cwd: "/repo",
+        repository: "mario/widget",
+        visibility: "private",
+      });
+
+      expect(mockedRun.mock.calls[0]?.[0].args).toEqual(["api", "-i", "user"]);
+      expect(lastArgs()).toEqual([
+        "api",
+        "-i",
+        "-X",
+        "POST",
+        "user/repos",
+        "-f",
+        "name=widget",
+        "-F",
+        "private=true",
+      ]);
+      expect(result.nameWithOwner).toBe("mario/widget");
+    }),
+  );
+
+  it.effect("matches the authenticated account case-insensitively", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiJson({ login: "Mario" })));
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          apiJson({
+            full_name: "Mario/widget",
+            clone_url: "https://git.example.com/Mario/widget.git",
+            ssh_url: "git@git.example.com:Mario/widget.git",
+          }),
+        ),
+      );
+
+      const tea = yield* GiteaCli.GiteaCli;
+      yield* tea.createRepository({
+        cwd: "/repo",
+        repository: "mario/widget",
+        visibility: "public",
+      });
+
+      expect(lastArgs()[4]).toBe("user/repos");
+    }),
+  );
+
+  it.effect("falls back to username when Gitea omits login", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiJson({ username: "mario" })));
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          apiJson({
+            full_name: "mario/widget",
+            clone_url: "https://git.example.com/mario/widget.git",
+            ssh_url: "git@git.example.com:mario/widget.git",
+          }),
+        ),
+      );
+
+      const tea = yield* GiteaCli.GiteaCli;
+      yield* tea.createRepository({
+        cwd: "/repo",
+        repository: "mario/widget",
+        visibility: "public",
+      });
+
+      expect(lastArgs()[4]).toBe("user/repos");
+    }),
+  );
+
   it.effect("creates a repository under an organization when an owner is given", () =>
     Effect.gen(function* () {
+      // acme is not the authenticated account, so this one really does belong on the orgs endpoint.
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiJson({ login: "mario" })));
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
           apiJson({
@@ -494,6 +582,8 @@ layer("GiteaCli.layer", (it) => {
         repository: "acme/widget",
         visibility: "public",
       });
+
+      expect(mockedRun.mock.calls[0]?.[0].args).toEqual(["api", "-i", "user"]);
 
       expect(lastArgs()).toEqual([
         "api",

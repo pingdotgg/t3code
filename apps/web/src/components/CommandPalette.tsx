@@ -8,6 +8,9 @@ import {
   getCloneDirectoryName,
   getDefaultCloneUrl,
   normalizePastedCloneUrl,
+  type AddProjectCloneFlow,
+  type AddProjectRemoteProviderKind,
+  type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
@@ -28,8 +31,6 @@ import {
   type FilesystemBrowseResult,
   type ProjectId,
   type SourceControlDiscoveryResult,
-  type SourceControlProviderKind,
-  type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -40,6 +41,7 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  GitPullRequestIcon,
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
@@ -202,39 +204,20 @@ interface AddProjectEnvironmentOption {
   readonly status: string;
 }
 
-type AddProjectRemoteProviderKind = Extract<
-  SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
->;
-type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
-
-type AddProjectCloneFlow =
-  | {
-      readonly step: "repository";
-      readonly environmentId: EnvironmentId;
-      readonly source: AddProjectRemoteSource;
-    }
-  | {
-      readonly step: "confirm";
-      readonly environmentId: EnvironmentId;
-      readonly source: AddProjectRemoteSource;
-      readonly repositoryInput: string;
-      readonly repository: SourceControlRepositoryInfo | null;
-      readonly remoteUrl: string;
-    };
-
 const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "url",
   "github",
   "gitlab",
   "bitbucket",
   "azure-devops",
+  "gitea",
 ];
 const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
   "github",
   "gitlab",
   "bitbucket",
   "azure-devops",
+  "gitea",
 ];
 
 function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
@@ -247,6 +230,8 @@ function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
       return "Bitbucket";
     case "azure-devops":
       return "Azure DevOps";
+    case "gitea":
+      return "Gitea";
     case "url":
       return "Git URL";
   }
@@ -262,6 +247,8 @@ function remoteProjectSourcePathHint(source: AddProjectRemoteSource): string {
       return "workspace/repository";
     case "azure-devops":
       return "project/repository";
+    case "gitea":
+      return "owner/repository";
     case "url":
       return "URL";
   }
@@ -283,6 +270,8 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
       return <BitbucketIcon className={className} />;
     case "azure-devops":
       return <AzureDevOpsIcon className={className} />;
+    case "gitea":
+      return <GitPullRequestIcon className={className} />;
     case "url":
       return <LinkIcon className={className} />;
   }
@@ -332,6 +321,7 @@ function buildAddProjectRemoteSourceReadiness(
     gitlab: unavailable,
     bitbucket: unavailable,
     "azure-devops": unavailable,
+    gitea: unavailable,
   };
 
   if (!discovery) {

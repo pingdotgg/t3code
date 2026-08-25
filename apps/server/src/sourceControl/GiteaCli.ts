@@ -304,6 +304,12 @@ const RawGiteaRepositorySchema = Schema.Struct({
   ssh_url: TrimmedNonEmptyString,
 });
 
+/** `GET /user`. Gitea reports the account name as `login`; older builds also send `username`. */
+const RawGiteaUserSchema = Schema.Struct({
+  login: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  username: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+
 const RawGiteaDefaultBranchSchema = Schema.Struct({
   default_branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
@@ -312,6 +318,7 @@ const decodeGiteaRepository = Schema.decodeEffect(Schema.fromJsonString(RawGitea
 const decodeGiteaDefaultBranch = Schema.decodeEffect(
   Schema.fromJsonString(RawGiteaDefaultBranchSchema),
 );
+const decodeGiteaUser = Schema.decodeEffect(Schema.fromJsonString(RawGiteaUserSchema));
 
 function normalizeRepositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawGiteaRepositorySchema>,
@@ -659,22 +666,55 @@ export const make = Effect.gen(function* () {
       ),
     createRepository: (input) => {
       const { owner, name } = parseRepositoryPath(input.repository);
-      // An explicit owner creates under that organization; otherwise the repo lands on the
-      // authenticated user, matching how the other providers read `owner/name`.
-      const endpoint = owner === null ? "user/repos" : `orgs/${encodeURIComponent(owner)}/repos`;
 
-      return api({
-        cwd: input.cwd,
-        args: [
-          "-X",
-          "POST",
-          endpoint,
-          "-f",
-          `name=${name}`,
-          "-F",
-          `private=${input.visibility === "private"}`,
-        ],
-      }).pipe(
+      /**
+       * Gitea splits repository creation in two: `POST /user/repos` creates under the authenticated
+       * user, while `POST /orgs/{org}/repos` requires a real organization and 404s for a plain
+       * user. T3's publish dialog prefills the signed-in account as the owner, so the common input
+       * is `<you>/name` — sending that to the orgs endpoint would fail every default publish.
+       * Resolve who we are and pick accordingly.
+       */
+      const endpoint: Effect.Effect<string, GiteaCliError> =
+        owner === null
+          ? Effect.succeed("user/repos")
+          : api({ cwd: input.cwd, args: ["user"] }).pipe(
+              Effect.flatMap((raw) =>
+                decodeGiteaUser(raw).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new GiteaRepositoryDecodeError({
+                        operation: "createRepository",
+                        command: "tea",
+                        cwd: input.cwd,
+                        repository: input.repository,
+                        cause,
+                      }),
+                  ),
+                ),
+              ),
+              Effect.map((user) => {
+                const login = user.login ?? user.username ?? null;
+                return login !== null && login.toLowerCase() === owner.toLowerCase()
+                  ? "user/repos"
+                  : `orgs/${encodeURIComponent(owner)}/repos`;
+              }),
+            );
+
+      return endpoint.pipe(
+        Effect.flatMap((resolvedEndpoint) =>
+          api({
+            cwd: input.cwd,
+            args: [
+              "-X",
+              "POST",
+              resolvedEndpoint,
+              "-f",
+              `name=${name}`,
+              "-F",
+              `private=${input.visibility === "private"}`,
+            ],
+          }),
+        ),
         Effect.flatMap((raw) =>
           decodeGiteaRepository(raw).pipe(
             Effect.mapError(

@@ -27,6 +27,7 @@ import {
   ExternalLinkIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
+  GitPullRequestIcon,
   InfoIcon,
   LockIcon,
   GlobeIcon,
@@ -115,7 +116,7 @@ interface PendingDefaultBranchAction {
 
 type PublishProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "bitbucket" | "azure-devops" | "gitea"
 >;
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -194,6 +195,15 @@ const PUBLISH_PROVIDER_OPTIONS = [
     host: "dev.azure.com",
     pathPlaceholder: "project/repository",
     Icon: AzureDevOpsIcon,
+  },
+  {
+    value: "gitea",
+    // A self-hosted Gitea has no canonical host, so the real one is read from discovery below.
+    label: "Gitea",
+    description: "Your authenticated instance",
+    host: "gitea",
+    pathPlaceholder: "owner/repository",
+    Icon: GitPullRequestIcon,
   },
 ] as const satisfies ReadonlyArray<{
   readonly value: PublishProviderKind;
@@ -416,6 +426,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       gitlab: null,
       bitbucket: null,
       "azure-devops": null,
+      gitea: null,
     };
     for (const provider of sourceControlDiscovery.data?.sourceControlProviders ?? []) {
       if (isPublishProviderKind(provider.kind)) {
@@ -423,6 +434,16 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       }
     }
     return accounts;
+  }, [sourceControlDiscovery.data]);
+  const publishHostByProvider = useMemo(() => {
+    const hosts: Partial<Record<PublishProviderKind, string>> = {};
+    for (const provider of sourceControlDiscovery.data?.sourceControlProviders ?? []) {
+      const host = Option.getOrNull(provider.auth.host);
+      if (isPublishProviderKind(provider.kind) && host) {
+        hosts[provider.kind] = host;
+      }
+    }
+    return hosts;
   }, [sourceControlDiscovery.data]);
   const publishProviderReadiness = useMemo(() => {
     const sourceControlProviders = sourceControlDiscovery.data?.sourceControlProviders ?? [];
@@ -465,7 +486,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     : "";
   const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
   const currentPublishProvider = publishProviderOption(publishProvider);
-  const publishHost = currentPublishProvider.host;
+  const publishHost =
+    publishProvider === "gitea"
+      ? (publishHostByProvider.gitea ?? currentPublishProvider.host)
+      : currentPublishProvider.host;
   const publishPathPlaceholder = currentPublishProvider.pathPlaceholder;
   const publishProviderLabel = currentPublishProvider.label;
   const publishWizardSteps = ["Provider", "Repository", "Summary"] as const;
