@@ -126,7 +126,10 @@ export interface ProviderServiceShape {
 
   readonly getCodexGoal: (
     threadId: ThreadId,
-    options?: { readonly allowRecovery?: boolean },
+    options?: {
+      readonly allowRecovery?: boolean;
+      readonly failIfInactive?: boolean;
+    },
   ) => Effect.Effect<CodexGoal | null, ProviderServiceError>;
 
   readonly setCodexGoal: (
