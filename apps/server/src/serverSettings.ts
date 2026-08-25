@@ -427,10 +427,10 @@ const make = Effect.gen(function* () {
             cause: failure.cause,
           });
         }
-        return DEFAULT_SERVER_SETTINGS;
+      } else {
+        settings = decoded.value;
+        persisted = persistedSettings.value;
       }
-      settings = decoded.value;
-      persisted = persistedSettings.value;
     }
 
     const providerHistory = yield* sql<{

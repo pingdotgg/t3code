@@ -627,6 +627,22 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("preserves provider history when the settings file is invalid", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, "{invalid json");
+      yield* recordProviderUsage("cursor");
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.isTrue(settings.providers.cursor.enabled);
+      assert.isFalse(settings.providers.grok.enabled);
+      assert.isFalse(settings.providers.opencode.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("restores providers from persisted runtime sessions", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
