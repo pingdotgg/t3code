@@ -2833,6 +2833,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  const addInfoExclude: GitVcsDriver.GitVcsDriver["Service"]["addInfoExclude"] = Effect.fn(
+    "addInfoExclude",
+  )(function* (input) {
+    const operation = "GitVcsDriver.addInfoExclude";
+    // A linked worktree keeps its exclude file under the parent's `.git/worktrees/<name>`,
+    // so ask git for the path instead of assuming `.git` is a directory.
+    const excludePath = (yield* runGitStdout(operation, input.cwd, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      "info/exclude",
+    ])).trim();
+    const existing = yield* fileSystem
+      .readFileString(excludePath)
+      .pipe(Effect.orElseSucceed(() => ""));
+    if (existing.split(/\r?\n/).some((line) => line.trim() === input.pattern)) {
+      return;
+    }
+    const separator = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
+    yield* fileSystem.makeDirectory(path.dirname(excludePath), { recursive: true }).pipe(
+      Effect.andThen(
+        fileSystem.writeFileString(excludePath, `${existing}${separator}${input.pattern}\n`),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new GitCommandError({
+            operation,
+            command: "git info/exclude",
+            cwd: input.cwd,
+            detail: `Failed to write ${excludePath}.`,
+            cause,
+          }),
+      ),
+    );
+  });
+
   const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
     Effect.fn("fetchPullRequestBranch")(function* (input) {
       const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
@@ -3272,6 +3308,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     setBranchUpstream: (input) => withListRefsInvalidation(input.cwd, setBranchUpstream(input)),
     removeWorktree: (input) => withListRefsInvalidation(input.cwd, removeWorktree(input)),
     pruneWorktrees: (input) => withListRefsInvalidation(input.cwd, pruneWorktrees(input)),
+    addInfoExclude,
     renameBranch: (input) => withListRefsInvalidation(input.cwd, renameBranch(input)),
     createRef: (input) => withListRefsInvalidation(input.cwd, createRef(input)),
     switchRef: (input) => withListRefsInvalidation(input.cwd, switchRef(input)),

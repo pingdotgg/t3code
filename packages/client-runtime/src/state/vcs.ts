@@ -314,6 +314,12 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
     }),
+    addInfoExclude: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:add-info-exclude",
+      tag: WS_METHODS.vcsAddInfoExclude,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
     createRef: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-ref",
       tag: WS_METHODS.vcsCreateRef,
