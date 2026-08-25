@@ -1,4 +1,8 @@
 import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  resolveSelectableProviderInstanceEntry,
+  type ProviderInstanceEntry,
+} from "../../providerInstances";
 import { getTriggerDisplayModelName, type ModelEsque } from "./providerIconUtils";
 
 export const CLAUDE_RESUME_COMPACTION_MINUTES = 70;
@@ -6,6 +10,30 @@ export const CLAUDE_RESUME_COMPACTION_TOKENS = 100_000;
 export const CLAUDE_RESUME_COMPACTION_NEVER_ANSWER = "Don't ask again";
 const CLAUDE_RESUME_COMPACTION_QUESTION_PATTERN =
   /^This session is (?:\d+h \d+m|\d+m) old and uses \d{1,3}(?:,\d{3})* tokens\. Compact it before continuing\?$/u;
+
+export function hasAvailableClaudeCompactionProvider(input: {
+  readonly providers: ReadonlyArray<ProviderInstanceEntry>;
+  readonly instanceId: ProviderInstanceId | null;
+  readonly lockedInstanceId: ProviderInstanceId | null;
+}): boolean {
+  const claudeProviders = input.providers.filter(
+    (provider) => provider.driverKind === "claudeAgent",
+  );
+  const lockedContinuationGroupKey = input.lockedInstanceId
+    ? claudeProviders.find((provider) => provider.instanceId === input.lockedInstanceId)
+        ?.continuationGroupKey
+    : undefined;
+  const compatibleProviders = lockedContinuationGroupKey
+    ? claudeProviders.filter(
+        (provider) => provider.continuationGroupKey === lockedContinuationGroupKey,
+      )
+    : claudeProviders;
+
+  return (
+    resolveSelectableProviderInstanceEntry(compatibleProviders, input.instanceId ?? undefined) !==
+    undefined
+  );
+}
 
 export function hasDismissedResumeCompaction(
   activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>,
