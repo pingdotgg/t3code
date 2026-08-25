@@ -33,26 +33,7 @@ export function useShortcutModifierState(): ShortcutModifierState {
     const onKeyboardEvent = (event: KeyboardEvent) => {
       setState((current) => shortcutModifierStateAfterKeyboardEvent(current, event));
     };
-    const onPointerDown = (event: PointerEvent) => {
-      setState((current) => {
-        const nextState = {
-          metaKey: event.metaKey,
-          ctrlKey: event.ctrlKey,
-          altKey: event.altKey,
-          shiftKey: event.shiftKey,
-        };
-
-        return areShortcutModifierStatesEqual(current, nextState) ? current : nextState;
-      });
-    };
-    const onTextInput = () => {
-      setState((current) =>
-        current.metaKey || current.ctrlKey
-          ? { ...current, metaKey: false, ctrlKey: false }
-          : current,
-      );
-    };
-    const resetModifierState = () => {
+    const onWindowBlur = () => {
       setState((current) =>
         areShortcutModifierStatesEqual(current, EMPTY_SHORTCUT_MODIFIER_STATE)
           ? current
@@ -62,21 +43,11 @@ export function useShortcutModifierState(): ShortcutModifierState {
 
     window.addEventListener("keydown", onKeyboardEvent, true);
     window.addEventListener("keyup", onKeyboardEvent, true);
-    window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("paste", onTextInput, true);
-    window.addEventListener("input", onTextInput, true);
-    window.addEventListener("blur", resetModifierState);
-    window.addEventListener("focus", resetModifierState);
-    document.addEventListener("visibilitychange", resetModifierState);
+    window.addEventListener("blur", onWindowBlur);
     return () => {
       window.removeEventListener("keydown", onKeyboardEvent, true);
       window.removeEventListener("keyup", onKeyboardEvent, true);
-      window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("paste", onTextInput, true);
-      window.removeEventListener("input", onTextInput, true);
-      window.removeEventListener("blur", resetModifierState);
-      window.removeEventListener("focus", resetModifierState);
-      document.removeEventListener("visibilitychange", resetModifierState);
+      window.removeEventListener("blur", onWindowBlur);
     };
   }, []);
 
@@ -106,16 +77,19 @@ export function shortcutModifierStateAfterKeyboardEvent(
   event: KeyboardEvent,
 ): ShortcutModifierState {
   const normalizedModifierKey = normalizeModifierKey(event.key);
-  const isKeyDown = event.type === "keydown";
-  const nextState: ShortcutModifierState = {
-    metaKey: event.metaKey && (isKeyDown || currentState.metaKey),
-    ctrlKey: event.ctrlKey && (isKeyDown || currentState.ctrlKey),
-    altKey: event.altKey && (isKeyDown || currentState.altKey),
-    shiftKey: event.shiftKey && (isKeyDown || currentState.shiftKey),
-  };
-
+  let nextState: ShortcutModifierState;
   if (normalizedModifierKey) {
-    nextState[normalizedModifierKey] = isKeyDown;
+    nextState = {
+      ...currentState,
+      [normalizedModifierKey]: event.type === "keydown",
+    };
+  } else {
+    nextState = {
+      metaKey: event.metaKey,
+      ctrlKey: event.ctrlKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+    };
   }
 
   return areShortcutModifierStatesEqual(currentState, nextState) ? currentState : nextState;

@@ -337,7 +337,7 @@ describe("createThreadJumpHintVisibilityController", () => {
     });
 
     controller.sync(true);
-    vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS - 1);
+    vi.advanceTimersByTime(199);
 
     expect(visibilityChanges).toEqual([]);
 
