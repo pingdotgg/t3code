@@ -205,11 +205,6 @@ export interface CodexThreadSnapshot {
   readonly turns: ReadonlyArray<CodexThreadTurnSnapshot>;
 }
 
-export type CodexSessionRuntimeGoalSetInput = Omit<
-  EffectCodexSchema.V2ThreadGoalSetParams,
-  "threadId"
->;
-
 export interface CodexSessionRuntimeShape {
   readonly start: () => Effect.Effect<ProviderSession, CodexSessionRuntimeError>;
   readonly getSession: Effect.Effect<ProviderSession>;
@@ -230,7 +225,7 @@ export interface CodexSessionRuntimeShape {
     CodexSessionRuntimeError
   >;
   readonly setGoal: (
-    input: CodexSessionRuntimeGoalSetInput,
+    input: Omit<EffectCodexSchema.V2ThreadGoalSetParams, "threadId">,
   ) => Effect.Effect<EffectCodexSchema.V2ThreadGoalSetResponse, CodexSessionRuntimeError>;
   readonly clearGoal: Effect.Effect<
     EffectCodexSchema.V2ThreadGoalClearResponse,
