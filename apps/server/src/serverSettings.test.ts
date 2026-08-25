@@ -118,6 +118,23 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(settingsLayer));
   });
 
+  it.effect("identifies provider history query failures", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DROP TABLE projection_thread_sessions`;
+
+      const error = yield* Effect.flip(serverSettings.getSettings);
+
+      assert.deepInclude(error, {
+        _tag: "ServerSettingsError",
+        operation: "read-provider-history",
+        settingsPath: serverConfig.settingsPath,
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("decodes nested settings patches", () =>
     Effect.gen(function* () {
       assert.deepEqual(

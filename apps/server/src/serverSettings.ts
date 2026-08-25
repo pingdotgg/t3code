@@ -453,7 +453,7 @@ const make = Effect.gen(function* () {
         (cause) =>
           new ServerSettingsError({
             settingsPath,
-            operation: "read-file",
+            operation: "read-provider-history",
             cause,
           }),
       ),
