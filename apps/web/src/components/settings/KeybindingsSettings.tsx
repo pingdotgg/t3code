@@ -876,12 +876,9 @@ function WhenClauseControl({
       <PopoverTrigger
         render={
           <Button
-            variant="ghost"
+            variant={expression ? "ghost" : "ghost-muted"}
             size="compact"
-            className={cn(
-              "h-6 max-w-full gap-1 px-1 font-mono font-normal text-[12px] sm:text-[12px]",
-              !expression && "text-muted-foreground",
-            )}
+            className="h-6 min-w-0 shrink gap-1 px-1 font-mono font-normal text-[12px] sm:text-[12px]"
           />
         }
         aria-label={`Edit when clause for ${label}`}
