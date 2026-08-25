@@ -29,9 +29,7 @@ describe("claude resume compaction copy", () => {
 
   it("does not match unrelated questions", () => {
     expect(
-      isClaudeResumeCompactionQuestion(
-        "The build cache is large. Compact it before continuing?",
-      ),
+      isClaudeResumeCompactionQuestion("The build cache is large. Compact it before continuing?"),
     ).toBe(false);
   });
 });
