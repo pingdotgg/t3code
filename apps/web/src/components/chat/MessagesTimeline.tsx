@@ -1213,13 +1213,19 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const { t } = useI18n();
-  const messageText = row.message.text || (row.message.streaming ? "" : t("chat.emptyResponse"));
   const reasoningText = row.message.reasoningText ?? "";
+  const hasVisibleReasoning = !row.hideAssistantReasoning && reasoningText.trim().length > 0;
+  const messageText =
+    row.message.text.trim().length > 0
+      ? row.message.text
+      : row.message.streaming || hasVisibleReasoning
+        ? ""
+        : t("chat.emptyResponse");
 
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
-        {!row.hideAssistantReasoning && reasoningText.trim().length > 0 ? (
+        {hasVisibleReasoning ? (
           <AssistantReasoningBlock
             text={reasoningText}
             streaming={Boolean(row.message.streaming)}

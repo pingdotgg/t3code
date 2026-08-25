@@ -53,7 +53,7 @@ export function AssistantReasoningBlock({
       >
         <ChevronRightIcon className="size-3.5 shrink-0 transition-transform" aria-hidden />
         <BotIcon className="size-3.5 shrink-0" aria-hidden />
-        <span>{t("chat.reasoning.thinking")}</span>
+        <span>{t(streaming ? "chat.reasoning.thinking" : "chat.reasoning.completed")}</span>
         {streaming ? <span className="animate-pulse text-muted-foreground/70">...</span> : null}
       </CollapsibleTrigger>
       <CollapsiblePanel>

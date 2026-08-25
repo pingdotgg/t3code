@@ -332,6 +332,20 @@ function normalizeRuntimeTurnState(
   }
 }
 
+function orchestrationSessionStatusFromRuntimeTurnState(
+  state: ReturnType<typeof normalizeRuntimeTurnState>,
+): "ready" | "interrupted" | "error" {
+  switch (state) {
+    case "failed":
+      return "error";
+    case "interrupted":
+    case "cancelled":
+      return "interrupted";
+    case "completed":
+      return "ready";
+  }
+}
+
 function orchestrationSessionStatusFromRuntimeState(
   state: "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error",
 ): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
@@ -1684,9 +1698,9 @@ const make = Effect.gen(function* () {
             case "session.exited":
               return "stopped";
             case "turn.completed":
-              return normalizeRuntimeTurnState(event.payload.state) === "failed"
-                ? "error"
-                : "ready";
+              return orchestrationSessionStatusFromRuntimeTurnState(
+                normalizeRuntimeTurnState(event.payload.state),
+              );
             case "session.started":
             case "thread.started":
               // Provider thread/session start notifications can arrive during an
@@ -1708,10 +1722,11 @@ const make = Effect.gen(function* () {
         const lastError =
           event.type === "session.state.changed" && event.payload.state === "error"
             ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
-            : event.type === "turn.completed" &&
-                normalizeRuntimeTurnState(event.payload.state) === "failed"
-              ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
-              : status === "ready"
+            : event.type === "turn.completed"
+              ? normalizeRuntimeTurnState(event.payload.state) === "failed"
+                ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
+                : null
+              : event.type === "turn.started" || status === "ready"
                 ? null
                 : (thread.session?.lastError ?? null);
 

@@ -863,6 +863,71 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.latestTurn?.state).toBe("completed");
       }
     });
+
+    it("keeps an interrupted turn interrupted when its checkpoint arrives", () => {
+      const interruptedThread: OrchestrationThread = {
+        ...baseThread,
+        latestTurn: {
+          turnId: TurnId.make("turn-1"),
+          state: "interrupted",
+          requestedAt: "2026-04-01T11:59:00.000Z",
+          startedAt: "2026-04-01T11:59:01.000Z",
+          completedAt: "2026-04-01T11:59:30.000Z",
+          assistantMessageId: null,
+        },
+      };
+      const result = applyThreadDetailEvent(interruptedThread, {
+        ...baseEventFields,
+        sequence: 14,
+        occurredAt: "2026-04-01T12:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.turn-diff-completed",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnId: TurnId.make("turn-1"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("ref-1"),
+          status: "ready",
+          files: [],
+          assistantMessageId: null,
+          completedAt: "2026-04-01T12:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.latestTurn?.state).toBe("interrupted");
+        expect(result.thread.latestTurn?.completedAt).toBe("2026-04-01T11:59:30.000Z");
+        expect(result.thread.checkpoints[0]?.status).toBe("ready");
+      }
+    });
+
+    it("keeps a missing checkpoint placeholder from marking a turn interrupted", () => {
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 15,
+        occurredAt: "2026-04-01T12:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.turn-diff-completed",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnId: TurnId.make("turn-placeholder"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("provider-diff:event-1"),
+          status: "missing",
+          files: [],
+          assistantMessageId: null,
+          completedAt: "2026-04-01T12:00:00.000Z",
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.latestTurn?.state).toBe("completed");
+      }
+    });
   });
 
   describe("thread.reverted", () => {
@@ -906,7 +971,7 @@ describe("applyThreadDetailEvent", () => {
             turnId: TurnId.make("turn-1"),
             checkpointTurnCount: 1,
             checkpointRef: CheckpointRef.make("ref-1"),
-            status: "ready",
+            status: "missing",
             files: [],
             assistantMessageId: MessageId.make("msg-2"),
             completedAt: "2026-04-01T02:00:00.000Z",
@@ -944,6 +1009,7 @@ describe("applyThreadDetailEvent", () => {
         // msg-3 (turn-2) is filtered, msg-1 (no turn) and msg-2 (turn-1) remain
         expect(result.thread.messages).toHaveLength(2);
         expect(result.thread.latestTurn?.turnId).toBe("turn-1");
+        expect(result.thread.latestTurn?.state).toBe("completed");
       }
     });
   });

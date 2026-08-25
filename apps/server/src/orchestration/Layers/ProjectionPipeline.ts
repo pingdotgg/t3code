@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   type ChatAttachment,
+  type OrchestrationCheckpointStatus,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
   ThreadId,
@@ -31,6 +32,7 @@ import {
 import { ProjectionThreadSessionRepository } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import {
   type ProjectionTurn,
+  type ProjectionTurnState,
   ProjectionTurnRepository,
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
@@ -91,6 +93,24 @@ function settledTurnStateForSessionStatus(
     case "running":
       return null;
   }
+}
+
+function checkpointStatusToTurnState(status: OrchestrationCheckpointStatus): ProjectionTurnState {
+  switch (status) {
+    case "ready":
+    case "missing":
+      return "completed";
+    case "error":
+      return "error";
+  }
+}
+
+function turnStateAfterCheckpoint(
+  existingState: ProjectionTurnState,
+  status: OrchestrationCheckpointStatus,
+): ProjectionTurnState {
+  if (existingState === "interrupted" || existingState === "error") return existingState;
+  return checkpointStatusToTurnState(status);
 }
 
 interface ProjectorDefinition {
@@ -1426,7 +1446,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
           });
-          const nextState = event.payload.status === "error" ? "error" : "completed";
+          const nextState = checkpointStatusToTurnState(event.payload.status);
           yield* projectionTurnRepository.clearCheckpointTurnConflict({
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
@@ -1437,14 +1457,19 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             yield* projectionTurnRepository.upsertByTurnId({
               ...existingTurn.value,
               assistantMessageId: event.payload.assistantMessageId,
-              state: turnStillRunning ? existingTurn.value.state : nextState,
+              state: turnStillRunning
+                ? existingTurn.value.state
+                : turnStateAfterCheckpoint(existingTurn.value.state, event.payload.status),
               checkpointTurnCount: event.payload.checkpointTurnCount,
               checkpointRef: event.payload.checkpointRef,
               checkpointStatus: event.payload.status,
               checkpointFiles: event.payload.files,
               startedAt: existingTurn.value.startedAt ?? event.payload.completedAt,
               requestedAt: existingTurn.value.requestedAt ?? event.payload.completedAt,
-              completedAt: event.payload.completedAt,
+              completedAt:
+                existingTurn.value.state === "interrupted" || existingTurn.value.state === "error"
+                  ? (existingTurn.value.completedAt ?? event.payload.completedAt)
+                  : event.payload.completedAt,
             });
             return;
           }

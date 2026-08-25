@@ -505,10 +505,17 @@ export function applyThreadDetailEvent(
         (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
           ? {
               turnId: event.payload.turnId,
-              state: checkpointStatusToTurnState(event.payload.status),
+              state:
+                thread.latestTurn === null
+                  ? checkpointStatusToTurnState(event.payload.status)
+                  : turnStateAfterCheckpoint(thread.latestTurn.state, event.payload.status),
               requestedAt: thread.latestTurn?.requestedAt ?? event.payload.completedAt,
               startedAt: thread.latestTurn?.startedAt ?? event.payload.completedAt,
-              completedAt: event.payload.completedAt,
+              completedAt:
+                thread.latestTurn !== null &&
+                (thread.latestTurn.state === "interrupted" || thread.latestTurn.state === "error")
+                  ? (thread.latestTurn.completedAt ?? event.payload.completedAt)
+                  : event.payload.completedAt,
               assistantMessageId: event.payload.assistantMessageId,
             }
           : thread.latestTurn;
@@ -652,6 +659,14 @@ function checkpointStatusToTurnState(
     case "missing":
       return "completed";
   }
+}
+
+function turnStateAfterCheckpoint(
+  existingState: OrchestrationLatestTurn["state"],
+  status: "ready" | "missing" | "error",
+): OrchestrationLatestTurn["state"] {
+  if (existingState === "interrupted" || existingState === "error") return existingState;
+  return checkpointStatusToTurnState(status);
 }
 
 function rebindCheckpointAssistantMessage(

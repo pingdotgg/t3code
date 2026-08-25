@@ -344,6 +344,150 @@ describe("orchestration projector", () => {
     expect(settledThread?.latestTurn?.completedAt).toBe(settledAt);
   });
 
+  effectIt.effect("keeps an interrupted latest turn interrupted when its checkpoint arrives", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-02-23T09:00:00.000Z";
+      const events = [
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-interrupted",
+          occurredAt: createdAt,
+          commandId: "cmd-create-interrupted",
+          payload: {
+            threadId: "thread-interrupted",
+            projectId: "project-1",
+            title: "interrupted",
+            modelSelection: {
+              provider: ProviderDriverKind.make("omp"),
+              model: "anthropic/claude-sonnet-4",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+        makeEvent({
+          sequence: 2,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: "thread-interrupted",
+          occurredAt: "2026-02-23T09:00:01.000Z",
+          commandId: "cmd-running",
+          payload: {
+            threadId: "thread-interrupted",
+            session: {
+              threadId: "thread-interrupted",
+              status: "running",
+              providerName: "omp",
+              providerSessionId: "session-interrupted",
+              providerThreadId: "provider-thread-interrupted",
+              runtimeMode: "full-access",
+              activeTurnId: "turn-interrupted",
+              lastError: null,
+              updatedAt: "2026-02-23T09:00:01.000Z",
+            },
+          },
+        }),
+        makeEvent({
+          sequence: 3,
+          type: "thread.turn-interrupt-requested",
+          aggregateKind: "thread",
+          aggregateId: "thread-interrupted",
+          occurredAt: "2026-02-23T09:00:30.000Z",
+          commandId: "cmd-interrupt",
+          payload: {
+            threadId: "thread-interrupted",
+            turnId: "turn-interrupted",
+            createdAt: "2026-02-23T09:00:30.000Z",
+          },
+        }),
+        makeEvent({
+          sequence: 4,
+          type: "thread.turn-diff-completed",
+          aggregateKind: "thread",
+          aggregateId: "thread-interrupted",
+          occurredAt: "2026-02-23T09:00:31.000Z",
+          commandId: "cmd-checkpoint",
+          payload: {
+            threadId: "thread-interrupted",
+            turnId: "turn-interrupted",
+            checkpointTurnCount: 1,
+            checkpointRef: "refs/t3/checkpoints/thread-interrupted/turn/1",
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-02-23T09:00:31.000Z",
+          },
+        }),
+      ];
+
+      let projected = createEmptyReadModel(createdAt);
+      for (const event of events) projected = yield* projectEvent(projected, event);
+
+      expect(projected.threads[0]?.latestTurn?.state).toBe("interrupted");
+      expect(projected.threads[0]?.latestTurn?.completedAt).toBe("2026-02-23T09:00:30.000Z");
+      expect(projected.threads[0]?.checkpoints[0]?.status).toBe("ready");
+    }),
+  );
+
+  effectIt.effect("keeps a missing checkpoint placeholder from marking a turn interrupted", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-02-23T10:00:00.000Z";
+      const afterCreate = yield* projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-placeholder",
+          occurredAt: createdAt,
+          commandId: "cmd-create-placeholder",
+          payload: {
+            threadId: "thread-placeholder",
+            projectId: "project-1",
+            title: "placeholder",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5.3-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      );
+      const projected = yield* projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.turn-diff-completed",
+          aggregateKind: "thread",
+          aggregateId: "thread-placeholder",
+          occurredAt: "2026-02-23T10:00:01.000Z",
+          commandId: "cmd-placeholder",
+          payload: {
+            threadId: "thread-placeholder",
+            turnId: "turn-placeholder",
+            checkpointTurnCount: 1,
+            checkpointRef: "provider-diff:event-placeholder",
+            status: "missing",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-02-23T10:00:01.000Z",
+          },
+        }),
+      );
+
+      expect(projected.threads[0]?.latestTurn?.state).toBe("completed");
+    }),
+  );
+
   it("updates canonical thread runtime mode from thread.runtime-mode-set", async () => {
     const createdAt = "2026-02-23T08:00:00.000Z";
     const updatedAt = "2026-02-23T08:00:05.000Z";
@@ -613,36 +757,34 @@ describe("orchestration projector", () => {
     expect(finalMessage?.streaming).toBe(false);
   });
 
-  it("prunes reverted turn messages from in-memory thread snapshot", async () => {
+  effectIt.effect("prunes reverted turn messages from in-memory thread snapshot", () => {
     const createdAt = "2026-02-23T10:00:00.000Z";
     const model = createEmptyReadModel(createdAt);
 
-    const afterCreate = await Effect.runPromise(
-      projectEvent(
-        model,
-        makeEvent({
-          sequence: 1,
-          type: "thread.created",
-          aggregateKind: "thread",
-          aggregateId: "thread-1",
-          occurredAt: createdAt,
-          commandId: "cmd-create",
-          payload: {
-            threadId: "thread-1",
-            projectId: "project-1",
-            title: "demo",
-            modelSelection: {
-              provider: ProviderDriverKind.make("codex"),
-              model: "gpt-5.3-codex",
-            },
-            runtimeMode: "full-access",
-            branch: null,
-            worktreePath: null,
-            createdAt,
-            updatedAt: createdAt,
+    const afterCreate = projectEvent(
+      model,
+      makeEvent({
+        sequence: 1,
+        type: "thread.created",
+        aggregateKind: "thread",
+        aggregateId: "thread-1",
+        occurredAt: createdAt,
+        commandId: "cmd-create",
+        payload: {
+          threadId: "thread-1",
+          projectId: "project-1",
+          title: "demo",
+          modelSelection: {
+            provider: ProviderDriverKind.make("codex"),
+            model: "gpt-5.3-codex",
           },
-        }),
-      ),
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      }),
     );
 
     const events: ReadonlyArray<OrchestrationEvent> = [
@@ -808,24 +950,25 @@ describe("orchestration projector", () => {
       }),
     ];
 
-    const afterRevert = await events.reduce<Promise<ReturnType<typeof createEmptyReadModel>>>(
-      (statePromise, event) =>
-        statePromise.then((state) => Effect.runPromise(projectEvent(state, event))),
-      Promise.resolve(afterCreate),
+    const afterRevert = events.reduce(
+      (state, event) => Effect.flatMap(state, (model) => projectEvent(model, event)),
+      afterCreate,
     );
 
-    const thread = afterRevert.threads[0];
-    expect(thread?.messages.map((message) => ({ role: message.role, text: message.text }))).toEqual(
-      [
+    return Effect.map(afterRevert, (projected) => {
+      const thread = projected.threads[0];
+      expect(
+        thread?.messages.map((message) => ({ role: message.role, text: message.text })),
+      ).toEqual([
         { role: "user", text: "First edit" },
         { role: "assistant", text: "Updated README to v2.\n" },
-      ],
-    );
-    expect(
-      thread?.activities.map((activity) => ({ id: activity.id, turnId: activity.turnId })),
-    ).toEqual([{ id: "activity-1", turnId: "turn-1" }]);
-    expect(thread?.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount)).toEqual([1]);
-    expect(thread?.latestTurn?.turnId).toBe("turn-1");
+      ]);
+      expect(
+        thread?.activities.map((activity) => ({ id: activity.id, turnId: activity.turnId })),
+      ).toEqual([{ id: "activity-1", turnId: "turn-1" }]);
+      expect(thread?.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount)).toEqual([1]);
+      expect(thread?.latestTurn?.turnId).toBe("turn-1");
+    });
   });
 
   effectIt.effect("does not fallback-retain messages tied to removed turn IDs", () => {

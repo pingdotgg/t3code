@@ -1045,6 +1045,38 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Inspecting the current state");
   });
 
+  it("shows completed reasoning without an empty-response placeholder", () => {
+    const assistantEntry = buildAssistantTimelineEntry("");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...assistantEntry,
+            message: {
+              ...assistantEntry.message,
+              reasoningText: "The run ended before a final answer.",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-reasoning-streaming="false"');
+    expect(markup).toContain(">Reasoning</span>");
+    expect(markup).not.toContain(">Thinking</span>");
+    expect(markup).not.toContain("(empty response)");
+  });
+
+  it.each(["", "   "])("keeps the empty-response placeholder for blank text %j", (text) => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildAssistantTimelineEntry(text)]} />,
+    );
+
+    expect(markup).toContain("(empty response)");
+  });
+
   it("keeps reasoning attached to a final answer inside the collapsed turn", () => {
     const turnId = TurnId.make("turn-with-final-reasoning");
     const assistantEntry = buildAssistantTimelineEntry("Final summary stays visible.");

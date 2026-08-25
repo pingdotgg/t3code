@@ -1662,7 +1662,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   );
 
   it.effect(
-    "resolves turn-count conflicts when checkpoint completion rewrites provisional turns",
+    "resolves turn-count conflicts without allowing checkpoint completion to rewrite interrupted turns",
     () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;
@@ -1781,15 +1781,61 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           },
         });
 
+        yield* appendAndProject({
+          type: "thread.turn-diff-completed",
+          eventId: EventId.make("evt-conflict-6"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-conflict"),
+          occurredAt: "2026-02-26T13:00:05.000Z",
+          commandId: CommandId.make("cmd-conflict-6"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-conflict-6"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-conflict"),
+            turnId: TurnId.make("turn-interrupted"),
+            checkpointTurnCount: 2,
+            checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-conflict/turn/2"),
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-02-26T13:00:05.000Z",
+          },
+        });
+
+        yield* appendAndProject({
+          type: "thread.turn-diff-completed",
+          eventId: EventId.make("evt-conflict-7"),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-conflict"),
+          occurredAt: "2026-02-26T13:00:06.000Z",
+          commandId: CommandId.make("cmd-conflict-7"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-conflict-7"),
+          metadata: {},
+          payload: {
+            threadId: ThreadId.make("thread-conflict"),
+            turnId: TurnId.make("turn-placeholder"),
+            checkpointTurnCount: 3,
+            checkpointRef: CheckpointRef.make("provider-diff:evt-conflict-7"),
+            status: "missing",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-02-26T13:00:06.000Z",
+          },
+        });
+
         const turnRows = yield* sql<{
           readonly turnId: string;
           readonly checkpointTurnCount: number | null;
           readonly status: string;
+          readonly completedAt: string | null;
         }>`
         SELECT
           turn_id AS "turnId",
           checkpoint_turn_count AS "checkpointTurnCount",
-          state AS "status"
+          state AS "status",
+          completed_at AS "completedAt"
         FROM projection_turns
         WHERE thread_id = 'thread-conflict'
         ORDER BY
@@ -1801,8 +1847,24 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           requested_at ASC
       `;
         assert.deepEqual(turnRows, [
-          { turnId: "turn-completed", checkpointTurnCount: 1, status: "completed" },
-          { turnId: "turn-interrupted", checkpointTurnCount: null, status: "interrupted" },
+          {
+            turnId: "turn-completed",
+            checkpointTurnCount: 1,
+            status: "completed",
+            completedAt: "2026-02-26T13:00:04.000Z",
+          },
+          {
+            turnId: "turn-interrupted",
+            checkpointTurnCount: 2,
+            status: "interrupted",
+            completedAt: "2026-02-26T13:00:02.000Z",
+          },
+          {
+            turnId: "turn-placeholder",
+            checkpointTurnCount: 3,
+            status: "completed",
+            completedAt: "2026-02-26T13:00:06.000Z",
+          },
         ]);
       }),
   );

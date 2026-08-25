@@ -33,6 +33,7 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnInterruptRequestedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -41,8 +42,15 @@ const MAX_THREAD_CHECKPOINTS = 500;
 
 function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error") {
   if (status === "error") return "error" as const;
-  if (status === "missing") return "interrupted" as const;
   return "completed" as const;
+}
+
+function latestTurnStateAfterCheckpoint(
+  existingState: NonNullable<OrchestrationThread["latestTurn"]>["state"],
+  status: "ready" | "missing" | "error",
+) {
+  if (existingState === "interrupted" || existingState === "error") return existingState;
+  return checkpointStatusToLatestTurnState(status);
 }
 
 /**
@@ -501,6 +509,32 @@ export function projectEvent(
         })),
       );
 
+    case "thread.turn-interrupt-requested":
+      return decodeForEvent(
+        ThreadTurnInterruptRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          if (payload.turnId === undefined) return nextBase;
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (thread?.latestTurn?.turnId !== payload.turnId) return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              latestTurn: {
+                ...thread.latestTurn,
+                state: "interrupted",
+                startedAt: thread.latestTurn.startedAt ?? payload.createdAt,
+                completedAt: thread.latestTurn.completedAt ?? payload.createdAt,
+              },
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
     case "thread.message-sent":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -719,7 +753,10 @@ export function projectEvent(
               ? thread.latestTurn
               : {
                   turnId: payload.turnId,
-                  state: checkpointStatusToLatestTurnState(payload.status),
+                  state:
+                    thread.latestTurn?.turnId === payload.turnId
+                      ? latestTurnStateAfterCheckpoint(thread.latestTurn.state, payload.status)
+                      : checkpointStatusToLatestTurnState(payload.status),
                   requestedAt:
                     thread.latestTurn?.turnId === payload.turnId
                       ? thread.latestTurn.requestedAt
@@ -728,7 +765,12 @@ export function projectEvent(
                     thread.latestTurn?.turnId === payload.turnId
                       ? (thread.latestTurn.startedAt ?? payload.completedAt)
                       : payload.completedAt,
-                  completedAt: payload.completedAt,
+                  completedAt:
+                    thread.latestTurn?.turnId === payload.turnId &&
+                    (thread.latestTurn.state === "interrupted" ||
+                      thread.latestTurn.state === "error")
+                      ? (thread.latestTurn.completedAt ?? payload.completedAt)
+                      : payload.completedAt,
                   assistantMessageId: payload.assistantMessageId,
                 },
             updatedAt: event.occurredAt,

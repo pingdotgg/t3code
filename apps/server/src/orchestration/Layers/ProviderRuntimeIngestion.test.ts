@@ -741,6 +741,65 @@ describe("ProviderRuntimeIngestion", () => {
     );
   });
 
+  it("preserves an interrupted runtime completion in the thread lifecycle", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-before-interrupted-lifecycle"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-failed-before-interrupted-lifecycle"),
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-failed-before-interrupted-lifecycle"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-failed-before-interrupted-lifecycle"),
+      payload: { state: "failed", errorMessage: "previous failure" },
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "error" && thread.session.lastError === "previous failure",
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-interrupted-lifecycle"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-interrupted-lifecycle"),
+    });
+    const running = await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.activeTurnId === "turn-interrupted-lifecycle",
+    );
+    expect(running.session?.lastError).toBeNull();
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-interrupted-lifecycle"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: "2026-01-01T00:00:03.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-interrupted-lifecycle"),
+      payload: { state: "interrupted" },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "interrupted" && entry.session.activeTurnId === null,
+    );
+    expect(thread.latestTurn?.state).toBe("interrupted");
+    expect(thread.session?.lastError).toBeNull();
+  });
+
   it("accepts claude turn lifecycle when seeded thread id is a synthetic placeholder", async () => {
     const harness = await createHarness();
     const seededAt = "2026-01-01T00:00:00.000Z";
