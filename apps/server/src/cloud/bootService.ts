@@ -459,28 +459,26 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
-  const xmlSafeInstallerPath = installerPath
-    .split(":")
-    .filter((directory) =>
+  const xmlSafeInstallerDirectories = installerPath.split(":").filter(
+    (directory) =>
+      directory.length > 0 &&
       Array.from(directory).every((character) => {
         const code = character.charCodeAt(0);
         return code >= 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
       }),
-    )
-    .join(":");
-  const environmentPath =
-    xmlSafeInstallerPath ||
-    Array.from(
-      new Set([
-        path.dirname(host.execPath),
-        "/opt/homebrew/bin",
-        "/usr/local/bin",
-        "/usr/bin",
-        "/bin",
-        "/usr/sbin",
-        "/sbin",
-      ]),
-    ).join(":");
+  );
+  const environmentPath = Array.from(
+    new Set([
+      ...xmlSafeInstallerDirectories,
+      path.dirname(host.execPath),
+      "/opt/homebrew/bin",
+      "/usr/local/bin",
+      "/usr/bin",
+      "/bin",
+      "/usr/sbin",
+      "/sbin",
+    ]),
+  ).join(":");
 
   const detectedManager = selectBootServiceManager({
     platform,

@@ -284,7 +284,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         true,
       );
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
-        `    <key>PATH</key>\n    <string>${macInstallerPath}</string>`,
+        `    <key>PATH</key>\n    <string>${macInstallerPath}:/usr/local/bin:/usr/sbin:/sbin</string>`,
       );
       expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -335,6 +335,18 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("adds missing provider directories to a minimal installer PATH", () =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness("darwin", false, "/usr/bin:/bin");
+      const plan = yield* service.install;
+
+      expect(yield* fs.readFileString(plan.unitPath)).toContain(
+        "    <key>PATH</key>\n    <string>/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin:/usr/sbin:/sbin</string>",
+      );
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
   it.effect("keeps an installed launch agent current when the process PATH changes", () =>
     Effect.gen(function* () {
       const { service, makeService } = yield* makeHarness("darwin");
@@ -356,7 +368,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const plist = yield* fs.readFileString(plan.unitPath);
 
       expect(plist).toContain(
-        "    <key>PATH</key>\n    <string>/opt/homebrew/bin:/usr/bin</string>",
+        "    <key>PATH</key>\n    <string>/opt/homebrew/bin:/usr/bin:/usr/local/bin:/bin:/usr/sbin:/sbin</string>",
       );
       expect(plist).not.toContain("\u0001");
       expect((yield* service.status).current).toBe(true);
