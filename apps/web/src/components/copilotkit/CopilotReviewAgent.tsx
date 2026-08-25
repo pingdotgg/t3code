@@ -1,9 +1,11 @@
 import {
   CopilotKit,
+  CopilotModalHeader,
   CopilotSidebar,
   useAgentContext,
   useComponent,
   useConfigureSuggestions,
+  useCopilotChatConfiguration,
   useFrontendTool,
   useHumanInTheLoop,
 } from "@copilotkit/react-core/v2";
@@ -29,7 +31,15 @@ import {
   ShieldCheckIcon,
   XCircleIcon,
 } from "lucide-react";
-import { useMemo, useRef } from "react";
+import {
+  createContext,
+  type MutableRefObject,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+} from "react";
 import { z } from "zod";
 
 import { newMessageId } from "~/lib/utils";
@@ -51,6 +61,7 @@ import {
 } from "./copilotReview.logic";
 
 const REVIEW_AGENT_ID = "review";
+const ReviewSidebarCloseContext = createContext<MutableRefObject<(() => void) | null> | null>(null);
 
 const severitySchema = z.enum(["critical", "high", "medium", "low"]);
 const findingSchema = z.object({
@@ -270,12 +281,36 @@ function ToolProgressCard({
   );
 }
 
+const ReviewSidebarHeader = Object.assign(function ReviewSidebarHeader() {
+  const closeSidebarRef = useContext(ReviewSidebarCloseContext);
+  const setModalOpen = useCopilotChatConfiguration()?.setModalOpen;
+
+  useEffect(() => {
+    if (!closeSidebarRef || !setModalOpen) return;
+    const close = () => setModalOpen(false);
+    closeSidebarRef.current = close;
+    return () => {
+      if (closeSidebarRef.current === close) closeSidebarRef.current = null;
+    };
+  }, [closeSidebarRef, setModalOpen]);
+
+  return <CopilotModalHeader />;
+}, CopilotModalHeader);
+
 function ReviewToolHost(props: CopilotReviewAgentProps) {
   const runDiffPreview = useAtomQueryRunner(reviewEnvironment.diffPreview, {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const approvedSignatures = useRef(new Set<string>());
+  const closeSidebarRef = useRef<(() => void) | null>(null);
+  const openFile = useCallback(
+    (relativePath: string) => {
+      props.onOpenFile(relativePath);
+      closeSidebarRef.current?.();
+    },
+    [props.onOpenFile],
+  );
   const agentContext = useMemo(
     () => ({
       project: props.projectName,
@@ -370,11 +405,21 @@ function ReviewToolHost(props: CopilotReviewAgentProps) {
       description:
         "Render the branch review as an interactive dashboard after inspect_branch returns. Do not invent CI results.",
       parameters: reviewDashboardSchema,
-      render: (dashboardProps) => (
-        <ReviewDashboard {...dashboardProps} onOpenFile={props.onOpenFile} />
-      ),
+      render: (dashboardProps) => {
+        const parsed = reviewDashboardSchema.safeParse(dashboardProps);
+        return parsed.success ? (
+          <ReviewDashboard {...parsed.data} onOpenFile={openFile} />
+        ) : (
+          <ToolProgressCard
+            active
+            detail="Building the findings and checks"
+            icon={GitBranchIcon}
+            title="Preparing the review dashboard"
+          />
+        );
+      },
     },
-    [props.onOpenFile],
+    [openFile],
   );
 
   useFrontendTool(
@@ -389,7 +434,7 @@ function ReviewToolHost(props: CopilotReviewAgentProps) {
         const safePath = safeWorkspaceRelativePath(path);
         if (safePath === null)
           throw new Error("Only safe repository-relative paths can be opened.");
-        props.onOpenFile(safePath);
+        openFile(safePath);
         return { opened: true, path: safePath };
       },
       render: ({ status, args }) => (
@@ -401,7 +446,7 @@ function ReviewToolHost(props: CopilotReviewAgentProps) {
         />
       ),
     },
-    [props.onOpenFile],
+    [openFile],
   );
 
   useHumanInTheLoop(
@@ -438,7 +483,7 @@ function ReviewToolHost(props: CopilotReviewAgentProps) {
         }
 
         return (
-          <Card className="my-3 rounded-xl border-primary/30 bg-primary/4">
+          <Card className="my-3 mb-36 rounded-xl border-primary/30 bg-primary/4 md:mb-3">
             <CardHeader className="p-4 pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
                 <ShieldCheckIcon className="size-4 text-primary" />
@@ -595,19 +640,22 @@ function ReviewToolHost(props: CopilotReviewAgentProps) {
   );
 
   return (
-    <CopilotSidebar
-      agentId={REVIEW_AGENT_ID}
-      defaultOpen={false}
-      labels={{
-        modalHeaderTitle: "PR review agent",
-        chatInputPlaceholder: "Review this branch or ask about a finding…",
-        welcomeMessageText:
-          "I can inspect the current diff, render a review, open files, and hand approved fixes to T3 Code.",
-      }}
-      position="right"
-      threadId={`review:${props.threadId}`}
-      width={500}
-    />
+    <ReviewSidebarCloseContext.Provider value={closeSidebarRef}>
+      <CopilotSidebar
+        agentId={REVIEW_AGENT_ID}
+        defaultOpen={false}
+        header={ReviewSidebarHeader}
+        labels={{
+          modalHeaderTitle: "PR review agent",
+          chatInputPlaceholder: "Review this branch or ask about a finding…",
+          welcomeMessageText:
+            "I can inspect the current diff, render a review, open files, and hand approved fixes to T3 Code.",
+        }}
+        position="right"
+        threadId={`review:${props.threadId}`}
+        width={500}
+      />
+    </ReviewSidebarCloseContext.Provider>
   );
 }
 
