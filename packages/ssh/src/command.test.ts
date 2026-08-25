@@ -14,8 +14,10 @@ import {
   baseSshArgs,
   getLastNonEmptyOutputLine,
   parseSshResolveOutput,
+  remoteStateKey,
   resolveRemoteT3CliPackageSpec,
   runSshCommand,
+  targetConnectionKey,
 } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 
@@ -94,8 +96,37 @@ describe("ssh command", () => {
           },
           { batchMode: "no" },
         ),
-        ["-o", "BatchMode=no", "-o", "ConnectTimeout=10", "-p", "2222"],
+        ["-a", "-o", "BatchMode=no", "-o", "ConnectTimeout=10", "-p", "2222"],
       );
+    }),
+  );
+
+  it.effect("only forwards the SSH agent when explicitly requested", () =>
+    Effect.sync(() => {
+      const target = {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 2222,
+      } as const;
+
+      assert.equal(baseSshArgs(target)[0], "-a");
+      assert.equal(baseSshArgs(target, { forwardAgent: true })[0], "-A");
+    }),
+  );
+
+  it.effect("reconnects when forwarding changes without orphaning remote launch state", () =>
+    Effect.sync(() => {
+      const target = {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 2222,
+      } as const;
+      const forwardingTarget = { ...target, forwardAgent: true } as const;
+
+      assert.notEqual(targetConnectionKey(target), targetConnectionKey(forwardingTarget));
+      assert.equal(remoteStateKey(target), remoteStateKey(forwardingTarget));
     }),
   );
 

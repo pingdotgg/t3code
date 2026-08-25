@@ -130,7 +130,8 @@ Use this when you want the desktop app to start or reuse T3 Code on another mach
 2. Under **Remote Environments**, choose **Add environment**.
 3. Select the SSH launch flow.
 4. Enter the SSH target, such as `user@example.com`.
-5. Confirm the launch. The desktop app probes the host, starts or reuses a remote T3 server, opens a local port forward, and saves the environment.
+5. If Git or commit signing on that host should use your local SSH agent, enable **Forward SSH agent**. Only enable it for hosts you trust.
+6. Confirm the launch. The desktop app probes the host, starts or reuses a remote T3 server, opens a local port forward, and saves the environment.
 
 After setup, the renderer connects to a local forwarded HTTP/WebSocket endpoint. The remote host still owns the actual T3 server, projects, files, git state, terminals, and provider sessions.
 
@@ -139,6 +140,10 @@ SSH launch is a desktop feature because it needs local process and SSH access. O
 #### SSH Launch Troubleshooting
 
 The desktop SSH launcher connects with a non-interactive `sh` session, writes a small launcher script under `~/.t3/ssh-launch/<host-key>/`, starts or reuses a remote T3 server, and forwards the remote loopback port back to your desktop.
+
+When **Forward SSH agent** is enabled, T3 Code keeps a separate SSH agent channel open and starts its managed remote server with that channel's `SSH_AUTH_SOCK`. This works with standard agents and the 1Password SSH agent without copying private keys to the remote host. The local agent must be running, and the remote SSH server must allow agent forwarding. Forwarding is unavailable for an independently started T3 server because its environment is outside the desktop launcher's control; stop that server and reconnect so the desktop app can start it.
+
+If the remote machine also runs 1Password, make sure its SSH configuration does not force a remote `IdentityAgent` over the forwarded `SSH_AUTH_SOCK`. You can confirm forwarding in a T3 terminal with `ssh-add -l`.
 
 The remote host must have a compatible Node.js runtime. T3 Code uses the server package's `engines.node` requirement:
 

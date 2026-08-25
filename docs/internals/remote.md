@@ -170,6 +170,13 @@ The desktop main process owns this because it can spawn SSH, manage prompts, wri
 and clean up forwards. The renderer connects through the forwarded URL like any other environment and
 needs no SSH-specific RPC path.
 
+SSH agent forwarding is an explicit per-target opt-in. The manager disables forwarding on ordinary
+SSH commands, opens one retained `ssh -A` channel when requested, publishes that channel's remote
+socket under the launch state directory, and starts the launcher-managed server with the socket in
+`SSH_AUTH_SOCK`. The agent channel and port tunnel share the environment connection scope, so
+disconnect and reconnect replace both. Pre-existing external servers are rejected for this mode
+because their process environment cannot be updated safely.
+
 Failure handling is explicit: SSH auth failure surfaces before an environment is saved, remote launch
 failure includes launcher output where available, forwarded-port failure leaves the environment
 disconnected rather than falling back to an unrelated endpoint, and reconnect restores the SSH bridge

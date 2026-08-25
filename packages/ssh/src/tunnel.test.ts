@@ -14,6 +14,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { SshPasswordPrompt } from "./auth.ts";
 import {
+  buildRemoteAgentForwardScript,
   buildRemoteLaunchScript,
   buildRemotePairingScript,
   buildRemoteStopScript,
@@ -79,6 +80,16 @@ const makeRunningProcess = (onKill: () => void) => {
     getOutputFd: () => Stream.empty,
     unref: Effect.succeed(Effect.void),
   });
+};
+
+const makeRunningProcessWithStdout = (stdout: string, onKill: () => void) => {
+  const process = makeRunningProcess(onKill);
+  const stdoutStream = Stream.make(new TextEncoder().encode(stdout));
+  return {
+    ...process,
+    stdout: stdoutStream,
+    all: stdoutStream,
+  };
 };
 
 const testHttpClient = HttpClient.make((request) =>
@@ -234,6 +245,19 @@ describe("ssh tunnel scripts", () => {
       buildRemoteLaunchScript().indexOf('DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port'),
       buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
+  });
+
+  it("configures the managed server to use the retained forwarded agent socket", () => {
+    const forwardScript = buildRemoteAgentForwardScript();
+    const launchScript = buildRemoteLaunchScript({ forwardAgent: true });
+    const ordinaryLaunchScript = buildRemoteLaunchScript();
+
+    assert.include(forwardScript, 'FORWARDED_SOCKET="${SSH_AUTH_SOCK:-}"');
+    assert.include(forwardScript, "t3-agent-forward-ready");
+    assert.include(forwardScript, 'rm -f "$SOCKET_FILE"');
+    assert.include(launchScript, "FORWARD_AGENT=1");
+    assert.include(launchScript, 'SSH_AUTH_SOCK="$FORWARDED_SSH_AUTH_SOCK" nohup');
+    assert.include(ordinaryLaunchScript, "FORWARD_AGENT=0");
   });
 
   it.effect("accepts launch JSON after remote shell startup noise", () => {
@@ -438,6 +462,61 @@ describe("ssh tunnel scripts", () => {
       yield* manager.ensureEnvironment(target);
 
       assert.equal(spawnedCommands.filter((args) => args.includes("-N")).length, 2);
+      assert.equal(tunnelKillCount, 1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.effect("retains an explicitly requested agent forwarding channel", () => {
+    const spawnedCommands: Array<ReadonlyArray<string>> = [];
+    let agentForwarderKillCount = 0;
+    let tunnelKillCount = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        spawnedCommands.push(args);
+        if (args.includes("-A")) {
+          return makeRunningProcessWithStdout("t3-agent-forward-ready\n", () => {
+            agentForwarderKillCount += 1;
+          });
+        }
+        if (args.includes("-N")) {
+          return makeRunningProcess(() => {
+            tunnelKillCount += 1;
+          });
+        }
+        if (args.includes("sh") && args.includes("--")) {
+          return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"managed"}\n');
+        }
+        return makeSuccessfulProcess('{"stopped":true}\n');
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshPasswordPrompt.disabledLayer,
+      SshEnvironmentManager.layer(),
+    );
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+      forwardAgent: true,
+    } as const;
+
+    return Effect.gen(function* () {
+      const manager = yield* SshEnvironmentManager;
+      yield* manager.ensureEnvironment(target);
+
+      const agentArgs = spawnedCommands.find((args) => args.includes("-A"));
+      assert.isDefined(agentArgs);
+      assert.include(agentArgs, "sh");
+      assert.isTrue(spawnedCommands.filter((args) => args.includes("-a")).length >= 2);
+
+      yield* manager.disconnectEnvironment(target);
+      assert.equal(agentForwarderKillCount, 1);
       assert.equal(tunnelKillCount, 1);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });

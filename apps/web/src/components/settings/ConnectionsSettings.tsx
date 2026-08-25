@@ -254,6 +254,7 @@ function parseManualDesktopSshTarget(input: {
   readonly host: string;
   readonly username: string;
   readonly port: string;
+  readonly forwardAgent: boolean;
 }): DesktopSshEnvironmentTarget {
   const rawHost = input.host.trim();
   if (rawHost.length === 0) {
@@ -305,6 +306,7 @@ function parseManualDesktopSshTarget(input: {
     hostname,
     username,
     port,
+    ...(input.forwardAgent ? { forwardAgent: true } : {}),
   };
 }
 
@@ -1826,6 +1828,7 @@ export function ConnectionsSettings() {
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
+  const [savedBackendSshForwardAgent, setSavedBackendSshForwardAgent] = useState(false);
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
@@ -2151,6 +2154,7 @@ export function ConnectionsSettings() {
           host: savedBackendSshHost,
           username: savedBackendSshUsername,
           port: savedBackendSshPort,
+          forwardAgent: savedBackendSshForwardAgent,
         });
       } catch (error) {
         setSavedBackendError(formatDesktopSshConnectionError(error));
@@ -2172,6 +2176,7 @@ export function ConnectionsSettings() {
       setSavedBackendSshHost("");
       setSavedBackendSshUsername("");
       setSavedBackendSshPort("");
+      setSavedBackendSshForwardAgent(false);
       setAddBackendDialogOpen(false);
       toastManager.add({
         type: "success",
@@ -2242,6 +2247,7 @@ export function ConnectionsSettings() {
     savedBackendPairingCode,
     savedBackendSshHost,
     savedBackendSshPort,
+    savedBackendSshForwardAgent,
     savedBackendSshUsername,
   ]);
 
@@ -2304,6 +2310,7 @@ export function ConnectionsSettings() {
         setSavedBackendSshHost("");
         setSavedBackendSshUsername("");
         setSavedBackendSshPort("");
+        setSavedBackendSshForwardAgent(false);
         setAddBackendDialogOpen(false);
         toastManager.add({
           type: "success",
@@ -2507,6 +2514,21 @@ export function ConnectionsSettings() {
             />
           </label>
         </div>
+        <label className="flex items-start justify-between gap-4 rounded-md border border-border/60 px-3 py-2.5">
+          <span className="min-w-0">
+            <span className="block text-xs font-medium text-foreground">Forward SSH agent</span>
+            <span className="mt-0.5 block text-[11px] leading-4 text-muted-foreground">
+              Let Git and signing commands on this trusted host use your local SSH agent, including
+              1Password.
+            </span>
+          </span>
+          <Switch
+            checked={savedBackendSshForwardAgent}
+            onCheckedChange={setSavedBackendSshForwardAgent}
+            disabled={isAddingSavedBackend}
+            aria-label="Forward SSH agent"
+          />
+        </label>
         {savedBackendError || discoveredSshHostsError ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
             {savedBackendError ?? discoveredSshHostsError}
@@ -2549,7 +2571,12 @@ export function ConnectionsSettings() {
                 key={`${target.alias}:${target.hostname}:${target.port ?? ""}`}
                 target={target}
                 connectingHostAlias={connectingSshHostAlias}
-                onConnect={(nextTarget) => void handleConnectSshHost(nextTarget)}
+                onConnect={(nextTarget) =>
+                  void handleConnectSshHost({
+                    ...nextTarget,
+                    ...(savedBackendSshForwardAgent ? { forwardAgent: true } : {}),
+                  })
+                }
               />
             ))}
             {hasLoadedDiscoveredSshHosts &&
