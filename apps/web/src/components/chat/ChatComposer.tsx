@@ -73,7 +73,11 @@ import {
   type ComposerTaskStep,
   type ComposerTasksProgress,
 } from "./ComposerTasksBadge";
-import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
+import {
+  compressImageForStash,
+  isHeicImageFile,
+  prepareImageForAttachment,
+} from "../../lib/imageCompression";
 import {
   releaseAttachmentUpload,
   retryAttachmentUpload,
@@ -2537,12 +2541,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const acceptedFiles: File[] = [];
     let error: string | null = null;
     for (const file of files) {
-      if (!file.type.startsWith("image/")) {
+      const isHeicImage = isHeicImageFile(file);
+      if (!file.type.startsWith("image/") && !isHeicImage) {
         error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
         continue;
       }
-      if (!isProviderSendTurnSupportedImageMimeType(file.type)) {
-        error = `'${file.name}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
+      if (!isHeicImage && !isProviderSendTurnSupportedImageMimeType(file.type)) {
+        error = `'${file.name}' is not a supported image type. Attach GIF, HEIC, HEIF, JPEG, PNG, or WebP images.`;
         continue;
       }
       if (reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
@@ -2562,7 +2567,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       for (const file of acceptedFiles) {
         // Images over the wire cap are downscaled to fit rather than
         // refused; files already within it pass through byte-for-byte.
-        const compressed = await compressImageToByteLimit(file, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
+        const compressed = await prepareImageForAttachment(
+          file,
+          PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+        );
         if (!compressed.ok) {
           compressionError =
             compressed.reason === "unreadable"
@@ -2615,7 +2623,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) return;
-    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    const imageFiles = files.filter(
+      (file) => file.type.startsWith("image/") || isHeicImageFile(file),
+    );
     if (imageFiles.length === 0) return;
     event.preventDefault();
     void addComposerImages(imageFiles);
