@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./posthogReportPrompt": {
+      "types": "./src/posthogReportPrompt.ts",
+      "import": "./src/posthogReportPrompt.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"
