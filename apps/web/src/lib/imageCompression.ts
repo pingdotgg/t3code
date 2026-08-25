@@ -25,6 +25,8 @@ export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
  * ImageBitmap can OOM the tab — beyond this we refuse rather than risk it.
  */
 export const MAX_COMPRESSIBLE_SOURCE_BYTES = 50 * 1024 * 1024;
+/** Bounds the full-resolution RGBA buffers allocated by the HEIC decoder. */
+export const MAX_HEIC_DECODE_PIXELS = 16_000_000;
 /**
  * Quality ladder tried in order until the encoded image fits the budget.
  * The floor stays high enough to avoid visible blocking on UI screenshots;
@@ -321,12 +323,12 @@ export async function compressImageForStash(
 export async function compressImageToByteLimit(
   file: File,
   maxBytes: number,
-  options?: { preferredMimeType?: "image/jpeg" },
+  options?: { preferredMimeType?: "image/jpeg"; sourceSizeBytes?: number },
 ): Promise<CompressImageFileResult> {
   if (file.size <= maxBytes) {
     return { ok: true, file, recompressed: false };
   }
-  if (file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) {
+  if ((options?.sourceSizeBytes ?? file.size) > MAX_COMPRESSIBLE_SOURCE_BYTES) {
     return { ok: false, reason: "too-large" };
   }
   // The re-encode loop budgets in data-URL characters. Base64 turns 3 bytes
@@ -366,6 +368,21 @@ export async function prepareImageForAttachment(
 
   let converted: Blob;
   try {
+    const { HEIF } = await import("image-size/types/heif");
+    const sourceBytes = new Uint8Array(await file.arrayBuffer());
+    if (!HEIF.validate(sourceBytes)) {
+      return { ok: false, reason: "unreadable" };
+    }
+    const image = HEIF.calculate(sourceBytes);
+    const images = image.images ?? [image];
+    if (
+      images.some(
+        ({ width, height }) => width <= 0 || height <= 0 || width > MAX_HEIC_DECODE_PIXELS / height,
+      )
+    ) {
+      return { ok: false, reason: "too-large" };
+    }
+
     const { heicTo } = await import("heic-to/csp");
     converted = await heicTo({ blob: file, type: "image/jpeg", quality: QUALITY_STEPS[0] });
   } catch {
@@ -378,6 +395,7 @@ export async function prepareImageForAttachment(
   });
   const result = await compressImageToByteLimit(jpeg, maxBytes, {
     preferredMimeType: "image/jpeg",
+    sourceSizeBytes: file.size,
   });
 
   return result.ok ? { ...result, recompressed: true } : result;

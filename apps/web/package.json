@@ -35,6 +35,7 @@
     "culori": "^4.0.2",
     "effect": "catalog:",
     "heic-to": "^1.5.2",
+    "image-size": "^2.0.2",
     "jose": "catalog:",
     "jsonc-parser": "3.3.1",
     "jszip": "3.10.1",
