@@ -32,6 +32,45 @@ function makeFile(sizeBytes: number, type = "image/png"): File {
   return new File([new Uint8Array(sizeBytes).fill(7)], "shot.png", { type });
 }
 
+function makeHeicFile(options?: {
+  name?: string;
+  type?: string;
+  width?: number;
+  height?: number;
+  lastModified?: number;
+}): File {
+  const encoder = new TextEncoder();
+  const makeBox = (name: string, ...contents: Uint8Array[]) => {
+    const bytes = new Uint8Array(8 + contents.reduce((size, content) => size + content.length, 0));
+    new DataView(bytes.buffer).setUint32(0, bytes.length);
+    bytes.set(encoder.encode(name), 4);
+    let offset = 8;
+    for (const content of contents) {
+      bytes.set(content, offset);
+      offset += content.length;
+    }
+    return bytes;
+  };
+
+  const dimensions = new Uint8Array(12);
+  const view = new DataView(dimensions.buffer);
+  view.setUint32(4, options?.width ?? 4000);
+  view.setUint32(8, options?.height ?? 3000);
+  const properties = makeBox("iprp", makeBox("ipco", makeBox("ispe", dimensions)));
+
+  return new File(
+    [
+      makeBox("ftyp", encoder.encode("heic"), new Uint8Array(4)),
+      makeBox("meta", new Uint8Array(4), properties),
+    ],
+    options?.name ?? "photo.heic",
+    {
+      type: options?.type ?? "image/heic",
+      ...(options?.lastModified !== undefined ? { lastModified: options.lastModified } : {}),
+    },
+  );
+}
+
 /**
  * Installs a fake bitmap + canvas whose encoded size follows `sizeForQuality`.
  * `supportsWebp: false` makes `convertToBlob` hand back a differently-typed
@@ -275,7 +314,9 @@ describe("HEIC attachment preparation", () => {
   });
 
   it("converts a HEIC photo with a missing MIME type into a named JPEG", async () => {
-    const original = new File([new Uint8Array([1, 2, 3])], "IMG_1234.HEIC", {
+    const original = makeHeicFile({
+      name: "IMG_1234.HEIC",
+      type: "",
       lastModified: 123,
     });
     mocks.heicTo.mockResolvedValueOnce(
@@ -297,7 +338,8 @@ describe("HEIC attachment preparation", () => {
   });
 
   it("keeps oversized converted photos in JPEG format while shrinking them", async () => {
-    const original = new File([new Uint8Array([1, 2, 3])], "photo.heif", {
+    const original = makeHeicFile({
+      name: "photo.heif",
       type: "image/heif",
     });
     mocks.heicTo.mockResolvedValueOnce(
@@ -314,7 +356,8 @@ describe("HEIC attachment preparation", () => {
   });
 
   it("compresses JPEG intermediates above the source safety ceiling", async () => {
-    const original = new File([new Uint8Array([1, 2, 3])], "large.heic", {
+    const original = makeHeicFile({
+      name: "large.heic",
       type: "image/heic",
     });
     mocks.heicTo.mockResolvedValueOnce(
@@ -332,8 +375,44 @@ describe("HEIC attachment preparation", () => {
     expect(close).toHaveBeenCalled();
   });
 
-  it("reports unreadable when HEIC decoding fails", async () => {
+  it.each([
+    { label: "24 MP", width: 5712, height: 4284 },
+    { label: "48 MP", width: 8064, height: 6048 },
+  ])("accepts $label HEIC photos", async ({ width, height }) => {
+    const original = makeHeicFile({ width, height });
+    mocks.heicTo.mockResolvedValueOnce(new Blob(["jpeg"], { type: "image/jpeg" }));
+
+    const result = await prepareImageForAttachment(original, 1024);
+
+    expect(result.ok && result.file.type).toBe("image/jpeg");
+    expect(mocks.heicTo).toHaveBeenCalledOnce();
+  });
+
+  it("rejects oversized HEIC dimensions before loading the decoder", async () => {
+    const original = makeHeicFile({ width: 16_000, height: 4001 });
+
+    expect(await prepareImageForAttachment(original, 1024)).toEqual({
+      ok: false,
+      reason: "too-large",
+    });
+    expect(mocks.heicTo).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid HEIC metadata before loading the decoder", async () => {
     const original = new File([new Uint8Array([1, 2, 3])], "broken.heic", {
+      type: "image/heic",
+    });
+
+    expect(await prepareImageForAttachment(original, 1024)).toEqual({
+      ok: false,
+      reason: "unreadable",
+    });
+    expect(mocks.heicTo).not.toHaveBeenCalled();
+  });
+
+  it("reports unreadable when HEIC decoding fails", async () => {
+    const original = makeHeicFile({
+      name: "broken.heic",
       type: "image/heic",
     });
     mocks.heicTo.mockRejectedValueOnce(new Error("Invalid HEIC image"));

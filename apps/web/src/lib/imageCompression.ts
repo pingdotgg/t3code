@@ -25,6 +25,8 @@ export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
  * ImageBitmap can OOM the tab — beyond this we refuse rather than risk it.
  */
 export const MAX_COMPRESSIBLE_SOURCE_BYTES = 50 * 1024 * 1024;
+const MAX_HEIC_DECODE_PIXELS = 64_000_000;
+const MAX_HEIC_METADATA_BYTES = 1024 * 1024;
 /**
  * Quality ladder tried in order until the encoded image fits the budget.
  * The floor stays high enough to avoid visible blocking on UI screenshots;
@@ -67,6 +69,75 @@ export function isHeicImageFile(file: Pick<File, "name" | "type">): boolean {
     (file.type === "" || file.type.toLowerCase() === "application/octet-stream") &&
     HEIC_IMAGE_EXTENSION.test(file.name)
   );
+}
+
+interface HeicMetadataBox {
+  payloadOffset: number;
+  endOffset: number;
+}
+
+function findHeicMetadataBox(
+  view: DataView,
+  startOffset: number,
+  endOffset: number,
+  type: number,
+): HeicMetadataBox | null {
+  let offset = startOffset;
+  while (offset + 8 <= endOffset) {
+    let size = view.getUint32(offset);
+    let headerSize = 8;
+    if (size === 1) {
+      if (offset + 16 > endOffset) return null;
+      const extendedSize = view.getBigUint64(offset + 8);
+      if (extendedSize > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+      size = Number(extendedSize);
+      headerSize = 16;
+    } else if (size === 0) {
+      size = endOffset - offset;
+    }
+    if (size < headerSize || size > endOffset - offset) return null;
+
+    const nextOffset = offset + size;
+    if (view.getUint32(offset + 4) === type) {
+      return { payloadOffset: offset + headerSize, endOffset: nextOffset };
+    }
+    offset = nextOffset;
+  }
+  return null;
+}
+
+/** Read HEIC image dimensions before the decoder allocates full RGBA buffers. */
+async function validateHeicImageDimensions(
+  file: File,
+): Promise<ImageCompressionFailureReason | null> {
+  const metadata = await file.slice(0, MAX_HEIC_METADATA_BYTES).arrayBuffer();
+  const view = new DataView(metadata);
+  const meta = findHeicMetadataBox(view, 0, view.byteLength, 0x6d657461);
+  if (!meta || meta.payloadOffset + 4 > meta.endOffset) return "unreadable";
+  const properties = findHeicMetadataBox(view, meta.payloadOffset + 4, meta.endOffset, 0x69707270);
+  if (!properties) return "unreadable";
+  const containers = findHeicMetadataBox(
+    view,
+    properties.payloadOffset,
+    properties.endOffset,
+    0x6970636f,
+  );
+  if (!containers) return "unreadable";
+
+  let offset = containers.payloadOffset;
+  let foundImageDimensions = false;
+  while (offset < containers.endOffset) {
+    const image = findHeicMetadataBox(view, offset, containers.endOffset, 0x69737065);
+    if (!image) break;
+    if (image.payloadOffset + 12 > image.endOffset) return "unreadable";
+    const width = view.getUint32(image.payloadOffset + 4);
+    const height = view.getUint32(image.payloadOffset + 8);
+    if (width === 0 || height === 0) return "unreadable";
+    if (width > MAX_HEIC_DECODE_PIXELS / height) return "too-large";
+    foundImageDimensions = true;
+    offset = image.endOffset;
+  }
+  return foundImageDimensions ? null : "unreadable";
 }
 
 /** Chunked so a large image can't blow the argument limit of `fromCharCode`. */
@@ -374,6 +445,10 @@ export async function prepareImageForAttachment(
 
   let converted: Blob;
   try {
+    const dimensionError = await validateHeicImageDimensions(file);
+    if (dimensionError) {
+      return { ok: false, reason: dimensionError };
+    }
     const { heicTo } = await import("heic-to/csp");
     converted = await heicTo({ blob: file, type: "image/jpeg", quality: QUALITY_STEPS[0] });
   } catch {
