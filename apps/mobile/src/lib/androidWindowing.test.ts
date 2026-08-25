@@ -107,11 +107,29 @@ describe("withAndroidTabletOrientation MainActivity patch", () => {
     expect(patched).toContain("rebindWindowDisplayMetrics()");
   });
 
+  it("emits the complete phone/tablet/desk policy and configuration rebind path", () => {
+    const patched = patchMainActivity(EXPO_MAIN_ACTIVITY);
+    expect(patched).toContain(`val uiModeType = config.uiMode and Configuration.UI_MODE_TYPE_MASK`);
+    expect(patched).toContain(
+      `val unlockOrientation =\n      config.smallestScreenWidthDp >= ${ANDROID_TABLET_SMALLEST_WIDTH_DP} || uiModeType == Configuration.UI_MODE_TYPE_DESK`,
+    );
+    expect(patched).toContain(
+      `if (unlockOrientation) {\n        ActivityInfo.SCREEN_ORIENTATION_FULL_USER\n      } else {\n        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT`,
+    );
+    expect(patched).toContain(
+      "DisplayMetricsHolder.initDisplayMetrics(this)\n    window.decorView.post { window.decorView.requestLayout() }",
+    );
+    expect(patched).toContain(
+      "super.onConfigurationChanged(newConfig)\n    applyWindowedOrientation()\n    rebindWindowDisplayMetrics()",
+    );
+  });
+
   it("replaces the tablet-only injection on existing MainActivity files", () => {
     const patched = patchMainActivity(LEGACY_MAIN_ACTIVITY);
     expect(patched).not.toContain("applyTabletOrientation");
     expect(patched).toContain("UI_MODE_TYPE_DESK");
     expect(patched).toContain("DisplayMetricsHolder.initDisplayMetrics(this)");
+    expect(patched).toContain("applyWindowedOrientation()\n    rebindWindowDisplayMetrics()");
   });
 
   it("is idempotent", () => {

@@ -29,6 +29,21 @@ export function androidSidebarPageTitleTextStyle(): {
 }
 
 /**
+ * Accessibility and layout contract for the painted Android Threads title.
+ * Keep these props together so replacing the title cannot drop its TalkBack
+ * heading semantics while preserving the window-density line box.
+ */
+export function androidSidebarPageTitleProps() {
+  return {
+    accessible: true as const,
+    accessibilityLabel: "T3 Code, Threads" as const,
+    "aria-level": 1 as const,
+    role: "heading" as const,
+    style: androidSidebarPageTitleTextStyle(),
+  };
+}
+
+/**
  * Height of the native iOS navigation bar below the safe-area inset, used as
  * a fallback when the measured HeaderHeightContext is unavailable.
  */

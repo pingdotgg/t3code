@@ -4,6 +4,7 @@ import {
   ANDROID_SIDEBAR_PAGE_TITLE_FONT_SIZE,
   ANDROID_SIDEBAR_PAGE_TITLE_LINE_HEIGHT,
   ANDROID_SIDEBAR_PAGE_TITLE_ROW_MIN_HEIGHT,
+  androidSidebarPageTitleProps,
   androidSidebarPageTitleTextStyle,
 } from "./layoutMetrics";
 
@@ -22,6 +23,16 @@ describe("Android sidebar page title geometry", () => {
       fontSize: ANDROID_SIDEBAR_PAGE_TITLE_FONT_SIZE,
       lineHeight: ANDROID_SIDEBAR_PAGE_TITLE_LINE_HEIGHT,
       includeFontPadding: false,
+    });
+  });
+
+  it("keeps the painted title's accessibility contract with its layout style", () => {
+    expect(androidSidebarPageTitleProps()).toEqual({
+      accessible: true,
+      accessibilityLabel: "T3 Code, Threads",
+      "aria-level": 1,
+      role: "heading",
+      style: androidSidebarPageTitleTextStyle(),
     });
   });
 });

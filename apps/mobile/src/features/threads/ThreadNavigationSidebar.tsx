@@ -27,7 +27,7 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   ANDROID_SIDEBAR_PAGE_TITLE_ROW_MIN_HEIGHT,
-  androidSidebarPageTitleTextStyle,
+  androidSidebarPageTitleProps,
 } from "../../lib/layoutMetrics";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -1311,13 +1311,9 @@ function ThreadNavigationSidebarPane(
             size="pageTitle"
             brand={
               <Text
-                accessible
-                accessibilityLabel="T3 Code, Threads"
-                aria-level={1}
+                {...androidSidebarPageTitleProps()}
                 className="flex-1 font-t3-bold text-foreground"
                 numberOfLines={1}
-                role="heading"
-                style={androidSidebarPageTitleTextStyle()}
               >
                 Threads
               </Text>
