@@ -82,8 +82,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --appearance-contrast-boost: 0%;
   --appearance-contrast-border-boost: 0%;
   --appearance-contrast-target: black;
-  --app-scrollbar-thumb: rgb(217 217 217);
-  --app-scrollbar-thumb-hover: rgb(191 191 191);
+  --app-scrollbar-thumb: rgb(217 217 211);
+  --app-scrollbar-thumb-hover: rgb(194 194 186);
   /*
    * Compact UI geometry. Keep these values semantic so sidebar, palette,
    * tooltip, and toolbar controls cannot quietly drift apart.
@@ -137,7 +137,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    the variables and Settings -> Appearance can override them at runtime. The
    default stacks are mirrored in `appearanceFonts.ts`. */
 @theme {
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-sans: "RoundHog", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono:
     ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 }
@@ -1388,7 +1388,40 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 :root {
   color-scheme: light;
   --radius: 0.625rem;
-  --background: var(--color-zinc-25);
+
+  /* PostHog warm neutrals. The canvas is a warm off-white paper; cards and
+     popovers lift toward near-white instead of pure white so the raised
+     surfaces read as paper on paper. */
+  --posthog-paper-25: #fbfbf9;
+  --posthog-paper-50: #f7f7f4;
+  --posthog-paper-100: #f1f1ec;
+  --posthog-paper-150: #eeefe9;
+  --posthog-paper-200: #e5e6df;
+  --posthog-paper-250: #dfe0d8;
+  --posthog-paper-300: #d9d9d3;
+  --posthog-paper-400: #c2c2ba;
+  --posthog-paper-600: #63635b;
+  --posthog-ink: #151515;
+
+  /* PostHog ink neutrals for the dark theme. */
+  --posthog-slate-950: #1d1f27;
+  --posthog-slate-900: #22242d;
+  --posthog-slate-850: #262832;
+  --posthog-slate-800: #2c2e39;
+  --posthog-slate-700: #343643;
+  --posthog-slate-600: #3a3d48;
+  --posthog-slate-500: #4a4d59;
+  --posthog-slate-300: #9ea0a8;
+
+  /* Brand accents. Tangerine is the only accent; the rest are semantic. */
+  --posthog-tangerine: #ff5c1c;
+  --posthog-tangerine-darker: #ff4800;
+  --posthog-green: #47c861;
+  --posthog-yellow: #ffa81c;
+  --posthog-coral: #ff474d;
+  --posthog-blue: #1490e8;
+
+  --background: var(--posthog-paper-150);
   --app-chrome-background: var(--background);
   --toolbar-background: var(--app-chrome-background);
   --toolbar-foreground: var(--foreground);
@@ -1397,17 +1430,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --toolbar-control-foreground: var(--foreground);
   --toolbar-control-hover: var(--accent);
   --surface-raised: color-mix(in srgb, var(--card) 20%, transparent);
-  --foreground: var(--color-zinc-800);
-  --card: var(--color-white);
-  --card-foreground: var(--color-zinc-800);
-  --popover: var(--color-white);
-  --popover-foreground: var(--color-zinc-800);
-  --primary: oklch(0.488 0.217 264);
-  --primary-foreground: var(--color-white);
-  --secondary: var(--color-zinc-50);
-  --secondary-foreground: var(--color-zinc-800);
-  --muted: var(--color-zinc-50);
-  --muted-foreground: var(--color-zinc-500);
+  --foreground: var(--posthog-ink);
+  --card: var(--posthog-paper-50);
+  --card-foreground: var(--posthog-ink);
+  --popover: var(--posthog-paper-50);
+  --popover-foreground: var(--posthog-ink);
+  --primary: var(--posthog-tangerine);
+  /* Ink on tangerine, not white: white on #ff5c1c is 3.1:1, well under the
+     contrast the blue primary it replaces used to carry. */
+  --primary-foreground: var(--posthog-ink);
+  --secondary: var(--posthog-paper-200);
+  --secondary-foreground: var(--posthog-ink);
+  --muted: var(--posthog-paper-200);
+  --muted-foreground: var(--posthog-paper-600);
   --placeholder: var(--muted-foreground);
   --secondary-label: var(--muted-foreground);
   --icon-muted: var(--muted-foreground);
@@ -1416,119 +1451,120 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --message-action: var(--primary);
   --message-action-foreground: var(--primary-foreground);
   --message-action-hover: color-mix(in srgb, var(--primary) 90%, var(--background));
-  --accent: var(--color-zinc-100);
-  --accent-foreground: var(--color-zinc-900);
-  --error: var(--color-red-500);
-  --error-foreground: var(--color-red-700);
-  --error-surface: color-mix(in srgb, var(--error) 8%, transparent);
+  --accent: var(--posthog-paper-250);
+  --accent-foreground: var(--posthog-ink);
+  --error: var(--posthog-coral);
+  --error-foreground: #c0161c;
+  --error-surface: color-mix(in srgb, var(--error) 10%, transparent);
   --destructive: var(--error);
-  --border: var(--color-zinc-200);
-  --input: var(--color-zinc-300);
+  --border: var(--posthog-paper-300);
+  --input: var(--posthog-paper-400);
   --ring: var(--primary);
   --destructive-foreground: var(--error-foreground);
-  --info: var(--color-blue-500);
-  --info-foreground: var(--color-blue-700);
-  --success: var(--color-emerald-500);
-  --success-foreground: var(--color-emerald-700);
-  --warning: var(--color-amber-500);
-  --warning-foreground: var(--color-amber-700);
-  --warning-surface: color-mix(in srgb, var(--warning) 8%, transparent);
+  --info: var(--posthog-blue);
+  --info-foreground: #0e5f99;
+  --success: var(--posthog-green);
+  --success-foreground: #1e7a33;
+  --warning: var(--posthog-yellow);
+  --warning-foreground: #8a5200;
+  --warning-surface: color-mix(in srgb, var(--warning) 12%, transparent);
   --update: var(--primary);
-  --update-foreground: var(--primary);
+  --update-foreground: var(--posthog-tangerine-darker);
   --update-surface: color-mix(in srgb, var(--update) 12%, transparent);
   /* Keep every sidebar primitive on the same light surface hierarchy, including
      portaled mobile sheets and settings navigation outside the app sidebar. */
-  --sidebar: var(--color-zinc-50);
+  --sidebar: var(--posthog-paper-200);
   --sidebar-foreground: var(--foreground);
   --sidebar-muted-foreground: var(--muted-foreground);
-  --sidebar-control-surface: var(--color-zinc-100);
-  --sidebar-row-hover: var(--color-zinc-25);
-  --sidebar-row-active: var(--color-white);
-  --sidebar-row-selected: var(--color-white);
+  --sidebar-control-surface: var(--posthog-paper-250);
+  --sidebar-row-hover: var(--posthog-paper-100);
+  --sidebar-row-active: var(--posthog-paper-50);
+  --sidebar-row-selected: var(--posthog-paper-50);
   --sidebar-border: var(--border);
   --sidebar-stage-fade: var(--sidebar);
   --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
   --code-foreground: var(--foreground);
   --terminal-background: var(--background);
   --terminal-foreground: var(--foreground);
-  --terminal-cursor: rgb(38 56 78);
-  --terminal-selection-background: rgb(37 63 99 / 20%);
+  --terminal-cursor: var(--posthog-tangerine-darker);
+  --terminal-selection-background: rgb(255 92 28 / 22%);
 
   @variant dark {
     color-scheme: dark;
-    /* Keep the workspace in the same neutral-black family as sidebar v2.
-       Surfaces lift from this base instead of starting from a milky gray. */
-    --background: var(--color-neutral-950);
+    /* PostHog's dark surfaces: a warm-leaning slate base with raised cards
+       lifting toward #262832 rather than a milky gray. */
+    --background: var(--posthog-slate-950);
     --surface-raised: var(--secondary);
-    --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--background) 97%, var(--color-white));
-    --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--background) 94%, var(--color-white));
-    --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.571 0.21 264);
-    --secondary: --alpha(var(--color-white) / 4%);
-    --secondary-foreground: var(--color-neutral-100);
-    --muted: --alpha(var(--color-white) / 4%);
-    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
-    --accent: --alpha(var(--color-white) / 4%);
-    --accent-foreground: var(--color-neutral-100);
-    --error: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
-    --error-foreground: var(--color-red-400);
-    --error-surface: color-mix(in srgb, var(--error) 16%, transparent);
-    --border: --alpha(var(--color-white) / 6%);
-    --input: --alpha(var(--color-white) / 8%);
-    --info-foreground: var(--color-blue-400);
-    --success-foreground: var(--color-emerald-400);
-    --warning-foreground: var(--color-amber-400);
-    --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
-    --update-foreground: var(--color-blue-400);
+    --foreground: var(--posthog-paper-150);
+    --card: var(--posthog-slate-850);
+    --card-foreground: var(--posthog-paper-150);
+    --popover: var(--posthog-slate-800);
+    --popover-foreground: var(--posthog-paper-150);
+    --primary: var(--posthog-tangerine);
+    --primary-foreground: var(--posthog-ink);
+    --secondary: var(--posthog-slate-850);
+    --secondary-foreground: var(--posthog-paper-150);
+    --muted: var(--posthog-slate-850);
+    --muted-foreground: var(--posthog-slate-300);
+    --accent: var(--posthog-slate-700);
+    --accent-foreground: var(--posthog-paper-150);
+    --error: var(--posthog-coral);
+    --error-foreground: #ff9498;
+    --error-surface: color-mix(in srgb, var(--error) 18%, transparent);
+    --border: var(--posthog-slate-600);
+    --input: var(--posthog-slate-500);
+    --info-foreground: #6ec0f5;
+    --success-foreground: #7bdb90;
+    --warning-foreground: #ffc45e;
+    --warning-surface: color-mix(in srgb, var(--warning) 18%, transparent);
+    --update-foreground: #ff8b57;
     --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
-    --sidebar: var(--card);
-    --sidebar-control-surface: var(--muted);
-    --sidebar-row-hover: var(--accent);
-    --sidebar-row-active: var(--accent);
-    --sidebar-row-selected: var(--muted);
-    --sidebar-stage-fade: var(--card);
-    --terminal-cursor: rgb(180 203 255);
-    --terminal-selection-background: rgb(180 203 255 / 25%);
+    --sidebar: var(--posthog-slate-900);
+    --sidebar-control-surface: var(--posthog-slate-700);
+    --sidebar-row-hover: var(--posthog-slate-800);
+    --sidebar-row-active: var(--posthog-slate-700);
+    --sidebar-row-selected: var(--posthog-slate-700);
+    --sidebar-stage-fade: var(--sidebar);
+    --terminal-cursor: #ff8b57;
+    --terminal-selection-background: rgb(255 92 28 / 28%);
   }
 }
 
-/* Keep both sidebar implementations (default and legacy) on the same quiet
-   zinc hierarchy: zinc-50 navigation, zinc-25 hover, and white selected/raised
-   surfaces. */
+/* Keep both sidebar implementations (default and legacy) on the same warm
+   paper hierarchy: paper-200 navigation, paper-100 hover, and paper-50
+   selected/raised surfaces. */
 [data-app-sidebar] {
-  --background: var(--color-zinc-25);
-  --foreground: var(--color-zinc-800);
-  --card: var(--color-white);
-  --card-foreground: var(--color-zinc-800);
-  --accent: var(--color-zinc-100);
-  --accent-foreground: var(--color-zinc-900);
-  --muted: var(--color-zinc-50);
-  --muted-foreground: var(--color-zinc-500);
-  --border: var(--color-zinc-200);
-  --input: var(--color-zinc-300);
-  --sidebar: var(--color-zinc-50);
-  --sidebar-foreground: var(--color-zinc-800);
-  --sidebar-muted-foreground: var(--color-zinc-500);
-  --sidebar-control-surface: var(--color-zinc-100);
-  --sidebar-row-hover: var(--color-zinc-25);
-  --sidebar-row-active: var(--color-white);
-  --sidebar-row-selected: var(--color-white);
-  --sidebar-border: var(--color-zinc-200);
+  --background: var(--posthog-paper-150);
+  --foreground: var(--posthog-ink);
+  --card: var(--posthog-paper-50);
+  --card-foreground: var(--posthog-ink);
+  --accent: var(--posthog-paper-250);
+  --accent-foreground: var(--posthog-ink);
+  --muted: var(--posthog-paper-200);
+  --muted-foreground: var(--posthog-paper-600);
+  --border: var(--posthog-paper-300);
+  --input: var(--posthog-paper-400);
+  --sidebar: var(--posthog-paper-200);
+  --sidebar-foreground: var(--posthog-ink);
+  --sidebar-muted-foreground: var(--posthog-paper-600);
+  --sidebar-control-surface: var(--posthog-paper-250);
+  --sidebar-row-hover: var(--posthog-paper-100);
+  --sidebar-row-active: var(--posthog-paper-50);
+  --sidebar-row-selected: var(--posthog-paper-50);
+  --sidebar-border: var(--posthog-paper-300);
   --sidebar-stage-fade: var(--sidebar);
 
   @variant dark {
-    --background: #000;
-    --foreground: #f1f3f7;
-    --card: #000;
+    --background: var(--posthog-slate-950);
+    --foreground: var(--posthog-paper-150);
+    --card: var(--posthog-slate-900);
     --card-foreground: var(--foreground);
-    --accent: #191a1d;
-    --accent-foreground: #f7f9ff;
-    --muted: #0a0a0a;
-    --muted-foreground: #a3a3a3;
-    --border: rgb(255 255 255 / 8%);
-    --input: rgb(255 255 255 / 18%);
+    --accent: var(--posthog-slate-700);
+    --accent-foreground: var(--posthog-paper-25);
+    --muted: var(--posthog-slate-850);
+    --muted-foreground: var(--posthog-slate-300);
+    --border: var(--posthog-slate-600);
+    --input: var(--posthog-slate-500);
     --sidebar: var(--card);
     --sidebar-foreground: var(--foreground);
     --sidebar-muted-foreground: var(--muted-foreground);
