@@ -1324,6 +1324,18 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
+        // The merge is the only action an override belongs to. `gh` refuses `--admin` beside
+        // `--auto`, and an armed auto-merge that skipped the requirements it exists to wait for
+        // would be a standing instruction to do nothing — so a request pairing the two is turned
+        // away rather than carried out as the ordinary action and reported as a bypass.
+        if (input.adminMerge === true && input.action !== "merge") {
+          return Effect.fail(
+            new PullRequestOperationError({
+              operation: "runAction",
+              detail: "Only a merge can be made past the requirements this host enforces.",
+            }),
+          );
+        }
         // An override a host has no notion of is refused rather than dropped: quietly merging
         // the ordinary way would report success for a merge that asked to step over the branch's
         // requirements and did not, and the pull request would still be sitting there.

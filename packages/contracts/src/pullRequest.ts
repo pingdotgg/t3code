@@ -832,8 +832,12 @@ export const PullRequestActionInput = Schema.Struct({
   updateMethod: Schema.optional(PullRequestUpdateMethod),
   /**
    * Merge past the requirements the host would otherwise enforce, which only a viewer the host
-   * calls an administrator may ask for. Only read for `merge`: an auto-merge exists to wait for
-   * exactly the requirements this steps over, so arming one that skipped them is a contradiction.
+   * calls an administrator may ask for.
+   *
+   * `merge` is the only action that takes it, and any other action carrying it is refused rather
+   * than run without it: an auto-merge exists to wait for exactly the requirements this steps
+   * over, so arming one that skipped them is a contradiction, and quietly arming an ordinary one
+   * instead would report a bypass that never happened.
    *
    * Absent is the ordinary merge, which is what every request before this field asked for.
    */

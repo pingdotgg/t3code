@@ -1072,6 +1072,72 @@ it.effect("gates arming a merge for later exactly as it gates merging now", () =
   }),
 );
 
+it.effect("refuses an override on any action but the merge itself", () =>
+  Effect.gen(function* () {
+    let ranWith: { readonly action: string; readonly adminMerge?: boolean } | null = null;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["merge", "enable-auto-merge", "close"],
+            mergeMethods: ["merge", "squash"],
+            adminMerge: true,
+            search: true,
+            reactions: true,
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: ["merge", "enable-auto-merge", "close"],
+              comment: true,
+              resolve: true,
+              verdicts: ["comment"],
+              requestReviewers: true,
+              adminMerge: true,
+            }),
+          runAction: (input) => {
+            ranWith = {
+              action: input.action,
+              ...(input.adminMerge === undefined ? {} : { adminMerge: input.adminMerge }),
+            };
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    // Arming an auto-merge that skips what it exists to wait for is a contradiction, and running
+    // it as the ordinary action would report a bypass that never happened.
+    const refused = yield* Effect.flip(
+      service.runAction({
+        ...reference,
+        action: "enable-auto-merge",
+        mergeMethod: "squash",
+        adminMerge: true,
+      }),
+    );
+    assert.strictEqual(refused._tag, "PullRequestOperationError");
+    assert.include(refused.message, "Only a merge can be made past the requirements");
+    assert.strictEqual(ranWith, null);
+
+    // Nothing else takes one either, whatever the viewer's standing.
+    const closeRefused = yield* Effect.flip(
+      service.runAction({ ...reference, action: "close", adminMerge: true }),
+    );
+    assert.strictEqual(closeRefused._tag, "PullRequestOperationError");
+    assert.strictEqual(ranWith, null);
+
+    // The same actions without one are untouched.
+    yield* service.runAction({ ...reference, action: "enable-auto-merge", mergeMethod: "squash" });
+    assert.deepStrictEqual(ranWith, { action: "enable-auto-merge" });
+  }),
+);
+
 it.effect("refuses an override merge to a host that has no override to ask for", () =>
   Effect.gen(function* () {
     let ran = false;
