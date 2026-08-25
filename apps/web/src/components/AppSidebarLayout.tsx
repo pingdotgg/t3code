@@ -16,7 +16,7 @@ import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
 import LegacyThreadSidebar from "./LegacySidebar";
-import ThreadSidebar from "./Sidebar";
+import ReportsSidebar from "./ReportsSidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import {
@@ -234,7 +234,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         ) : legacySidebarEnabled ? (
           <LegacyThreadSidebar />
         ) : (
-          <ThreadSidebar />
+          <ReportsSidebar />
         )}
         <SidebarRail onDoubleClick={resetSidebarWidth} />
       </Sidebar>
