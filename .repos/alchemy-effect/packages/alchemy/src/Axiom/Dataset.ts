@@ -80,7 +80,7 @@ export type Dataset = Resource<
  * inject them into a Worker / Lambda's env vars for OpenTelemetry shipping.
  * The bearer token is **not** stored in resource state — supply
  * `Authorization: Bearer <AXIOM_TOKEN>` separately at runtime.
- *
+ * @resource
  * @see https://axiom.co/docs/reference/datasets
  * @see https://axiom.co/docs/send-data/opentelemetry — OTLP endpoint reference
  *
@@ -167,10 +167,11 @@ export const DatasetProvider = () =>
   Provider.effect(
     Dataset,
     Effect.gen(function* () {
-      const { apiBaseUrl } = yield* Credentials;
+      const { apiBaseUrl } = yield* yield* Credentials;
       const create = yield* Axiom.createDataset;
       const update = yield* Axiom.updateDataset;
       const get = yield* Axiom.getDataset;
+      const listDatasets = yield* Axiom.getDatasets;
       const del = yield* Axiom.deleteDataset;
 
       const toAttrs = (dataset: Axiom.CreateDatasetOutput) => ({
@@ -184,6 +185,15 @@ export const DatasetProvider = () =>
 
       return {
         stables: ["id", "name", "kind"],
+        // Enumerate every dataset in the org. Axiom exposes a single
+        // account-wide `GET /v2/datasets` collection op (no pagination), so we
+        // fetch it once and hydrate each row into the exact `read`/`toAttrs`
+        // Attributes shape — directly usable by `delete` with no follow-up get.
+        list: () =>
+          Effect.gen(function* () {
+            const datasets = yield* listDatasets({});
+            return datasets.map(toAttrs);
+          }),
         diff: Effect.fn(function* ({ olds, news, output }) {
           if (!isResolved(news)) return undefined;
           if (output && news.name !== output.name) {

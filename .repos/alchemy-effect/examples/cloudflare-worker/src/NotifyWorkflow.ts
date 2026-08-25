@@ -2,6 +2,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import { Config } from "effect";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import { KV } from "./KV.ts";
 import Room from "./Room.ts";
 
@@ -20,25 +21,26 @@ export default class NotifyWorkflow extends Cloudflare.Workflow<NotifyWorkflow>(
       Config.withDefault(WORKFLOW_SECRET_VALUE),
     );
 
-    // Regression guard for https://github.com/alchemy-run/alchemy-effect/pull/71
-    //
-    // The kv binding internally yields `Cloudflare.WorkerEnvironment` —
-    // before that PR, accessing `WorkerEnvironment` inside a workflow body
-    // crashed because `provideService(WorkerEnvironment, env)` was applied
-    // to the outer `Effect.succeed(body)` wrapper (a no-op) instead of
-    // `body` itself in `Workflow.ts`. Exercising `kv.put` / `kv.get` from
-    // inside a `task` keeps the integ test catching any future regression.
-    const kv = yield* Cloudflare.KVNamespace.bind(KV);
+    const kv = yield* Cloudflare.KV.ReadWriteNamespace(KV);
 
     return Effect.fn(function* (input: { roomId: string; message: string }) {
       const { roomId, message } = input;
 
-      const stored = yield* Cloudflare.task(
+      const stored = yield* Cloudflare.Workflows.task(
         "kv-roundtrip",
         Effect.gen(function* () {
           const key = `workflow:smoke:${roomId}`;
           yield* kv.put(key, message);
-          const got = yield* kv.get(key);
+          // KV is eventually consistent: a read immediately after a write can
+          // briefly miss or return stale data. Re-read until it reflects the
+          // write (bounded, so a genuine failure still surfaces below).
+          const got = yield* kv.get(key).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("500 millis"),
+              until: (value) => value === message,
+              times: 10,
+            }),
+          );
           if (got !== message) {
             return yield* Effect.die(
               new Error(
@@ -56,7 +58,7 @@ export default class NotifyWorkflow extends Cloudflare.Workflow<NotifyWorkflow>(
       // so the integ test can assert end-to-end propagation).
       const secretValue = Redacted.value(secret);
 
-      const processed = yield* Cloudflare.task(
+      const processed = yield* Cloudflare.Workflows.task(
         "process",
         Effect.succeed({
           text: `Processed: ${stored}`,
@@ -66,14 +68,14 @@ export default class NotifyWorkflow extends Cloudflare.Workflow<NotifyWorkflow>(
       );
 
       const room = rooms.getByName(roomId);
-      yield* Cloudflare.task(
+      yield* Cloudflare.Workflows.task(
         "broadcast",
         room.broadcast(`[workflow] ${processed.text} secret=${secretValue}`),
       );
 
-      yield* Cloudflare.sleep("cooldown", "2 seconds");
+      yield* Cloudflare.Workflows.sleep("cooldown", "2 seconds");
 
-      yield* Cloudflare.task(
+      yield* Cloudflare.Workflows.task(
         "finalize",
         room.broadcast(`[workflow] complete for ${roomId}`),
       );

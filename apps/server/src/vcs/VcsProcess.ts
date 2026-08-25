@@ -37,6 +37,9 @@ export interface VcsProcessOutput {
   readonly stderr: string;
   readonly stdoutTruncated: boolean;
   readonly stderrTruncated: boolean;
+  /** Present on real process output; optional so narrow test doubles remain lightweight. */
+  readonly stdoutInvalidUtf8?: boolean;
+  readonly stderrInvalidUtf8?: boolean;
 }
 
 export class VcsProcess extends Context.Service<
@@ -64,6 +67,16 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
     normalized.includes("unauthorized")
   ) {
     return "authentication";
+  }
+
+  if (
+    normalized.includes("api rate limit") ||
+    normalized.includes("rate limit exceeded") ||
+    normalized.includes("secondary rate limit") ||
+    normalized.includes("too many requests") ||
+    normalized.includes("http 429")
+  ) {
+    return "rate-limited";
   }
 
   if (
@@ -163,6 +176,8 @@ export const make = Effect.gen(function* () {
       stderr: result.stderr,
       stdoutTruncated: result.stdoutTruncated,
       stderrTruncated: result.stderrTruncated,
+      stdoutInvalidUtf8: result.stdoutInvalidUtf8 ?? false,
+      stderrInvalidUtf8: result.stderrInvalidUtf8 ?? false,
     } satisfies VcsProcessOutput;
   });
 

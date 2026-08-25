@@ -29,7 +29,7 @@ import { IngestToken } from "./IngestToken.ts";
 export default class Ingester extends Cloudflare.Worker<Ingester>()(
   "OtelWorker",
   Stack.useSync(({ stage }) => ({
-    main: import.meta.filename,
+    main: import.meta.url,
     observability: { enabled: true },
     domain:
       stage === "prod"

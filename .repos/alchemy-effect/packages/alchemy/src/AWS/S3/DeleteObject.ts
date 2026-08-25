@@ -1,9 +1,7 @@
 import * as S3 from "@distilled.cloud/aws/s3";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+
 import * as Binding from "../../Binding.ts";
-import * as Output from "../../Output.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Bucket } from "./Bucket.ts";
 
 export interface DeleteObjectRequest extends Omit<
@@ -11,8 +9,27 @@ export interface DeleteObjectRequest extends Omit<
   "Bucket"
 > {}
 
-export class DeleteObject extends Binding.Service<
+/**
+ * Runtime binding for `s3:DeleteObject`.
+ *
+ * Bind this operation to a bucket to get a callable that deletes objects —
+ * the bucket name is injected automatically and `s3:DeleteObject` is granted
+ * on the bucket. Provide the implementation with
+ * `Effect.provide(AWS.S3.DeleteObjectHttp)`.
+ * @binding
+ * @section Deleting Objects
+ * @example Delete an Object
+ * ```typescript
+ * // init — bind the operation to the bucket
+ * const deleteObject = yield* AWS.S3.DeleteObject(bucket);
+ *
+ * // runtime — deleting a non-existent key succeeds (S3 delete is idempotent)
+ * yield* deleteObject({ Key: "jobs/job-123.json" });
+ * ```
+ */
+export interface DeleteObject extends Binding.Service<
   DeleteObject,
+  "AWS.S3.DeleteObject",
   (
     bucket: Bucket,
   ) => Effect.Effect<
@@ -20,48 +37,7 @@ export class DeleteObject extends Binding.Service<
       request: DeleteObjectRequest,
     ) => Effect.Effect<S3.DeleteObjectOutput, S3.DeleteObjectError>
   >
->()("AWS.S3.DeleteObject") {}
-
-export const DeleteObjectLive = Layer.effect(
-  DeleteObject,
-  Effect.gen(function* () {
-    const Policy = yield* DeleteObjectPolicy;
-    const deleteObject = yield* S3.deleteObject;
-
-    return Effect.fn(function* (bucket: Bucket) {
-      const BucketName = yield* bucket.bucketName;
-      yield* Policy(bucket);
-      return Effect.fn(function* (request: DeleteObjectRequest) {
-        return yield* deleteObject({
-          ...request,
-          Bucket: yield* BucketName,
-        });
-      });
-    });
-  }),
-);
-
-export class DeleteObjectPolicy extends Binding.Policy<
-  DeleteObjectPolicy,
-  (bucket: Bucket) => Effect.Effect<void>
->()("AWS.S3.DeleteObject") {}
-
-export const DeleteObjectPolicyLive = DeleteObjectPolicy.layer.succeed(
-  Effect.fn(function* (host, bucket) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.S3.DeleteObject(${bucket}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["s3:DeleteObject", "s3:DeleteObjectVersion"],
-            Resource: [Output.interpolate`${bucket.bucketArn}/*`],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `DeleteObjectPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+> {}
+export const DeleteObject = Binding.Service<DeleteObject>(
+  "AWS.S3.DeleteObject",
 );

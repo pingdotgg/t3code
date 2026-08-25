@@ -2,36 +2,8 @@
  * The `OpenAiEmbeddingModel` module adapts OpenAI-compatible embeddings
  * endpoints to Effect's embedding model service. It sends embedding requests
  * through {@link OpenAiClient}, exposes constructors for layers and `AiModel`
- * values, and supports scoped request configuration overrides.
- *
- * **Mental model**
- *
- * - {@link make} builds the `EmbeddingModel` service when an
- *   {@link OpenAiClient} is already available.
- * - {@link layer} provides that service as a `Layer`.
- * - {@link model} creates an `AiModel` and also provides the configured vector
- *   dimensions service expected by embedding consumers.
- * - {@link Config} and {@link withConfigOverride} merge default request options
- *   with scoped overrides for individual operations.
- *
- * **Common tasks**
- *
- * - Use {@link model} when application code wants a named `AiModel` with known
- *   dimensions.
- * - Use {@link layer} when composing services around an existing
- *   {@link OpenAiClient} layer.
- * - Use {@link withConfigOverride} to set per-operation options such as `user`,
- *   `dimensions`, or provider-specific request fields.
- *
- * **Gotchas**
- *
- * - {@link Model} is `string` because OpenAI-compatible providers use their
- *   own embedding model identifiers.
- * - {@link model} requires explicit dimensions because compatible providers do
- *   not expose a shared way to infer vector width.
- * - Provider responses must contain one numeric vector per input with unique,
- *   in-range indexes; base64 embeddings or malformed indexes fail with
- *   `InvalidOutputError`.
+ * values, supports scoped request configuration overrides, and checks that the
+ * provider returns one numeric vector for each requested input.
  *
  * @since 4.0.0
  */
@@ -53,6 +25,9 @@ import { OpenAiClient } from "./OpenAiClient.ts"
  * @since 4.0.0
  */
 export type Model = string
+
+type ConfigOptions = Simplify<Partial<Omit<CreateEmbeddingRequestJson, "input">>>
+type ModelConfig = Omit<ConfigOptions, "model"> & { readonly [x: string]: unknown }
 
 /**
  * Context service for OpenAI embedding model configuration.
@@ -76,17 +51,7 @@ export type Model = string
  */
 export class Config extends Context.Service<
   Config,
-  Simplify<
-    & Partial<
-      Omit<
-        CreateEmbeddingRequestJson,
-        "input"
-      >
-    >
-    & {
-      readonly [x: string]: unknown
-    }
-  >
+  ConfigOptions & { readonly [x: string]: unknown }
 >()("@effect/ai-openai-compat/OpenAiEmbeddingModel/Config") {}
 
 /**
@@ -105,9 +70,9 @@ export class Config extends Context.Service<
  */
 export const model = (
   model: string,
-  options: {
+  options: Omit<ConfigOptions, "model" | "dimensions"> & {
     readonly dimensions: number
-    readonly config?: Omit<typeof Config.Service, "model" | "dimensions">
+    readonly [x: string]: unknown
   }
 ): AiModel.Model<"openai", EmbeddingModel.EmbeddingModel | EmbeddingModel.Dimensions, OpenAiClient> =>
   AiModel.make(
@@ -116,10 +81,7 @@ export const model = (
     Layer.merge(
       layer({
         model,
-        config: {
-          ...options.config,
-          dimensions: options.dimensions
-        }
+        config: options
       }),
       Layer.succeed(EmbeddingModel.Dimensions, options.dimensions)
     )
@@ -155,7 +117,7 @@ export const model = (
  */
 export const make = Effect.fnUntraced(function*({ model, config: providerConfig }: {
   readonly model: string
-  readonly config?: Omit<typeof Config.Service, "model"> | undefined
+  readonly config?: ModelConfig | undefined
 }): Effect.fn.Return<EmbeddingModel.Service, never, OpenAiClient> {
   const client = yield* OpenAiClient
 
@@ -190,7 +152,7 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
  */
 export const layer = (options: {
   readonly model: string
-  readonly config?: Omit<typeof Config.Service, "model"> | undefined
+  readonly config?: ModelConfig | undefined
 }): Layer.Layer<EmbeddingModel.EmbeddingModel, never, OpenAiClient> =>
   Layer.effect(EmbeddingModel.EmbeddingModel, make(options))
 

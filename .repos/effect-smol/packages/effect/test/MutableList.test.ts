@@ -46,6 +46,18 @@ describe("MutableList", () => {
     strictEqual(list.length, 2)
   })
 
+  it("filter restores the empty list state when no values match", () => {
+    const list = MutableList.make<number>()
+    MutableList.append(list, 1)
+
+    MutableList.filter(list, () => false)
+
+    strictEqual(list.length, 0)
+    strictEqual(list.head, undefined)
+    strictEqual(list.tail, undefined)
+    strictEqual(MutableList.take(list), MutableList.Empty)
+  })
+
   it("remove deletes all strictly equal values and updates length", () => {
     const list = MutableList.make<string>()
     MutableList.appendAll(list, ["apple", "banana", "apple", "cherry", "apple"])

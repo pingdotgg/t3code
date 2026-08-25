@@ -20,6 +20,8 @@ import showcaseConfig, {
   type ShowcaseStoreAssetSpec,
   SHOWCASE_SCENES,
   type ShowcaseScene,
+  SHOWCASE_THEMES,
+  type ShowcaseTheme,
 } from "./mobile-showcase.config.ts";
 import {
   SHOWCASE_ENVIRONMENTS,
@@ -31,14 +33,14 @@ import {
 
 const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 const MOBILE_ROOT = NodePath.join(REPO_ROOT, "apps/mobile");
-const ANDROID_PACKAGE = "com.t3tools.t3code.dev";
-const APP_SCHEME = "t3code-dev";
+const ANDROID_PACKAGE = "com.t3tools.t3code";
+const APP_SCHEME = "t3code";
 const IOS_READY_FILENAME = "T3ShowcaseReadyScene";
 const SERVER_HOST = "0.0.0.0";
 const IOS_SIMULATOR_ARCH = NodeProcess.arch === "arm64" ? "arm64" : "x86_64";
 const IOS_APP_PATH = NodePath.join(
   MOBILE_ROOT,
-  ".showcase/ios-derived-data/Build/Products/Debug-iphonesimulator/T3CodeDev.app",
+  ".showcase/ios-derived-data/Build/Products/Debug-iphonesimulator/T3Code.app",
 );
 const ANDROID_APK_PATH = NodePath.join(
   MOBILE_ROOT,
@@ -58,8 +60,11 @@ const ANDROID_SDK_ROOT = resolveAndroidSdkRoot(NodeProcess.env);
 const MOBILE_BUILD_ENV = {
   ...NodeProcess.env,
   ANDROID_HOME: ANDROID_SDK_ROOT,
-  APP_VARIANT: "development",
+  APP_VARIANT: "production",
   EXPO_NO_GIT_STATUS: "1",
+  // Lets the capture build require full screen on iPad so the app can rotate
+  // itself to landscape (see app.config.ts).
+  T3_SHOWCASE_CAPTURE_BUILD: "1",
   JAVA_HOME:
     NodeProcess.env.JAVA_HOME ??
     (NodeProcess.platform === "darwin"
@@ -73,6 +78,7 @@ interface CliOptions {
   readonly deviceIds: ReadonlySet<string>;
   readonly scenes: ReadonlySet<ShowcaseScene>;
   readonly appearances: ReadonlySet<ShowcaseAppearance>;
+  readonly themes: ReadonlySet<ShowcaseTheme>;
   readonly skipBuild: boolean;
   readonly skipMetro: boolean;
   readonly keepRunning: boolean;
@@ -84,6 +90,7 @@ export interface ShowcaseCapture {
   readonly device: ShowcaseDevice;
   readonly scenes: ReadonlyArray<ShowcaseScene>;
   readonly appearance: ShowcaseAppearance;
+  readonly theme: ShowcaseTheme;
 }
 
 interface IosCaptureCleanup {
@@ -220,9 +227,16 @@ export function validateStoreAssetCount(
 
 export function showcaseCaptureDirectory(
   outputDirectory: string,
-  capture: Pick<ShowcaseCapture, "device" | "appearance">,
+  capture: Pick<ShowcaseCapture, "device" | "appearance" | "theme">,
 ): string {
-  return NodePath.join(outputDirectory, capture.device.storeAsset.directory, capture.appearance);
+  // Each palette owns a leaf folder so one upload slot never mixes themes and
+  // every folder keeps a store-legal screenshot count of its own.
+  return NodePath.join(
+    outputDirectory,
+    capture.device.storeAsset.directory,
+    capture.appearance,
+    capture.theme,
+  );
 }
 
 async function finalizeCapture(destination: string, device: ShowcaseDevice): Promise<void> {
@@ -273,6 +287,7 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
   const deviceIds = new Set<string>();
   const scenes = new Set<ShowcaseScene>();
   const appearances = new Set<ShowcaseAppearance>();
+  const themes = new Set<ShowcaseTheme>();
   let skipBuild = false;
   let skipMetro = false;
   let keepRunning = false;
@@ -315,6 +330,18 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
         appearances.add(value);
       }
       index += 1;
+    } else if (argument === "--theme") {
+      const value = argumentValue(args, index, argument);
+      if (value === "all") {
+        for (const theme of SHOWCASE_THEMES) themes.add(theme);
+      } else if (SHOWCASE_THEMES.some((theme) => theme === value)) {
+        themes.add(value as ShowcaseTheme);
+      } else {
+        // The app silently falls back to its default palette for an unknown id,
+        // so reject it here rather than shipping a mislabeled screenshot.
+        throw new Error(`Unsupported theme '${value}'. Use ${SHOWCASE_THEMES.join(", ")}, or all.`);
+      }
+      index += 1;
     } else if (argument === "--skip-build") {
       skipBuild = true;
     } else if (argument === "--skip-metro") {
@@ -337,6 +364,7 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
     deviceIds,
     scenes,
     appearances,
+    themes,
     skipBuild,
     skipMetro,
     keepRunning,
@@ -347,7 +375,7 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
 
 export function planShowcaseCaptures(
   config: ShowcaseConfig,
-  options: Pick<CliOptions, "platforms" | "deviceIds" | "scenes" | "appearances">,
+  options: Pick<CliOptions, "platforms" | "deviceIds" | "scenes" | "appearances" | "themes">,
 ): ReadonlyArray<ShowcaseCapture> {
   const captures = config.devices
     .filter((device) => options.platforms.size === 0 || options.platforms.has(device.platform))
@@ -355,14 +383,18 @@ export function planShowcaseCaptures(
     .flatMap((device) => {
       const appearances =
         options.appearances.size === 0 ? [device.appearance] : options.appearances;
-      return [...appearances].map((appearance) => ({
-        device,
-        appearance,
-        scenes:
-          options.scenes.size === 0
-            ? device.scenes
-            : device.scenes.filter((scene) => options.scenes.has(scene)),
-      }));
+      const themes = options.themes.size === 0 ? [device.theme] : options.themes;
+      return [...appearances].flatMap((appearance) =>
+        [...themes].map((theme) => ({
+          device,
+          appearance,
+          theme,
+          scenes:
+            options.scenes.size === 0
+              ? device.scenes
+              : device.scenes.filter((scene) => options.scenes.has(scene)),
+        })),
+      );
     })
     .filter((capture) => capture.scenes.length > 0);
 
@@ -390,6 +422,7 @@ Options:
   --scene <name>             Capture one scene (repeatable)
   --appearance light|dark|both
                              Override the configured appearance
+  --theme <id>|all           Override the configured palette (repeatable)
   --skip-build               Reuse the existing simulator app / debug APK
   --skip-metro               Reuse an already running showcase Metro server
   --keep-running             Leave devices and Metro running after capture
@@ -397,12 +430,13 @@ Options:
   --list                     Print this help and the configured matrix
 
 Scenes: ${SHOWCASE_SCENES.join(", ")}
+Themes: ${SHOWCASE_THEMES.join(", ")}
 
 Configured devices:
 ${config.devices
   .map((device) => {
     const target = device.platform === "ios" ? device.simulator : device.avd;
-    return `  ${device.id.padEnd(18)} ${device.platform.padEnd(8)} ${target} -> ${device.storeAsset.directory}/{light|dark} (${device.storeAsset.width}×${device.storeAsset.height}, default ${device.appearance}) [${device.scenes.join(", ")}]`;
+    return `  ${device.id.padEnd(18)} ${device.platform.padEnd(8)} ${target} -> ${device.storeAsset.directory}/{light|dark}/<theme> (${device.storeAsset.width}×${device.storeAsset.height}, default ${device.appearance} ${device.theme}) [${device.scenes.join(", ")}]`;
   })
   .join("\n")}
 `);
@@ -498,6 +532,23 @@ async function waitForPort(port: number, label = "Process", timeoutMs = 60_000):
     await delay(500);
   }
   throw new Error(`${label} did not begin listening on port ${port} within ${timeoutMs}ms.`);
+}
+
+async function waitForFileContent(
+  filePath: string,
+  label: string,
+  timeoutMs = 60_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const content = await NodeFSP.readFile(filePath, "utf8").then(
+      (value) => value.trim(),
+      () => "",
+    );
+    if (content) return content;
+    await delay(250);
+  }
+  throw new Error(`${label} was not written to ${filePath} within ${timeoutMs}ms.`);
 }
 
 async function reserveAvailablePort(): Promise<number> {
@@ -664,9 +715,9 @@ async function buildIos(): Promise<string> {
     "xcodebuild",
     [
       "-workspace",
-      NodePath.join(MOBILE_ROOT, "ios/T3CodeDev.xcworkspace"),
+      NodePath.join(MOBILE_ROOT, "ios/T3Code.xcworkspace"),
       "-scheme",
-      "T3CodeDev",
+      "T3Code",
       "-configuration",
       "Debug",
       "-sdk",
@@ -775,6 +826,60 @@ async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: strin
   ]);
 }
 
+// iPadOS 26 windowing ("Chamois") runs UIRequiresFullScreen apps in a fixed
+// portrait compatibility window, which defeats the in-app landscape rotation
+// the capture build relies on. Switch the device to Full Screen Apps mode
+// (Settings > Multitasking & Gestures) and restart SpringBoard to apply it.
+async function ensureIosFullScreenAppsMode(udid: string): Promise<void> {
+  const current = await commandOutput("xcrun", [
+    "simctl",
+    "spawn",
+    udid,
+    "defaults",
+    "read",
+    "com.apple.springboard",
+    "SBChamoisWindowingEnabled",
+  ]).catch(() => "");
+  if (current.trim() === "0") return;
+  // The Settings toggle writes all three keys; SBChamoisWindowingEnabled
+  // alone is not honored on a freshly created device.
+  for (const key of [
+    "SBChamoisWindowingEnabled",
+    "SBMedusaMultitaskingEnabled",
+    "SBFlexibleWindowingPreviouslyEnabledAutomaticStageCreation",
+  ]) {
+    await runCommand("xcrun", [
+      "simctl",
+      "spawn",
+      udid,
+      "defaults",
+      "write",
+      "com.apple.springboard",
+      key,
+      "-bool",
+      "false",
+    ]);
+  }
+  // A SpringBoard restart is not enough on a freshly created simulator (the
+  // first CI run captured with windowing still active), so reboot the device
+  // and verify the mode actually stuck.
+  await runCommand("xcrun", ["simctl", "shutdown", udid]);
+  await runCommand("xcrun", ["simctl", "boot", udid]);
+  await runCommand("xcrun", ["simctl", "bootstatus", udid, "-b"]);
+  const applied = await commandOutput("xcrun", [
+    "simctl",
+    "spawn",
+    udid,
+    "defaults",
+    "read",
+    "com.apple.springboard",
+    "SBChamoisWindowingEnabled",
+  ]).catch(() => "");
+  if (applied.trim() !== "0") {
+    throw new Error(`Simulator ${udid} did not switch to Full Screen Apps mode.`);
+  }
+}
+
 async function iosAppContainer(udid: string): Promise<string> {
   return (
     await commandOutput("xcrun", ["simctl", "get_app_container", udid, ANDROID_PACKAGE, "data"])
@@ -819,6 +924,9 @@ async function captureIos(
   }
   await runCommand("xcrun", ["simctl", "boot", simulator.udid]);
   await runCommand("xcrun", ["simctl", "bootstatus", simulator.udid, "-b"]);
+  if (capture.device.orientation === "landscape") {
+    await ensureIosFullScreenAppsMode(simulator.udid);
+  }
   await normalizeIosSimulator(capture.appearance, simulator.udid);
   if (appPath) {
     await runCommand("xcrun", ["simctl", "uninstall", simulator.udid, ANDROID_PACKAGE]).catch(
@@ -869,6 +977,12 @@ async function captureIos(
       JSON.stringify(pairingUrls),
       "--showcaseScene",
       firstScene,
+      "--showcaseTheme",
+      capture.theme,
+      // The app rotates itself; Simulator menu UI scripting needs macOS
+      // Accessibility permission that CI runners do not grant to osascript.
+      "--showcaseOrientation",
+      capture.device.orientation ?? "portrait",
     ]);
   };
   await NodeFSP.rm(readyPath, { force: true });
@@ -900,6 +1014,15 @@ async function captureIos(
       `${scene}.png`,
     );
     await runCommand("xcrun", ["simctl", "io", simulator.udid, "screenshot", destination]);
+    if (capture.device.orientation === "landscape") {
+      // A headless simulator keeps its display portrait while the rotated app
+      // renders sideways inside it; with Simulator.app attached the display
+      // itself rotates. Only post-rotate the former.
+      const { width, height } = readPngDimensions(await NodeFSP.readFile(destination));
+      if (height > width) {
+        await runCommand("sips", ["--rotate", "270", destination]);
+      }
+    }
     await finalizeCapture(destination, capture.device);
   }
 }
@@ -1114,6 +1237,9 @@ async function captureAndroid(
     "--es",
     "showcaseScene",
     firstScene,
+    "--es",
+    "showcaseTheme",
+    capture.theme,
     ANDROID_PACKAGE,
   ]);
   for (const [sceneIndex, scene] of capture.scenes.entries()) {
@@ -1225,12 +1351,12 @@ async function main(): Promise<void> {
       showcaseServers.push(server);
       await waitForPort(port, `${environment.label} server`);
       await seedShowcaseEnvironment({ baseDir, projectIds: environment.projectIds });
-      const environmentId = (
-        await NodeFSP.readFile(NodePath.join(baseDir, "userdata", "environment-id"), "utf8")
-      ).trim();
-      if (!environmentId) {
-        throw new Error(`${environment.label} did not persist an environment id.`);
-      }
+      // The server begins listening before the ServerEnvironment layer
+      // persists the environment id, so poll rather than read once.
+      const environmentId = await waitForFileContent(
+        NodePath.join(baseDir, "userdata", "environment-id"),
+        `${environment.label} environment id`,
+      );
       showcaseEnvironments.push({ baseDir, environmentId, label: environment.label, port });
     }
 
@@ -1338,7 +1464,12 @@ async function main(): Promise<void> {
 
 if (import.meta.main) {
   void main().catch((error: unknown) => {
-    NodeProcess.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    // Stack over message: the harness only fails in CI, where the line that
+    // threw is the whole diagnosis and there is nobody at a terminal to
+    // re-run it with more output.
+    NodeProcess.stderr.write(
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    );
     NodeProcess.exit(1);
   });
 }

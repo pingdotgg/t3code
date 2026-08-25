@@ -1,29 +1,11 @@
 /**
- * Provides an Effect layer for configuring OpenTelemetry in browser
- * applications. The module builds a shared resource from explicit service
- * metadata and wires Effect tracing, metrics, and logging into OpenTelemetry
- * SDK providers when span processors, metric readers, or log record processors
- * are supplied.
+ * Browser OpenTelemetry setup for Effect applications.
  *
- * Use this module in client-side applications that need Effect spans, metrics,
- * and logs exported from browser runtimes, such as single-page apps,
- * multi-page apps with hydrated Effect code, frontend workers, or UI flows
- * that should be correlated with backend traces. Telemetry is enabled only for
- * the configured signal types, so tracing, metrics, and logging can be
- * installed independently from the same layer.
- *
- * Browser SDKs cannot rely on process environment resource configuration, so
- * provide stable service metadata explicitly and use resource attributes for
- * application, release, deployment, or page-shell identity rather than
- * per-event data. This module does not create exporters; supply
- * browser-compatible processors, readers, and exporters yourself, and make sure
- * their endpoints are reachable from the browser with the required CORS and
- * authentication behavior. The layer is scoped: tracer providers are
- * force-flushed and shut down when the scope is released, while metric readers
- * and logger providers follow their respective layer lifecycles. Keep the
- * scope alive for the lifetime of the browser application and release it during
- * application teardown when possible so batched exporters and periodic metric
- * readers can deliver buffered telemetry before the page is unloaded.
+ * This module exports a `Configuration` type and layers for installing
+ * tracing, metrics, and logging in browser runtimes. The main `layer` builds
+ * the shared OpenTelemetry resource from explicit service metadata, then
+ * enables only the signal types that have processors or readers configured.
+ * `layerTracerProvider` creates a scoped `WebTracerProvider`.
  *
  * @since 4.0.0
  */
@@ -37,10 +19,10 @@ import * as Effect from "effect/Effect"
 import { constant, type LazyArg } from "effect/Function"
 import * as Layer from "effect/Layer"
 import { isNonEmpty } from "./internal/utilities.ts"
-import * as Logger from "./Logger.ts"
-import * as Metrics from "./Metrics.ts"
+import * as Logger from "./OtelLogger.ts"
+import * as Metrics from "./OtelMetrics.ts"
+import * as Tracer from "./OtelTracer.ts"
 import * as Resource from "./Resource.ts"
-import * as Tracer from "./Tracer.ts"
 
 /**
  * Configuration for the Web OpenTelemetry layer, including resource metadata and optional tracing, metrics, and logging settings.
@@ -99,10 +81,8 @@ export const layerTracerProvider = (
  *
  * **When to use**
  *
- * Use to install browser OpenTelemetry support for an Effect application when
- * service metadata is provided in code and tracing, metrics, or logging should
- * be enabled from supplied span processors, metric readers, or log record
- * processors.
+ * Use to install browser OpenTelemetry support when service metadata is
+ * configured in code and telemetry processors or readers are supplied directly.
  *
  * **Details**
  *

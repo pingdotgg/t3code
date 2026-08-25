@@ -17,7 +17,12 @@ export function normalizeSemverVersion(version: string): string {
     }
   }
 
-  if (segments.length === 2) {
+  // Pad shorthand versions ("20" or "20.1") up to three segments so major-only
+  // and minor-only inputs parse and compare numerically. This matches
+  // satisfiesSemverRange, which already treats a missing minor/patch as 0. The
+  // length > 0 guard keeps empty/garbage input empty (parseSemver still
+  // rejects it), and inputs with more than three segments are left untouched.
+  while (segments.length > 0 && segments.length < 3) {
     segments.push("0");
   }
 

@@ -1,0 +1,76 @@
+---
+title: Backups & restores
+description: Restore a PlanetScale backup into a fresh branch with backupId, or seed a new branch from the last successful backup with seedData.
+---
+
+Alchemy doesn't manage PlanetScale backup schedules — create backups
+in the PlanetScale dashboard or via the API. What it gives you is the
+restore side: point a new branch at a backup and it comes up with that
+backup's schema and data.
+
+Both `MySQLBranch` and `PostgresBranch` accept the same two props:
+`backupId` restores a specific backup, `seedData` restores the parent
+branch's last successful backup.
+
+## Restore a branch from a backup
+
+Pass the backup's ID as `backupId`. `clusterSize` is required when
+restoring from a backup:
+
+```typescript
+const restored = yield* Planetscale.MySQLBranch("restored", {
+  database,
+  parentBranch: "main",
+  isProduction: true,
+  backupId: "backup-123",
+  clusterSize: "PS_10",
+});
+```
+
+The branch is created from `parentBranch` with the backup's schema and
+data restored into it, then waits until it's ready like any other
+branch. Grab the ID from the backup's page in the PlanetScale
+dashboard or the backups API, and make sure the backup has completed
+(state `success`) before deploying.
+
+## Seed from the last successful backup
+
+When you don't care which backup — just "recent production data" —
+use `seedData` instead of pinning an ID:
+
+```typescript
+const preview = yield* Planetscale.MySQLBranch("preview", {
+  database,
+  parentBranch: "main",
+  isProduction: false,
+  seedData: "last_successful_backup",
+});
+```
+
+This is the usual choice for preview and development branches that
+want realistic data without tracking backup IDs in code.
+
+## Create-only semantics
+
+Both props apply only when the branch is first created. If the branch
+already exists, `backupId` and `seedData` are ignored — subsequent
+deploys sync the branch's other settings (production status,
+`clusterSize`, `safeMigrations`) but never re-restore data. Changing
+`backupId` on a deployed branch is a no-op, not a replacement.
+
+To restore again, create a new branch: give the resource a new logical
+ID (or a new `name`) so the next deploy creates a fresh branch from
+the backup.
+
+## Where next
+
+- [MySQL](/planetscale/data/mysql) — databases, branches, and passwords.
+- [Postgres](/planetscale/data/postgres) — the PostgreSQL side, including
+  roles.
+- [Migrations](/planetscale/data/migrations) — schema migrations and seed
+  files per branch.
+
+Reference:
+
+- [MySQLBranch](/providers/planetscale/mysql/mysqlbranch) ·
+  [PostgresBranch](/providers/planetscale/postgres/postgresbranch)

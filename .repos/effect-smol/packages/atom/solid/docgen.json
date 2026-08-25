@@ -4,7 +4,6 @@
   "srcLink": "https://github.com/Effect-TS/effect/tree/main/packages/atom/solid/src/",
   "enforceVersion": true,
   "exclude": ["src/internal/**/*.ts"],
-  "tscExecutable": "tsgo",
   "examplesCompilerOptions": {
     "noEmit": true,
     "strict": true,

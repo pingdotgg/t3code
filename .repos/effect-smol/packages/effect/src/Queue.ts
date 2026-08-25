@@ -1,67 +1,10 @@
 /**
- * The `Queue` module provides asynchronous queues for communicating between
- * fibers. A `Queue<A, E>` accepts values of type `A`, hands each value to one
- * consumer in offer order, and can later complete, fail, interrupt, or shut
- * down through the queue lifecycle.
+ * Passes values asynchronously between fibers.
  *
- * **Mental model**
- *
- * - A queue is a fiber-aware channel with a write side ({@link Enqueue}) and a
- *   read side ({@link Dequeue}).
- * - Producers add values with {@link offer} or {@link offerAll}; consumers
- *   remove values with {@link take}, {@link takeN}, {@link takeBetween}, or
- *   {@link takeAll}.
- * - Unlike publish-subscribe hubs, consumers compete for values; a successful
- *   take removes the value from the queue.
- * - Bounded queues use an overflow strategy: {@link bounded} suspends
- *   producers, {@link dropping} rejects new values, and {@link sliding} drops
- *   old values.
- * - Operations are `Effect` values, so waiting producers and consumers compose
- *   with interruption, scheduling, and structured concurrency.
- *
- * **Common tasks**
- *
- * - Create queues: {@link make}, {@link bounded}, {@link dropping},
- *   {@link sliding}, {@link unbounded}.
- * - Restrict capabilities: {@link asEnqueue}, {@link asDequeue}.
- * - Produce values: {@link offer}, {@link offerAll}.
- * - Consume values: {@link take}, {@link takeN}, {@link takeBetween},
- *   {@link takeAll}, {@link poll}, {@link peek}.
- * - Drain or reset buffered values: {@link collect}, {@link clear}.
- * - Signal lifecycle: {@link end}, {@link fail}, {@link failCause},
- *   {@link interrupt}, {@link shutdown}.
- * - Inspect state: {@link size}, {@link isFull}.
- *
- * **Example** (One producer and one consumer)
- *
- * ```ts
- * import { Effect, Queue } from "effect"
- *
- * const program = Effect.gen(function*() {
- *   const queue = yield* Queue.bounded<string>(16)
- *
- *   yield* Queue.offer(queue, "work")
- *
- *   return yield* Queue.take(queue)
- * })
- * ```
- *
- * **Gotchas**
- *
- * - {@link take} waits when the queue is empty; use {@link poll} when absence
- *   should be represented as an empty `Option`.
- * - {@link dropping} and {@link sliding} queues can lose values by design; use
- *   {@link bounded} when every offered value must be preserved.
- * - Completion and failure are observed by consumers through the queue's error
- *   channel, so include `Cause.Done` in the error type when using {@link end}.
- * - The `Unsafe` variants are synchronous, low-level operations; prefer the
- *   effectful APIs in application code.
- *
- * **See also**
- *
- * - {@link Enqueue} for write-only queue handles.
- * - {@link Dequeue} for read-only queue handles.
- * - {@link Pull} for stream-style completion errors.
+ * A `Queue<A, E>` accepts values, hands each value to one consumer in offer
+ * order, and can complete, fail, interrupt, or shut down. Queues can be bounded
+ * or unbounded, and bounded queues can suspend, drop, or slide values when
+ * producers are faster than consumers.
  *
  * @since 3.8.0
  */
@@ -553,8 +496,8 @@ export const bounded = <A, E = never>(capacity: number): Effect<Queue<A, E>> => 
  *
  * **When to use**
  *
- * Use when producers should not block and message loss is acceptable.
- * Useful when you want to maintain a rolling window of the most recent messages.
+ * Use when you need producer offers not to block and can accept dropping the
+ * oldest messages, such as when maintaining a rolling window of recent values.
  *
  * **Example** (Creating sliding queues)
  *
@@ -588,8 +531,8 @@ export const sliding = <A, E = never>(capacity: number): Effect<Queue<A, E>> => 
  *
  * **When to use**
  *
- * Use when producers should not block and existing messages should be preserved,
- * but new messages may be lost when the queue is full.
+ * Use when you need producer offers not to block while preserving existing
+ * queued messages, even if new messages may be dropped when the queue is full.
  *
  * **Example** (Creating dropping queues)
  *
@@ -624,9 +567,8 @@ export const dropping = <A, E = never>(capacity: number): Effect<Queue<A, E>> =>
  *
  * **When to use**
  *
- * Use when producers should never be blocked; unbounded queues never apply backpressure, so producers
- * can always add messages successfully. This is useful when you want to prioritize
- * producer throughput over memory usage control.
+ * Use when you need producers to add messages without backpressure and accept
+ * unbounded memory growth.
  *
  * **Example** (Creating unbounded queues)
  *
@@ -716,6 +658,11 @@ export const offer = <A, E>(self: Enqueue<A, E>, message: Types.NoInfer<A>): Eff
 /**
  * Adds a message to the queue synchronously. Returns `false` if the queue is done.
  *
+ * **When to use**
+ *
+ * Use when you are already in synchronous queue internals or a performance
+ * boundary where wrapping the mutation in `Effect` is intentionally avoided.
+ *
  * **Gotchas**
  *
  * This is an unsafe operation that directly modifies the queue without Effect wrapping.
@@ -768,6 +715,11 @@ export const offerUnsafe = <A, E>(self: Enqueue<A, E>, message: Types.NoInfer<A>
  * Adds multiple messages to the queue. Returns the remaining messages that
  * were not added.
  *
+ * **When to use**
+ *
+ * Use when producers can submit a batch at once and need to know which messages
+ * did not fit under the queue's capacity strategy.
+ *
  * **Details**
  *
  * For bounded queues, this operation may suspend if the queue doesn't have
@@ -808,6 +760,11 @@ export const offerAll = <A, E>(self: Enqueue<A, E>, messages: Iterable<A>): Effe
 /**
  * Adds multiple messages to the queue synchronously. Returns the remaining messages that
  * were not added.
+ *
+ * **When to use**
+ *
+ * Use when queue internals or a performance boundary need a synchronous batch
+ * offer and can handle any messages that do not fit.
  *
  * **Gotchas**
  *
@@ -891,7 +848,7 @@ export const offerAllUnsafe = <A, E>(self: Enqueue<A, E>, messages: Iterable<A>)
  * })
  * ```
  *
- * @category Completion
+ * @category completion
  * @since 4.0.0
  */
 export const fail = <A, E>(self: Enqueue<A, E>, error: E) => failCause(self, core.causeFail(error))
@@ -918,7 +875,7 @@ export const fail = <A, E>(self: Enqueue<A, E>, error: E) => failCause(self, cor
  * })
  * ```
  *
- * @category Completion
+ * @category completion
  * @since 4.0.0
  */
 export const failCause: {
@@ -933,6 +890,11 @@ export const failCause: {
 /**
  * Fails the queue with a cause synchronously. If the queue is already done, `false` is
  * returned.
+ *
+ * **When to use**
+ *
+ * Use when queue completion must be driven from synchronous internals while
+ * preserving the full failure `Cause`.
  *
  * **Gotchas**
  *
@@ -956,7 +918,7 @@ export const failCause: {
  * })
  * ```
  *
- * @category Completion
+ * @category completion
  * @since 4.0.0
  */
 export const failCauseUnsafe = <A, E>(self: Enqueue<A, E>, cause: Cause<E>): boolean => {
@@ -1014,7 +976,7 @@ export const failCauseUnsafe = <A, E>(self: Enqueue<A, E>, cause: Cause<E>): boo
  * })
  * ```
  *
- * @category Completion
+ * @category completion
  * @since 4.0.0
  */
 export const end = <A, E>(self: Enqueue<A, E | Done>): Effect<boolean> => failCause(self, core.causeFail(core.Done()))
@@ -1063,7 +1025,7 @@ export const end = <A, E>(self: Enqueue<A, E | Done>): Effect<boolean> => failCa
  * })
  * ```
  *
- * @category Completion
+ * @category completion
  * @since 4.0.0
  */
 export const endUnsafe = <A, E>(self: Enqueue<A, E | Done>) => failCauseUnsafe(self, core.causeFail(core.Done()))
@@ -1109,7 +1071,7 @@ export const endUnsafe = <A, E>(self: Enqueue<A, E | Done>) => failCauseUnsafe(s
  * })
  * ```
  *
- * @category Completion
+ * @category completion
  * @since 4.0.0
  */
 export const interrupt = <A, E>(self: Enqueue<A, E>): Effect<boolean> =>
@@ -1146,7 +1108,7 @@ export const interrupt = <A, E>(self: Enqueue<A, E>): Effect<boolean> =>
  * })
  * ```
  *
- * @category Completion
+ * @category completion
  * @since 2.0.0
  */
 export const shutdown = <A, E>(self: Enqueue<A, E>): Effect<boolean> =>
@@ -1223,6 +1185,11 @@ export const clear = <A, E>(self: Dequeue<A, E>): Effect<Array<A>, Pull.ExcludeD
  * Takes all currently available messages, waiting until at least one message
  * is available when the queue is empty.
  *
+ * **When to use**
+ *
+ * Use when consumers should process the next non-empty batch of buffered
+ * messages instead of repeatedly taking one message at a time.
+ *
  * **Details**
  *
  * Returns a non-empty array. If the queue completes or fails before a message
@@ -1245,7 +1212,7 @@ export const clear = <A, E>(self: Dequeue<A, E>): Effect<Array<A>, Pull.ExcludeD
  * })
  * ```
  *
- * @category Taking
+ * @category taking
  * @since 2.0.0
  */
 export const takeAll = <A, E>(self: Dequeue<A, E>): Effect<Arr.NonEmptyArray<A>, E> =>
@@ -1273,7 +1240,7 @@ export const takeAll = <A, E>(self: Dequeue<A, E>): Effect<Arr.NonEmptyArray<A>,
  * })
  * ```
  *
- * @category Taking
+ * @category taking
  * @since 4.0.0
  */
 export const collect = <A, E>(self: Dequeue<A, E | Done>): Effect<Array<A>, Pull.ExcludeDone<E>> =>
@@ -1331,7 +1298,7 @@ export const collect = <A, E>(self: Dequeue<A, E | Done>): Effect<Array<A>, Pull
  * })
  * ```
  *
- * @category Taking
+ * @category taking
  * @since 2.0.0
  */
 export const takeN = <A, E>(
@@ -1373,7 +1340,7 @@ export const takeN = <A, E>(
  * })
  * ```
  *
- * @category Taking
+ * @category taking
  * @since 2.0.0
  */
 export const takeBetween = <A, E>(
@@ -1423,7 +1390,7 @@ export const takeBetween = <A, E>(
  * })
  * ```
  *
- * @category Taking
+ * @category taking
  * @since 2.0.0
  */
 export const take = <A, E>(self: Dequeue<A, E>): Effect<A, E> =>
@@ -1461,7 +1428,7 @@ export const take = <A, E>(self: Dequeue<A, E>): Effect<A, E> =>
  * })
  * ```
  *
- * @category Taking
+ * @category taking
  * @since 2.0.0
  */
 export const poll = <A, E>(self: Dequeue<A, E>): Effect<Option.Option<A>> =>
@@ -1515,6 +1482,11 @@ export const peek = <A, E>(self: Dequeue<A, E>): Effect<A, E> =>
 /**
  * Attempts to take one message from the queue synchronously.
  *
+ * **When to use**
+ *
+ * Use when polling queue internals must not suspend or register a waiting taker,
+ * and `undefined` is an acceptable result for an empty queue.
+ *
  * **Details**
  *
  * Returns an `Exit` for an immediately available message or for the queue's
@@ -1547,7 +1519,7 @@ export const peek = <A, E>(self: Dequeue<A, E>): Effect<A, E> =>
  * })
  * ```
  *
- * @category Taking
+ * @category taking
  * @since 4.0.0
  */
 export const takeUnsafe = <A, E>(self: Dequeue<A, E>): Exit<A, E> | undefined => {
@@ -1611,7 +1583,7 @@ export {
    * @see {@link interrupt} for graceful interruption after buffered messages are drained
    * @see {@link shutdown} for immediately discarding buffered messages and resuming pending operations
    *
-   * @category Completion
+   * @category completion
    * @since 4.0.0
    */
   await_ as await
@@ -1652,7 +1624,7 @@ export {
  * })
  * ```
  *
- * @category Size
+ * @category sizes
  * @since 2.0.0
  */
 export const size = <A, E>(self: Dequeue<A, E>): Effect<number> => internalEffect.sync(() => sizeUnsafe(self))
@@ -1677,13 +1649,18 @@ export const size = <A, E>(self: Dequeue<A, E>): Effect<number> => internalEffec
  * })
  * ```
  *
- * @category Size
+ * @category sizes
  * @since 2.0.0
  */
 export const isFull = <A, E>(self: Dequeue<A, E>): Effect<boolean> => internalEffect.sync(() => isFullUnsafe(self))
 
 /**
  * Returns the current number of buffered messages in the queue synchronously.
+ *
+ * **When to use**
+ *
+ * Use when you need an immediate `Queue` size snapshot for diagnostics or
+ * internals and do not need the read wrapped in `Effect`.
  *
  * **Details**
  *
@@ -1720,13 +1697,18 @@ export const isFull = <A, E>(self: Dequeue<A, E>): Effect<boolean> => internalEf
  * })
  * ```
  *
- * @category Size
+ * @category sizes
  * @since 4.0.0
  */
 export const sizeUnsafe = <A, E>(self: Dequeue<A, E>): number => self.state._tag === "Done" ? 0 : self.messages.length
 
 /**
  * Checks whether the queue is full synchronously.
+ *
+ * **When to use**
+ *
+ * Use when an immediate `Queue` capacity snapshot is needed outside effectful
+ * code and racing queue changes are acceptable.
  *
  * **Example** (Checking fullness synchronously)
  *
@@ -1745,7 +1727,7 @@ export const sizeUnsafe = <A, E>(self: Dequeue<A, E>): number => self.state._tag
  * })
  * ```
  *
- * @category Size
+ * @category sizes
  * @since 4.0.0
  */
 export const isFullUnsafe = <A, E>(self: Dequeue<A, E>): boolean => sizeUnsafe(self) === self.capacity
@@ -1781,7 +1763,7 @@ export const isFullUnsafe = <A, E>(self: Dequeue<A, E>): boolean => sizeUnsafe(s
  * })
  * ```
  *
- * @category Completion
+ * @category completion
  * @since 4.0.0
  */
 export const into: {

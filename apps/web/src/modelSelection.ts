@@ -1,11 +1,12 @@
 import {
-  DEFAULT_GIT_TEXT_GENERATION_MODEL,
-  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  DEFAULT_TEXT_GENERATION_MODEL,
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import {
   createModelSelection,
@@ -75,6 +76,8 @@ export interface AppModelOption {
   shortName?: string;
   subProvider?: string;
   isCustom: boolean;
+  isDefault?: boolean;
+  isLegacy?: boolean;
 }
 
 function toAppModelOption(model: ServerProvider["models"][number]): AppModelOption {
@@ -85,6 +88,8 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
   };
   if (model.shortName) option.shortName = model.shortName;
   if (model.subProvider) option.subProvider = model.subProvider;
+  if (model.isDefault) option.isDefault = true;
+  if (model.isLegacy) option.isLegacy = true;
   return option;
 }
 
@@ -247,7 +252,9 @@ export function resolveAppModelSelectionForInstance(
   const options = getAppModelOptionsForInstance(settings, entry);
   return (
     resolveSelectableModel(entry.driverKind, selectedModel, options) ??
+    options.find((option) => option.isDefault)?.slug ??
     options[0]?.slug ??
+    entry.models.find((model) => model.isDefault)?.slug ??
     entry.models[0]?.slug ??
     null
   );
@@ -271,13 +278,58 @@ export function getCustomModelOptionsByInstance(
   return out;
 }
 
+/**
+ * Drop the opencode "plan" agent option from a stored model selection.
+ * Used when legacy plan mode is turned off so server-side text-generation
+ * tasks (title, branch, PR) cannot keep dispatching the plan agent.
+ */
+export function withoutPlanAgentSelection(
+  selection: ModelSelection | null | undefined,
+): ModelSelection | null | undefined {
+  if (!selection?.options) {
+    return selection;
+  }
+  const options = selection.options.filter(
+    (option) => !(option.id === "agent" && option.value === "plan"),
+  );
+  if (options.length === selection.options.length) {
+    return selection;
+  }
+  return createModelSelection(selection.instanceId, selection.model, options);
+}
+
+// The dropdown hides the opencode "plan" agent while legacy plan mode is off,
+// but the persisted text-generation selections are only healed when the toggle
+// flips. Users who already have plan mode off and a stored "plan" selection
+// never trip the toggle handler, so resolve the heal once per settings load.
+export function resolvePlanAgentHealPatch(input: {
+  readonly planModeEnabled: boolean;
+  readonly textGenerationModelSelection: ModelSelection | null | undefined;
+  readonly sourceControlWriterModelSelection: ModelSelection | null | undefined;
+}): ServerSettingsPatch | null {
+  if (input.planModeEnabled) {
+    return null;
+  }
+  const healedText = withoutPlanAgentSelection(input.textGenerationModelSelection);
+  const healedSourceControl = withoutPlanAgentSelection(input.sourceControlWriterModelSelection);
+  const patch: ServerSettingsPatch = {
+    ...(healedText && healedText !== input.textGenerationModelSelection
+      ? { textGenerationModelSelection: healedText }
+      : {}),
+    ...(healedSourceControl && healedSourceControl !== input.sourceControlWriterModelSelection
+      ? { sourceControlWriterModelSelection: healedSourceControl }
+      : {}),
+  };
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
 export function resolveAppModelSelectionState(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
   const selection = settings.textGenerationModelSelection ?? {
     instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
-    model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
+    model: DEFAULT_TEXT_GENERATION_MODEL,
   };
   const entries = deriveProviderInstanceEntries(providers);
   const selectedEntry = entries.find(
@@ -292,7 +344,7 @@ export function resolveAppModelSelectionState(
     const model =
       resolveAppModelSelectionForInstance(entry.instanceId, settings, providers, selectedModel) ??
       entry.models[0]?.slug ??
-      DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind];
+      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind];
     if (!model) {
       return createModelSelection(entry.instanceId, "", []);
     }
@@ -302,6 +354,7 @@ export function resolveAppModelSelectionState(
       model,
       models: entry.models,
       modelOptions: selectedEntry ? selection.options : undefined,
+      planModeEnabled: settings.planModeEnabled,
     });
 
     return createModelSelection(entry.instanceId, model, modelOptionsForDispatch);
@@ -319,6 +372,7 @@ export function resolveAppModelSelectionState(
     model,
     models: getProviderModels(providers, provider),
     modelOptions: keptSelectedProvider ? selection.options : undefined,
+    planModeEnabled: settings.planModeEnabled,
   });
 
   return createModelSelection(defaultInstanceIdForDriver(provider), model, modelOptionsForDispatch);

@@ -1,0 +1,29 @@
+---
+/**
+ * Official provider brand mark, sourced from the same simple-icons set
+ * the docs tab bar uses (see docs-icons.ts). Renders nothing for
+ * unknown names. Theme-adaptive via currentColor.
+ */
+import { TAB_ICONS } from "../../docs-icons";
+
+interface Props {
+  name: string;
+  size?: number;
+}
+
+const { name, size = 20 } = Astro.props;
+const body = TAB_ICONS[name];
+---
+
+{
+  body && (
+    <svg
+      class="alc-provider-mark"
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      set:html={body}
+    />
+  )
+}

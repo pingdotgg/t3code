@@ -22,7 +22,6 @@ import {
   type PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -75,11 +74,18 @@ interface PendingRequest {
   readonly context: PreviewAutomationRequestErrorContext;
 }
 
+/**
+ * A lease pinning one provider session to one desktop runtime. It lives exactly
+ * as long as the connection it names: `connectionId`/`queue` identity is what
+ * makes a lease valid, so a disconnected or replaced host is dropped on the next
+ * lookup. The lease deliberately has no clock of its own — it used to inherit
+ * the MCP credential's expiry, which coupled host stickiness to an unrelated
+ * auth deadline and could migrate a live session to another runtime mid-flow.
+ */
 interface HostAssignment {
   readonly clientId: ClientConnection["clientId"];
   readonly connectionId: ClientConnection["connectionId"];
   readonly queue: ClientConnection["queue"];
-  readonly expiresAt: number;
   readonly tabId?: PreviewTabId;
   readonly tabSequence?: number;
 }
@@ -422,13 +428,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const timeoutMs = input.timeoutMs ?? 15_000;
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
-    const now = yield* Clock.currentTimeMillis;
     const route = yield* SynchronizedRef.modify(state, (current) => {
       const assignments = new Map(
         Array.from(current.assignments).filter(([, assignment]) => {
           const connection = current.clients.get(assignment.clientId);
           return (
-            assignment.expiresAt > now &&
             connection?.connectionId === assignment.connectionId &&
             connection.queue === assignment.queue
           );
@@ -473,7 +477,6 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         clientId: connection.clientId,
         connectionId: connection.connectionId,
         queue: connection.queue,
-        expiresAt: input.scope.expiresAt,
         ...(canReuseAssignedTab && assigned.tabId !== undefined ? { tabId: assigned.tabId } : {}),
         ...(canReuseAssignedTab && assigned.tabSequence !== undefined
           ? { tabSequence: assigned.tabSequence }
@@ -548,8 +551,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       });
     });
     const result = yield* awaitResponse().pipe(Effect.ensuring(removePending));
-    // A stop artifact identifies the globally recorded tab, not the caller's browsing target.
-    const responseTabId = input.operation === "recordingStop" ? undefined : readResultTabId(result);
+    const responseTabId = readResultTabId(result);
     const resultTabId = responseTabId === undefined ? input.tabId : responseTabId;
     if (resultTabId === undefined) return result;
     const assignmentKey = hostAssignmentKey(input.scope);

@@ -1,0 +1,251 @@
+---
+title: Custom domains & routes
+description: Serve Workers from your own domain — create or adopt a Zone, attach custom domains, route hostname patterns, manage DNS records, and control the workers.dev subdomain.
+sidebar:
+  order: 0
+---
+
+Every Worker gets a `workers.dev` URL by default, but production apps
+live on their own domain. This guide covers the pieces involved: the
+Zone that holds your domain, the `domain` prop that attaches a hostname
+to a Worker, Routes for pattern-based dispatch, plain DNS records, and
+the account's `workers.dev` subdomain.
+
+All the snippets below run inside a Stack's `Effect.gen` body:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    // resources go here
+    return {};
+  }),
+);
+```
+
+## Create a Zone
+
+A Zone is a domain managed by Cloudflare. Declaring one gives you the
+zone's identifiers and the name servers to point your registrar at:
+
+```typescript
+const zone = yield* Cloudflare.Zone.Zone("MyZone", {
+  name: "example.com",
+});
+// zone.zoneId, zone.nameServers, zone.accountId, zone.status, ...
+```
+
+Zones default to **retain** on removal — destroying the stack does NOT
+delete the zone in Cloudflare. Opt in to actual deletion by wrapping
+the resource in `destroy()` from `alchemy/RemovalPolicy`:
+
+```typescript
+import { destroy } from "alchemy/RemovalPolicy";
+
+const zone = yield* Cloudflare.Zone.Zone("MyZone", {
+  name: "example.com",
+}).pipe(destroy());
+```
+
+## Adopt an existing Zone
+
+Most domains already exist in Cloudflare before Alchemy enters the
+picture. A zone carries no ownership markers, so the engine refuses to
+take over a pre-existing zone unless you opt in with `adopt(true)`:
+
+```typescript
+import { adopt } from "alchemy/AdoptPolicy";
+
+const zone = yield* Cloudflare.Zone.Zone("MyZone", {
+  name: "example.com",
+}).pipe(adopt(true));
+```
+
+Without `adopt(true)`, deploying against an existing zone fails with a
+typed `OwnedBySomeoneElse` error instead of silently clobbering it.
+Once adopted, the zone behaves like any other managed resource — and it
+still retains on destroy unless you add `destroy()`.
+
+## Attach a custom domain to a Worker
+
+The simplest way to serve a Worker on your domain is the `domain` prop.
+Cloudflare provisions the DNS record and certificate for you; the zone
+is inferred from the hostname, so it must already exist in the account:
+
+```typescript
+const worker = yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  domain: "api.example.com",
+});
+```
+
+`domain` also accepts an array. Custom domains come first in
+`worker.domains` (in the order you provided them), followed by the
+`workers.dev` URL when the subdomain is enabled — and `worker.url` is
+`domains[0]`, so the custom domain wins:
+
+```typescript
+const worker = yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  domain: ["api.example.com", "api-v2.example.com"],
+});
+// worker.url === "https://api.example.com"
+```
+
+## Route a hostname pattern to a Worker
+
+Routes are the classic alternative: a zone-level mapping from a URL
+pattern to a Worker script. Unlike the `domain` prop, a route can match
+paths (`example.com/api/*`), so different Workers can serve different
+parts of one hostname:
+
+```typescript
+const worker = yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+});
+
+yield* Cloudflare.Workers.WorkerRoute("ApiRoute", {
+  zoneId: zone.zoneId,
+  pattern: "api.example.com/*",
+  script: worker.workerName,
+});
+```
+
+A route only fires on hostnames that resolve through Cloudflare's
+proxy, so pair it with a proxied DNS record. When the Worker is the
+only origin, an `AAAA 100::` placeholder is the conventional choice:
+
+```typescript
+yield* Cloudflare.DNS.Record("ApiPlaceholder", {
+  zoneId: zone.zoneId,
+  name: "api.example.com",
+  type: "AAAA",
+  content: "100::",
+  proxied: true,
+});
+```
+
+Cloudflare enforces one route per pattern per zone, and routes carry no
+ownership markers — so if the route already exists, Alchemy reports it
+as unowned and refuses to take it over unless you opt in with
+`adopt(true)` (the same policy as zones):
+
+```typescript
+import { adopt } from "alchemy/AdoptPolicy";
+
+yield* Cloudflare.Workers.WorkerRoute("ApiRoute", {
+  zoneId: zone.zoneId,
+  pattern: "api.example.com/*",
+  script: worker.workerName,
+}).pipe(adopt(true));
+```
+
+Both `pattern` and `script` are mutable — changing either updates the
+same physical route in place. Changing `zoneId` triggers a replacement.
+
+## DNS records for non-Worker targets
+
+Not everything on your zone is a Worker. `Cloudflare.DNS.Record`
+manages individual records — here a plain A record pointing at an
+external server:
+
+```typescript
+yield* Cloudflare.DNS.Record("ApiA", {
+  zoneId: zone.zoneId,
+  name: "api.example.com",
+  type: "A",
+  content: "203.0.113.42",
+  ttl: 300,
+});
+```
+
+Proxied records (orange-clouded) route through Cloudflare's edge —
+`proxied: true` is only valid for `A`, `AAAA`, and `CNAME` records, and
+requires the automatic TTL. A common shape is a proxied CNAME at a
+Cloudflare Tunnel:
+
+```typescript
+yield* Cloudflare.DNS.Record("AdminCname", {
+  zoneId: zone.zoneId,
+  name: "cluster-admin.example.com",
+  type: "CNAME",
+  content: `${tunnel.tunnelId}.cfargotunnel.com`,
+  proxied: true,
+});
+```
+
+DNS records get the same adoption safety as routes: if a record with
+the same `(name, type)` already exists in the zone, Alchemy reports it
+as unowned and requires `adopt(true)` to take it over. This protects
+hand-edited records — especially apex `A`/`AAAA` and email
+DKIM/SPF records the dashboard often manages — from being clobbered.
+
+## Disable Workers on a path
+
+A route with no `script` opts matching requests out of Workers
+entirely. Use it to punch a hole in a broader wildcard route — for
+example, letting `/assets/*` bypass the Worker and hit the origin
+directly:
+
+```typescript
+yield* Cloudflare.Workers.WorkerRoute("AssetsBypass", {
+  zoneId: zone.zoneId,
+  pattern: "example.com/assets/*",
+});
+```
+
+## Control the workers.dev subdomain
+
+Per Worker, the `url` prop toggles the `workers.dev` URL (it defaults
+to `true`). Once a custom domain serves production traffic, you may
+want to switch the dev URL off:
+
+```typescript
+const worker = yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  domain: "api.example.com",
+  url: false,
+});
+```
+
+Account-wide, the `<subdomain>` in
+`https://<script>.<subdomain>.workers.dev` is a singleton you can pin
+with the `Subdomain` resource:
+
+```typescript
+const sub = yield* Cloudflare.Workers.Subdomain("Subdomain", {
+  subdomain: "my-team",
+});
+// Workers are now served from https://<script>.my-team.workers.dev
+```
+
+Subdomain names are globally unique across all Cloudflare accounts;
+claiming a taken name fails with a typed `SubdomainAlreadyExists`
+error. Destroy is capture-and-restore: the subdomain is renamed back to
+whatever the account had before Alchemy first managed it.
+
+:::caution
+Renaming the subdomain immediately changes the URL of **every**
+deployed Worker on the account that relies on `workers.dev`. Only
+manage this resource on accounts where that is acceptable.
+:::
+
+## Where next
+
+- [Domains & DNS](/cloudflare/networking/domains) — the full domain-management
+  surface: zone settings, DNSSEC, certificates, and more.
+- [Workers](/cloudflare/compute/workers) — the Worker resource itself and its
+  binding system.
+
+Reference:
+
+- [Zone API reference](/providers/cloudflare/zone/zone)
+- [WorkerRoute API reference](/providers/cloudflare/workers/workerroute)
+- [Record API reference](/providers/cloudflare/dns/record)
+- [Subdomain API reference](/providers/cloudflare/workers/subdomain)

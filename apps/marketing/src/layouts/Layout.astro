@@ -1,5 +1,10 @@
 ---
-import { GITHUB_REPOSITORY_URL, MARKETING_STATS } from "../lib/site";
+import {
+  ANDROID_PLAY_STORE_URL,
+  GITHUB_REPOSITORY_URL,
+  IOS_APP_STORE_URL,
+  MARKETING_STATS,
+} from "../lib/site";
 
 interface Props {
   title?: string;
@@ -69,6 +74,8 @@ const {
             <a href={GITHUB_REPOSITORY_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
             <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Discord</a>
             <a href="/download">Download</a>
+            <a href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">iOS app</a>
+            <a href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">Android app</a>
             <a href="/terms-of-service">Terms</a>
             <a href="/privacy-policy">Privacy</a>
             <a href="/security-policy">Security</a>

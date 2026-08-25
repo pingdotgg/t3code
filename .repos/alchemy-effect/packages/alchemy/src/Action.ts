@@ -2,10 +2,12 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { Pipeable } from "effect/Pipeable";
+import { makeCaptureContext } from "./ActionRuntimeContext.ts";
 import { toFqn } from "./FQN.ts";
 import type { Input } from "./Input.ts";
 import { CurrentNamespace, type NamespaceNode } from "./Namespace.ts";
 import * as Output from "./Output.ts";
+import { RuntimeContext } from "./RuntimeContext.ts";
 import { Stack } from "./Stack.ts";
 
 /**
@@ -35,6 +37,14 @@ export interface ActionLike<
   readonly Type: Type;
   readonly LogicalId: string;
   readonly Input: In;
+  /**
+   * Resource Outputs referenced via `yield* output` inside the init Effect,
+   * keyed by the Output's sanitized key. They become dependency edges (the
+   * Action waits for these upstreams) and are resolved against the tracker at
+   * apply time, then exposed to the body through the resolve
+   * {@link RuntimeContext}. Empty when the Action captures nothing.
+   */
+  readonly Captures: Record<string, Output.Output>;
   /** Resolved runner — populated by the init effect (if any). */
   readonly Run: (input: In) => Effect.Effect<Out, any, any>;
   /** @internal phantom */
@@ -83,9 +93,14 @@ export type ActionInit<In extends object | undefined, Out, Req> = Effect.Effect<
 //   const rows = yield* Sync({ table: bucket.name });
 //   // rows: Output<{ rows: number }, never>
 //
-// Tagged form for split contract/implementation:
+// Tagged form for split contract/implementation — declare the type with an
+// interface, build the value with the no-arg overload, then supply the runner
+// via `.make` (add the returned Layer to the stack's `providers`, or provide it
+// locally with `Effect.provide`). The init passed to `.make` runs under the
+// same capture context as the inline form, so `yield* output` accessors work:
 //
-//   class Sync extends Action<Sync, { table: string }, { rows: number }>()("Sync") {}
+//   interface Sync extends Action<"Sync", { table: string }, { rows: number }> {}
+//   const Sync = Action<Sync, { table: string }, { rows: number }>()("Sync");
 //   const SyncLive = Sync.make(Effect.gen(function* () { /* ... */ }));
 
 export function Action<
@@ -187,14 +202,23 @@ const makeActionClass = (
         `alchemy/Action<${type}>`,
       );
 
+  // Outputs referenced via `yield* output` inside the init Effect land here,
+  // recorded by the capture RuntimeContext. Shared per definition — the init
+  // runs at most once (Effect.cached), so captures are inherently
+  // per-definition, matching how the init's `Req` bubbles per definition.
+  const captures: Record<string, Output.Output> = {};
+  const captureContext = makeCaptureContext(captures);
+
   const constructor = (...args: [any] | [string, any]) => {
     const [id, input] =
       args.length === 1 ? [type, args[0]] : (args as [string, any]);
     return Effect.gen(function* () {
       const run = resolveRunner
-        ? yield* resolveRunner
+        ? yield* resolveRunner.pipe(
+            Effect.provideService(RuntimeContext, captureContext),
+          )
         : ((yield* SelfTag!) as ActionRunner<any, any, any>);
-      return yield* registerAction(type, id, input, run);
+      return yield* registerAction(type, id, input, run, captures);
     });
   };
 
@@ -203,12 +227,19 @@ const makeActionClass = (
     extra.Self = SelfTag;
     // `.make(initOrRun)` — accepts either a direct runner or an init Effect.
     // For init form we use `Layer.effect` so the init's Req surfaces on the
-    // Layer; for runners we use `Layer.succeed`.
+    // Layer, and run it under the capture RuntimeContext so `yield* output`
+    // accessors are recorded just like the inline form; for runners we use
+    // `Layer.succeed` (nothing to capture).
     extra.make = <R>(
       initOrRun: ActionRunner<any, any, R> | ActionInit<any, any, R>,
     ) =>
       isRunnerEffect(initOrRun)
-        ? Layer.effect(SelfTag, initOrRun as any)
+        ? Layer.effect(
+            SelfTag,
+            (initOrRun as ActionInit<any, any, R>).pipe(
+              Effect.provideService(RuntimeContext, captureContext),
+            ),
+          )
         : Layer.succeed(SelfTag, initOrRun as ActionRunner<any, any, any>);
   }
   return Object.assign(constructor, extra);
@@ -223,6 +254,7 @@ const registerAction = <
   id: string,
   input: any,
   run: ActionRunner<In, Out, any>,
+  captures: Record<string, Output.Output>,
 ): Effect.Effect<Output.ToOutput<Out, never>, never, Stack> =>
   Effect.gen(function* () {
     const stack = yield* Stack;
@@ -255,6 +287,7 @@ const registerAction = <
       FQN: fqn,
       LogicalId: id,
       Input: input,
+      Captures: captures,
       Run: run,
       Output: undefined as any,
     };

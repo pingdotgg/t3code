@@ -1,0 +1,225 @@
+---
+title: Containers
+description: Cloudflare Containers run long-lived processes beside a Durable Object — declare a typed container class, implement its runtime in a separate file, and alchemy builds the image, pushes it, and wires the DO pairing.
+---
+
+A Cloudflare Container is a long-lived process running next to a
+[Durable Object](/cloudflare/compute/durable-objects): the DO owns the
+container's lifecycle, and callers reach the container through it.
+In alchemy a container is a class with a typed RPC surface — the
+same tagged-shape ceremony as a Durable Object — plus a runtime
+implementation that alchemy bundles into a Docker image and pushes
+to Cloudflare's registry for you.
+
+Reach for a container when a [Worker](/cloudflare/compute/workers) isn't
+enough: you need a real OS process — a sandboxed shell, a binary you
+can't compile to wasm, an HTTP server listening on a port, a
+runtime Workers doesn't offer. If you only need per-entity state
+and coordination, a plain Durable Object is lighter; if you only
+need request/response compute, a Worker is.
+
+## Declare the container class
+
+The class declares the container's name and its public RPC surface;
+configuration lives on `.make()`, not here:
+
+```typescript
+// src/Sandbox.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import type * as Effect from "effect/Effect";
+
+export class Sandbox extends Cloudflare.Container<
+  Sandbox,
+  { ping: () => Effect.Effect<string> }
+>()("Sandbox") {}
+```
+
+Anything that binds `Sandbox` sees `ping()` as a typed RPC method
+returning `Effect<string>` — no schemas, no serialization
+boilerplate, exactly like DO methods.
+
+## Implement the runtime in a separate file
+
+The runtime always lives in its own file — the DO imports the class,
+and if the implementation lived alongside it, the DO bundle would
+pull in process spawners, Node APIs, and SDKs that the Workers
+runtime rejects. `.make()` takes the deploy-time props first and the
+implementation second:
+
+```typescript
+// src/Sandbox.runtime.ts
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Sandbox } from "./Sandbox.ts";
+
+export default Sandbox.make(
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    return Sandbox.of({
+      ping: () => Effect.succeed("pong"),
+      fetch: Effect.succeed(
+        HttpServerResponse.text("Hello from the container!"),
+      ),
+    });
+  }),
+);
+```
+
+`main` tells alchemy to bundle this file's Effect program and bake
+it into a generated image as the entrypoint. RPC methods and `fetch`
+are independent: `fetch` serves HTTP on port `3000` inside the
+container by default, while methods like `ping` are invoked directly
+through the typed handle.
+
+## Run it from a Durable Object
+
+Yield the class inside a DO's init phase and provide
+`Cloudflare.Containers.layer` — that layer binds, starts, and
+monitors the container, then hands you a running instance:
+
+```typescript
+// src/Agent.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { Sandbox } from "./Sandbox.ts";
+
+export default class Agent extends Cloudflare.DurableObject<Agent>()(
+  "Agents",
+  Effect.gen(function* () {
+    const sandbox = yield* Sandbox;
+
+    return Effect.gen(function* () {
+      return {
+        ping: () => sandbox.ping(),
+      };
+    });
+  }).pipe(
+    Effect.provide(
+      Cloudflare.Containers.layer(Sandbox, { enableInternet: true }),
+    ),
+  ),
+) {}
+```
+
+Importing `Sandbox` (the class) does not pull in the runtime file —
+it gets tree-shaken out of the DO's bundle. A Worker then binds
+`Agent` and calls `agents.getByName(name).ping()` like any other DO
+method.
+
+## Wire the runtime into the Stack
+
+The `.make()` default export is the side-effect that registers the
+container's runtime, so it must be reachable from `alchemy.run.ts`:
+
+```typescript
+// alchemy.run.ts
+import SandboxLive from "./src/Sandbox.runtime.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    const worker = yield* Worker;
+    return { url: worker.url };
+  }).pipe(Effect.provide(SandboxLive)),
+);
+```
+
+On deploy, alchemy bundles the entrypoint, builds the Docker image,
+pushes it to Cloudflare's managed registry, and reconciles the
+application's scaling and runtime configuration — the first deploy
+takes a minute or two longer while the registry is provisioned.
+
+## Proxy HTTP to a container port
+
+`getTcpPort(port)` returns a `fetch` handle for any port inside the
+container, so an HTTP server you'd normally run in Docker just
+works:
+
+```typescript
+// inside the DO's inner Effect
+const { fetch } = yield* sandbox.getTcpPort(3000);
+
+return {
+  hello: () =>
+    Effect.gen(function* () {
+      const response = yield* fetch(
+        HttpClientRequest.get("http://container/"),
+      );
+      return yield* response.text;
+    }),
+};
+```
+
+The returned `fetch` retries with backoff while the container is
+still booting, so you don't coordinate readiness yourself.
+
+## Process scope vs request scope
+
+Unlike Workers, a Container is a **real process** — and that changes
+what the instance scope means. The bundled program runs under a root
+scope that closes when the process shuts down gracefully, so
+resources acquired at init (a connection kept warm across requests,
+a background consumer) are genuinely released on exit. Serverless
+runtimes only approximate this: workerd never closes its instance
+scope at all, and Lambda gets a best-effort 500 ms SIGTERM window at
+sandbox shutdown. A hard kill still skips finalizers, as in any
+process, so treat instance-level cleanup as best-effort.
+
+Each incoming request to the container's HTTP server still gets its
+own request `Scope`, released when the response settles — the same
+per-event contract as every other runtime. See
+[Instance scope vs request scope](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope)
+for the model across all runtimes.
+
+## Bring your own image
+
+`main` is one of three image sources. Point `context` at a directory
+with a Dockerfile to build your own image, or `image` at a pre-built
+remote image that alchemy pulls and re-pushes — no Effect bundling,
+no `.make()`, props declared inline on the class:
+
+```typescript
+export class Web extends Cloudflare.Container<Web>()("Web", {
+  context: `${import.meta.dirname}/context`,
+}) {}
+
+export class Echo extends Cloudflare.Container<Echo>()("Echo", {
+  image: "mendhak/http-https-echo:latest",
+}) {}
+```
+
+Arbitrary images expose no RPC methods — the DO talks to them purely
+over their TCP port via `getTcpPort`. To build, tag, and push that
+image as part of the same Stack, see
+[Build & push images](/docker/build-and-push) in the Docker hub.
+
+## ContainerApplication
+
+Under the hood every container is backed by a
+[ContainerApplication](/providers/cloudflare/containers/containerapplication)
+— the deployed, scalable unit that carries the image, instance
+type, instance counts, and observability settings. You typically
+extend `Cloudflare.Container` rather than using it directly, but
+the same props shape (`instanceType`, `observability`, `runtime`,
+…) flows through `.make()`.
+
+## Where next
+
+The full walkthrough:
+
+- [Run a Container](/cloudflare/compute/run-a-container) — build the
+  sandbox above out to a shell-executing container with RPC, HTTP
+  proxying, stage-dependent config, and tests.
+
+Related:
+
+- [Durable Objects](/cloudflare/compute/durable-objects) — every container
+  is fronted by one.
+- [Workers](/cloudflare/compute/workers) — the entrypoint that reaches the
+  DO (and through it, the container).
+
+Reference:
+
+- [Container API reference](/providers/cloudflare/containers/container)
+- [ContainerApplication API reference](/providers/cloudflare/containers/containerapplication)

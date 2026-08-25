@@ -17,14 +17,16 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Tracer from "effect/Tracer";
-import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
+import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const DESKTOP_LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const DESKTOP_LOG_FILE_MAX_FILES = 10;
 const DESKTOP_BACKEND_CHILD_LOG_FIBER_ID = "#backend-child";
-const DESKTOP_TRACE_BATCH_WINDOW_MS = 200;
+const DESKTOP_TRACE_BATCH_WINDOW_MS = 1_000;
+const DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_BYTES = 1024 * 1024;
+const DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_CHUNKS = 256;
 
 export interface RotatingLogFileWriter {
   readonly writeBytes: (chunk: Uint8Array) => Effect.Effect<void>;
@@ -32,14 +34,14 @@ export interface RotatingLogFileWriter {
 }
 
 export interface DesktopBackendOutputLogShape {
-  readonly writeSessionBoundary: (input: {
-    readonly phase: "START" | "END";
-    readonly details: string;
-  }) => Effect.Effect<void>;
+  readonly beginSession: (input: { readonly details: string }) => Effect.Effect<void>;
   readonly writeOutputChunk: (
     streamName: "stdout" | "stderr",
     chunk: Uint8Array,
   ) => Effect.Effect<void>;
+  readonly persistFailureSnapshot: (input: { readonly details: string }) => Effect.Effect<void>;
+  readonly persistFailure: (input: { readonly details: string }) => Effect.Effect<void>;
+  readonly discardSession: Effect.Effect<void>;
 }
 
 // Factory for per-instance backend output logs. `forInstance(id)` returns
@@ -127,9 +129,79 @@ const encodeDesktopBackendChildLogRecord = Schema.encodeEffect(
 );
 
 const DesktopBackendOutputLogNoop: DesktopBackendOutputLogShape = {
-  writeSessionBoundary: () => Effect.void,
+  beginSession: () => Effect.void,
   writeOutputChunk: () => Effect.void,
+  persistFailureSnapshot: () => Effect.void,
+  persistFailure: () => Effect.void,
+  discardSession: Effect.void,
 };
+
+interface BufferedBackendOutputChunk {
+  readonly streamName: "stdout" | "stderr";
+  readonly chunk: Uint8Array;
+  readonly offset: number;
+}
+
+interface BackendOutputSession {
+  readonly runId: string;
+  readonly startDetails: string;
+  readonly chunks: ReadonlyArray<BufferedBackendOutputChunk>;
+  readonly byteLength: number;
+}
+
+export function appendBoundedOutputChunk(
+  session: BackendOutputSession,
+  streamName: "stdout" | "stderr",
+  chunk: Uint8Array,
+): BackendOutputSession {
+  if (chunk.byteLength === 0) {
+    return session;
+  }
+
+  const retainedChunk =
+    chunk.byteLength > DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_BYTES
+      ? chunk.slice(chunk.byteLength - DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_BYTES)
+      : chunk.slice();
+  const chunks = [...session.chunks, { streamName, chunk: retainedChunk, offset: 0 }];
+  let byteLength = session.byteLength + retainedChunk.byteLength;
+  let overflow = Math.max(0, byteLength - DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_BYTES);
+  let firstRetainedIndex = 0;
+
+  while (overflow > 0) {
+    const first = chunks[firstRetainedIndex];
+    if (!first) break;
+    const retainedByteLength = first.chunk.byteLength - first.offset;
+    if (retainedByteLength <= overflow) {
+      overflow -= retainedByteLength;
+      byteLength -= retainedByteLength;
+      firstRetainedIndex += 1;
+      continue;
+    }
+
+    chunks[firstRetainedIndex] = {
+      ...first,
+      offset: first.offset + overflow,
+    };
+    byteLength -= overflow;
+    overflow = 0;
+  }
+
+  const excessChunks = Math.max(
+    0,
+    chunks.length - firstRetainedIndex - DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_CHUNKS,
+  );
+  for (let index = firstRetainedIndex; index < firstRetainedIndex + excessChunks; index += 1) {
+    const chunk = chunks[index];
+    byteLength -= chunk ? chunk.chunk.byteLength - chunk.offset : 0;
+  }
+  firstRetainedIndex += excessChunks;
+
+  return {
+    ...session,
+    chunks: chunks.slice(firstRetainedIndex),
+    byteLength,
+  };
+}
 
 const currentDesktopRunId = Effect.gen(function* () {
   const annotations = yield* References.CurrentLogAnnotations;
@@ -345,47 +417,93 @@ const makeBackendOutputLogShape = (
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
   id: string,
   sink: Option.Option<RotatingLogFileWriter>,
-): DesktopBackendOutputLogShape =>
+): Effect.Effect<DesktopBackendOutputLogShape> =>
   Option.match(sink, {
-    onNone: () => DesktopBackendOutputLogNoop,
+    onNone: () => Effect.succeed(DesktopBackendOutputLogNoop),
     onSome: (logFile) =>
-      ({
-        writeSessionBoundary: Effect.fn("desktop.observability.backendOutput.writeSessionBoundary")(
-          function* ({ phase, details }) {
-            const runId = yield* currentDesktopRunId;
+      Effect.gen(function* () {
+        const sessionRef = yield* Ref.make(Option.none<BackendOutputSession>());
+        const writeFailure = Effect.fn("desktop.observability.backendOutput.writeFailure")(
+          function* (session: BackendOutputSession, details: string) {
             yield* writeBackendChildLogRecord(logFile, {
-              message: `backend child process session ${phase.toLowerCase()}`,
-              level: "INFO",
+              message: "backend child process failure output start",
+              level: "ERROR",
               annotations: {
                 component: "desktop-backend-child",
-                runId,
+                runId: session.runId,
                 instanceId: id,
-                phase,
+                phase: "START",
+                details: session.startDetails,
+              },
+            });
+            for (const output of session.chunks) {
+              yield* writeBackendChildLogRecord(logFile, {
+                message: "backend child process output",
+                level: output.streamName === "stderr" ? "ERROR" : "INFO",
+                annotations: {
+                  component: "desktop-backend-child",
+                  runId: session.runId,
+                  instanceId: id,
+                  stream: output.streamName,
+                  text: textDecoder.decode(output.chunk.subarray(output.offset)),
+                },
+              });
+            }
+            yield* writeBackendChildLogRecord(logFile, {
+              message: "backend child process failure output end",
+              level: "ERROR",
+              annotations: {
+                component: "desktop-backend-child",
+                runId: session.runId,
+                instanceId: id,
+                phase: "END",
                 details: sanitizeLogValue(details),
               },
             });
           },
-        ),
-        writeOutputChunk: Effect.fn("desktop.observability.backendOutput.writeOutputChunk")(
-          function* (streamName, chunk) {
+        );
+        return {
+          beginSession: Effect.fn("desktop.observability.backendOutput.beginSession")(function* ({
+            details,
+          }) {
+            const runId = yield* currentDesktopRunId;
+            yield* Ref.set(
+              sessionRef,
+              Option.some({
+                runId,
+                startDetails: sanitizeLogValue(details),
+                chunks: [],
+                byteLength: 0,
+              }),
+            );
+          }),
+          writeOutputChunk: Effect.fnUntraced(function* (streamName, chunk) {
             if (environment.isDevelopment) {
               yield* writeDevelopmentConsoleOutput(streamName, chunk);
             }
-            const runId = yield* currentDesktopRunId;
-            yield* writeBackendChildLogRecord(logFile, {
-              message: "backend child process output",
-              level: streamName === "stderr" ? "ERROR" : "INFO",
-              annotations: {
-                component: "desktop-backend-child",
-                runId,
-                instanceId: id,
-                stream: streamName,
-                text: textDecoder.decode(chunk),
-              },
-            });
-          },
-        ),
-      }) satisfies DesktopBackendOutputLogShape,
+            yield* Ref.update(
+              sessionRef,
+              Option.map((session) => appendBoundedOutputChunk(session, streamName, chunk)),
+            );
+          }),
+          persistFailureSnapshot: Effect.fn(
+            "desktop.observability.backendOutput.persistFailureSnapshot",
+          )(function* ({ details }) {
+            const session = yield* Ref.get(sessionRef);
+            if (Option.isSome(session)) {
+              yield* writeFailure(session.value, details);
+            }
+          }),
+          persistFailure: Effect.fn("desktop.observability.backendOutput.persistFailure")(
+            function* ({ details }) {
+              const session = yield* Ref.modify(sessionRef, (current) => [current, Option.none()]);
+              if (Option.isNone(session)) return;
+              yield* writeFailure(session.value, details);
+            },
+          ),
+          discardSession: Ref.set(sessionRef, Option.none()),
+        } satisfies DesktopBackendOutputLogShape;
+      }),
   });
 
 const backendOutputLogFactoryLayer = Layer.effect(
@@ -412,10 +530,9 @@ const backendOutputLogFactoryLayer = Layer.effect(
         const cacheKey = backendLogFilePathForInstance(environment, id);
         const cached = cache.get(cacheKey);
         if (cached !== undefined) {
-          return Effect.succeed([
-            makeBackendOutputLogShape(environment, id, cached),
-            cache,
-          ] as const);
+          return makeBackendOutputLogShape(environment, id, cached).pipe(
+            Effect.map((outputLog) => [outputLog, cache] as const),
+          );
         }
         return makeBackendOutputSinkForInstance(environment, id).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -424,11 +541,19 @@ const backendOutputLogFactoryLayer = Layer.effect(
           Effect.map((sink) => {
             const next = new Map(cache);
             next.set(cacheKey, sink);
-            return [
-              makeBackendOutputLogShape(environment, id, sink),
-              next as ReadonlyMap<string, Option.Option<RotatingLogFileWriter>>,
-            ] as const;
+            return { sink, next };
           }),
+          Effect.flatMap(({ sink, next }) =>
+            makeBackendOutputLogShape(environment, id, sink).pipe(
+              Effect.map(
+                (outputLog) =>
+                  [
+                    outputLog,
+                    next as ReadonlyMap<string, Option.Option<RotatingLogFileWriter>>,
+                  ] as const,
+              ),
+            ),
+          ),
         );
       });
 
@@ -478,7 +603,7 @@ const tracerLayer = Layer.unwrap(
 
     return Layer.succeed(Tracer.Tracer, tracer);
   }),
-).pipe(Layer.provideMerge(OtlpSerialization.layerJson));
+).pipe(Layer.provide(OtlpExporter.layerFlusher), Layer.provideMerge(OtlpSerialization.layerJson));
 
 export const layer = Layer.mergeAll(
   backendOutputLogFactoryLayer,

@@ -1,0 +1,162 @@
+---
+title: Preview branches per PR
+description: Keep one long-lived Neon project in a staging stage and fork a copy-on-write branch per PR stage — isolated preview databases in seconds, destroyed with the stage.
+---
+
+Provisioning a whole `Neon.Project` per PR preview is slow and
+wasteful — every stage pays for cluster creation, runs into
+project-count limits, and replays every migration from scratch. The
+Neon-native pattern is to split the two tiers: one **long-lived
+project** owned by a `staging` stage, and one **copy-on-write
+branch** per ephemeral stage. Branches fork in seconds and are
+destroyed with the stage; the project outlives them all.
+
+## Own the project in a long-lived stage
+
+The project is a normal resource, created once by the stage that
+owns it:
+
+```typescript
+import * as Neon from "alchemy/Neon";
+
+const project = yield* Neon.Project("app-db", {
+  region: "aws-us-east-1",
+});
+```
+
+Deploy it with `bun alchemy deploy --stage staging`. The state for
+`Neon.Project("app-db")` lands in the `staging` state file — that's
+what PR stages will look up.
+
+## Read the active stage
+
+Ephemeral stages need to decide at deploy time whether to create
+the project or reference it. Pull the stage name off the `Stack`
+service:
+
+```typescript
+import * as Alchemy from "alchemy";
+
+const { stage } = yield* Alchemy.Stack;
+```
+
+`stage` is whatever was passed to
+`bun alchemy deploy --stage <name>` — `staging`, `prod`, or
+`pr-147`.
+
+## Reference the project from PR stages
+
+`Neon.Project.ref(id, { stage })` returns a typed reference to a
+project that another stage already deployed, instead of creating a
+new one:
+
+```typescript
+const project = stage.startsWith("pr-")
+  ? yield* Neon.Project.ref("app-db", { stage: "staging" })
+  : yield* Neon.Project("app-db", {
+      region: "aws-us-east-1",
+    });
+```
+
+The lookup is keyed by the logical ID (`"app-db"`) and the stage
+whose state to read (`"staging"`); the stack is implied. Either
+side of the conditional produces a `Neon.Project`, so nothing
+downstream cares which path ran. If the `staging` stage hasn't been
+deployed yet, plan fails with `InvalidReferenceError` — deploy
+`staging` first.
+
+## Fork a branch per stage
+
+Below the project line, every stage — staging and previews alike —
+creates its own branch:
+
+```typescript
+const branch = yield* Neon.Branch("app-branch", { project });
+```
+
+With no `name`, the branch gets a unique name generated from the
+app, stage, and logical ID, so `pr-147` and `pr-148` never collide.
+Branches are copy-on-write forks of the project's default branch —
+they share storage until they diverge, so creation takes seconds
+regardless of database size, and each PR gets fully isolated data.
+See [Branching](/neon/data/branching) for parents, point-in-time forks,
+and schema-only copies.
+
+## Apply migrations on the branch
+
+Point the branch at your migrations directory so its schema is
+converged as part of the deploy:
+
+```typescript
+const branch = yield* Neon.Branch("app-branch", {
+  project,
+  migrationsDir: "./migrations",
+});
+```
+
+Because the branch forks from an already-migrated parent, it
+inherits the parent's schema *and* its tracking table — only
+migrations added after the fork are applied. See
+[Migrations](/neon/data/migrations) for ordering, hashing, and the
+tracking table.
+
+## Let stragglers expire
+
+`expiresAt` tells Neon to delete the branch itself at an RFC-3339
+timestamp — a safety net for previews that outlive their deploy
+(a PR abandoned without running `alchemy destroy`):
+
+```typescript
+const branch = yield* Neon.Branch("app-branch", {
+  project,
+  expiresAt: "2026-07-08T00:00:00Z",
+});
+```
+
+`expiresAt` is mutable, so pushing the timestamp forward on each
+deploy updates the branch in place.
+
+## Tear a preview down
+
+```sh
+bun alchemy destroy --stage pr-147
+```
+
+Destroy deletes the stage's resources — including its branch — but
+leaves the referenced project untouched: the PR stage doesn't own
+`app-db`, so it can't delete it. The shared project keeps serving
+`staging` and every other preview.
+
+## Wire it into your runtime
+
+Everything above is runtime-agnostic — the branch exposes
+`origin` / `pooledOrigin` outputs ready to feed whatever connects
+to it (see [Connections](/neon/data/connections)). For the full
+Cloudflare walkthrough — fronting the branch with
+[Hyperdrive](/cloudflare/data/hyperdrive) and binding it into a Worker —
+follow
+[Branch from a shared database](/cloudflare/data/branch-from-shared-database),
+which builds this exact pattern step by step, and
+[Shared database across stages](/cloudflare/data/shared-database)
+for the general `Resource.ref` mechanics, including cross-stack
+references.
+
+## Where next
+
+Guides:
+
+- [Branch from a shared database](/cloudflare/data/branch-from-shared-database)
+  — the Cloudflare walkthrough of this pattern, end to end.
+- [Drizzle ORM with Neon](/neon/guides/drizzle) — generate the
+  migrations the branch applies from a typed schema.
+
+Related:
+
+- [Branching](/neon/data/branching) — everything a `Neon.Branch` can do.
+- [Connections](/neon/data/connections) — direct vs pooled URIs and the
+  origin shape.
+
+Reference:
+
+- [Project API reference](/providers/neon/project)
+- [Branch API reference](/providers/neon/branch)

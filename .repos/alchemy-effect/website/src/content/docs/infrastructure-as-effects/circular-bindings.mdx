@@ -1,0 +1,232 @@
+---
+title: Circular Bindings
+description: How to model two services that reference each other (Worker A ↔ Worker B, Lambda ↔ Lambda) using tagged classes and Layers.
+---
+
+import DAG from "../../../components/DAG.astro";
+
+Real systems have cycles. A web Worker calls an internal Worker for
+auth; the internal Worker calls back into the web Worker for
+billing. Two Lambdas trigger each other through a queue.
+
+Most IaC engines reject these — you can't create A before B if A
+needs B's URL, but B needs A's URL too. Alchemy resolves the
+deadlock by separating **identity** (a class used as a Tag) from
+**implementation** (a Layer attached via `.make()`).
+
+This guide builds on [Bindings](/infrastructure-as-effects/binding) and
+[Layers](/infrastructure-as-effects/layers): two Workers that call each
+other, one step at a time.
+
+## Sketch the cycle
+
+The goal: two Workers, `A` and `B`. Each one delegates half of its
+work to the other.
+
+```
+GET /  →  A  ──rpc──▶  B
+              ◀──rpc───
+```
+
+Naively you'd write `import { B } from "./B.ts"` inside `A.ts` and
+`import { A } from "./A.ts"` inside `B.ts`. The imports succeed at
+the module level, but at deploy time neither Worker can be created
+first — each needs the other's URL.
+
+The fix is to import only the **Tag** (cheap, side-effect free)
+across the cycle, and keep each Worker's **runtime implementation**
+behind a `.make()` call that runs only when the Stack provides it.
+
+## Create A as a Tag
+
+Start `src/A.ts` with just the class — no runtime yet. The class
+extends `Cloudflare.Worker<A, Shape>()(...)`, which produces a typed
+identifier you can `yield*` from anywhere. The second type parameter
+declares the shape A's runtime will expose — here, a `work` method.
+
+```typescript
+// src/A.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export class A extends Cloudflare.Worker<A, { work: () => Effect.Effect<string> }>()("A") {}
+```
+
+`A` is now a Tag. It carries the type of A's interface, but no
+implementation — importing it from another file does **not** force
+any runtime code to load, because there is no implementation yet.
+This is what makes the cycle resolvable.
+
+## Create B as a Tag
+
+Do the same for `B`. Both files only declare identity and shape at
+this point — no runtime.
+
+```typescript
+// src/B.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+
+export class B extends Cloudflare.Worker<B, { work: () => Effect.Effect<string> }>()("B") {}
+```
+
+Now `A` and `B` can freely `import` each other — neither side
+triggers any runtime code by importing the other's class.
+
+## Add A's runtime, binding B
+
+Attach A's implementation with `A.make(...)`. Inside the Init phase,
+`yield* Cloudflare.Workers.bindWorker(B)` produces a typed stub whose
+methods dispatch to B's deployed Worker at runtime. A also exposes its
+own `work` RPC method so B can call back into it.
+
+```diff lang="typescript"
+  // src/A.ts
+  import * as Cloudflare from "alchemy/Cloudflare";
+  import * as Effect from "effect/Effect";
++ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++ import { B } from "./B.ts";
+
+  export class A extends Cloudflare.Worker<A, { work: () => Effect.Effect<string> }>()("A") {}
+
++ export default A.make(
++   { main: import.meta.url },
++   Effect.gen(function* () {
++     const b = yield* Cloudflare.Workers.bindWorker(B);
++     return {
++       fetch: Effect.gen(function* () {
++         // delegate half the work to B over the RPC stub
++         return HttpServerResponse.text(yield* b.work());
++       }),
++       work: () => Effect.succeed("A handled its half"),
++     };
++   }),
++ );
+```
+
+The `import { B }` line pulls in B's Tag only. `bindWorker(B)`
+returns a [typed RPC stub](/apis/schemaless) — at plan time it
+registers the service binding; at runtime `b.work()` round-trips to
+B's deployed Worker as a native RPC call.
+
+## Add B's runtime, binding A
+
+Mirror the same pattern in `B.ts`. B's runtime imports A's Tag and
+binds it.
+
+```diff lang="typescript"
+  // src/B.ts
+  import * as Cloudflare from "alchemy/Cloudflare";
+  import * as Effect from "effect/Effect";
++ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
++ import { A } from "./A.ts";
+
+  export class B extends Cloudflare.Worker<B, { work: () => Effect.Effect<string> }>()("B") {}
+
++ export default B.make(
++   { main: import.meta.url },
++   Effect.gen(function* () {
++     const a = yield* Cloudflare.Workers.bindWorker(A);
++     return {
++       fetch: Effect.gen(function* () {
++         return HttpServerResponse.text(yield* a.work());
++       }),
++       work: () => Effect.succeed("B handled its half"),
++     };
++   }),
++ );
+```
+
+This is the symmetric half of the cycle. `A` imports `B`'s Tag and
+binds it; `B` imports `A`'s Tag and binds it. Neither file needs the
+other's `.make()` to be evaluated.
+
+## Wire both into the Stack
+
+The Stack pulls in both Tags (via `import { A }` / `import { B }`)
+and both Layers (via the default exports). `Effect.provide` attaches
+the Layers to the generator so the Tags resolve to real Workers.
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import ALive, { A } from "./src/A.ts";
+import BLive, { B } from "./src/B.ts";
+
+export default Alchemy.Stack(
+  "AB",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    const a = yield* A;
+    const b = yield* B;
+    return { aUrl: a.url, bUrl: b.url };
+  }).pipe(Effect.provide(Layer.mergeAll(ALive, BLive))),
+);
+```
+
+`yield* A` and `yield* B` only succeed because `ALive` and `BLive`
+are provided. Forget one, and TypeScript flags the missing layer at
+the call site.
+
+## How alchemy resolves the cycle
+
+Under the hood, alchemy plans the cycle in two passes:
+
+<DAG
+  nodes={[
+    { id: "Decl", label: "declare", type: "A & B Tags" },
+    { id: "Pre", label: "precreate", type: "reserve URLs", tone: "accent" },
+    { id: "Create", label: "create", type: "deferred Outputs" },
+    { id: "Wire", label: "update", type: "wire bindings", tone: "accent" },
+  ]}
+  edges={[
+    { from: "Decl", to: "Pre" },
+    { from: "Pre", to: "Create" },
+    { from: "Create", to: "Wire" },
+  ]}
+/>
+
+1. The **Tags** are registered up front, so the graph knows that A
+   and B both exist.
+2. Each provider's [`precreate`](/infrastructure-as-code/provider#precreate) hook
+   reserves the resource (and its physical URL) without needing the
+   other side's outputs.
+3. `create` runs in parallel using deferred Outputs — bindings see
+   `Output<string>` placeholders that resolve later.
+4. A converge pass calls `update` once both sides exist, wiring the
+   real cross-references in. Types stay sound the whole way through
+   because Outputs are typed.
+
+The same pattern works for Lambda↔Lambda, Worker↔Container, or any
+mix — the Tag/Layer split is a property of every Function resource
+([Functions & Servers](/infrastructure-as-effects/functions-and-servers)), not just Workers.
+
+## When you don't need this
+
+If your services form a DAG (no cycles), you can keep declaration
+and implementation in one expression:
+
+```typescript
+export default Cloudflare.Worker(
+  "MyWorker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    /* ... */
+  }),
+);
+```
+
+The tagged-class pattern only pays off when something else needs to
+reference the Worker before its implementation is in scope. For
+non-circular reuse across files, see [Layers](/infrastructure-as-effects/layers).
+
+The deferred `Output` mechanism behind the two-phase plan is covered
+in [Inputs & Outputs](/infrastructure-as-code/outputs).
+
+## Where next
+
+- [Inputs & Outputs](/infrastructure-as-code/outputs) — the deferred references that make the cycle resolvable.
+- [Providers](/infrastructure-as-code/provider) — the `precreate` hook that reserves resources up front.

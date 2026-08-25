@@ -8,32 +8,6 @@
  * data-driven text, check whether an unknown value is already a `RegExp`, or
  * access the native constructor without leaving the Effect namespace.
  *
- * **Common tasks**
- *
- * - Construct expressions with the native constructor: {@link RegExp}
- * - Narrow unknown input to `RegExp`: {@link isRegExp}
- * - Escape literal text before interpolating it into a pattern: {@link escape}
- *
- * **Gotchas**
- *
- * - {@link escape} only escapes regular expression metacharacters in a string.
- *   It does not add anchors, flags, grouping, or validation for a full pattern.
- *
- * **Quickstart**
- *
- * **Example** (Matching literal text)
- *
- * ```ts
- * import { RegExp } from "effect"
- *
- * const literal = "a+b.txt"
- * const expression = new RegExp.RegExp(`^${RegExp.escape(literal)}$`)
- *
- * console.log(expression.test("a+b.txt")) // true
- * console.log(expression.test("aaab.txt")) // false
- * console.log(RegExp.isRegExp(expression)) // true
- * ```
- *
  * @since 2.0.0
  */
 import * as predicate from "./Predicate.ts"
@@ -102,7 +76,7 @@ export const isRegExp: (input: unknown) => input is RegExp = predicate.isRegExp
  * assert.deepStrictEqual(RegExp.escape("a*b"), "a\\*b")
  * ```
  *
- * @category utils
+ * @category RegExp
  * @since 2.0.0
  */
 export const escape = (string: string): string => string.replace(/[/\\^$*+?.()|[\]{}]/g, "\\$&")

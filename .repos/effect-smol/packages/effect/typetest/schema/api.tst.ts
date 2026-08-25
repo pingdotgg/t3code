@@ -1,5 +1,5 @@
 import { hole, Schema } from "effect"
-import type { Effect, Exit, Option } from "effect"
+import type { Effect, Exit, Option, Result } from "effect"
 import { describe, expect, it } from "tstyche"
 
 describe("decoding / encoding API", () => {
@@ -173,6 +173,16 @@ describe("decoding / encoding API", () => {
     })("a")({ a: "1" })
     expect(decodeExit).type.toBe<Exit.Exit<{ readonly a: number }, Schema.SchemaError>>()
 
+    const decodeUnknownResult = (<K extends "a" | "b">(key: K) => {
+      return Schema.decodeUnknownResult(schemas[key])
+    })("a")({ a: "1" })
+    expect(decodeUnknownResult).type.toBe<Result.Result<{ readonly a: number }, Schema.SchemaError>>()
+
+    const decodeResult = (<K extends "a" | "b">(key: K) => {
+      return Schema.decodeResult(schemas[key])
+    })("a")({ a: "1" })
+    expect(decodeResult).type.toBe<Result.Result<{ readonly a: number }, Schema.SchemaError>>()
+
     const decodeUnknownOption = (<K extends "a" | "b">(key: K) => {
       return Schema.decodeUnknownOption(schemas[key])
     })("a")({ a: "1" })
@@ -222,6 +232,16 @@ describe("decoding / encoding API", () => {
       return Schema.encodeExit(schemas[key])
     })("a")({ a: 1 })
     expect(encodeExit).type.toBe<Exit.Exit<{ readonly a: string }, Schema.SchemaError>>()
+
+    const encodeUnknownResult = (<K extends "a" | "b">(key: K) => {
+      return Schema.encodeUnknownResult(schemas[key])
+    })("a")({ a: 1 })
+    expect(encodeUnknownResult).type.toBe<Result.Result<{ readonly a: string }, Schema.SchemaError>>()
+
+    const encodeResult = (<K extends "a" | "b">(key: K) => {
+      return Schema.encodeResult(schemas[key])
+    })("a")({ a: 1 })
+    expect(encodeResult).type.toBe<Result.Result<{ readonly a: string }, Schema.SchemaError>>()
 
     const encodeUnknownOption = (<K extends "a" | "b">(key: K) => {
       return Schema.encodeUnknownOption(schemas[key])

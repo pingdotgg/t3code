@@ -1,8 +1,6 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { AlarmResource } from "./binding-common.ts";
 
 export interface SetAlarmStateRequest extends Omit<
@@ -11,10 +9,30 @@ export interface SetAlarmStateRequest extends Omit<
 > {}
 
 /**
- * Runtime binding for `cloudwatch:SetAlarmState`.
+ * Runtime binding for `cloudwatch:SetAlarmState` — force the bound alarm
+ * into a specific state (useful for testing alarm actions or resetting a
+ * stuck alarm). Bind it to an {@link Alarm} / {@link CompositeAlarm}; the
+ * alarm name is injected automatically.
+ *
+ * Provide `CloudWatch.SetAlarmStateHttp` on the hosting Lambda Function to
+ * satisfy the requirement.
+ * @binding
+ * @section Managing Alarm Actions
+ * @example Force an Alarm into ALARM to Test Its Actions
+ * ```typescript
+ * // init — grants cloudwatch:SetAlarmState on the alarm
+ * const setAlarmState = yield* AWS.CloudWatch.SetAlarmState(alarm);
+ *
+ * // runtime
+ * yield* setAlarmState({
+ *   StateValue: "ALARM",
+ *   StateReason: "fire-drill: verifying the on-call page",
+ * });
+ * ```
  */
-export class SetAlarmState extends Binding.Service<
+export interface SetAlarmState extends Binding.Service<
   SetAlarmState,
+  "AWS.CloudWatch.SetAlarmState",
   (
     alarm: AlarmResource,
   ) => Effect.Effect<
@@ -25,49 +43,8 @@ export class SetAlarmState extends Binding.Service<
       cloudwatch.SetAlarmStateError
     >
   >
->()("AWS.CloudWatch.SetAlarmState") {}
+> {}
 
-export const SetAlarmStateLive = Layer.effect(
-  SetAlarmState,
-  Effect.gen(function* () {
-    const Policy = yield* SetAlarmStatePolicy;
-    const setAlarmState = yield* cloudwatch.setAlarmState;
-
-    return Effect.fn(function* (alarm: AlarmResource) {
-      const AlarmName = yield* alarm.alarmName;
-      yield* Policy(alarm);
-
-      return Effect.fn(function* (request: SetAlarmStateRequest) {
-        return yield* setAlarmState({
-          ...request,
-          AlarmName: yield* AlarmName,
-        });
-      });
-    });
-  }),
-);
-
-export class SetAlarmStatePolicy extends Binding.Policy<
-  SetAlarmStatePolicy,
-  (alarm: AlarmResource) => Effect.Effect<void>
->()("AWS.CloudWatch.SetAlarmState") {}
-
-export const SetAlarmStatePolicyLive = SetAlarmStatePolicy.layer.succeed(
-  Effect.fn(function* (host, alarm) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.CloudWatch.SetAlarmState(${alarm}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["cloudwatch:SetAlarmState"],
-            Resource: [alarm.alarmArn],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `SetAlarmStatePolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const SetAlarmState = Binding.Service<SetAlarmState>(
+  "AWS.CloudWatch.SetAlarmState",
 );

@@ -1,6 +1,6 @@
 # `@effect/sql-mssql`
 
-An `@effect/sql` implementation using the mssql `tedious` library.
+An Effect SQL implementation using the mssql `tedious` library.
 
 ## Documentation
 

@@ -7,20 +7,6 @@
  * wiring those primitives from `window`, and schemas for the key shapes accepted
  * by IndexedDB object stores and indexes.
  *
- * Use it when building typed local persistence for browser caches,
- * offline-first state, background queues, drafts, or other client-side data
- * that should be validated before it reaches IndexedDB. Higher-level database,
- * version, table, and query modules build on these primitives for migrations
- * and typed transactions.
- *
- * IndexedDB still follows the browser rules: schema changes happen only during
- * version upgrades, upgrades may be blocked by other open tabs or connections,
- * and reads or writes must run in transactions scoped to the object stores they
- * touch. The `layerWindow` constructor should be used only where browser
- * globals are available, and code that also runs during SSR or in restricted
- * browser contexts should account for `indexedDB` or `IDBKeyRange` being
- * missing.
- *
  * @since 4.0.0
  */
 import * as Context from "effect/Context"
@@ -45,7 +31,7 @@ export interface IndexedDb {
 /**
  * Service tag for browser IndexedDB primitives.
  *
- * @category tag
+ * @category services
  * @since 4.0.0
  */
 export const IndexedDb: Context.Service<IndexedDb, IndexedDb> = Context.Service<IndexedDb, IndexedDb>(TypeId)
@@ -54,7 +40,7 @@ export const IndexedDb: Context.Service<IndexedDb, IndexedDb> = Context.Service<
 const IDBFlatKey = Schema.Union([
   Schema.String,
   Schema.Number.check(Schema.makeFilter((input) => !Number.isNaN(input))),
-  Schema.DateValid,
+  Schema.Date,
   Schema.declare(
     (input): input is BufferSource =>
       input instanceof ArrayBuffer ||
@@ -75,8 +61,8 @@ export const IDBValidKey = Schema.Union([IDBFlatKey, Schema.Array(IDBFlatKey)])
  *
  * **When to use**
  *
- * Use when defining numeric key-path fields for `IndexedDbTable` definitions
- * that use IndexedDB auto-increment keys.
+ * Use when you need to define numeric key-path fields for `IndexedDbTable`
+ * definitions that use IndexedDB auto-increment keys.
  *
  * **Details**
  *

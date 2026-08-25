@@ -4,7 +4,7 @@ import * as Logger from "effect/Logger";
 import { Path } from "effect/Path";
 import { AlchemyContext } from "../AlchemyContext.ts";
 
-export const fileLogger = Effect.fnUntraced(function* (
+export const fileLogger = Effect.fn(function* (
   ...segments: ReadonlyArray<string>
 ) {
   const { dotAlchemy } = yield* AlchemyContext;

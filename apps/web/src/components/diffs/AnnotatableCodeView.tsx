@@ -6,7 +6,7 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import { CodeView, type CodeViewHandle, type CodeViewProps } from "@pierre/diffs/react";
+import type { CodeViewHandle } from "@pierre/diffs/react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useMemo, useState, type ReactNode, type Ref } from "react";
 
@@ -18,8 +18,9 @@ import {
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
 
-import { LocalCommentAnnotation } from "../files/LocalCommentAnnotation";
 import { nextFileCommentId } from "../files/fileCommentAnnotations";
+import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
+import { StyledDiffCodeView, type StyledDiffCodeViewOptions } from "./StyledDiffCodeView";
 
 interface DiffCommentAnnotationEntry {
   id: string;
@@ -71,6 +72,7 @@ function appendAnnotationEntry(
 }
 
 interface AnnotatableCodeViewProps {
+  codeViewKey: string;
   files: ReadonlyArray<{
     fileDiff: FileDiffMetadata;
     filePath: string;
@@ -80,7 +82,7 @@ interface AnnotatableCodeViewProps {
   sectionId: string;
   sectionTitle: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
-  options: NonNullable<CodeViewProps<DiffCommentAnnotationGroup>["options"]>;
+  options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
   className?: string;
   renderHeaderPrefix: (
@@ -95,6 +97,7 @@ interface DiffSelectionContext {
 }
 
 export function AnnotatableCodeView({
+  codeViewKey,
   files,
   sectionId,
   sectionTitle,
@@ -117,6 +120,7 @@ export function AnnotatableCodeView({
     fileKey: string;
     annotation: DiffCommentLineAnnotation;
   } | null>(null);
+  const [draftText, setDraftText] = useState("");
 
   const filesByKey = useMemo(() => new Map(files.map((file) => [file.fileKey, file])), [files]);
   const items = useMemo<CodeViewDiffItem<DiffCommentAnnotationGroup>[]>(
@@ -167,6 +171,7 @@ export function AnnotatableCodeView({
       setSelectedLines(null);
       if (draft?.annotation.metadata.entries.some((entry) => entry.id === entryId)) {
         setDraft(null);
+        setDraftText("");
       } else {
         removeReviewComment(composerDraftTarget, entryId);
       }
@@ -193,6 +198,7 @@ export function AnnotatableCodeView({
       if (comment) addReviewComment(composerDraftTarget, comment);
       setSelectedLines(null);
       setDraft(null);
+      setDraftText("");
     },
     [addReviewComment, composerDraftTarget, draft, filesByKey, sectionId, sectionTitle],
   );
@@ -215,6 +221,7 @@ export function AnnotatableCodeView({
         text: "",
       });
       if (!comment) return;
+      setDraftText("");
       setDraft({
         fileKey: item.id,
         annotation: {
@@ -231,8 +238,9 @@ export function AnnotatableCodeView({
 
   const hasOpenComment = draft !== null;
   return (
-    <CodeView<DiffCommentAnnotationGroup>
-      {...(viewerRef ? { ref: viewerRef } : {})}
+    <StyledDiffCodeView<DiffCommentAnnotationGroup>
+      key={codeViewKey}
+      {...(viewerRef ? { viewerRef } : {})}
       {...(className ? { className } : {})}
       items={items}
       selectedLines={selectedLines}
@@ -241,28 +249,34 @@ export function AnnotatableCodeView({
         ...options,
         enableGutterUtility: !hasOpenComment,
         enableLineSelection: !hasOpenComment,
-        onLineSelectionEnd: beginComment,
+        onGutterUtilityClick: beginComment,
       }}
       renderHeaderPrefix={(item) =>
         item.type === "diff"
           ? renderHeaderPrefix(item.fileDiff, item.id, item.collapsed === true)
           : null
       }
-      renderAnnotation={(annotation) => (
-        <div className="py-1">
-          {annotation.metadata.entries.map((entry) => (
-            <LocalCommentAnnotation
-              key={entry.id}
-              kind={entry.kind}
-              rangeLabel={entry.rangeLabel}
-              text={entry.text}
-              onCancel={() => removeEntry(entry.id)}
-              onComment={(text) => submitEntry(entry.id, text)}
-              onDelete={() => removeEntry(entry.id)}
-            />
-          ))}
-        </div>
-      )}
+      renderAnnotation={(annotation) => {
+        const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
+        return (
+          <div
+            className={hasDraft ? "py-1" : "divide-y divide-border/30 border-y border-border/30"}
+          >
+            {annotation.metadata.entries.map((entry) => (
+              <DiffCommentAnnotation
+                key={entry.id}
+                kind={entry.kind}
+                rangeLabel={entry.rangeLabel}
+                text={entry.kind === "draft" ? draftText : entry.text}
+                onTextChange={setDraftText}
+                onCancel={() => removeEntry(entry.id)}
+                onComment={(text) => submitEntry(entry.id, text)}
+                onDelete={() => removeEntry(entry.id)}
+              />
+            ))}
+          </div>
+        );
+      }}
     />
   );
 }

@@ -14,7 +14,7 @@ import type { Simplify } from "effect/Types";
  *
  * Use `undefined` for events that do not accept custom properties.
  */
-export type ZarazEventMap = Record<string, object | undefined>;
+export type EventMap = Record<string, object | undefined>;
 
 type RequireAtLeastOne<T extends object> = {
   readonly [K in keyof T]-?: Required<Pick<T, K>> & Partial<Omit<T, K>>;
@@ -23,7 +23,7 @@ type RequireAtLeastOne<T extends object> = {
 /**
  * Product properties supported by Cloudflare Zaraz ecommerce events.
  */
-export type ZarazEcommerceProduct = {
+export type EcommerceProduct = {
   readonly product_id?: string;
   readonly sku?: string;
   readonly category?: string;
@@ -41,7 +41,7 @@ export type ZarazEcommerceProduct = {
 /**
  * Order and checkout properties supported by Cloudflare Zaraz ecommerce events.
  */
-export type ZarazEcommerceOrder = {
+export type EcommerceOrder = {
   readonly checkout_id?: string;
   readonly order_id?: string;
   readonly affiliation?: string;
@@ -52,26 +52,26 @@ export type ZarazEcommerceOrder = {
   readonly discount?: number;
   readonly coupon?: string;
   readonly currency?: string;
-  readonly products?: readonly ZarazEcommerceProduct[];
+  readonly products?: readonly EcommerceProduct[];
 };
 
-export type ZarazEcommercePromotion = {
+export type EcommercePromotion = {
   readonly creative?: string;
 };
 
-export type ZarazEcommerceSearch = {
+export type EcommerceSearch = {
   readonly query?: string;
 };
 
-export type ZarazEcommerceCheckoutStep = {
+export type EcommerceCheckoutStep = {
   readonly step?: number;
 };
 
-export type ZarazEcommercePayment = {
+export type EcommercePayment = {
   readonly payment_type?: string;
 };
 
-export type ZarazEcommerceRefund = {
+export type EcommerceRefund = {
   readonly amount?: number;
   readonly amount_refunded?: number;
   readonly currency?: string;
@@ -81,30 +81,30 @@ export type ZarazEcommerceRefund = {
 /**
  * Standard ecommerce events supported by Cloudflare's `zaraz.ecommerce()` API.
  */
-export type ZarazEcommerceEvents = {
+export type EcommerceEvents = {
   readonly "Product List Viewed": RequireAtLeastOne<
-    Pick<ZarazEcommerceOrder, "products">
+    Pick<EcommerceOrder, "products">
   >;
-  readonly "Products Searched": RequireAtLeastOne<ZarazEcommerceSearch>;
-  readonly "Product Clicked": RequireAtLeastOne<ZarazEcommerceProduct>;
-  readonly "Product Added": RequireAtLeastOne<ZarazEcommerceProduct>;
-  readonly "Product Added to Wishlist": RequireAtLeastOne<ZarazEcommerceProduct>;
-  readonly "Product Removed": RequireAtLeastOne<ZarazEcommerceProduct>;
-  readonly "Product Viewed": RequireAtLeastOne<ZarazEcommerceProduct>;
-  readonly "Cart Viewed": RequireAtLeastOne<ZarazEcommerceOrder>;
-  readonly "Checkout Started": RequireAtLeastOne<ZarazEcommerceOrder>;
-  readonly "Checkout Step Viewed": RequireAtLeastOne<ZarazEcommerceCheckoutStep>;
-  readonly "Checkout Step Completed": RequireAtLeastOne<ZarazEcommerceCheckoutStep>;
-  readonly "Payment Info Entered": RequireAtLeastOne<ZarazEcommercePayment>;
-  readonly "Order Completed": RequireAtLeastOne<ZarazEcommerceOrder>;
-  readonly "Order Updated": RequireAtLeastOne<ZarazEcommerceOrder>;
+  readonly "Products Searched": RequireAtLeastOne<EcommerceSearch>;
+  readonly "Product Clicked": RequireAtLeastOne<EcommerceProduct>;
+  readonly "Product Added": RequireAtLeastOne<EcommerceProduct>;
+  readonly "Product Added to Wishlist": RequireAtLeastOne<EcommerceProduct>;
+  readonly "Product Removed": RequireAtLeastOne<EcommerceProduct>;
+  readonly "Product Viewed": RequireAtLeastOne<EcommerceProduct>;
+  readonly "Cart Viewed": RequireAtLeastOne<EcommerceOrder>;
+  readonly "Checkout Started": RequireAtLeastOne<EcommerceOrder>;
+  readonly "Checkout Step Viewed": RequireAtLeastOne<EcommerceCheckoutStep>;
+  readonly "Checkout Step Completed": RequireAtLeastOne<EcommerceCheckoutStep>;
+  readonly "Payment Info Entered": RequireAtLeastOne<EcommercePayment>;
+  readonly "Order Completed": RequireAtLeastOne<EcommerceOrder>;
+  readonly "Order Updated": RequireAtLeastOne<EcommerceOrder>;
   readonly "Order Refunded": RequireAtLeastOne<
-    ZarazEcommerceOrder & ZarazEcommerceRefund
+    EcommerceOrder & EcommerceRefund
   >;
-  readonly "Order Cancelled": RequireAtLeastOne<ZarazEcommerceOrder>;
-  readonly "Clicked Promotion": RequireAtLeastOne<ZarazEcommercePromotion>;
-  readonly "Viewed Promotion": RequireAtLeastOne<ZarazEcommercePromotion>;
-  readonly "Shipping Info Entered": RequireAtLeastOne<ZarazEcommerceOrder>;
+  readonly "Order Cancelled": RequireAtLeastOne<EcommerceOrder>;
+  readonly "Clicked Promotion": RequireAtLeastOne<EcommercePromotion>;
+  readonly "Viewed Promotion": RequireAtLeastOne<EcommercePromotion>;
+  readonly "Shipping Info Entered": RequireAtLeastOne<EcommerceOrder>;
 };
 
 declare const ZarazEventContractTypeId: unique symbol;
@@ -116,9 +116,9 @@ declare const ZarazEventContractTypeId: unique symbol;
  * import derived types and call Cloudflare's injected `window.zaraz` API rather
  * than importing Alchemy runtime code into the client bundle.
  */
-export type ZarazEventContract<
-  Events extends ZarazEventMap,
-  EcommerceEvents extends ZarazEventMap = {},
+export type EventContract<
+  Events extends EventMap,
+  EcommerceEvents extends EventMap = {},
 > = {
   readonly [ZarazEventContractTypeId]: {
     readonly events: Events;
@@ -131,50 +131,43 @@ export type ZarazEventContract<
  *
  * @example
  * ```typescript
- * const zaraz = Cloudflare.ZarazConfig.events<{
+ * const zaraz = Cloudflare.Config.events<{
  *   Login: { method: "google" | "email" | "email-link" };
  *   "Button Clicked": { button_label: string; context?: string };
  * }>();
  *
- * const zarazWithEcommerce = Cloudflare.ZarazConfig.events<{
+ * const zarazWithEcommerce = Cloudflare.Config.events<{
  *   Login: { method: "google" | "email" | "email-link" };
  * }>({ ecommerce: true });
  *
- * export type AppZarazEvents = Cloudflare.InferZarazEvents<typeof zaraz>;
+ * export type AppZarazEvents = Cloudflare.Zaraz.InferZarazEvents<typeof zaraz>;
  * ```
  */
-export function defineZarazEvents<const Events extends ZarazEventMap>(options: {
+export function defineZarazEvents<const Events extends EventMap>(options: {
   readonly ecommerce: true;
-}): ZarazEventContract<Events, ZarazEcommerceEvents>;
-export function defineZarazEvents<
-  const Events extends ZarazEventMap,
->(options?: { readonly ecommerce?: false }): ZarazEventContract<Events, {}>;
-export function defineZarazEvents<
-  const Events extends ZarazEventMap,
->(_options?: {
+}): EventContract<Events, EcommerceEvents>;
+export function defineZarazEvents<const Events extends EventMap>(options?: {
+  readonly ecommerce?: false;
+}): EventContract<Events, {}>;
+export function defineZarazEvents<const Events extends EventMap>(_options?: {
   readonly ecommerce?: boolean;
-}): ZarazEventContract<Events, ZarazEventMap> {
-  return {} as ZarazEventContract<Events, {}>;
+}): EventContract<Events, EventMap> {
+  return {} as EventContract<Events, {}>;
 }
 
 export type InferZarazEvents<Contract> =
-  Contract extends ZarazEventContract<infer Events, ZarazEventMap>
-    ? Events
-    : never;
+  Contract extends EventContract<infer Events, EventMap> ? Events : never;
 
 export type InferZarazEcommerceEvents<Contract> =
-  Contract extends ZarazEventContract<ZarazEventMap, infer EcommerceEvents>
+  Contract extends EventContract<EventMap, infer EcommerceEvents>
     ? EcommerceEvents
     : never;
 
-export type ZarazEventName<Events extends ZarazEventMap> = Extract<
-  keyof Events,
-  string
->;
+export type EventName<Events extends EventMap> = Extract<keyof Events, string>;
 
-export type ZarazEventProperties<
-  Events extends ZarazEventMap,
-  Name extends ZarazEventName<Events>,
+export type EventProperties<
+  Events extends EventMap,
+  Name extends EventName<Events>,
 > = Events[Name];
 
 type ZarazEventPropertiesArgs<Properties> = [Properties] extends [undefined]
@@ -186,8 +179,8 @@ type ZarazEventPropertiesArgs<Properties> = [Properties] extends [undefined]
 /**
  * Type for Cloudflare's injected `window.zaraz.track` function.
  */
-export type ZarazTrack<Events extends ZarazEventMap> = <
-  const Name extends ZarazEventName<Events>,
+export type Track<Events extends EventMap> = <
+  const Name extends EventName<Events>,
 >(
   eventName: Name,
   ...args: ZarazEventPropertiesArgs<Events[Name]>
@@ -196,31 +189,27 @@ export type ZarazTrack<Events extends ZarazEventMap> = <
 /**
  * Type for Cloudflare's injected `window.zaraz.ecommerce` function.
  */
-export type ZarazEcommerce<Events extends ZarazEventMap> = ZarazTrack<Events>;
+export type Ecommerce<Events extends EventMap> = Track<Events>;
 
-export type ZarazSetScope = "page" | "session" | "persist";
+export type SetScope = "page" | "session" | "persist";
 
 /**
  * Type for Cloudflare's injected browser-side Zaraz API.
  */
-export type ZarazWebApi<
-  Events extends ZarazEventMap,
-  EcommerceEvents extends ZarazEventMap = {},
+export type WebApi<
+  Events extends EventMap,
+  EcommerceEvents extends EventMap = {},
 > = {
-  set: (
-    name: string,
-    value: unknown,
-    options?: { scope?: ZarazSetScope },
-  ) => void;
-  track: ZarazTrack<Events>;
-  ecommerce: ZarazEcommerce<EcommerceEvents>;
+  set: (name: string, value: unknown, options?: { scope?: SetScope }) => void;
+  track: Track<Events>;
+  ecommerce: Ecommerce<EcommerceEvents>;
   preview: (debugKey: string) => Promise<void>;
   debug: (debugKey: string) => Promise<void>;
   showConsentModal: () => Promise<void>;
   pageVariables: Record<string, unknown>;
 };
 
-export type ZarazSystem = {
+export type System = {
   cookies?: Record<string, unknown>;
   device?: {
     ip?: string;
@@ -237,21 +226,21 @@ export type ZarazSystem = {
   };
 };
 
-export type ZarazClientProperties<
-  Events extends ZarazEventMap,
-  Name extends ZarazEventName<Events> = ZarazEventName<Events>,
+export type ClientProperties<
+  Events extends EventMap,
+  Name extends EventName<Events> = EventName<Events>,
 > =
-  Name extends ZarazEventName<Events>
+  Name extends EventName<Events>
     ? Events[Name] extends undefined
       ? { readonly __zarazTrack: Name }
       : Simplify<Events[Name] & { readonly __zarazTrack: Name }>
     : never;
 
-export type ZarazHttpEvent<Events extends ZarazEventMap> = {
-  readonly client: ZarazClientProperties<Events>;
-  readonly system?: ZarazSystem;
+export type HttpEvent<Events extends EventMap> = {
+  readonly client: ClientProperties<Events>;
+  readonly system?: System;
 };
 
-export type ZarazHttpEventsPayload<Events extends ZarazEventMap> = {
-  readonly events: readonly ZarazHttpEvent<Events>[];
+export type HttpEventsPayload<Events extends EventMap> = {
+  readonly events: readonly HttpEvent<Events>[];
 };

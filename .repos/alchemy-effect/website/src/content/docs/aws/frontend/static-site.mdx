@@ -1,0 +1,163 @@
+---
+title: Deploy a static site
+description: Ship a static site to S3 + CloudFront with AWS.Website.StaticSite — build-step support, Router composition, and cache invalidation on deploy.
+sidebar:
+  order: 4
+---
+
+`AWS.Website.StaticSite` deploys a directory of files as a website: it uploads
+the files to a private S3 bucket, creates a CloudFront distribution with a
+CloudFront Function that routes requests at the edge via a KeyValueStore file
+manifest, and invalidates the cache when your assets change. Use it whenever
+the output is plain files — docs, marketing pages, or a built SPA.
+
+## Deploy a directory
+
+Point `path` at a directory of files and return the site's `url` as a stack
+output:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyStaticSite",
+  {
+    providers: AWS.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* AWS.Website.StaticSite("MarketingSite", {
+      path: "./site",
+      forceDestroy: true,
+    });
+
+    return {
+      url: site.url,
+    };
+  }),
+);
+```
+
+One `StaticSite` expands into the whole stack — an S3 bucket, the asset
+upload, a CloudFront KeyValueStore holding the file manifest, a viewer-request
+CloudFront Function, and the distribution itself. `forceDestroy: true` lets
+`destroy` empty the bucket before deleting it; `site.url` resolves to the
+CloudFront domain (or `https://<your-domain>` when you pass `domain`).
+
+```sh
+bun alchemy deploy
+```
+
+The deployed example lives at
+[`examples/aws-static-site`](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-static-site)
+if you want a runnable starting point.
+
+## Run a build step first
+
+For framework sites (Vite, Astro, etc.), add `build` so the framework's build
+runs before upload and the `output` directory is what gets deployed:
+
+```typescript
+const site = yield* AWS.Website.StaticSite("Web", {
+  path: "./frontend",
+  build: {
+    command: "bun run build",
+    output: "dist",
+  },
+  environment: {
+    VITE_API_URL: api.url,
+  },
+});
+```
+
+The build step is a [Command.Build](/providers/command/build) resource —
+memoized, so unchanged inputs skip the build
+([details](/command/memoization)). The input hash covers, by default, all
+files under `path` (filtered by your gitignore rules) plus the nearest
+package-manager lockfile. Tune the hash with `build.include`, `build.exclude`, and
+`build.lockfile` — e.g. `include: ["src/**", "package.json"]` to re-run only
+when source files change. `environment` variables are passed to the build
+command, so outputs from other resources (like an API URL) flow straight into
+the frontend bundle.
+
+## Compose sites with a Router
+
+`AWS.Website.Router` is a shared CloudFront front door: one distribution whose
+routes live in a KeyValueStore, matched at the edge by a CloudFront Function.
+Create the router, then attach sites to it instead of giving each site its own
+distribution:
+
+```typescript
+const router = yield* AWS.Website.Router("WebsiteRouter", {
+  domain: { name: "example.com", hostedZoneId },
+});
+
+const site = yield* AWS.Website.StaticSite("Docs", {
+  path: "./docs",
+  router: {
+    instance: router,
+    path: "/docs",
+  },
+});
+```
+
+The site registers itself by writing its file manifest and metadata into the
+router's KV store — no distribution redeploy is needed to add or remove a
+site. When attaching to a router, put `domain` and `edge` on the `Router`, not
+the `StaticSite`; passing either alongside `router` is an error.
+
+## Route to non-site origins
+
+The router also takes inline `routes` for origins that aren't managed by
+`StaticSite`, keyed by path pattern:
+
+```typescript
+const router = yield* AWS.Website.Router("WebsiteRouter", {
+  routes: {
+    "/*": { url: api.functionUrl },
+  },
+});
+```
+
+A route value can be a URL (proxied as a custom origin) or a
+`{ bucket }` route serving straight from S3, optionally with a
+`rewrite: { regex, to }` applied to the URI before forwarding. Longest
+host-then-path match wins, so a `StaticSite` mounted at `/docs` takes
+precedence over a `/*` fallback route.
+
+## Cache invalidation on deploy
+
+By default every deploy that changes your files creates a CloudFront
+invalidation for `/*` and moves on without waiting
+(`{ paths: "all", wait: false }`). The invalidation is keyed to a content hash
+of the uploaded assets, so deploys that change nothing don't invalidate
+anything. Tune it with `invalidation`:
+
+```typescript
+const site = yield* AWS.Website.StaticSite("MarketingSite", {
+  path: "./site",
+  invalidation: {
+    paths: "all",
+    wait: true,
+  },
+});
+```
+
+- `paths: "all"` — invalidate `/*` (the default)
+- `paths: "versioned"` — invalidate only the index page, for sites whose
+  assets are content-hashed and immutable
+- `paths: [...]` — an explicit list of paths
+- `wait: true` — block the deploy until CloudFront reports the invalidation
+  complete
+- `invalidation: false` — skip invalidation entirely
+
+## Where next
+
+- [Websites on AWS](/aws/frontend/websites) — the full websites surface, including
+  server-side rendering
+- [StaticSite reference](/providers/aws/website/staticsite) and
+  [Router reference](/providers/aws/website/router) — every prop and attribute
+- [AWS on Alchemy](/aws) — the AWS provider hub

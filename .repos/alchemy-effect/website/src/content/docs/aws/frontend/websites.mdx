@@ -1,0 +1,180 @@
+---
+title: Websites
+description: Deploy static sites and Vite apps to S3 and CloudFront as a single StaticSite resource.
+---
+
+**`AWS.Website.StaticSite`** deploys a static site — plain HTML
+or a built Vite app — to S3 and CloudFront as one resource. It
+uploads your files to a private bucket, stands up a CloudFront
+distribution with an edge router in front, and invalidates the
+cache when content changes. For multiple sites (or a site plus
+an API) behind one distribution, compose it with
+**`AWS.Website.Router`**.
+
+## Prerequisites
+
+Install Alchemy and connect your AWS account — see
+[Setup](/aws/setup).
+
+## Deploy a static site
+
+Point `StaticSite` at a directory of files and surface its URL
+from the Stack:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MySite",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* AWS.Website.StaticSite("MarketingSite", {
+      path: "./site",
+      forceDestroy: true,
+    });
+
+    return { url: site.url };
+  }),
+);
+```
+
+`path` is the local directory to upload (defaults to `"."`).
+`forceDestroy: true` lets `alchemy destroy` empty the bucket
+before deleting it — leave it off for sites you never intend to
+tear down.
+
+```sh
+bun alchemy deploy
+```
+
+The first deploy takes a few minutes while CloudFront
+provisions; after that, deploys only re-upload changed files and
+`site.url` serves your site over HTTPS from the edge.
+
+## Build a Vite app
+
+For a site with a build step, add `build` and Alchemy runs the
+command before uploading the output directory:
+
+```typescript
+const site = yield* AWS.Website.StaticSite("Web", {
+  path: "./frontend",
+  build: {
+    command: "bun run build",
+    output: "dist",
+  },
+  environment: {
+    VITE_STAGE: "production",
+  },
+});
+```
+
+`environment` is exposed to the build command, and values accept
+outputs from other resources — so a `VITE_API_URL` can reference
+a Function URL deployed in the same Stack. The build is
+memoized: it re-runs only when the hash of its inputs changes
+(all files by default, filtered by your gitignore rules;
+tune with `build.include` / `build.exclude`).
+
+Requests that don't match an uploaded file fall back to the
+index page, so client-side SPA routing works out of the box. Set
+`errorPage` to serve a real 404 page instead.
+
+## Add a custom domain
+
+Set `domain` with a Route 53 hosted zone and Alchemy handles the
+certificate and DNS:
+
+```typescript
+const site = yield* AWS.Website.StaticSite("MarketingSite", {
+  path: "./site",
+  domain: {
+    name: "www.example.com",
+    hostedZoneId: "Z1234567890",
+  },
+});
+```
+
+This creates an ACM certificate for the domain (plus any
+`aliases`), attaches it to the distribution, and creates Route
+53 alias records pointing at CloudFront. Bring your own
+certificate with `domain.cert`, or set `dns: false` to skip
+record creation and manage DNS elsewhere.
+
+## Share one distribution with a Router
+
+CloudFront distributions are slow to create and each custom
+domain can only attach to one of them. `Router` owns a single
+distribution and routes requests at the edge via a CloudFront
+KeyValueStore — sites attach to it instead of creating their
+own:
+
+```typescript
+const router = yield* AWS.Website.Router("WebsiteRouter", {
+  domain: {
+    name: "example.com",
+    hostedZoneId: "Z1234567890",
+  },
+});
+
+const docs = yield* AWS.Website.StaticSite("Docs", {
+  path: "./docs",
+  router: {
+    instance: router,
+    path: "/docs",
+  },
+});
+```
+
+The site registers its file manifest in the Router's KV store
+and is served under `/docs` — no second distribution, and adding
+or updating a site never touches the distribution config. The
+`domain` lives on the Router; sites attached to a Router must
+not set their own.
+
+Routers also take inline `routes` for origins that aren't static
+sites — for example, forwarding a path prefix to an API:
+
+```typescript
+const router = yield* AWS.Website.Router("WebsiteRouter", {
+  routes: {
+    "/*": { url: api.functionUrl },
+  },
+});
+```
+
+## What Alchemy automates
+
+One `StaticSite` fans out into the whole S3 + CloudFront stack:
+
+- **Bucket and uploads** — a private S3 bucket (or an existing
+  one via `assets.bucket`), each file uploaded with an inferred
+  `Content-Type` and sensible cache headers: HTML is
+  `no-cache`, other assets `max-age=31536000,public,immutable`.
+  Stale files are purged on each deploy.
+- **Distribution and edge routing** — a CloudFront distribution
+  whose viewer-request CloudFront Function resolves each request
+  against a KeyValueStore manifest of your files, with index and
+  error-page fallbacks handled at the edge.
+- **Certificate and DNS** — an ACM certificate and Route 53
+  alias records whenever `domain` includes a `hostedZoneId`.
+- **Invalidation** — a CloudFront invalidation keyed to the
+  uploaded asset hash, so caches refresh exactly when content
+  changes. Defaults to `{ paths: "all", wait: false }`;
+  disable with `invalidation: false`.
+
+## Where next
+
+- [Static site guide](/aws/frontend/static-site) — an end-to-end
+  walkthrough from empty directory to custom domain.
+- [Lambda](/aws/compute/lambda) — deploy an API to route behind the same
+  Router.
+- [`StaticSite` reference](/providers/aws/website/staticsite)
+  and [`Router` reference](/providers/aws/website/router) —
+  every prop and attribute.

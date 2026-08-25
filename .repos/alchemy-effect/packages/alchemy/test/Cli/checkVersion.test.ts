@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test } from "alchemy-test";
 
 import { _internal } from "../../src/Cli/checkVersion";
 

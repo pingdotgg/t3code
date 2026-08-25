@@ -1,0 +1,423 @@
+---
+title: Custom Auth Provider
+description: Plug a third-party API into alchemy login — a lazy credentials service backed by an AuthProvider that resolves keys from a Profile, env vars, or a refreshable session.
+---
+
+The [Custom Provider](/infrastructure-as-code/custom-provider) guide builds a
+Stripe `Product` provider whose lifecycle handlers need an API key. This guide
+builds the credentials side properly: a lazy `StripeCredentials` service backed
+by an Auth Provider, so the key comes from the configured
+[Profile](/environments/profiles), from env vars in CI, or from a refreshable
+session — never from props or hardcoded config. The steps below mirror the
+in-repo [Neon Auth Provider](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Neon/AuthProvider.ts),
+the smallest real implementation.
+
+For what an Auth Provider *is* — the five-method contract, the registry, lazy
+resolution — see [Auth Providers](/environments/auth-providers).
+
+## Declare a lazy credentials service
+
+The service value is an `Effect`, not a resolved struct:
+
+```typescript
+// src/stripe/Credentials.ts
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+
+export class StripeCredentials extends Context.Service<
+  StripeCredentials,
+  Effect.Effect<{ apiKey: Redacted.Redacted<string> }>
+>()("StripeCredentials") {}
+```
+
+Provider Layers are built on every CLI invocation — before any Profile is
+configured — so nothing may resolve at Layer construction. Consumers run the
+Effect only when an operation executes, and a session-backed implementation can
+put refresh logic inside it. Every built-in credentials service has this shape
+(`CloudflareEnvironment`, `AWSEnvironment`, the distilled SDK `Credentials`
+tags).
+
+## Declare the auth config and credential types
+
+Three types, one per storage tier:
+
+```typescript
+// src/stripe/AuthProvider.ts
+import * as Redacted from "effect/Redacted";
+
+export const STRIPE_AUTH_PROVIDER_NAME = "Stripe";
+const STORAGE_KEY = "stripe-stored";
+
+export type StripeAuthConfig = { method: "env" } | { method: "stored" };
+
+export type StripeStoredCredentials = {
+  type: "apiKey";
+  apiKey: string;
+};
+
+export type StripeResolvedCredentials = {
+  type: "apiKey";
+  apiKey: Redacted.Redacted<string>;
+  source: { type: StripeAuthConfig["method"] };
+};
+```
+
+`StripeAuthConfig` is what gets persisted in `~/.alchemy/profiles.json` — only
+the chosen `{ method }`, never secrets. Stored secrets live separately at
+`~/.alchemy/credentials/{profile}/stripe-stored.json`, and the resolved shape
+is in-memory only with the key wrapped in `Redacted` so it can't leak into
+logs.
+
+## Register with `AuthProviderLayer`
+
+An Auth Provider is five Effect-returning methods — `configure`, `login`,
+`logout`, `prettyPrint`, `read` — registered by name. Pass an Effect as the
+implementation so you can resolve `CredentialsStore` once and close over it:
+
+```typescript
+// src/stripe/AuthProvider.ts
+import { AuthProviderLayer } from "alchemy/Auth/AuthProvider";
+import { CredentialsStore } from "alchemy/Auth/Credentials";
+import * as Effect from "effect/Effect";
+
+export const StripeAuth = AuthProviderLayer<
+  StripeAuthConfig,
+  StripeResolvedCredentials
+>()(
+  STRIPE_AUTH_PROVIDER_NAME,
+  Effect.gen(function* () {
+    const store = yield* CredentialsStore;
+
+    // ...method implementations from the next sections, closing over `store`
+
+    return {
+      configure: configureCredentials,
+      login,
+      logout,
+      prettyPrint,
+      read: resolveCredentials,
+    };
+  }),
+);
+```
+
+`AuthProviderLayer` registers the implementation into the `AuthProviders`
+registry — that's how `alchemy login` discovers it. The factory also wraps
+`read`/`login`/`logout`/`configure` in a cross-process file lock and serializes
+interactive prompts across providers, so you don't handle either concern
+yourself.
+
+## Implement `configure`
+
+`configure` runs when a Profile has no stored entry for your provider — it
+picks a method and returns the config to persist:
+
+```typescript
+// src/stripe/AuthProvider.ts (inside the Effect.gen above)
+import { AuthError, type ConfigureContext } from "alchemy/Auth/AuthProvider";
+import { retryOnce } from "alchemy/Auth/Env";
+import * as Clank from "alchemy/Util/Clank";
+import * as Match from "effect/Match";
+
+const loginStored = Effect.fn(function* (profileName: string) {
+  const apiKey = yield* Clank.password({
+    message: "Stripe API Key",
+    validate: (v) => (v.length === 0 ? "Required" : undefined),
+  }).pipe(retryOnce);
+
+  yield* store.write<StripeStoredCredentials>(profileName, STORAGE_KEY, {
+    type: "apiKey",
+    apiKey,
+  });
+  yield* Clank.success("Stripe: credentials saved.");
+  return { method: "stored" as const };
+});
+
+const configureInteractive = (profileName: string) =>
+  Clank.select({
+    message: "Stripe authentication method",
+    options: [
+      { value: "env" as const, label: "Environment Variable", hint: "STRIPE_API_KEY" },
+      {
+        value: "stored" as const,
+        label: "API Key",
+        hint: "enter interactively, stored in ~/.alchemy/credentials",
+      },
+    ],
+  }).pipe(
+    Effect.flatMap((method) =>
+      Match.value(method).pipe(
+        Match.when("env", () => Effect.succeed({ method: "env" as const })),
+        Match.when("stored", () => loginStored(profileName)),
+        Match.exhaustive,
+      ),
+    ),
+  );
+
+const configureCredentials = (profileName: string, ctx: ConfigureContext) =>
+  Effect.gen(function* () {
+    if (ctx.ci) {
+      return { method: "env" as const };
+    }
+    return yield* configureInteractive(profileName);
+  }).pipe(
+    Effect.mapError(
+      (e) =>
+        new AuthError({ message: "failed to configure credentials", cause: e }),
+    ),
+  );
+```
+
+`ConfigureContext.ci` is `true` in CI — `configure` must not prompt there, so
+it returns `{ method: "env" }` and unattended runs need only the env var.
+`retryOnce` gives the user one retry on a cancelled prompt before failing with
+`AuthError`.
+
+## Implement `read`
+
+`read(profileName, config)` is the credential resolver — it materializes
+`StripeResolvedCredentials` from whichever method the Profile stored:
+
+```typescript
+// src/stripe/AuthProvider.ts (inside the Effect.gen)
+import { getEnvRedacted } from "alchemy/Auth/Env";
+
+const resolveCredentials = (
+  profileName: string,
+  config: StripeAuthConfig,
+): Effect.Effect<StripeResolvedCredentials, AuthError> =>
+  Match.value(config).pipe(
+    Match.when(
+      { method: "env" },
+      Effect.fn(function* () {
+        const apiKey = yield* getEnvRedacted("STRIPE_API_KEY");
+        if (!apiKey) {
+          return yield* new AuthError({
+            message: "Stripe env credentials not found. Set STRIPE_API_KEY.",
+          });
+        }
+        return {
+          type: "apiKey" as const,
+          apiKey,
+          source: { type: "env" as const },
+        };
+      }),
+    ),
+    Match.when({ method: "stored" }, () =>
+      store.read<StripeStoredCredentials>(profileName, STORAGE_KEY).pipe(
+        Effect.flatMap((creds) =>
+          creds == null
+            ? Effect.fail(
+                new AuthError({
+                  message:
+                    "Stripe stored credentials not found. Run: alchemy login --configure",
+                }),
+              )
+            : Effect.succeed({
+                type: "apiKey" as const,
+                apiKey: Redacted.make(creds.apiKey),
+                source: { type: "stored" as const },
+              }),
+        ),
+      ),
+    ),
+    Match.exhaustive,
+  );
+```
+
+The `env` branch pulls from the environment *at resolution time* — it's a
+first-class method, not a bypass, and it's what CI runs use.
+
+### Refreshable sessions slot into the same contract
+
+Because credentials are resolved by running `read` (not by storing a value), an
+OAuth or session method is just another `Match.when` branch: read the stored
+session, refresh proactively when near expiry, persist the refreshed session,
+return the fresh token. Cloudflare's provider does exactly this — see the
+refresh walkthrough in
+[Auth Providers › Refresh in practice](/environments/auth-providers#refresh-in-practice).
+
+## Implement `login`, `logout`, and `prettyPrint`
+
+`login` re-authenticates an already-configured Profile; `logout` removes stored
+secrets; `prettyPrint` renders the provider's block in `alchemy profile show`:
+
+```typescript
+// src/stripe/AuthProvider.ts (inside the Effect.gen)
+import { displayRedacted } from "alchemy/Auth/Credentials";
+import * as Console from "effect/Console";
+
+const login = (profileName: string, config: StripeAuthConfig) =>
+  Match.value(config)
+    .pipe(
+      Match.when({ method: "env" }, () => Effect.void),
+      Match.when({ method: "stored" }, () =>
+        store
+          .read<StripeStoredCredentials>(profileName, STORAGE_KEY)
+          .pipe(
+            Effect.flatMap((creds) =>
+              creds == null ? loginStored(profileName) : Effect.void,
+            ),
+          ),
+      ),
+      Match.exhaustive,
+    )
+    .pipe(
+      Effect.mapError(
+        (e) => new AuthError({ message: "login failed", cause: e }),
+      ),
+    );
+
+const logout = (profileName: string, config: StripeAuthConfig) =>
+  Match.value(config).pipe(
+    Match.when({ method: "env" }, () => Effect.void),
+    Match.when({ method: "stored" }, () =>
+      store
+        .delete(profileName, STORAGE_KEY)
+        .pipe(
+          Effect.andThen(Clank.success("Stripe: stored credentials removed")),
+        ),
+    ),
+    Match.exhaustive,
+  );
+
+const prettyPrint = (profileName: string, config: StripeAuthConfig) =>
+  resolveCredentials(profileName, config).pipe(
+    Effect.tap((creds) =>
+      Effect.all([
+        Console.log(`  apiKey: ${displayRedacted(creds.apiKey, 7)}`),
+        Console.log(`  source: ${creds.source.type}`),
+      ]),
+    ),
+    Effect.catch((e) =>
+      Console.error(`  Failed to retrieve credentials: ${e}`),
+    ),
+  );
+```
+
+`displayRedacted` shows only the first few characters — never print a raw
+`Redacted` value.
+
+## Bridge the Auth Provider to the credentials service
+
+`fromAuthProvider()` connects the two: look up the registered provider, load
+(or interactively configure) the Profile's `{ method }`, run `read`, and
+provide the result as the `StripeCredentials` Effect:
+
+```typescript
+// src/stripe/Credentials.ts (additions)
+import { getAuthProvider } from "alchemy/Auth/AuthProvider";
+import { ALCHEMY_PROFILE, AlchemyProfile } from "alchemy/Auth/Profile";
+import * as Config from "effect/Config";
+import * as Layer from "effect/Layer";
+import {
+  STRIPE_AUTH_PROVIDER_NAME,
+  type StripeAuthConfig,
+  type StripeResolvedCredentials,
+} from "./AuthProvider.ts";
+
+export const fromAuthProvider = () =>
+  Layer.effect(
+    StripeCredentials,
+    Effect.gen(function* () {
+      const profile = yield* AlchemyProfile;
+      const auth = yield* getAuthProvider<
+        StripeAuthConfig,
+        StripeResolvedCredentials
+      >(STRIPE_AUTH_PROVIDER_NAME);
+      const profileName = yield* ALCHEMY_PROFILE;
+      const ci = yield* Config.boolean("CI").pipe(Config.withDefault(false));
+
+      return yield* profile.loadOrConfigure(auth, profileName, { ci }).pipe(
+        Effect.flatMap((config) =>
+          auth.read(profileName, config as StripeAuthConfig),
+        ),
+        Effect.map((creds) => ({ apiKey: creds.apiKey })),
+        Effect.orDie,
+        Effect.cached,
+      );
+    }),
+  );
+```
+
+Two details matter. `loadOrConfigure` returns the stored config for the
+Profile, or runs `configure` and persists the answer — so the first deploy
+configures itself. And the value returned to `Layer.effect` is the *Effect*
+(closed by `Effect.cached`), not its result: nothing resolves until a handler
+runs it, and within one process `read` (and its file lock) runs at most once.
+Every built-in bridge — Neon, Planetscale, Cloudflare — has this exact shape.
+
+## Bundle into `providers()`
+
+Merge the auth machinery into the same `providers()` Layer that carries the
+resource providers, mirroring
+[`Neon/Providers.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Neon/Providers.ts):
+
+```typescript
+// src/stripe/Providers.ts
+import { CredentialsStoreLive } from "alchemy/Auth/Credentials";
+import { ProfileLive } from "alchemy/Auth/Profile";
+import * as Provider from "alchemy/Provider";
+import * as Layer from "effect/Layer";
+import { StripeAuth } from "./AuthProvider.ts";
+import * as Credentials from "./Credentials.ts";
+import { StripeProduct, StripeProductProvider } from "./Product.ts";
+
+export class Providers extends Provider.ProviderCollection<Providers>()(
+  "Stripe",
+) {}
+
+export const providers = () =>
+  Layer.effect(Providers, Provider.collection([StripeProduct])).pipe(
+    Layer.provide(StripeProductProvider()),
+    Layer.provideMerge(Credentials.fromAuthProvider()),
+    Layer.provideMerge(StripeAuth),
+    Layer.provideMerge(ProfileLive),
+    Layer.provideMerge(CredentialsStoreLive),
+    Layer.orDie,
+  );
+```
+
+`StripeAuth` registers the provider so `alchemy login` discovers it;
+`ProfileLive` and `CredentialsStoreLive` give the auth machinery its
+file-system services. (Providers that call APIs through an Effect `HttpClient`
+also merge `FetchHttpClient.layer` here, as Neon does.)
+
+## Consume it from a lifecycle handler
+
+Inside `reconcile` (or `delete`, `read`), double-yield the service — the first
+`yield*` gets the lazy Effect out of the service, the second runs it:
+
+```typescript
+// src/stripe/Product.ts
+reconcile: Effect.fn(function* ({ news, output }) {
+  const { apiKey } = yield* yield* StripeCredentials;
+  const stripe = new Stripe(Redacted.value(apiKey));
+  // observe / ensure / sync — see the Custom Provider guide
+}),
+```
+
+This is the same idiom the built-ins use — `yield* AWSEnvironment.current`,
+`yield* yield* CloudflareEnvironment` — and it's what keeps credentials
+demanded exactly when an operation runs, never at Layer construction.
+
+## Try it
+
+```sh
+alchemy deploy             # first run: prompts for a method, saves it to the profile
+alchemy login --configure  # re-run the method picker
+alchemy profile show       # renders your prettyPrint
+```
+
+In CI, `configure` returns `{ method: "env" }` without prompting, so setting
+`STRIPE_API_KEY` is all a pipeline needs.
+
+## Where next
+
+- [Auth Providers](/environments/auth-providers) — the concept: the five-method
+  contract, the registry, and lazy resolution.
+- [Custom Provider](/infrastructure-as-code/custom-provider) — the lifecycle
+  handlers these credentials feed.
+- [Profiles](/environments/profiles) — switching, inspecting, and storing the
+  per-provider config.

@@ -1,24 +1,10 @@
 /**
- * Defines the `SqlClient` service, the central runtime entry point for Effect's
- * unstable SQL support.
+ * Main SQL client service for tagged-template queries.
  *
- * A `SqlClient` combines the tagged-template statement constructor with a
- * scoped connection acquirer, dialect compiler, tracing attributes, optional row
- * transforms, reactive query helpers, and transaction management. Applications
- * typically consume it from `Context` to build parameterized queries, stream
- * rows, run raw driver operations, reserve a connection for lower-level work, or
- * wrap several query effects in `withTransaction`.
- *
- * Transactions are tracked through a per-client context service. Top-level
- * transactions acquire the configured transaction connection and issue the
- * dialect's begin/commit/rollback SQL; nested transactions reuse that
- * connection and rely on dialect-provided savepoint SQL. A query only joins a
- * transaction when it is run with the same client service, so avoid mixing
- * clients or manually reserved connections when atomicity matters. Dialect
- * integrations are also responsible for the compiler and transaction
- * statements, which means placeholder syntax, identifier escaping, row
- * transforms, savepoint support, and unprepared/raw statement behavior can
- * differ by database.
+ * `SqlClient` combines the tagged-template statement constructor with
+ * connection acquisition, dialect compilation, transactions, row transforms,
+ * tracing, and reactive query helpers. Driver integrations build this service
+ * from their connection and compiler pieces.
  *
  * @since 4.0.0
  */
@@ -76,8 +62,7 @@ export interface SqlClient extends Constructor {
   readonly transactionService: Context.Service<TransactionConnection, TransactionConnection.Service>
 
   /**
-   * Use the Reactivity service from @effect/experimental to create a reactive
-   * query.
+   * Use the Reactivity service to create a reactive query.
    */
   readonly reactive: <A, E, R>(
     keys: ReadonlyArray<unknown> | ReadonlyRecord<string, ReadonlyArray<unknown>>,
@@ -102,7 +87,7 @@ export interface SqlClient extends Constructor {
  * Use to access or provide the SQL client used to build statements, stream
  * rows, reserve connections, and run transactions.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const SqlClient = Context.Service<SqlClient>("effect/sql/SqlClient")
@@ -118,7 +103,7 @@ export declare namespace SqlClient {
    * the SQL compiler, transaction SQL, row transformation, tracing attributes,
    * and optional reactive query integration.
    *
-   * @category models
+   * @category options
    * @since 4.0.0
    */
   export interface MakeOptions {
@@ -336,7 +321,7 @@ export declare namespace TransactionConnection {
  * Creates a unique context service tag for the active transaction connection of
  * a specific SQL client.
  *
- * @category tags
+ * @category services
  * @since 4.0.0
  */
 export const TransactionConnection = (

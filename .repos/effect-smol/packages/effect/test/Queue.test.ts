@@ -130,6 +130,22 @@ describe("Queue", () => {
       assert.deepStrictEqual(result, [5])
     }))
 
+  it.effect("take can be interrupted without losing offers", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.unbounded<number>()
+      const interruptedFiber = yield* Queue.take(queue).pipe(Effect.forkChild)
+
+      yield* Effect.yieldNow
+      yield* Fiber.interrupt(interruptedFiber)
+      assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(interruptedFiber)))
+
+      const liveFiber = yield* Queue.take(queue).pipe(Effect.forkChild)
+      yield* Effect.yieldNow
+      yield* Queue.offer(queue, 1)
+
+      assert.strictEqual(yield* Fiber.join(liveFiber), 1)
+    }))
+
   it.effect("done completes takes", () =>
     Effect.gen(function*() {
       const queue = yield* Queue.bounded<number, Cause.Done>(2)

@@ -17,7 +17,9 @@ interface BranchToolbarEnvironmentSelectorProps {
   envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
-  onEnvironmentChange: (environmentId: EnvironmentId) => void;
+  // Absent when there is only one environment to show: the indicator still
+  // renders (as a static label) so remote projects are always identifiable.
+  onEnvironmentChange?: (environmentId: EnvironmentId) => void;
 }
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
@@ -39,15 +41,33 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     [availableEnvironments],
   );
 
-  if (envLocked) {
+  // The static label carries the xs control's height (h-7 sm:h-6) as well as
+  // its padding: the composer context strip has no min-height of its own, and
+  // the glass seam joining it to the composer assumes a fixed strip height, so
+  // a shorter label would drag the seam out of line whenever this label is the
+  // only thing in the strip.
+  if (envLocked || onEnvironmentChange === undefined) {
     return (
-      <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
+      <span
+        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:h-6 sm:text-xs"
+        data-composer-context-control
+      >
         {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3" />
+          <MonitorIcon className="size-3 shrink-0" />
         ) : (
-          <CloudIcon className="size-3" />
+          <CloudIcon className="size-3 shrink-0" />
         )}
-        {activeEnvironment?.label ?? "Run on"}
+        <span
+          data-composer-label
+          className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
+        >
+          <span
+            data-composer-label-motion
+            className="block w-full min-w-0 max-w-[240px] origin-left truncate transition-[opacity,transform] duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:[transform:translateX(-0.25rem)_scaleX(0.95)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transform-none motion-reduce:transition-opacity"
+          >
+            {activeEnvironment?.label ?? "Run on"}
+          </span>
+        </span>
       </span>
     );
   }
@@ -59,13 +79,29 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
       onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
       items={environmentItems}
     >
-      <SelectTrigger variant="ghost" size="xs" className="font-medium" aria-label="Run on">
+      <SelectTrigger
+        variant="ghost"
+        size="xs"
+        className="min-w-0 max-w-full font-medium"
+        aria-label="Run on"
+        data-composer-context-control
+      >
         {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3" />
+          <MonitorIcon className="size-3 shrink-0" />
         ) : (
-          <CloudIcon className="size-3" />
+          <CloudIcon className="size-3 shrink-0" />
         )}
-        <SelectValue />
+        <span
+          data-composer-label
+          className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
+        >
+          <span
+            data-composer-label-motion
+            className="block w-full min-w-0 max-w-[240px] origin-left truncate transition-[opacity,transform] duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:[transform:translateX(-0.25rem)_scaleX(0.95)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transform-none motion-reduce:transition-opacity"
+          >
+            <SelectValue />
+          </span>
+        </span>
       </SelectTrigger>
       <SelectPopup>
         <SelectGroup>

@@ -1,9 +1,7 @@
 import * as S3 from "@distilled.cloud/aws/s3";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+
 import * as Binding from "../../Binding.ts";
-import * as Output from "../../Output.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Bucket } from "./Bucket.ts";
 
 export interface UploadPartRequest extends Omit<
@@ -11,8 +9,33 @@ export interface UploadPartRequest extends Omit<
   "Bucket"
 > {}
 
-export class UploadPart extends Binding.Service<
+/**
+ * Runtime binding for `s3:UploadPart`.
+ *
+ * Uploads one part of a multipart upload started with
+ * `CreateMultipartUpload`. Keep each part's returned `ETag` — the final
+ * `CompleteMultipartUpload` call needs the full `{ ETag, PartNumber }` list.
+ * Provide the implementation with `Effect.provide(AWS.S3.UploadPartHttp)`.
+ * @binding
+ * @section Multipart Uploads
+ * @example Upload a Part
+ * ```typescript
+ * // init — bind the operation to the bucket
+ * const uploadPart = yield* AWS.S3.UploadPart(bucket);
+ *
+ * // runtime — PartNumber is 1-based; collect the ETag for completion
+ * const part = yield* uploadPart({
+ *   Key: "backups/archive.tar",
+ *   UploadId,
+ *   PartNumber: 1,
+ *   Body: chunk, // 5 MiB–5 GiB except the last part
+ * });
+ * parts.push({ ETag: part.ETag, PartNumber: 1 });
+ * ```
+ */
+export interface UploadPart extends Binding.Service<
   UploadPart,
+  "AWS.S3.UploadPart",
   (
     bucket: Bucket,
   ) => Effect.Effect<
@@ -20,48 +43,5 @@ export class UploadPart extends Binding.Service<
       request: UploadPartRequest,
     ) => Effect.Effect<S3.UploadPartOutput, S3.UploadPartError>
   >
->()("AWS.S3.UploadPart") {}
-
-export const UploadPartLive = Layer.effect(
-  UploadPart,
-  Effect.gen(function* () {
-    const Policy = yield* UploadPartPolicy;
-    const uploadPart = yield* S3.uploadPart;
-
-    return Effect.fn(function* (bucket: Bucket) {
-      const BucketName = yield* bucket.bucketName;
-      yield* Policy(bucket);
-      return Effect.fn(function* (request: UploadPartRequest) {
-        return yield* uploadPart({
-          ...request,
-          Bucket: yield* BucketName,
-        });
-      });
-    });
-  }),
-);
-
-export class UploadPartPolicy extends Binding.Policy<
-  UploadPartPolicy,
-  (bucket: Bucket) => Effect.Effect<void>
->()("AWS.S3.UploadPart") {}
-
-export const UploadPartPolicyLive = UploadPartPolicy.layer.succeed(
-  Effect.fn(function* (host, bucket: Bucket) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.S3.UploadPart(${bucket}))`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["s3:PutObject"],
-            Resource: [Output.interpolate`${bucket.bucketArn}/*`],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `UploadPartPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
-);
+> {}
+export const UploadPart = Binding.Service<UploadPart>("AWS.S3.UploadPart");

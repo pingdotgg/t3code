@@ -1,27 +1,12 @@
 /**
- * The `TestClock` module provides a controllable implementation of the Effect
- * `Clock` service for tests. Instead of waiting for real time to pass, effects
- * that use `Effect.sleep`, timeouts, schedules, retries, and other time-based
- * operators can be driven deterministically by advancing the test clock.
+ * Controllable `Clock` service for tests.
  *
- * **Common use cases**
- *
- * - Testing sleeps, delays, timeouts, debouncing, retries, and schedules without
- *   slowing the test suite down
- * - Advancing time with {@link adjust} or jumping to an exact timestamp with
- *   {@link setTime}
- * - Running a specific effect against the live clock with {@link withLive}
- *   while the rest of the test remains under test-clock control
- *
- * **Testing gotchas**
- *
- * - Effects that sleep semantically block until the clock is advanced far
- *   enough, so tests usually fork the time-dependent effect before calling
- *   {@link adjust} or {@link setTime}
- * - Scheduled sleeps are resumed in clock-time order as the test clock moves
- *   forward
- * - If a test uses time but never advances the `TestClock`, the module starts a
- *   delayed warning to help identify a hanging test
+ * Instead of waiting for real time to pass, effects that use `Effect.sleep`,
+ * timeouts, schedules, retries, and other time-based operators can be driven by
+ * advancing the test clock. This makes time-based tests deterministic and fast.
+ * The module also includes helpers for moving test time, temporarily using the
+ * live clock, and warning when a test appears to be waiting on time without
+ * advancing it.
  *
  * @since 2.0.0
  */
@@ -167,7 +152,7 @@ export declare namespace TestClock {
    * })
    * ```
    *
-   * @category models
+   * @category options
    * @since 4.0.0
    */
   export interface Options {
@@ -240,7 +225,7 @@ const SleepOrder = Order.flip(Order.Struct({
 export const make = Effect.fnUntraced(function*(
   options?: TestClock.Options
 ) {
-  const config = Object.assign({}, defaultOptions, options)
+  const config = { ...defaultOptions, ...options }
   let sequence = 0
   const sleeps: Array<{
     readonly sequence: number
@@ -419,7 +404,7 @@ export const layer: (options?: TestClock.Options) => Layer.Layer<TestClock> = fl
  * })
  * ```
  *
- * @category utils
+ * @category testing
  * @since 2.0.0
  */
 export const testClockWith = <A, E, R>(
@@ -454,7 +439,7 @@ export const testClockWith = <A, E, R>(
  * })
  * ```
  *
- * @category utils
+ * @category testing
  * @since 2.0.0
  */
 export const adjust = (duration: Duration.Input): Effect.Effect<void> =>
@@ -488,7 +473,7 @@ export const adjust = (duration: Duration.Input): Effect.Effect<void> =>
  * })
  * ```
  *
- * @category utils
+ * @category testing
  * @since 2.0.0
  */
 export const setTime = (timestamp: number): Effect.Effect<void> =>
@@ -522,7 +507,7 @@ export const setTime = (timestamp: number): Effect.Effect<void> =>
  * })
  * ```
  *
- * @category utils
+ * @category testing
  * @since 4.0.0
  */
 export const withLive = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>

@@ -1,8 +1,6 @@
 import * as eventbridge from "@distilled.cloud/aws/eventbridge";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Rule } from "./Rule.ts";
 
 export interface ListTargetsByRuleRequest extends Omit<
@@ -10,8 +8,27 @@ export interface ListTargetsByRuleRequest extends Omit<
   "Rule" | "EventBusName"
 > {}
 
-export class ListTargetsByRule extends Binding.Service<
+/**
+ * Lists the targets attached to an EventBridge rule
+ * (`events:ListTargetsByRule`).
+ *
+ * Bind this operation to a {@link Rule} inside a function runtime to get a
+ * callable that automatically injects the rule and bus names. Provide the
+ * `ListTargetsByRuleHttp` layer on the Function to satisfy the binding.
+ * @binding
+ * @section Listing Targets
+ * @example List a Rule's Targets
+ * ```typescript
+ * // init — bind the rule (provide AWS.EventBridge.ListTargetsByRuleHttp on the Function)
+ * const listTargets = yield* AWS.EventBridge.ListTargetsByRule(rule);
+ *
+ * // runtime — enumerate the rule's targets
+ * const { Targets } = yield* listTargets();
+ * ```
+ */
+export interface ListTargetsByRule extends Binding.Service<
   ListTargetsByRule,
+  "AWS.EventBridge.ListTargetsByRule",
   (
     rule: Rule,
   ) => Effect.Effect<
@@ -22,55 +39,7 @@ export class ListTargetsByRule extends Binding.Service<
       eventbridge.ListTargetsByRuleError
     >
   >
->()("AWS.EventBridge.ListTargetsByRule") {}
-
-export const ListTargetsByRuleLive = Layer.effect(
-  ListTargetsByRule,
-  Effect.gen(function* () {
-    const Policy = yield* ListTargetsByRulePolicy;
-    const listTargetsByRule = yield* eventbridge.listTargetsByRule;
-
-    return Effect.fn(function* (rule: Rule) {
-      const RuleName = yield* rule.ruleName;
-      const EventBusName = yield* rule.eventBusName;
-      yield* Policy(rule);
-      return Effect.fn(function* (request?: ListTargetsByRuleRequest) {
-        const ruleName = yield* RuleName;
-        const eventBusName = yield* EventBusName;
-        return yield* listTargetsByRule({
-          ...request,
-          Rule: ruleName,
-          EventBusName: eventBusName !== "default" ? eventBusName : undefined,
-        });
-      });
-    });
-  }),
+> {}
+export const ListTargetsByRule = Binding.Service<ListTargetsByRule>(
+  "AWS.EventBridge.ListTargetsByRule",
 );
-
-export class ListTargetsByRulePolicy extends Binding.Policy<
-  ListTargetsByRulePolicy,
-  (rule: Rule) => Effect.Effect<void>
->()("AWS.EventBridge.ListTargetsByRule") {}
-
-export const ListTargetsByRulePolicyLive =
-  ListTargetsByRulePolicy.layer.succeed(
-    Effect.fn(function* (host, rule) {
-      if (isFunction(host)) {
-        yield* host.bind`Allow(${host}, AWS.EventBridge.ListTargetsByRule(${rule}))`(
-          {
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: ["events:ListTargetsByRule"],
-                Resource: [rule.ruleArn],
-              },
-            ],
-          },
-        );
-      } else {
-        return yield* Effect.die(
-          `ListTargetsByRulePolicy does not support runtime '${host.Type}'`,
-        );
-      }
-    }),
-  );

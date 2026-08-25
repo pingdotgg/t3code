@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -88,6 +89,9 @@ export const execStack = Effect.fn(function* ({
           ...ctx,
           dev,
           adopt,
+          // `--yes` also auto-accepts (and performs) an out-of-date state
+          // store upgrade, instead of prompting.
+          updateStateStore: yes,
         })),
       ),
     ),
@@ -147,14 +151,33 @@ export const execStack = Effect.fn(function* ({
             return;
           }
         }
-        const outputs = yield* apply(updatePlan);
+        // In dev, a failed apply must not drain the keep-alive below:
+        // `alchemy dev` runs under `bun --watch`, which cancels watch mode
+        // entirely on a clean exit (oven-sh/bun#10983), so completing here
+        // would tear down every healthy local resource along with the failed
+        // one. Swallow apply failures (logging the full cause, since the TUI
+        // renderer only shows the failure status) so the keep-alive engages
+        // and the rest of the stack keeps serving, but re-propagate a pure
+        // interruption (Ctrl-C / fiber kill) so dev still shuts down cleanly.
+        const applyPlan = dev
+          ? apply(updatePlan).pipe(
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.failCause(cause)
+                  : Console.error(
+                      `alchemy dev: apply failed; keeping dev alive so healthy resources keep serving.\n${Cause.pretty(cause)}`,
+                    ).pipe(Effect.as(undefined)),
+              ),
+            )
+          : apply(updatePlan);
+        const outputs = yield* applyPlan;
 
         if (outputs !== undefined) {
           yield* Console.log(outputs);
         }
 
         if (dev) {
-          yield* Effect.never;
+          return yield* Effect.never;
         }
       }
     }).pipe(Effect.provide(stack.services));

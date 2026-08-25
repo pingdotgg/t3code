@@ -1,28 +1,11 @@
 /**
- * The `TxHashMap` module provides a transactional hash map for storing and
- * updating key-value pairs inside Effect transactions. It is useful when
- * multiple fibers need to coordinate shared map state and each read-modify-write
- * sequence must be committed atomically.
+ * Transactional hash maps for storing and updating key-value pairs inside
+ * Effect transactions.
  *
- * A `TxHashMap<K, V>` has the familiar shape of a `HashMap<K, V>`, but every
- * operation returns an `Effect` and participates in transaction semantics
- * through `TxRef`. Use it for concurrent registries, caches, counters, indexes,
- * and other mutable maps whose updates should compose safely with other
- * transactional references.
- *
- * **Common tasks**
- *
- * - Create maps with {@link empty}, {@link fromIterable}, or {@link make}
- * - Read entries with {@link get}, {@link has}, {@link keys}, {@link values}, and {@link entries}
- * - Update entries with {@link set}, {@link modify}, {@link modifyAt}, and {@link remove}
- * - Inspect aggregate state with {@link size}, {@link isEmpty}, and {@link reduce}
- *
- * **Gotchas**
- *
- * - Operations are effectful; run them in `Effect.gen` and wrap multi-step
- *   transactions with `Effect.tx` when the whole sequence must commit together.
- * - Reads that may be absent return `Option`, so handle both `Some` and `None`
- *   instead of assuming a key exists.
+ * A `TxHashMap` stores an immutable `HashMap` in a `TxRef`, so map reads and
+ * writes can commit atomically with other transactional operations. Use it for
+ * shared registries, counters, indexes, and other maps that need safe
+ * read-modify-write sequences alongside related transactional state.
  *
  * @since 2.0.0
  */
@@ -164,7 +147,7 @@ export declare namespace TxHashMap {
    * })
    * ```
    *
-   * @category type-level
+   * @category utility types
    * @since 4.0.0
    */
   export type Key<T extends TxHashMap<any, any>> = T extends TxHashMap<infer K, any> ? K : never
@@ -197,7 +180,7 @@ export declare namespace TxHashMap {
    * })
    * ```
    *
-   * @category type-level
+   * @category utility types
    * @since 4.0.0
    */
   export type Value<T extends TxHashMap<any, any>> = T extends TxHashMap<any, infer V> ? V : never
@@ -233,7 +216,7 @@ export declare namespace TxHashMap {
    * })
    * ```
    *
-   * @category type-level
+   * @category utility types
    * @since 4.0.0
    */
   export type Entry<T extends TxHashMap<any, any>> = T extends TxHashMap<infer K, infer V> ? readonly [K, V] : never

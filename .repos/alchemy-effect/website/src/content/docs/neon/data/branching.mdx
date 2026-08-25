@@ -1,0 +1,144 @@
+---
+title: Branching
+description: Neon branches are copy-on-write forks of a parent branch — create them per stage or preview, pin them to a point in time, copy schema only, and let them expire on their own.
+---
+
+A `Neon.Branch` is a copy-on-write fork of a parent branch. It shares
+storage with the parent until it starts diverging, so creating one
+takes seconds regardless of database size — cheap enough to fork a
+branch per stage, per pull request, or per experiment.
+
+## Create a branch
+
+```typescript
+const project = yield* Neon.Project("my-project");
+const dev = yield* Neon.Branch("dev-branch", { project });
+```
+
+With no other props, the branch forks from the project's default
+branch and gets a unique name generated from the app, stage, and
+logical ID. Pass `name` to control it. The outputs include
+`connectionUri`, `pooledConnectionUri`, and parsed `origin` /
+`pooledOrigin` components — see [Connections](/neon/data/connections) for
+how to use them.
+
+## Choose the parent
+
+`parentBranch` selects which branch to fork from:
+
+```typescript
+const dev = yield* Neon.Branch("dev", { project });
+const featureBranch = yield* Neon.Branch("feature", {
+  project,
+  parentBranch: dev,
+});
+```
+
+It accepts another `Branch` resource, a `{ branchId: "br-..." }`, or
+a `{ name: "dev" }` to look up by name — the deploy fails if the
+named branch is missing or the name is ambiguous. When omitted, the
+project's default branch is the parent.
+
+## Branch from a point in time
+
+`parentLsn` forks the parent's data as of a specific Log Sequence
+Number:
+
+```typescript
+const branch = yield* Neon.Branch("at-lsn", {
+  project,
+  parentLsn: "0/3FA01B0",
+});
+```
+
+`parentTimestamp` does the same with an ISO-8601 timestamp:
+
+```typescript
+const branch = yield* Neon.Branch("before-incident", {
+  project,
+  parentTimestamp: "2026-06-30T12:00:00Z",
+});
+```
+
+The fork point is fixed at creation, so changing `parentLsn` or
+`parentTimestamp` on a subsequent deploy replaces the branch with a
+fresh fork.
+
+## Schema-only branches
+
+`initSource: "schema-only"` copies the parent's schema without its
+data — useful when the parent holds data that shouldn't leak into
+development branches:
+
+```typescript
+const schemaBranch = yield* Neon.Branch("schema-only", {
+  project,
+  initSource: "schema-only",
+});
+```
+
+The default is `"parent-data"` (schema and data). Like the fork
+point, `initSource` is decided at creation — changing it replaces
+the branch.
+
+## Expiring preview branches
+
+`expiresAt` tells Neon to delete the branch itself at an RFC-3339
+timestamp — a safety net for ephemeral preview branches that might
+outlive their deploy:
+
+```typescript
+const preview = yield* Neon.Branch("preview", {
+  project,
+  expiresAt: "2026-07-08T00:00:00Z",
+});
+```
+
+Unlike the fork point, `expiresAt` is mutable: changing or removing
+it updates the branch in place. The inverse guard is
+`protected: true`, which marks the branch protected from deletion
+and mutation.
+
+## Compute endpoints
+
+By default each branch gets one `read_write` compute endpoint —
+required to connect at all. `endpoints` overrides the default with
+explicit compute settings:
+
+```typescript
+const branch = yield* Neon.Branch("analytics", {
+  project,
+  endpoints: [
+    {
+      type: "read_write",
+      autoscalingLimitMinCu: 0.25,
+      autoscalingLimitMaxCu: 2,
+      suspendTimeoutSeconds: 300,
+    },
+    { type: "read_only" },
+  ],
+});
+```
+
+`autoscalingLimitMinCu` / `autoscalingLimitMaxCu` bound the compute
+size the endpoint scales between, and `suspendTimeoutSeconds`
+controls how long the endpoint idles before suspending.
+
+## Where next
+
+Guides:
+
+- [Branch from a shared database](/cloudflare/data/branch-from-shared-database)
+  — fork a preview branch per stage off a long-lived staging
+  project.
+
+Related:
+
+- [Connections](/neon/data/connections) — direct vs pooled URIs and
+  feeding `origin` into Hyperdrive.
+- [Migrations](/neon/data/migrations) — apply SQL migrations on the
+  branch as part of the deploy.
+
+Reference:
+
+- [Branch API reference](/providers/neon/branch)

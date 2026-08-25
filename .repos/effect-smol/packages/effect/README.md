@@ -4,7 +4,7 @@ The `effect` package is the heart of the Effect framework, providing robust prim
 
 ## Requirements
 
-- **TypeScript 5.4 or Newer:**
+- **TypeScript 5.9 or Newer:**
   Ensure you are using a compatible TypeScript version.
 
 - **Strict Type-Checking:**
@@ -49,5 +49,3 @@ The `effect` package provides a collection of modules designed for functional pr
 | Schedule | A module for defining retry and repeat policies with composable schedules.                                                 |
 | Scope    | Manages the lifecycle of resources, ensuring proper acquisition and release.                                               |
 | Schema   | A powerful library for defining, validating, and transforming structured data with type-safe encoding and decoding.        |
-
-For a comparison between `effect/Schema` and `zod`, see [Schema vs Zod](https://github.com/Effect-TS/effect/tree/main/packages/effect/schema-vs-zod.md).

@@ -6,7 +6,7 @@ import {
   type RpcSpawnPayload,
 } from "@/Local/RpcSpawner.ts";
 import { PlatformServices } from "@/Util/PlatformServices.ts";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it } from "alchemy-test";
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -199,7 +199,12 @@ const echoWebSocket = (
   Effect.gen(function* () {
     yield* openWebSocket(new URL("/parent", rpcUrl));
     return yield* Effect.promise(async () => {
-      const stub = newWebSocketRpcSession(rpcUrl) as RpcStub<RpcProxyApi>;
+      // Cast through `unknown`: comparing capnweb's deeply-recursive Stub
+      // type against RpcStub<RpcProxyApi> exceeds the compiler's
+      // instantiation depth (TS2589/TS2321).
+      const stub = newWebSocketRpcSession(
+        rpcUrl,
+      ) as unknown as RpcStub<RpcProxyApi>;
       const provider = await stub.getProvider("Test.Echo");
       const handlers = unwrapRpcHandlers(provider as any) as {
         echo: (m: string) => Effect.Effect<string>;

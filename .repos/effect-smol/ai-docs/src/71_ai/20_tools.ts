@@ -20,7 +20,7 @@ const ProductId = Schema.String.pipe(Schema.brand("ProductId")).annotate({
 class Product extends Schema.Class<Product>("acme/domain/Product")({
   id: ProductId,
   name: Schema.String,
-  price: Schema.Number
+  price: Schema.Finite
 }) {}
 
 // Each tool has a name, an optional description, a parameters schema that the
@@ -34,7 +34,7 @@ const SearchProducts = Tool.make("SearchProducts", {
       // guidance.
       description: "The search query, e.g. 'wireless headphones'"
     }),
-    maxResults: Schema.Number.pipe(Schema.withDecodingDefault(Effect.succeed(10))).annotate({
+    maxResults: Schema.Natural.pipe(Schema.withDecodingDefault(Effect.succeed(10))).annotate({
       description: "The maximum number of results to return"
     })
   }),
@@ -57,7 +57,7 @@ const GetInventory = Tool.make("GetInventory", {
   }),
   success: Schema.Struct({
     productId: ProductId,
-    available: Schema.Number
+    available: Schema.Natural
   })
 })
 

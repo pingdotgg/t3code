@@ -1,8 +1,6 @@
 import * as secretsmanager from "@distilled.cloud/aws/secrets-manager";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 import type { Secret } from "./Secret.ts";
 
 export interface PutSecretValueRequest extends Omit<
@@ -12,9 +10,34 @@ export interface PutSecretValueRequest extends Omit<
 
 /**
  * Runtime binding for `secretsmanager:PutSecretValue`.
+ *
+ * Bind this operation to a `Secret` to get a callable that writes a new
+ * secret version (string or binary); the new version becomes `AWSCURRENT`.
+ * Provide the implementation with
+ * `Effect.provide(AWS.SecretsManager.PutSecretValueHttp)`.
+ * @binding
+ * @section Writing Secret Values
+ * @example Rotate a Secret's Value
+ * ```typescript
+ * // init — bind the operation to the secret
+ * const putSecretValue = yield* AWS.SecretsManager.PutSecretValue(secret);
+ *
+ * // runtime — write a new version; the response carries its VersionId
+ * const result = yield* putSecretValue({
+ *   SecretString: newPassword,
+ * });
+ * ```
+ *
+ * @example Store a Binary Payload
+ * ```typescript
+ * yield* putSecretValue({
+ *   SecretBinary: new TextEncoder().encode(JSON.stringify(credentials)),
+ * });
+ * ```
  */
-export class PutSecretValue extends Binding.Service<
+export interface PutSecretValue extends Binding.Service<
   PutSecretValue,
+  "AWS.SecretsManager.PutSecretValue",
   (
     secret: Secret,
   ) => Effect.Effect<
@@ -25,54 +48,8 @@ export class PutSecretValue extends Binding.Service<
       secretsmanager.PutSecretValueError
     >
   >
->()("AWS.SecretsManager.PutSecretValue") {}
+> {}
 
-export const PutSecretValueLive = Layer.effect(
-  PutSecretValue,
-  Effect.gen(function* () {
-    const Policy = yield* PutSecretValuePolicy;
-    const putSecretValue = yield* secretsmanager.putSecretValue;
-
-    return Effect.fn(function* (secret: Secret) {
-      const SecretId = yield* secret.secretArn;
-      yield* Policy(secret);
-      return Effect.fn(function* (request: PutSecretValueRequest) {
-        const secretId = yield* SecretId;
-        return yield* putSecretValue({
-          ...request,
-          SecretId: secretId,
-        });
-      });
-    });
-  }),
-);
-
-export class PutSecretValuePolicy extends Binding.Policy<
-  PutSecretValuePolicy,
-  (secret: Secret) => Effect.Effect<void>
->()("AWS.SecretsManager.PutSecretValue") {}
-
-export const PutSecretValuePolicyLive = PutSecretValuePolicy.layer.succeed(
-  Effect.fn(function* (host, secret) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.SecretsManager.PutSecretValue(${secret}))`(
-        {
-          policyStatements: [
-            {
-              Effect: "Allow",
-              Action: [
-                "secretsmanager:PutSecretValue",
-                "secretsmanager:DescribeSecret",
-              ],
-              Resource: [secret.secretArn],
-            },
-          ],
-        },
-      );
-    } else {
-      return yield* Effect.die(
-        `PutSecretValuePolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const PutSecretValue = Binding.Service<PutSecretValue>(
+  "AWS.SecretsManager.PutSecretValue",
 );

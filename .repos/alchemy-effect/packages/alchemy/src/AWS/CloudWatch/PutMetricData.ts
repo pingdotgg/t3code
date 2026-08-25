@@ -1,16 +1,46 @@
 import * as cloudwatch from "@distilled.cloud/aws/cloudwatch";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Binding from "../../Binding.ts";
-import { isFunction } from "../Lambda/Function.ts";
 
 export interface PutMetricDataRequest extends cloudwatch.PutMetricDataInput {}
 
 /**
- * Runtime binding for `cloudwatch:PutMetricData`.
+ * Runtime binding for `cloudwatch:PutMetricData` — publish custom metric
+ * datums from inside a function runtime.
+ *
+ * Provide `CloudWatch.PutMetricDataHttp` on the hosting Lambda Function to
+ * satisfy the requirement. For high-volume publishing prefer the batching
+ * {@link MetricSink}, which packs datums into 1000-datum `PutMetricData`
+ * calls.
+ * @binding
+ * @section Publishing Metrics
+ * @example Publish a Custom Metric from a Lambda Function
+ * ```typescript
+ * export default MyFunction.make(
+ *   { main: import.meta.url, url: true },
+ *   Effect.gen(function* () {
+ *     // init — grants cloudwatch:PutMetricData to the function
+ *     const putMetricData = yield* AWS.CloudWatch.PutMetricData();
+ *
+ *     return {
+ *       fetch: Effect.gen(function* () {
+ *         // runtime — publish a datum on every request
+ *         yield* putMetricData({
+ *           Namespace: "MyApp/Payments",
+ *           MetricData: [
+ *             { MetricName: "PaymentProcessed", Value: 1, Unit: "Count" },
+ *           ],
+ *         });
+ *         return HttpServerResponse.text("ok");
+ *       }).pipe(Effect.orDie),
+ *     };
+ *   }).pipe(Effect.provide(AWS.CloudWatch.PutMetricDataHttp)),
+ * );
+ * ```
  */
-export class PutMetricData extends Binding.Service<
+export interface PutMetricData extends Binding.Service<
   PutMetricData,
+  "AWS.CloudWatch.PutMetricData",
   () => Effect.Effect<
     (
       request: PutMetricDataRequest,
@@ -19,44 +49,8 @@ export class PutMetricData extends Binding.Service<
       cloudwatch.PutMetricDataError
     >
   >
->()("AWS.CloudWatch.PutMetricData") {}
+> {}
 
-export const PutMetricDataLive = Layer.effect(
-  PutMetricData,
-  Effect.gen(function* () {
-    const Policy = yield* PutMetricDataPolicy;
-    const putMetricData = yield* cloudwatch.putMetricData;
-
-    return Effect.fn(function* () {
-      yield* Policy();
-      return Effect.fn(function* (request: PutMetricDataRequest) {
-        return yield* putMetricData(request);
-      });
-    });
-  }),
-);
-
-export class PutMetricDataPolicy extends Binding.Policy<
-  PutMetricDataPolicy,
-  () => Effect.Effect<void>
->()("AWS.CloudWatch.PutMetricData") {}
-
-export const PutMetricDataPolicyLive = PutMetricDataPolicy.layer.succeed(
-  Effect.fn(function* (host) {
-    if (isFunction(host)) {
-      yield* host.bind`Allow(${host}, AWS.CloudWatch.PutMetricData())`({
-        policyStatements: [
-          {
-            Effect: "Allow",
-            Action: ["cloudwatch:PutMetricData"],
-            Resource: ["*"],
-          },
-        ],
-      });
-    } else {
-      return yield* Effect.die(
-        `PutMetricDataPolicy does not support runtime '${host.Type}'`,
-      );
-    }
-  }),
+export const PutMetricData = Binding.Service<PutMetricData>(
+  "AWS.CloudWatch.PutMetricData",
 );
