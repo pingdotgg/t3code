@@ -242,13 +242,19 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             contextMenuConfigurationForItemAt indexPath: IndexPath,
             point: CGPoint
         ) -> UIContextMenuConfiguration? {
-            guard case let .thread(thread, _, _, isArchived, _) = item(at: indexPath) else {
+            guard case let .thread(thread, context, _, isArchived, _) = item(at: indexPath) else {
                 return nil
             }
 
             return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
                 guard let self else { return nil }
-                return UIMenu(children: self.menuActions(for: thread, isArchived: isArchived))
+                return UIMenu(
+                    children: self.menuActions(
+                        for: thread,
+                        context: context,
+                        isArchived: isArchived
+                    )
+                )
             }
         }
 
@@ -623,7 +629,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
         }
 
-        private func menuActions(for thread: FeatureThread, isArchived: Bool) -> [UIMenuElement] {
+        private func menuActions(
+            for thread: FeatureThread,
+            context: HomeThreadRowContext,
+            isArchived: Bool
+        ) -> [UIMenuElement] {
             let rename = UIAction(title: "Rename", image: UIImage(systemName: "pencil")) { [weak self] _ in
                 self?.parent.onRename(thread)
             }
@@ -637,6 +647,27 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     ) { [weak self] _ in
                         self?.parent.onRegenerateTitle(thread)
                     }
+                )
+            }
+            let copyActions = ThreadCopyModel.actions(
+                for: thread,
+                projectWorkspaceRoot: context.projectWorkspaceRoot
+            )
+            if !copyActions.isEmpty {
+                titleActions.append(
+                    UIMenu(
+                        title: "Copy",
+                        image: UIImage(systemName: "doc.on.doc"),
+                        children: copyActions.map { action in
+                            UIAction(
+                                title: action.kind.title,
+                                image: UIImage(systemName: action.kind.systemImage),
+                                attributes: action.isAvailable ? [] : .disabled
+                            ) { _ in
+                                ThreadCopyClipboard.copy(action)
+                            }
+                        }
+                    )
                 )
             }
 
