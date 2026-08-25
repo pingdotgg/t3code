@@ -616,6 +616,19 @@ export const ServerSettings = Schema.Struct({
    * between a desktop window and a phone attached to the same server.
    */
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Whether the server's task scheduler may start agent turns at their due
+   * times. Turning this off stops the scheduler from dispatching `task.fire`
+   * for due tasks — existing schedules stay stored and resume untouched when
+   * the feature is turned back on (missed fires coalesce into one, exactly
+   * like downtime). Clients read the same flag through `serverGetConfig` to
+   * hide the schedule UI everywhere at once.
+   *
+   * Server-authoritative rather than client-local: firing happens on the
+   * server even with no client open, so a client-side switch could not
+   * actually stop anything.
+   */
+  enableScheduledTasks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
@@ -824,6 +837,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  enableScheduledTasks: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

@@ -1145,15 +1145,17 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           ) : null}
         </SettingsSection>
 
-        <ScheduledTasksSection
-          environmentId={representative.environmentId}
-          projectId={representative.id}
-          threads={threads.filter(
-            (thread) =>
-              thread.environmentId === representative.environmentId &&
-              thread.projectId === representative.id,
-          )}
-        />
+        {settings.enableScheduledTasks ? (
+          <ScheduledTasksSection
+            environmentId={representative.environmentId}
+            projectId={representative.id}
+            threads={threads.filter(
+              (thread) =>
+                thread.environmentId === representative.environmentId &&
+                thread.projectId === representative.id,
+            )}
+          />
+        ) : null}
 
         <SettingsSection title="Danger">
           <SettingsRow

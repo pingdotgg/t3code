@@ -116,6 +116,24 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }),
   );
 
+  it.effect("round-trips the scheduled tasks feature switch", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      assert.equal(DEFAULT_SERVER_SETTINGS.enableScheduledTasks, true);
+
+      const disabled = yield* serverSettings.updateSettings({ enableScheduledTasks: false });
+      assert.equal(disabled.enableScheduledTasks, false);
+      // Persisted sparsely (non-default only) and reloaded cleanly.
+      const reloaded = yield* serverSettings.getSettings;
+      assert.equal(reloaded.enableScheduledTasks, false);
+
+      yield* serverSettings.updateSettings({ enableScheduledTasks: true });
+      const restored = yield* serverSettings.getSettings;
+      assert.equal(restored.enableScheduledTasks, true);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect(
     "decodes legacy object-shaped textGenerationModelSelection.options from settings.json",
     () =>

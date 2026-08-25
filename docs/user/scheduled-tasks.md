@@ -23,6 +23,14 @@ uses the thread's model selection and permission mode.
 Open **Settings → Projects → Scheduled tasks** and select **Cancel** next to the task.
 Cancelled tasks stay visible until the panel is refreshed elsewhere.
 
+## Turn the feature off
+
+Open **Settings → Integrations → Automation** and turn off **Scheduled tasks**. The
+server stops starting runs at due times and the per-project schedule UI hides on every
+connected client. Nothing is deleted: stored schedules keep their times and resume —
+with missed fires coalescing into one, like any other downtime — when you turn the
+feature back on.
+
 ## Good to know
 
 - Tasks are stored with your server's data and survive restarts. If the server is down

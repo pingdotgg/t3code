@@ -1,8 +1,8 @@
 /**
  * Integrations settings - preferences for surfaces T3 Code embeds rather than
- * owns. Browser is the first section: the defaults a preview tab opens at,
- * applied to both hand-opened tabs and agent `preview_open` calls that don't
- * state their own size.
+ * owns. Automation covers server-side scheduled runs; Browser holds the
+ * defaults a preview tab opens at, applied to both hand-opened tabs and agent
+ * `preview_open` calls that don't state their own size.
  *
  * @module IntegrationsSettings
  */
@@ -355,6 +355,37 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
   );
 }
 
+function ScheduledTasksSetting() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("scheduled-tasks")}
+      description="Let T3 Code start agent runs at their scheduled times — nightly chores, delayed follow-ups, recurring work. When off, nothing fires and the per-project schedule UI hides; stored schedules resume where they left off when turned back on."
+      resetAction={
+        settings.enableScheduledTasks !== DEFAULT_UNIFIED_SETTINGS.enableScheduledTasks ? (
+          <SettingResetButton
+            label="scheduled tasks"
+            onClick={() =>
+              updateSettings({
+                enableScheduledTasks: DEFAULT_UNIFIED_SETTINGS.enableScheduledTasks,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.enableScheduledTasks}
+          onCheckedChange={(checked) => updateSettings({ enableScheduledTasks: Boolean(checked) })}
+          aria-label="Enable scheduled tasks"
+        />
+      }
+    />
+  );
+}
+
 function AgentBrowserAccessSetting() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -467,6 +498,9 @@ export function IntegrationsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <SettingsSection id="automation" title="Automation">
+        <ScheduledTasksSetting />
+      </SettingsSection>
       <SettingsSection id="browser" title="Browser">
         {/* Server-authoritative, so it stays editable on every client and sits
             outside the block covering the desktop-only defaults. */}

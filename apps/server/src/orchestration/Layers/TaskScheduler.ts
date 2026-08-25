@@ -8,6 +8,7 @@ import * as Schedule from "effect/Schedule";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { TaskScheduler, type TaskSchedulerShape } from "../Services/TaskScheduler.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { forkParked } from "../../serverActivation.ts";
 
 const DEFAULT_TICK_INTERVAL_MS = 15 * 1000;
@@ -26,10 +27,28 @@ const makeTaskScheduler = (options?: TaskSchedulerLiveOptions) =>
   Effect.gen(function* () {
     const orchestrationEngine = yield* OrchestrationEngineService;
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    // The feature switch is read per tick, not captured at startup, so
+    // toggling it in settings takes effect within one tick interval without
+    // a server restart.
+    const serverSettings = yield* ServerSettingsService;
 
     const tickIntervalMs = Math.max(1, options?.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS);
 
     const tickEffect: TaskSchedulerShape["tick"] = Effect.fn("TaskScheduler.tick")(function* () {
+      // Disabled is the cheap path: no due-scan, no dispatch. Stored tasks
+      // are untouched — their nextFireAt keeps aging and fires coalesce into
+      // the first future slot when re-enabled (decider's drift anchoring).
+      // A failed settings read fails open: the tick behaves as before the
+      // switch existed rather than silently disabling automation.
+      const enabled = yield* serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.enableScheduledTasks),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("task.scheduler.settings-read-failed", { cause }).pipe(Effect.as(true)),
+        ),
+      );
+      if (!enabled) {
+        return 0;
+      }
       // ISO strings compare lexicographically, but the query uses SQLite
       // string comparison on next_fire_at — pass the same normalized format
       // the projector writes.

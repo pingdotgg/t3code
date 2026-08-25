@@ -210,6 +210,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "browser",
   },
   {
+    id: "scheduled-tasks",
+    title: "Scheduled tasks",
+    to: "/settings/integrations",
+    targetId: "automation",
+  },
+  {
     id: "browser-default-viewport",
     title: "Default browser viewport",
     to: "/settings/integrations",
