@@ -204,7 +204,7 @@ index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..3ccf6f16067152dfcb0c143371e2ec6a
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a306b293f797a8b338adfca3060c0f6db22b..89077be4d6833cfaabf9d6d6205d9551505e32b4 100644
+index b3c5a306b293f797a8b338adfca3060c0f6db22b..4227ed22da8865b7493f47f199f4d8f4a5493efb 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -954,7 +954,7 @@ function setInitialRenderState(ctx, {
@@ -513,14 +513,6 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..89077be4d6833cfaabf9d6d6205d9551
      estimatedItemSize = 100,
      estimatedListSize,
      extraData,
-@@ -7105,6 +7260,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
-     onLayout: onLayoutProp,
-     onLoad,
-     onMomentumScrollEnd,
-+    onScrollBeginDrag,
-     onRefresh,
-     onScroll: onScrollProp,
-     onScrollBeginDrag,
 @@ -7200,7 +7356,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    const combinedRef = useCombinedRef(refScroller, refScrollView);
    const keyExtractor = keyExtractorProp != null ? keyExtractorProp : ((_item, index) => index.toString());
@@ -925,6 +917,82 @@ index 40e87cda8c9bc79a889e5542f29af429a24b24d4..2d556eecb0bafe2f54084c809f82144c
        onScroll: onScrollHandler,
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2.cloneElement(refreshControlElement, {
+diff --git a/react.js b/react.js
+index 914d2dafaafa001c9ab6791a0a0581659295e333..06466096ceb96ef8773f7f7e202a19c9b774d49b 100644
+--- a/react.js
++++ b/react.js
+@@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
+       contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
+       isReady = !hasUnknownTailSize;
+-      nextSize = hasUnknownTailSize ? previousSize || 0 : Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
++      const knownSizeBound = Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
++      nextSize = hasUnknownTailSize ? Math.min(previousSize || 0, knownSizeBound) : knownSizeBound;
+     } else if (anchorIndex >= 0) {
+       isReady = false;
+     }
+@@ -4721,7 +4722,13 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       updateContentMetricsState(ctx);
+       updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
+     }
+     (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
++  } else if (!isReady && didSizeChange && nextSize < (previousSize || 0)) {
++    set$(ctx, "anchoredEndSpaceSize", nextSize);
++    (_a3 = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onSizeChanged) == null ? void 0 : _a3.call(anchoredEndSpace, nextSize);
++    if (anchoredEndSpace == null ? void 0 : anchoredEndSpace.includeInEndInset) {
++      updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
++    }
+   }
+   return nextSize;
+ }
+@@ -6448,8 +6455,8 @@ function ScrollAdjust() {
+               window.getComputedStyle(contentNode)[axis.paddingEndProp]
+             );
+             const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
+-            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: temporaryPaddingEnd };
+             contentNode.style[axis.paddingEndProp] = temporaryPaddingEnd;
++            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: contentNode.style[axis.paddingEndProp] };
+             void contentNode.offsetHeight;
+             scrollBy();
+             if (resetPaddingRafRef.current !== void 0) {
+diff --git a/react.mjs b/react.mjs
+index 95465f2ab89ce41a10553f58af83618f7310e83c..4b5f06c60f1e8bbd9035a49980d9e86820262da4 100644
+--- a/react.mjs
++++ b/react.mjs
+@@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
+       contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
+       isReady = !hasUnknownTailSize;
+-      nextSize = hasUnknownTailSize ? previousSize || 0 : Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
++      const knownSizeBound = Math.max(0, state.scrollLength - contentBelowAnchor - anchorOffset);
++      nextSize = hasUnknownTailSize ? Math.min(previousSize || 0, knownSizeBound) : knownSizeBound;
+     } else if (anchorIndex >= 0) {
+       isReady = false;
+     }
+@@ -4700,7 +4701,13 @@ function maybeUpdateAnchoredEndSpace(ctx) {
+       updateContentMetricsState(ctx);
+       updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
+     }
+     (_b = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onReady) == null ? void 0 : _b.call(anchoredEndSpace, { anchorIndex: nextAnchorIndex, anchorKey: nextAnchorKey, size: nextSize });
++  } else if (!isReady && didSizeChange && nextSize < (previousSize || 0)) {
++    set$(ctx, "anchoredEndSpaceSize", nextSize);
++    (_a3 = anchoredEndSpace == null ? void 0 : anchoredEndSpace.onSizeChanged) == null ? void 0 : _a3.call(anchoredEndSpace, nextSize);
++    if (anchoredEndSpace == null ? void 0 : anchoredEndSpace.includeInEndInset) {
++      updateScroll(ctx, state.scroll, true, { markHasScrolled: false });
++    }
+   }
+   return nextSize;
+ }
+@@ -6427,8 +6434,8 @@ function ScrollAdjust() {
+               window.getComputedStyle(contentNode)[axis.paddingEndProp]
+             );
+             const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
+-            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: temporaryPaddingEnd };
+             contentNode.style[axis.paddingEndProp] = temporaryPaddingEnd;
++            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: contentNode.style[axis.paddingEndProp] };
+             void contentNode.offsetHeight;
+             scrollBy();
+             if (resetPaddingRafRef.current !== void 0) {
 diff --git a/reanimated.d.ts b/reanimated.d.ts
 index e5043320700b12f34f4c0babbc341f85ca8135c1..2ce63830a28636b21937a0741fd0e613dae950fe 100644
 --- a/reanimated.d.ts
