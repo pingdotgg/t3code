@@ -710,6 +710,36 @@ describe("releaseManagedTunnelOnShutdown", () => {
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
+  it.effect.each([
+    { status: 401, errorTag: "EnvironmentHttpUnauthorizedError" },
+    { status: 403, errorTag: "EnvironmentHttpUnauthorizedError" },
+    { status: 409, errorTag: "EnvironmentHttpConflictError" },
+  ])("preserves a permanent $status relay recovery failure", ({ status, errorTag }) => {
+    const { store } = makeMemorySecretStore([
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(recoverManagedCloudTunnel("http://127.0.0.1:3773"));
+
+      expect(error._tag).toBe(errorTag);
+      expect(requests).toHaveLength(1);
+      expect(applyConfigCalls).toEqual([]);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests,
+        respond: () => Response.json({}, { status }),
+      }),
+    );
+  });
+
   it.effect("keeps a tunnel configuration replaced during recovery", () => {
     const { store, values } = makeMemorySecretStore([
       [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],

@@ -234,6 +234,7 @@ function makeAllocations(calls: AllocationCall[] = []) {
         mutate(allocationKey(input), (allocation) => ({
           ...allocation,
           tunnelId: input.tunnelId,
+          readyAt: null,
         }));
         return allocations.get(allocationKey(input))?.generation ?? null;
       }),

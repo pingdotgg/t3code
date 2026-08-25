@@ -288,6 +288,7 @@ export const make = Effect.gen(function* () {
         .update(relayManagedEndpointAllocations)
         .set({
           tunnelId: input.tunnelId,
+          readyAt: null,
           updatedAt: DateTime.formatIso(yield* DateTime.now),
           generation: sql`${relayManagedEndpointAllocations.generation} + 1`,
         })
@@ -382,6 +383,7 @@ export const make = Effect.gen(function* () {
         .update(relayManagedEndpointAllocations)
         .set({
           recoveryEnabledAt: now,
+          recoveryEnvironmentPublicKey: input.environmentPublicKey,
           updatedAt: now,
           generation: sql`${relayManagedEndpointAllocations.generation} + 1`,
         })
@@ -439,15 +441,39 @@ export const make = Effect.gen(function* () {
               .select({
                 ...allocationSelection,
                 recoveryEnabledAt: relayManagedEndpointAllocations.recoveryEnabledAt,
+                recoveryEnvironmentPublicKey:
+                  relayManagedEndpointAllocations.recoveryEnvironmentPublicKey,
+                linkedEnvironmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
               })
               .from(relayManagedEndpointAllocations)
+              .leftJoin(
+                relayEnvironmentLinks,
+                and(
+                  eq(relayEnvironmentLinks.userId, relayManagedEndpointAllocations.userId),
+                  eq(
+                    relayEnvironmentLinks.environmentId,
+                    relayManagedEndpointAllocations.environmentId,
+                  ),
+                  isNull(relayEnvironmentLinks.revokedAt),
+                ),
+              )
               .where(inArray(relayManagedEndpointAllocations.tunnelName, batch))
               .pipe(
                 Effect.map((rows) =>
-                  rows.map(({ recoveryEnabledAt, ...allocation }) => ({
-                    ...allocation,
-                    recoveryEnabled: recoveryEnabledAt !== null,
-                  })),
+                  rows.map(
+                    ({
+                      recoveryEnabledAt,
+                      recoveryEnvironmentPublicKey,
+                      linkedEnvironmentPublicKey,
+                      ...allocation
+                    }) => ({
+                      ...allocation,
+                      recoveryEnabled:
+                        recoveryEnabledAt !== null &&
+                        recoveryEnvironmentPublicKey !== null &&
+                        recoveryEnvironmentPublicKey === linkedEnvironmentPublicKey,
+                    }),
+                  ),
                 ),
                 Effect.mapError(
                   (cause) =>

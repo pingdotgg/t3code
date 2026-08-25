@@ -12,10 +12,49 @@ const layerWithDb = (db: RelayDb.RelayDb["Service"]) =>
   ManagedEndpointAllocations.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, db)));
 
 describe("ManagedEndpointAllocations", () => {
+  it.effect("clears endpoint readiness when recording a replacement tunnel", () => {
+    let updated:
+      | {
+          readonly tunnelId: string;
+          readonly readyAt: string | null;
+        }
+      | undefined;
+    const fakeDb = {
+      update: (table: unknown) => {
+        expect(table).toBe(relayManagedEndpointAllocations);
+        return {
+          set: (values: { readonly tunnelId: string; readonly readyAt: string | null }) => {
+            updated = values;
+            return {
+              where: () => ({
+                returning: () => Effect.succeed([{ generation: 8 }]),
+              }),
+            };
+          },
+        };
+      },
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      expect(
+        yield* allocations.recordTunnel({
+          userId: "user-1",
+          environmentId: "environment-1",
+          tunnelId: "replacement-tunnel",
+          generation: 7,
+        }),
+      ).toBe(8);
+      expect(updated?.tunnelId).toBe("replacement-tunnel");
+      expect(updated?.readyAt).toBeNull();
+    }).pipe(Effect.provide(layerWithDb(fakeDb)));
+  });
+
   it.effect("records recovery support and advances the allocation generation", () => {
     let updated:
       | {
           readonly recoveryEnabledAt: string;
+          readonly recoveryEnvironmentPublicKey: string;
           readonly updatedAt: string;
         }
       | undefined;
@@ -24,7 +63,11 @@ describe("ManagedEndpointAllocations", () => {
       update: (table: unknown) => {
         expect(table).toBe(relayManagedEndpointAllocations);
         return {
-          set: (values: { readonly recoveryEnabledAt: string; readonly updatedAt: string }) => {
+          set: (values: {
+            readonly recoveryEnabledAt: string;
+            readonly recoveryEnvironmentPublicKey: string;
+            readonly updatedAt: string;
+          }) => {
             updated = values;
             return {
               where: (where: unknown) => {
@@ -52,6 +95,7 @@ describe("ManagedEndpointAllocations", () => {
 
       expect(updated?.recoveryEnabledAt).toBe(updated?.updatedAt);
       expect(updated?.recoveryEnabledAt).toBeDefined();
+      expect(updated?.recoveryEnvironmentPublicKey).toBe("public-key");
       const query = new PgDialect().sqlToQuery(condition as never);
       expect(query.sql).toContain('"relay_managed_endpoint_allocations"."tunnel_id"');
       expect(query.sql).toContain('"relay_environment_links"."environment_public_key"');
@@ -101,21 +145,35 @@ describe("ManagedEndpointAllocations", () => {
         from: (table: unknown) => {
           expect(table).toBe(relayManagedEndpointAllocations);
           return {
-            where: () =>
-              Effect.succeed([
-                {
-                  ...base,
-                  environmentId: "environment-1",
-                  tunnelId: "tunnel-1",
-                  recoveryEnabledAt: "2026-08-25T12:00:00.000Z",
-                },
-                {
-                  ...base,
-                  environmentId: "environment-2",
-                  tunnelId: "tunnel-2",
-                  recoveryEnabledAt: null,
-                },
-              ]),
+            leftJoin: () => ({
+              where: () =>
+                Effect.succeed([
+                  {
+                    ...base,
+                    environmentId: "environment-1",
+                    tunnelId: "tunnel-1",
+                    recoveryEnabledAt: "2026-08-25T12:00:00.000Z",
+                    recoveryEnvironmentPublicKey: "current-key",
+                    linkedEnvironmentPublicKey: "current-key",
+                  },
+                  {
+                    ...base,
+                    environmentId: "environment-2",
+                    tunnelId: "tunnel-2",
+                    recoveryEnabledAt: null,
+                    recoveryEnvironmentPublicKey: null,
+                    linkedEnvironmentPublicKey: "current-key",
+                  },
+                  {
+                    ...base,
+                    environmentId: "environment-3",
+                    tunnelId: "tunnel-3",
+                    recoveryEnabledAt: "2026-08-25T12:00:00.000Z",
+                    recoveryEnvironmentPublicKey: "old-key",
+                    linkedEnvironmentPublicKey: "new-key",
+                  },
+                ]),
+            }),
           };
         },
       }),
@@ -123,11 +181,16 @@ describe("ManagedEndpointAllocations", () => {
 
     return Effect.gen(function* () {
       const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
-      const result = yield* allocations.listByTunnelNames(["first-tunnel", "second-tunnel"]);
+      const result = yield* allocations.listByTunnelNames([
+        "first-tunnel",
+        "second-tunnel",
+        "third-tunnel",
+      ]);
 
       expect(result.map((entry) => [entry.tunnelId, entry.recoveryEnabled])).toEqual([
         ["tunnel-1", true],
         ["tunnel-2", false],
+        ["tunnel-3", false],
       ]);
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
@@ -144,10 +207,12 @@ describe("ManagedEndpointAllocations", () => {
     const fakeDb = {
       select: () => ({
         from: () => ({
-          where: (condition: unknown) => {
-            batchSizes.push(new PgDialect().sqlToQuery(condition as never).params.length);
-            return Effect.succeed([]);
-          },
+          leftJoin: () => ({
+            where: (condition: unknown) => {
+              batchSizes.push(new PgDialect().sqlToQuery(condition as never).params.length);
+              return Effect.succeed([]);
+            },
+          }),
         }),
       }),
     } as unknown as RelayDb.RelayDb["Service"];
