@@ -13,53 +13,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  authorize:
-    name: Authorize macOS signing
+  build:
+    name: Build macOS Apple Silicon preview
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'preview:mac') &&
       (github.event.action != 'labeled' || github.event.label.name == 'preview:mac')
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    outputs:
-      trusted: ${{ steps.authorize.outputs.trusted }}
-    steps:
-      - id: authorize
-        name: Check repository access
-        uses: actions/github-script@v8
-        env:
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-        with:
-          script: |
-            const trustedRoles = new Set(["admin", "maintain"]);
-            const accounts = new Set([
-              process.env.PR_AUTHOR,
-              context.actor,
-              process.env.TRIGGERING_ACTOR,
-            ]);
-
-            for (const username of accounts) {
-              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                username,
-              });
-              const role = data.role_name ?? data.permission;
-              if (!trustedRoles.has(role)) {
-                core.warning(`${username} has ${role} access and cannot run signed previews.`);
-                core.setOutput("trusted", "false");
-                return;
-              }
-            }
-
-            core.setOutput("trusted", "true");
-
-  build:
-    name: Build macOS Apple Silicon preview
-    needs: authorize
-    if: needs.authorize.outputs.trusted == 'true'
     runs-on: blacksmith-12vcpu-macos-26
     timeout-minutes: 30
     steps:
@@ -110,59 +69,29 @@ jobs:
 
           echo "version=$preview_version" >> "$GITHUB_OUTPUT"
 
-      - name: Build signed macOS DMG
+      - id: build
+        name: Build unsigned macOS DMG
         shell: bash
         env:
           T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          MACOS_PROVISIONING_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE }}
           PREVIEW_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
 
-          required=(
-            CSC_LINK
-            CSC_KEY_PASSWORD
-            APPLE_API_KEY
-            APPLE_API_KEY_ID
-            APPLE_API_ISSUER
-            APPLE_TEAM_ID
-            MACOS_PROVISIONING_PROFILE
-          )
-          missing=()
-          for name in "${required[@]}"; do
-            if [[ -z "${!name:-}" ]]; then
-              missing+=("$name")
-            fi
-          done
-          if (( ${#missing[@]} > 0 )); then
-            printf 'Missing required macOS signing configuration: %s\n' "${missing[*]}" >&2
-            exit 1
-          fi
-
-          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-          printf '%s' "$APPLE_API_KEY" > "$key_path"
-          export APPLE_API_KEY="$key_path"
-
-          profile_path="$RUNNER_TEMP/t3code.provisionprofile"
-          printf '%s' "$MACOS_PROVISIONING_PROFILE" | base64 -D > "$profile_path"
-          security cms -D -i "$profile_path" >/dev/null
-          export T3CODE_APPLE_TEAM_ID="$APPLE_TEAM_ID"
-          export T3CODE_MACOS_PROVISIONING_PROFILE="$profile_path"
-
-          env -u GITHUB_REPOSITORY -u T3CODE_DESKTOP_UPDATE_REPOSITORY \
-            vp run dist:desktop:artifact \
+          vp run dist:desktop:artifact \
             --platform mac \
             --target dmg \
             --arch arm64 \
             --build-version "$PREVIEW_VERSION" \
-            --signed \
             --verbose
+
+          shopt -s nullglob
+          dmg_files=(release/*.dmg)
+          if (( ${#dmg_files[@]} != 1 )); then
+            printf 'Expected one DMG, found %s.\n' "${#dmg_files[@]}" >&2
+            exit 1
+          fi
+          printf 'dmg_name=%s\n' "$(basename "${dmg_files[0]}")" >> "$GITHUB_OUTPUT"
 
       - id: upload
         name: Upload macOS DMG
@@ -178,6 +107,7 @@ jobs:
         uses: actions/github-script@v8
         env:
           ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          DMG_NAME: ${{ steps.build.outputs.dmg_name }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PREVIEW_VERSION: ${{ steps.version.outputs.version }}
         with:
@@ -201,6 +131,11 @@ jobs:
               "",
               `Version: ${process.env.PREVIEW_VERSION}`,
               `Commit: ${process.env.HEAD_SHA.slice(0, 7)}`,
+              "",
+              "Unsigned build. Clear quarantine before opening:",
+              "```sh",
+              `xattr -d com.apple.quarantine ~/Downloads/${process.env.DMG_NAME}`,
+              "```",
               "",
               "The download requires GitHub access and expires after 7 days.",
             ].join("\n");
