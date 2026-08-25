@@ -193,6 +193,30 @@ describe("index.html boot script", () => {
     expect(boot.isDark).toBe(false);
   });
 
+  it("uses the local desktop palette when it owns the resolved theme half", () => {
+    const desktopSystemTheme = {
+      appearance: "dark" as const,
+      colors: {
+        background: "#282a36",
+        foreground: "#f8f8f2",
+        accent: "#bd93f9",
+      },
+    };
+    const boot = runBootScript({
+      storage: {
+        [THEME_STORAGE_KEY]: "system",
+        [THEME_APPEARANCE_MODE_STORAGE_KEY]: "dark",
+        "t3code:theme-halves:v1": JSON.stringify({ dark: DESKTOP_SYSTEM_THEME_ID }),
+      },
+      prefersDark: false,
+      desktopSystemTheme,
+    });
+
+    expect(boot.themeId).toBe(DESKTOP_SYSTEM_THEME_ID);
+    expect(boot.isDark).toBe(true);
+    expect(boot.backgroundColor).toBe(desktopSystemTheme.colors.background);
+  });
+
   const parityCases: ReadonlyArray<{
     name: string;
     storage: Record<string, string>;

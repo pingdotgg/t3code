@@ -804,7 +804,7 @@ export function ThemeLibrary({
                 initialAppearance,
               })
             }
-            onUse={() => persistTheme(DESKTOP_SYSTEM_THEME_ID)}
+            onUse={() => assignHalf(desktopSystemTheme.appearance, DESKTOP_SYSTEM_THEME_ID)}
             onUseMode={handlePairPick(DESKTOP_SYSTEM_THEME_ID)}
             theme={getThemeCardDefinition(desktopSystemTheme)}
           />

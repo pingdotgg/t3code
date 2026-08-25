@@ -242,13 +242,11 @@
           const legacyMode = isLegacyT3ChatDark ? "dark" : null;
           const builtInModes = BUILT_IN_THEME_MODES[themeId] ?? null;
           let desktopSystemTheme = null;
-          if (themeId === DESKTOP_SYSTEM_THEME_ID) {
-            try {
-              const candidate = window.desktopBridge?.getSystemTheme?.() ?? null;
-              if (isDesktopSystemTheme(candidate)) desktopSystemTheme = candidate;
-            } catch {
-              // The desktop bridge is optional and unavailable on web builds.
-            }
+          try {
+            const candidate = window.desktopBridge?.getSystemTheme?.() ?? null;
+            if (isDesktopSystemTheme(candidate)) desktopSystemTheme = candidate;
+          } catch {
+            // The desktop bridge is optional and unavailable on web builds.
           }
           const customTheme = builtInModes || desktopSystemTheme ? null : findCustomTheme(themeId);
           const themeModes =
@@ -302,9 +300,13 @@
             if (typeof candidate === "string") {
               const halfId = LEGACY_THEME_IDS[candidate] ?? candidate;
               const halfBuiltIn = BUILT_IN_THEME_MODES[halfId] ?? null;
-              const halfCustom = halfBuiltIn ? null : findCustomTheme(halfId);
+              const halfDesktopSystemTheme =
+                halfId === DESKTOP_SYSTEM_THEME_ID ? desktopSystemTheme : null;
+              const halfCustom =
+                halfBuiltIn || halfDesktopSystemTheme ? null : findCustomTheme(halfId);
               const halfModes =
                 halfBuiltIn ??
+                (halfDesktopSystemTheme ? [halfDesktopSystemTheme.appearance] : null) ??
                 (halfCustom
                   ? ["light", "dark"].filter(
                       (mode) => mode === halfCustom.appearance || halfCustom.variants?.[mode],
