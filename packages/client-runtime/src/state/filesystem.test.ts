@@ -34,6 +34,9 @@ describe("filesystem browse model", () => {
     expect(filterFilesystemBrowseEntries(entries, "").visibleEntries).toEqual(entries.slice(1));
     expect(filterFilesystemBrowseEntries(entries, ".").visibleEntries).toEqual(entries.slice(0, 1));
     expect(filterFilesystemBrowseEntries(entries, "Code").exactEntry).toEqual(entries[1]);
+    expect(
+      filterFilesystemBrowseEntries(entries, "code", { caseSensitive: false }).exactEntry,
+    ).toEqual(entries[1]);
   });
 });
 

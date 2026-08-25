@@ -3269,10 +3269,8 @@ export default function LegacySidebar() {
       const activeProject = sidebarProjects.find((project) => project.projectKey === active.id);
       const overProject = sidebarProjects.find((project) => project.projectKey === over.id);
       if (!activeProject || !overProject) return;
-      const activeMemberKeys = activeProject.memberProjects.map(
-        (member) => member.physicalProjectKey,
-      );
-      const overMemberKeys = overProject.memberProjects.map((member) => member.physicalProjectKey);
+      const activeMemberKeys = activeProject.memberProjects.map(getProjectOrderKey);
+      const overMemberKeys = overProject.memberProjects.map(getProjectOrderKey);
       reorderProjects(orderedProjects.map(getProjectOrderKey), activeMemberKeys, overMemberKeys);
     },
     [orderedProjects, sidebarProjectSortOrder, reorderProjects, sidebarProjects],

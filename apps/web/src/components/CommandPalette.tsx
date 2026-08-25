@@ -940,7 +940,9 @@ function OpenCommandPaletteDialog(props: {
             pinnedDirectoryName: pinnedCloneDirectoryName,
             caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
           })
-        : filterFilesystemBrowseEntries(browseEntries, browsePath.filterQuery),
+        : filterFilesystemBrowseEntries(browseEntries, browsePath.filterQuery, {
+            caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
+          }),
     [browseEntries, browseEnvironmentPlatform, browsePath.filterQuery, pinnedCloneDirectoryName],
   );
 
