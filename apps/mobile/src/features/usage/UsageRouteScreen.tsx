@@ -15,6 +15,7 @@ import {
   formatHourShort,
   formatPercent,
   formatTokens,
+  formatUsageContractMismatch,
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
@@ -571,7 +572,12 @@ function usageEnvironmentStatus(environment: EnvironmentUsageStatus): string {
     environment.summary &&
     !isCompatibleUsageContractVersion(environment.summary.contractVersion, USAGE_CONTRACT_VERSION)
   ) {
-    return "Older server · excluded from usage totals";
+    return formatUsageContractMismatch(environment.label, {
+      direction:
+        environment.summary.contractVersion < USAGE_CONTRACT_VERSION
+          ? "serverBehind"
+          : "clientBehind",
+    });
   }
   if (!environment.isConnected)
     return environment.summary ? "Disconnected · showing saved usage" : "Waiting for connection…";
