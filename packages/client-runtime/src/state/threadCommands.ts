@@ -134,20 +134,9 @@ export function parseCodexGoalCommand(value: string): CodexGoalCommand | null {
   return { action: "set", objective: argument, status: "active" };
 }
 
-interface CodexGoalProjection {
-  readonly goal: CodexGoal | null;
-  readonly hasNativeUpdate: boolean;
-}
-
-export function applyCodexGoalStreamEvent(
-  current: CodexGoalProjection,
-  event: CodexGoalStreamEvent,
-): CodexGoalProjection {
-  if (event.type === "snapshot") {
-    return current.hasNativeUpdate ? current : { goal: event.goal, hasNativeUpdate: false };
-  }
-  if (event.type === "updated") return { goal: event.goal, hasNativeUpdate: true };
-  return { goal: null, hasNativeUpdate: true };
+export function applyCodexGoalStreamEvent(event: CodexGoalStreamEvent): CodexGoal | null {
+  if (event.type === "snapshot" || event.type === "updated") return event.goal;
+  return null;
 }
 
 export type {
@@ -185,16 +174,7 @@ export function createThreadEnvironmentAtoms<R, E>(
   const codexGoal = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:codex-goal",
     tag: WS_METHODS.subscribeCodexGoal,
-    transform: (events) =>
-      events.pipe(
-        Stream.mapAccum(
-          (): CodexGoalProjection => ({ goal: null, hasNativeUpdate: false }),
-          (current, event) => {
-            const next = applyCodexGoalStreamEvent(current, event);
-            return [next, [next.goal]] as const;
-          },
-        ),
-      ),
+    transform: (events) => events.pipe(Stream.map(applyCodexGoalStreamEvent)),
   });
   return {
     codexGoal,
