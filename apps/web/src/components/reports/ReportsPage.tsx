@@ -4,9 +4,10 @@
  */
 import type { PostHogReport } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { isElectron } from "../../env";
+import { useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { postHogEnvironment } from "../../state/posthog";
 import { Button } from "../ui/button";
@@ -47,10 +48,12 @@ function ReportsErrorState({ error }: { readonly error: PostHogQueryError }) {
 
 function ReportRow({
   report,
+  pullRequestNumber,
   selected,
   onSelect,
 }: {
   readonly report: PostHogReport;
+  readonly pullRequestNumber: number | null;
   readonly selected: boolean;
   readonly onSelect: () => void;
 }) {
@@ -66,6 +69,9 @@ function ReportRow({
           {report.status}
           {report.priority ? ` · ${report.priority}` : ""}
           {` · ${formatUpdatedAt(report.updated_at)}`}
+          {pullRequestNumber !== null ? (
+            <span className="ml-1 rounded bg-muted px-1 tabular-nums">PR #{pullRequestNumber}</span>
+          ) : null}
         </span>
       </button>
     </li>
@@ -94,6 +100,18 @@ function ConnectedReportsPage({
   );
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const reports = reportsQuery.data?.reports ?? [];
+  const threadShells = useThreadShells();
+  // First linked PR per report, so a row can show it without re-scanning shells per render.
+  const pullRequestByReportId = useMemo(() => {
+    const result = new Map<string, number>();
+    for (const shell of threadShells) {
+      const number = shell.linkedPullRequest?.number;
+      if (shell.reportId && number !== undefined && !result.has(shell.reportId)) {
+        result.set(shell.reportId, number);
+      }
+    }
+    return result;
+  }, [threadShells]);
   const selectedReport =
     reports.find((report) => report.id === selectedReportId) ?? reports[0] ?? null;
 
@@ -121,6 +139,7 @@ function ConnectedReportsPage({
               <ReportRow
                 key={report.id}
                 report={report}
+                pullRequestNumber={pullRequestByReportId.get(report.id) ?? null}
                 selected={selectedReport?.id === report.id}
                 onSelect={() => setSelectedReportId(report.id)}
               />

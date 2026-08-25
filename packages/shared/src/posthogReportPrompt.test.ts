@@ -124,6 +124,21 @@ describe("renderReportPrompt", () => {
     `);
   });
 
+  it("asks for discussion instead of a pull request in discuss mode", () => {
+    const prompt = renderReportPrompt(report, artefacts, {
+      host: "https://us.posthog.com",
+      projectId: "42",
+      mode: "discuss",
+    });
+
+    expect(prompt).toContain("## Findings");
+    expect(prompt).toContain("Do not make code changes unless the user explicitly asks for them.");
+    expect(prompt).toContain(
+      "Report: https://us.posthog.com/project/42/inbox/reports/0f3c2a1e-7b6d-4c2a-9e1f-1234567890ab",
+    );
+    expect(prompt).not.toContain("gh pr create");
+  });
+
   it("skips sections whose artefacts are missing or undecodable", () => {
     const prompt = renderReportPrompt(
       report,

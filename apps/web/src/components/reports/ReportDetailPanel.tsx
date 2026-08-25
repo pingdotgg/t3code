@@ -1,6 +1,7 @@
 /**
- * Raw view of one PostHog report plus the "Implement" action that turns it
- * into a worktree thread whose first message is the rendered report.
+ * Raw view of one PostHog report plus the "Implement" and "Discuss" actions
+ * that turn it into a thread whose first message is the rendered report.
+ * Implement prepares a worktree; Discuss stays on the project checkout.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -20,9 +21,10 @@ import {
   type PostHogReport,
   type PostHogReportArtefact,
   type ProviderDriverKind,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { renderReportPrompt } from "@t3tools/shared/posthogReportPrompt";
+import { renderReportPrompt, type ReportPromptMode } from "@t3tools/shared/posthogReportPrompt";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -30,6 +32,7 @@ import * as Schema from "effect/Schema";
 import { useMemo, useState } from "react";
 
 import { buildThreadRouteParams } from "../../threadRoutes";
+import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import { newThreadId, randomUUID } from "../../lib/utils";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { postHogEnvironment } from "../../state/posthog";
@@ -78,6 +81,9 @@ function Section({
 }
 
 const reportBranchName = (reportId: string): string => `posthog/${reportId.slice(0, 8)}`;
+
+// Discussion threads read code without a worktree, so the agent asks before it edits.
+const DISCUSS_RUNTIME_MODE: RuntimeMode = "approval-required";
 
 export function ReportDetailPanel({
   environmentId,
@@ -146,13 +152,15 @@ export function ReportDetailPanel({
     null;
 
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  const [implementing, setImplementing] = useState(false);
-  const [implementError, setImplementError] = useState<string | null>(null);
+  const openPrLink = useOpenPrLink();
+  const [starting, setStarting] = useState<ReportPromptMode | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
 
-  const implement = async () => {
-    if (!selectedProject || !defaultBranch || implementing) return;
-    setImplementing(true);
-    setImplementError(null);
+  const startThread = async (mode: ReportPromptMode) => {
+    if (!selectedProject || starting) return;
+    if (mode === "implement" && !defaultBranch) return;
+    setStarting(mode);
+    setStartError(null);
     const threadId = newThreadId();
     const createdAt = new Date().toISOString();
     const instanceId =
@@ -168,7 +176,33 @@ export function ReportDetailPanel({
     const text = renderReportPrompt(report, artefacts, {
       host: serverSettings.posthog.host,
       projectId: serverSettings.posthog.projectId,
+      mode,
     });
+    const runtimeMode = mode === "discuss" ? DISCUSS_RUNTIME_MODE : DEFAULT_RUNTIME_MODE;
+    const worktreeBase = mode === "implement" ? defaultBranch : null;
+    const createThread = {
+      projectId: selectedProject.id,
+      title: report.title,
+      modelSelection,
+      runtimeMode,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      branch: worktreeBase,
+      worktreePath: null,
+      reportId: report.id,
+      createdAt,
+    };
+    const bootstrap = worktreeBase
+      ? {
+          createThread,
+          prepareWorktree: {
+            projectCwd: selectedProject.workspaceRoot,
+            baseBranch: worktreeBase,
+            branch: reportBranchName(report.id),
+            startFromOrigin: false,
+          },
+          runSetupScript: true,
+        }
+      : { createThread, runSetupScript: false };
     const result = await startThreadTurn({
       environmentId,
       input: {
@@ -181,34 +215,15 @@ export function ReportDetailPanel({
         },
         modelSelection,
         titleSeed: report.title,
-        runtimeMode: DEFAULT_RUNTIME_MODE,
+        runtimeMode,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        bootstrap: {
-          createThread: {
-            projectId: selectedProject.id,
-            title: report.title,
-            modelSelection,
-            runtimeMode: DEFAULT_RUNTIME_MODE,
-            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            branch: defaultBranch,
-            worktreePath: null,
-            reportId: report.id,
-            createdAt,
-          },
-          prepareWorktree: {
-            projectCwd: selectedProject.workspaceRoot,
-            baseBranch: defaultBranch,
-            branch: reportBranchName(report.id),
-            startFromOrigin: false,
-          },
-          runSetupScript: true,
-        },
+        bootstrap,
         createdAt,
       },
     });
-    setImplementing(false);
+    setStarting(null);
     if (result._tag === "Failure") {
-      setImplementError(String(result.cause));
+      setStartError(String(result.cause));
       return;
     }
     await navigate({
@@ -238,7 +253,7 @@ export function ReportDetailPanel({
         </p>
       </header>
 
-      <Section title="Implement">
+      <Section title="Start a thread">
         <div className="flex flex-wrap items-center gap-2">
           <select
             className="h-8 rounded-md border border-border bg-background px-2 text-sm"
@@ -255,11 +270,19 @@ export function ReportDetailPanel({
           <Button
             size="sm"
             disabled={
-              !selectedProject || !defaultBranch || implementing || artefactsQuery.isPending
+              !selectedProject || !defaultBranch || starting !== null || artefactsQuery.isPending
             }
-            onClick={() => void implement()}
+            onClick={() => void startThread("implement")}
           >
-            {implementing ? "Starting…" : "Implement"}
+            {starting === "implement" ? "Starting…" : "Implement"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!selectedProject || starting !== null || artefactsQuery.isPending}
+            onClick={() => void startThread("discuss")}
+          >
+            {starting === "discuss" ? "Starting…" : "Discuss"}
           </Button>
           {selectedProject ? (
             <span className="text-xs text-muted-foreground">
@@ -269,30 +292,45 @@ export function ReportDetailPanel({
             </span>
           ) : null}
         </div>
-        {implementError ? <p className="text-xs text-destructive">{implementError}</p> : null}
+        {startError ? <p className="text-xs text-destructive">{startError}</p> : null}
         {linkedThreads.length > 0 ? (
           <ul className="space-y-1">
-            {linkedThreads.map((thread) => (
-              <li key={thread.id}>
-                <button
-                  type="button"
-                  className="text-left underline"
-                  onClick={() =>
-                    void navigate({
-                      to: "/$environmentId/$threadId",
-                      params: buildThreadRouteParams(
-                        scopeThreadRef(thread.environmentId, thread.id),
-                      ),
-                    })
-                  }
-                >
-                  {thread.title}
-                </button>
-                <span className="text-xs text-muted-foreground">
-                  {thread.branch ? ` · ${thread.branch}` : ""}
-                </span>
-              </li>
-            ))}
+            {linkedThreads.map((thread) => {
+              const pullRequest = thread.linkedPullRequest ?? null;
+              return (
+                <li key={thread.id}>
+                  <button
+                    type="button"
+                    className="text-left underline"
+                    onClick={() =>
+                      void navigate({
+                        to: "/$environmentId/$threadId",
+                        params: buildThreadRouteParams(
+                          scopeThreadRef(thread.environmentId, thread.id),
+                        ),
+                      })
+                    }
+                  >
+                    {thread.title}
+                  </button>
+                  <span className="text-xs text-muted-foreground">
+                    {` · ${thread.worktreePath ? "Implementation" : "Discussion"}`}
+                    {thread.branch ? ` · ${thread.branch}` : ""}
+                  </span>
+                  {pullRequest ? (
+                    <a
+                      href={pullRequest.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="ml-2 text-xs tabular-nums underline"
+                      onClick={(event) => openPrLink(event, pullRequest.url)}
+                    >
+                      PR #{pullRequest.number}
+                    </a>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         ) : null}
       </Section>
