@@ -44,6 +44,7 @@ import {
   relayDocsRedirectRoute,
   relayEnvironmentAuthLayer,
   relayNotFoundRoute,
+  recoverEnvironmentTunnelRecord,
   relayDpopFailureReason,
   revokeEnvironmentLinkRecord,
   serverApi,
@@ -56,6 +57,7 @@ import * as RelayConfiguration from "../Config.ts";
 import * as RelayDb from "../db.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
+import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
 import * as AgentActivityPublisher from "../agentActivity/AgentActivityPublisher.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
@@ -307,6 +309,7 @@ function relayUnlinkTestLayer(input?: {
   readonly revokeCredential?: EnvironmentCredentials.EnvironmentCredentials["Service"]["revokeForEnvironmentPublicKey"];
   readonly prepareDeprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["prepareDeprovision"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
+  readonly provision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["provision"];
 }) {
   return Layer.mergeAll(
     Layer.succeed(
@@ -336,7 +339,7 @@ function relayUnlinkTestLayer(input?: {
     Layer.succeed(
       ManagedEndpointProvider.ManagedEndpointProvider,
       ManagedEndpointProvider.ManagedEndpointProvider.of({
-        provision: () => Effect.die("unused provision"),
+        provision: input?.provision ?? (() => Effect.die("unused provision")),
         prepareDeprovision: input?.prepareDeprovision ?? (() => Effect.succeed(null)),
         deprovision: input?.deprovision ?? (() => Effect.void),
         release: () => Effect.die("unused release"),
@@ -356,6 +359,163 @@ const linkedEnvironmentRecord = {
   environmentPublicKey: "public-key",
   linkedAt: "2026-07-28T00:00:00.000Z",
 } as const;
+
+describe("relay managed tunnel recovery", () => {
+  it.effect("recovers a linked environment and marks its tunnel as recoverable", () => {
+    let recoveryEnabledFor: { readonly userId: string; readonly environmentId: string } | null =
+      null;
+    const runtime = {
+      providerKind: "cloudflare_tunnel" as const,
+      connectorToken: "replacement-token",
+      tunnelId: "replacement-tunnel",
+    };
+
+    return Effect.gen(function* () {
+      expect(
+        yield* recoverEnvironmentTunnelRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+          environmentPublicKey: "public-key",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        }),
+      ).toEqual({
+        endpoint: linkedEnvironmentRecord.endpoint,
+        endpointRuntime: runtime,
+      });
+      expect(recoveryEnabledFor).toEqual({
+        userId: "user-1",
+        environmentId: "environment-1",
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          relayUnlinkTestLayer({
+            getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+            provision: () =>
+              Effect.succeed({
+                endpoint: linkedEnvironmentRecord.endpoint,
+                runtime,
+              }),
+          }),
+          Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
+            enableRecovery: (input) =>
+              Effect.sync(() => {
+                recoveryEnabledFor = input;
+              }),
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("rejects a credential from a different environment owner", () => {
+    let provisioned = false;
+
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        recoverEnvironmentTunnelRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+          environmentPublicKey: "different-public-key",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        }),
+      );
+      expect(error).toMatchObject({ _tag: "Unauthorized" });
+      expect(provisioned).toBe(false);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          relayUnlinkTestLayer({
+            getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+            provision: () =>
+              Effect.sync(() => {
+                provisioned = true;
+                return {
+                  endpoint: linkedEnvironmentRecord.endpoint,
+                  runtime: { providerKind: "cloudflare_tunnel", connectorToken: "token" },
+                };
+              }),
+          }),
+          Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
+            enableRecovery: () => Effect.die("unused"),
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("does not recover a publish-only environment", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        recoverEnvironmentTunnelRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+          environmentPublicKey: "public-key",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        }),
+      );
+      expect(error).toMatchObject({ _tag: "Unauthorized" });
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          relayUnlinkTestLayer({
+            getForUser: () =>
+              Effect.succeed({
+                ...linkedEnvironmentRecord,
+                endpoint: {
+                  ...linkedEnvironmentRecord.endpoint,
+                  providerKind: "manual" as const,
+                },
+              }),
+          }),
+          Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
+            enableRecovery: () => Effect.die("unused"),
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("rejects a recovered tunnel that changes the linked endpoint", () => {
+    let recoveryEnabled = false;
+
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        recoverEnvironmentTunnelRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+          environmentPublicKey: "public-key",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        }),
+      );
+      expect(error).toMatchObject({ _tag: "Unauthorized" });
+      expect(recoveryEnabled).toBe(false);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          relayUnlinkTestLayer({
+            getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+            provision: () =>
+              Effect.succeed({
+                endpoint: {
+                  httpBaseUrl: "https://different.example.test/",
+                  wsBaseUrl: "wss://different.example.test/ws",
+                  providerKind: "cloudflare_tunnel",
+                },
+                runtime: { providerKind: "cloudflare_tunnel", connectorToken: "token" },
+              }),
+          }),
+          Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
+            enableRecovery: () =>
+              Effect.sync(() => {
+                recoveryEnabled = true;
+              }),
+          }),
+        ),
+      ),
+    );
+  });
+});
 
 describe("relay environment unlink", () => {
   it.effect("revokes the link and its credentials in one database transaction", () => {

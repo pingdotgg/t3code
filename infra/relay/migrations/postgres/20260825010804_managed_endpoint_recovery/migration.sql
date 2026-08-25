@@ -1,0 +1,1 @@
+ALTER TABLE "relay_managed_endpoint_allocations" ADD COLUMN "recovery_enabled_at" varchar(64);

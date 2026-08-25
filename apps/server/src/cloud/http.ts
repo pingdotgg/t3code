@@ -29,6 +29,7 @@ import {
   RelayEnvironmentLinkProofPayload,
   RelayLinkProofRequest,
   RelayManagedEndpointOrigin,
+  RelayManagedEndpointRecoveryResponse,
   RelayOkResponse,
 } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -458,6 +459,7 @@ const cloudLinkProofHandler = Effect.fn("environment.cloud.linkProof")(
 const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(function* (
   dependencies: CloudHttpDependencies,
   payload: RelayEnvironmentConfigRequest,
+  options?: { readonly requestRecovery?: boolean },
 ) {
   yield* validateRelayConfigPayload(payload);
   yield* validateLinkedCloudUser({
@@ -494,6 +496,9 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
       CLOUD_ENDPOINT_RUNTIME_CONFIG,
       stringToBytes(endpointRuntimeJson),
     );
+    if (options?.requestRecovery !== false) {
+      yield* dependencies.endpointRuntime.requestRecovery(payload.endpointRuntime);
+    }
   } else {
     yield* dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
   }
@@ -607,14 +612,18 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       schema: RelayEnvironmentLinkResponse,
     });
     yield* setCliDesiredCloudLink(true, mode);
-    return yield* applyCloudRelayConfig(dependencies, {
-      relayUrl,
-      relayIssuer: link.relayIssuer,
-      cloudUserId: link.cloudUserId,
-      environmentCredential: link.environmentCredential,
-      cloudMintPublicKey: link.cloudMintPublicKey,
-      endpointRuntime: link.endpointRuntime,
-    });
+    return yield* applyCloudRelayConfig(
+      dependencies,
+      {
+        relayUrl,
+        relayIssuer: link.relayIssuer,
+        cloudUserId: link.cloudUserId,
+        environmentCredential: link.environmentCredential,
+        cloudMintPublicKey: link.cloudMintPublicKey,
+        endpointRuntime: link.endpointRuntime,
+      },
+      { requestRecovery: false },
+    );
   },
   Effect.catchIf(
     ServerSecretStore.isSecretStoreError,
@@ -632,6 +641,84 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
 export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileDesiredLink")(
   function* (localOrigin: string) {
     return yield* reconcileDesiredCloudLinkWith(yield* cloudHttpDependencies, localOrigin);
+  },
+);
+
+export const recoverManagedCloudTunnel = Effect.fn("environment.cloud.recoverManagedCloudTunnel")(
+  function* (localOrigin: string) {
+    const dependencies = yield* cloudHttpDependencies;
+    const [runtimeConfig, relayUrl, cloudUserId, environmentCredential] = yield* Effect.all([
+      dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+      dependencies.secrets.get(RELAY_URL_SECRET),
+      dependencies.secrets.get(CLOUD_LINKED_USER_ID),
+      dependencies.secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+    ]);
+    if (
+      Option.isNone(runtimeConfig) ||
+      Option.isNone(relayUrl) ||
+      Option.isNone(cloudUserId) ||
+      Option.isNone(environmentCredential)
+    ) {
+      return false;
+    }
+
+    const localUrl = yield* Effect.try({
+      try: () => new URL(localOrigin),
+      catch: () =>
+        new EnvironmentHttpBadRequestError({
+          message: "Could not resolve local environment origin.",
+        }),
+    });
+    if (localUrl.origin !== localOrigin) {
+      return yield* new EnvironmentHttpBadRequestError({
+        message: "Could not resolve local environment origin.",
+      });
+    }
+
+    const environmentId = yield* dependencies.environment.getEnvironmentId;
+    const recovered = yield* relayClientRequest(dependencies, {
+      url: `${bytesToString(relayUrl.value)}/v1/environments/${encodeURIComponent(environmentId)}/tunnel`,
+      token: bytesToString(environmentCredential.value),
+      payload: {
+        cloudUserId: bytesToString(cloudUserId.value),
+        origin: {
+          localHttpHost: localUrl.hostname,
+          localHttpPort: endpointRequestPort(localUrl),
+        },
+      },
+      schema: RelayManagedEndpointRecoveryResponse,
+    });
+    if (recovered.endpointRuntime.providerKind !== "cloudflare_tunnel") {
+      return yield* new EnvironmentHttpInternalServerError({
+        message: "T3 Connect returned an unsupported managed tunnel configuration.",
+      });
+    }
+
+    const currentConfig = yield* dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
+    if (
+      Option.isNone(currentConfig) ||
+      bytesToString(currentConfig.value) !== bytesToString(runtimeConfig.value)
+    ) {
+      return false;
+    }
+
+    const status = yield* dependencies.endpointRuntime.applyConfig(recovered.endpointRuntime);
+    if (status.status !== "running") {
+      return yield* new EnvironmentCloudEndpointUnavailableError({
+        message: "Managed endpoint runtime could not be started.",
+        endpointRuntimeStatus: status,
+      });
+    }
+    const encoded = yield* encodeEndpointRuntimeConfigJson(recovered.endpointRuntime).pipe(
+      Effect.mapError(
+        () =>
+          new EnvironmentHttpInternalServerError({
+            message: "Could not persist the recovered managed tunnel configuration.",
+          }),
+      ),
+    );
+    yield* dependencies.secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, stringToBytes(encoded));
+    return true;
   },
 );
 

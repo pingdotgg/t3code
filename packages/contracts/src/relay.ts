@@ -186,6 +186,18 @@ export const RelayManagedEndpointRuntimeConfig = Schema.Struct({
 });
 export type RelayManagedEndpointRuntimeConfig = typeof RelayManagedEndpointRuntimeConfig.Type;
 
+export const RelayManagedEndpointRecoveryRequest = Schema.Struct({
+  cloudUserId: TrimmedNonEmptyString,
+  origin: RelayManagedEndpointOrigin,
+});
+export type RelayManagedEndpointRecoveryRequest = typeof RelayManagedEndpointRecoveryRequest.Type;
+
+export const RelayManagedEndpointRecoveryResponse = Schema.Struct({
+  endpoint: RelayManagedEndpoint,
+  endpointRuntime: RelayManagedEndpointRuntimeConfig,
+});
+export type RelayManagedEndpointRecoveryResponse = typeof RelayManagedEndpointRecoveryResponse.Type;
+
 export const RelayLinkProofRequest = Schema.Struct({
   challenge: Schema.String,
   relayIssuer: Schema.String,
@@ -1090,6 +1102,14 @@ const RelayDpopClientGroup = HttpApiGroup.make("dpopClient")
 
 const RelayServerGroup = HttpApiGroup.make("server")
   .add(
+    HttpApiEndpoint.post("recoverManagedEndpoint", "/v1/environments/:environmentId/tunnel", {
+      params: Schema.Struct({
+        environmentId: EnvironmentId,
+      }),
+      payload: RelayManagedEndpointRecoveryRequest,
+      success: RelayManagedEndpointRecoveryResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Recover an environment's managed tunnel"),
     HttpApiEndpoint.post(
       "publishAgentActivity",
       "/v1/environments/:environmentId/threads/:threadId/agent-activity",

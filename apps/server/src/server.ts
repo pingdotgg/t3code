@@ -124,6 +124,7 @@ import {
   connectHttpApiLayer,
   pendingServiceUpdateExists,
   reconcileDesiredCloudLink,
+  recoverManagedCloudTunnel,
   releaseManagedTunnelOnShutdown,
 } from "./cloud/http.ts";
 import { serverRelayBrokerTracingLayer } from "./cloud/relayTracing.ts";
@@ -740,17 +741,12 @@ const makeServerLayer = Layer.unwrap(
             if (!cleanupBeforeActivation) {
               yield* Effect.addFinalizer(() => releaseManagedTunnel);
             }
-            if (!(yield* CloudCliState.readCliDesiredCloudLink)) return;
             const server = yield* HttpServer.HttpServer;
             const address = server.address;
             if (typeof address === "string" || !("port" in address)) return;
-            // No settling delay before the first attempt: routes are already
-            // serving by the time activation opens this gate (the startup
-            // sequence awaits routesReady), and the retry schedule below
-            // covers anything this sleep used to hedge against. Every
-            // millisecond here is dead time on the path to remote
-            // reachability after a restart.
-            yield* reconcileDesiredCloudLink(`http://127.0.0.1:${address.port}`).pipe(
+            const localOrigin = `http://127.0.0.1:${address.port}`;
+            const endpointRuntime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
+            const recoverManagedTunnel = recoverManagedCloudTunnel(localOrigin).pipe(
               Effect.retry({
                 while: shouldRetryCloudLink,
                 schedule: Schedule.exponential("1 second").pipe(
@@ -760,13 +756,46 @@ const makeServerLayer = Layer.unwrap(
                   Schedule.upTo({ duration: "10 minutes" }),
                 ),
               }),
-              Effect.tap(() => Effect.logInfo("T3 Connect desired link reconciled on startup")),
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
-                  message: cause.message,
-                }),
+              Effect.tap((recovered) =>
+                recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
+              ),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to recover the T3 Connect managed tunnel", { cause }),
               ),
             );
+            yield* endpointRuntime.recoveryRequests.pipe(
+              Stream.runForEach(() => recoverManagedTunnel),
+              Effect.forkScoped,
+            );
+            // No settling delay before the first attempt: routes are already
+            // serving by the time activation opens this gate (the startup
+            // sequence awaits routesReady), and the retry schedule below
+            // covers anything this sleep used to hedge against. Every
+            // millisecond here is dead time on the path to remote
+            // reachability after a restart.
+            if (yield* CloudCliState.readCliDesiredCloudLink) {
+              yield* reconcileDesiredCloudLink(localOrigin).pipe(
+                Effect.retry({
+                  while: (error) =>
+                    error._tag !== "EnvironmentHttpBadRequestError" &&
+                    error._tag !== "EnvironmentHttpUnauthorizedError" &&
+                    error._tag !== "EnvironmentHttpConflictError",
+                  schedule: Schedule.exponential("1 second").pipe(
+                    Schedule.modifyDelay(({ duration }) =>
+                      Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                    ),
+                    Schedule.upTo({ duration: "10 minutes" }),
+                  ),
+                }),
+                Effect.tap(() => Effect.logInfo("T3 Connect desired link reconciled on startup")),
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
+                    cause,
+                  }),
+                ),
+              );
+            }
+            yield* recoverManagedTunnel;
           }),
         );
         yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);

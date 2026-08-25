@@ -166,13 +166,28 @@ export class ManagedEndpointProvider extends Context.Service<
     readonly release: (input: {
       readonly userId: string;
       readonly environmentId: string;
+      readonly expectedTunnelId?: string;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
   }
 >()("t3code-relay/environments/ManagedEndpointProvider") {}
 
-interface ManagedEndpointTunnel {
+export interface ManagedEndpointTunnel {
   readonly id?: string | null;
   readonly name?: string | null;
+  readonly status?: string | null;
+  readonly createdAt?: string | null;
+  readonly connsInactiveAt?: string | null;
+}
+
+export interface ManagedEndpointTunnelListRequest {
+  readonly isDeleted: false;
+  readonly name?: string;
+  readonly includePrefix?: string;
+  readonly status?: "inactive" | "down";
+  readonly existedAt?: string;
+  readonly wasInactiveAt?: string;
+  readonly page?: number;
+  readonly perPage?: number;
 }
 
 const ManagedEndpointTunnelClientOperation = Schema.Literals([
@@ -201,11 +216,15 @@ export class ManagedEndpointTunnelClientError extends Schema.TaggedError<Managed
 export class ManagedEndpointTunnelClient extends Context.Service<
   ManagedEndpointTunnelClient,
   {
-    readonly list: (request: {
-      readonly name: string;
-      readonly isDeleted: false;
-    }) => Effect.Effect<
-      { readonly result: ReadonlyArray<ManagedEndpointTunnel> },
+    readonly list: (request: ManagedEndpointTunnelListRequest) => Effect.Effect<
+      {
+        readonly result: ReadonlyArray<ManagedEndpointTunnel>;
+        readonly resultInfo?: {
+          readonly page?: number | null;
+          readonly perPage?: number | null;
+          readonly totalCount?: number | null;
+        } | null;
+      },
       ManagedEndpointTunnelClientError
     >;
     readonly create: (request: {
@@ -554,6 +573,9 @@ export const make = Effect.gen(function* () {
       if (allocation === null || tunnelId === null) {
         return true;
       }
+      if (input.expectedTunnelId !== undefined && input.expectedTunnelId !== tunnelId) {
+        return false;
+      }
       // Claim the release against the allocation's current generation before
       // touching Cloudflare. A provision racing this release (fast environment
       // restart) rewrites updatedAt when it records its tunnel, so a stale
@@ -865,7 +887,7 @@ export const layerCloudflareBindings = (
   alchemyRuntimeContext: Alchemy.BaseRuntimeContext,
 ) =>
   layer.pipe(
-    Layer.provide(
+    Layer.provideMerge(
       Layer.mergeAll(
         layerTunnelClient({
           list: (request) =>
@@ -874,7 +896,7 @@ export const layerCloudflareBindings = (
                 (cause) =>
                   new ManagedEndpointTunnelClientError({
                     operation: "list",
-                    tunnelName: request.name,
+                    ...(request.name === undefined ? {} : { tunnelName: request.name }),
                     cause,
                   }),
               ),

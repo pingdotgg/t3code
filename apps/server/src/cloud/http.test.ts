@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
+import * as Stream from "effect/Stream";
 import {
   HttpClient,
   HttpClientResponse,
@@ -32,13 +33,20 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import type { RelayLinkProofRequest } from "@t3tools/contracts/relay";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG, RELAY_URL_SECRET } from "./config.ts";
+import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINKED_USER_ID,
+  decodeRuntimeConfig,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+  RELAY_URL_SECRET,
+} from "./config.ts";
 import {
   consumeCloudReplayGuards,
   isSupportedLinkProviderKind,
   linkProofScopes,
   pendingServiceUpdateExists,
   reconcileDesiredCloudLink,
+  recoverManagedCloudTunnel,
   releaseManagedTunnelOnShutdown,
 } from "./http.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
@@ -211,6 +219,8 @@ describe("reconcileDesiredCloudLink", () => {
         ManagedEndpointRuntime.CloudManagedEndpointRuntime,
         ManagedEndpointRuntime.CloudManagedEndpointRuntime.of({
           applyConfig: unusedSecretStoreOperation,
+          recoveryRequests: Stream.empty,
+          requestRecovery: () => Effect.void,
         } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"]),
       ),
       Effect.provideService(
@@ -319,10 +329,18 @@ describe("releaseManagedTunnelOnShutdown", () => {
             applyConfig: (config) =>
               Effect.sync(() => {
                 harness.applyConfigCalls.push(config);
-                return {
-                  status: "disabled",
-                } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntimeStatus;
+                return config === null
+                  ? ({
+                      status: "disabled",
+                    } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntimeStatus)
+                  : ({
+                      status: "running",
+                      providerKind: "cloudflare_tunnel",
+                      pid: 123,
+                    } satisfies ManagedEndpointRuntime.CloudManagedEndpointRuntimeStatus);
               }),
+            recoveryRequests: Stream.empty,
+            requestRecovery: () => Effect.void,
           }),
         ),
         Effect.provideService(
@@ -624,6 +642,106 @@ describe("releaseManagedTunnelOnShutdown", () => {
         applyConfigCalls,
         requests,
         respond: () => Response.json({ ok: false }, { status: 503 }),
+      }),
+    );
+  });
+
+  it.effect("recovers a web-linked tunnel with its environment credential", () => {
+    const oldConfig =
+      '{"providerKind":"cloudflare_tunnel","connectorToken":"old-token","tunnelId":"old-tunnel"}';
+    const nextConfig = {
+      providerKind: "cloudflare_tunnel",
+      connectorToken: "new-token",
+      tunnelId: "new-tunnel",
+    } as const;
+    const { store, values } = makeMemorySecretStore([
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, oldConfig],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      expect(yield* recoverManagedCloudTunnel("http://127.0.0.1:3773")).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.method).toBe("POST");
+      expect(requests[0]?.url).toBe("https://relay.example.test/v1/environments/env_123/tunnel");
+      expect(requests[0]?.headers.authorization).toBe("Bearer environment-credential");
+      expect(applyConfigCalls).toEqual([nextConfig]);
+      expect(
+        Option.getOrNull(
+          decodeRuntimeConfig(new TextDecoder().decode(values.get(CLOUD_ENDPOINT_RUNTIME_CONFIG))),
+        ),
+      ).toEqual(nextConfig);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests,
+        respond: () =>
+          Response.json({
+            endpoint: {
+              httpBaseUrl: "https://environment.example.test/",
+              wsBaseUrl: "wss://environment.example.test/ws",
+              providerKind: "cloudflare_tunnel",
+            },
+            endpointRuntime: nextConfig,
+          }),
+      }),
+    );
+  });
+
+  it.effect("does not recover an environment without a managed tunnel credential", () => {
+    const { store } = makeMemorySecretStore([
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      expect(yield* recoverManagedCloudTunnel("http://127.0.0.1:3773")).toBe(false);
+      expect(applyConfigCalls).toEqual([]);
+      expect(requests).toEqual([]);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
+  it.effect("keeps a tunnel configuration replaced during recovery", () => {
+    const { store, values } = makeMemorySecretStore([
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    const freshConfig = new TextEncoder().encode("fresh-config");
+
+    return Effect.gen(function* () {
+      expect(yield* recoverManagedCloudTunnel("http://127.0.0.1:3773")).toBe(false);
+      expect(values.get(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(freshConfig);
+      expect(applyConfigCalls).toEqual([]);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests,
+        respond: () => {
+          values.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, freshConfig);
+          return Response.json({
+            endpoint: {
+              httpBaseUrl: "https://environment.example.test/",
+              wsBaseUrl: "wss://environment.example.test/ws",
+              providerKind: "cloudflare_tunnel",
+            },
+            endpointRuntime: {
+              providerKind: "cloudflare_tunnel",
+              connectorToken: "replacement-token",
+            },
+          });
+        },
       }),
     );
   });

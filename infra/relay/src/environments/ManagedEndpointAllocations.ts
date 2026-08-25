@@ -1,5 +1,5 @@
 import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -23,6 +23,10 @@ export interface ManagedEndpointAllocation {
    * so `claimRelease` can detect a provision that raced a release.
    */
   readonly updatedAt: string;
+}
+
+export interface ManagedEndpointTunnelAllocation extends ManagedEndpointAllocation {
+  readonly recoveryEnabled: boolean;
 }
 
 export function resolveReadyManagedEndpoint(input: {
@@ -50,6 +54,8 @@ export class ManagedEndpointAllocationPersistenceError extends Schema.TaggedErro
       "record-tunnel",
       "record-dns",
       "mark-ready",
+      "enable-recovery",
+      "list-tunnels",
       "claim-release",
       "claim-deprovision",
       "remove",
@@ -119,6 +125,15 @@ export class ManagedEndpointAllocations extends Context.Service<
     readonly markReady: (
       input: ManagedEndpointAllocationKey,
     ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
+    readonly enableRecovery: (
+      input: ManagedEndpointAllocationKey,
+    ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
+    readonly listByTunnelNames: (
+      tunnelNames: ReadonlyArray<string>,
+    ) => Effect.Effect<
+      ReadonlyArray<ManagedEndpointTunnelAllocation>,
+      ManagedEndpointAllocationPersistenceError
+    >;
     /**
      * Atomically claims the right to delete the allocation's tunnel: succeeds
      * only while the recorded tunnel and generation still match what the
@@ -312,6 +327,60 @@ export const make = Effect.gen(function* () {
           ),
         );
     }),
+    enableRecovery: Effect.fn("relay.managed_endpoint_allocations.enable_recovery")(function* (
+      input: ManagedEndpointAllocationKey,
+    ) {
+      const now = DateTime.formatIso(yield* DateTime.now);
+      yield* db
+        .update(relayManagedEndpointAllocations)
+        .set({ recoveryEnabledAt: now, updatedAt: now })
+        .where(
+          and(whereAllocation(input), isNull(relayManagedEndpointAllocations.recoveryEnabledAt)),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ManagedEndpointAllocationPersistenceError({
+                operation: "enable-recovery",
+                stage: "database-request",
+                ...input,
+                cause,
+              }),
+          ),
+        );
+    }),
+    listByTunnelNames: Effect.fn("relay.managed_endpoint_allocations.list_by_tunnel_names")(
+      function* (tunnelNames: ReadonlyArray<string>) {
+        if (tunnelNames.length === 0) {
+          return [];
+        }
+        return yield* db
+          .select({
+            ...allocationSelection,
+            recoveryEnabledAt: relayManagedEndpointAllocations.recoveryEnabledAt,
+          })
+          .from(relayManagedEndpointAllocations)
+          .where(inArray(relayManagedEndpointAllocations.tunnelName, tunnelNames))
+          .pipe(
+            Effect.map((rows) =>
+              rows.map(({ recoveryEnabledAt, ...allocation }) => ({
+                ...allocation,
+                recoveryEnabled: recoveryEnabledAt !== null,
+              })),
+            ),
+            Effect.mapError(
+              (cause) =>
+                new ManagedEndpointAllocationPersistenceError({
+                  operation: "list-tunnels",
+                  stage: "database-request",
+                  userId: "*",
+                  environmentId: "*",
+                  cause,
+                }),
+            ),
+          );
+      },
+    ),
     claimRelease: Effect.fn("relay.managed_endpoint_allocations.claim_release")(function* (
       input: ClaimManagedEndpointReleaseInput,
     ) {

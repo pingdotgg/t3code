@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
@@ -60,6 +61,8 @@ export class CloudManagedEndpointRuntime extends Context.Service<
     readonly applyConfig: (
       config: RelayManagedEndpointRuntimeConfig | null,
     ) => Effect.Effect<CloudManagedEndpointRuntimeStatus>;
+    readonly recoveryRequests: Stream.Stream<RelayManagedEndpointRuntimeConfig>;
+    readonly requestRecovery: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<void>;
   }
 >()("t3/cloud/ManagedEndpointRuntime/CloudManagedEndpointRuntime") {}
 
@@ -117,6 +120,7 @@ export const make = Effect.gen(function* () {
   const relayClient = yield* RelayClient.RelayClient;
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
+  const recoveryRequests = yield* PubSub.sliding<RelayManagedEndpointRuntimeConfig>(1);
   const reconcileSemaphore = yield* Semaphore.make(1);
   const restartDelayRef = yield* Ref.make(0);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
@@ -191,6 +195,7 @@ export const make = Effect.gen(function* () {
             tunnelId: connector.config.tunnelId,
             tunnelName: connector.config.tunnelName,
           });
+          yield* PubSub.publish(recoveryRequests, connector.config);
           yield* reconcileConfig(desiredConfig);
         }),
       );
@@ -357,6 +362,8 @@ export const make = Effect.gen(function* () {
 
   const runtime = CloudManagedEndpointRuntime.of({
     applyConfig,
+    recoveryRequests: Stream.fromPubSub(recoveryRequests),
+    requestRecovery: (config) => PubSub.publish(recoveryRequests, config).pipe(Effect.asVoid),
   });
 
   const initialConfig = yield* readRuntimeConfig.pipe(

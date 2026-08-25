@@ -10,6 +10,91 @@ const layerWithDb = (db: RelayDb.RelayDb["Service"]) =>
   ManagedEndpointAllocations.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, db)));
 
 describe("ManagedEndpointAllocations", () => {
+  it.effect("records recovery support and advances the allocation generation", () => {
+    let updated:
+      | {
+          readonly recoveryEnabledAt: string;
+          readonly updatedAt: string;
+        }
+      | undefined;
+    const fakeDb = {
+      update: (table: unknown) => {
+        expect(table).toBe(relayManagedEndpointAllocations);
+        return {
+          set: (values: { readonly recoveryEnabledAt: string; readonly updatedAt: string }) => {
+            updated = values;
+            return {
+              where: () => Effect.void,
+            };
+          },
+        };
+      },
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      yield* allocations.enableRecovery({
+        userId: "user-1",
+        environmentId: "environment-1",
+      });
+
+      expect(updated?.recoveryEnabledAt).toBe(updated?.updatedAt);
+      expect(updated?.recoveryEnabledAt).toBeDefined();
+    }).pipe(Effect.provide(layerWithDb(fakeDb)));
+  });
+
+  it.effect("returns recovery support with tunnel allocation lookups", () => {
+    const base = {
+      userId: "user-1",
+      hostname: "environment.example.test",
+      tunnelName: "managed-tunnel",
+      dnsRecordId: "dns-1",
+      readyAt: "2026-08-25T12:00:00.000Z",
+      updatedAt: "2026-08-25T12:00:00.000Z",
+    };
+    const fakeDb = {
+      select: () => ({
+        from: (table: unknown) => {
+          expect(table).toBe(relayManagedEndpointAllocations);
+          return {
+            where: () =>
+              Effect.succeed([
+                {
+                  ...base,
+                  environmentId: "environment-1",
+                  tunnelId: "tunnel-1",
+                  recoveryEnabledAt: "2026-08-25T12:00:00.000Z",
+                },
+                {
+                  ...base,
+                  environmentId: "environment-2",
+                  tunnelId: "tunnel-2",
+                  recoveryEnabledAt: null,
+                },
+              ]),
+          };
+        },
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      const result = yield* allocations.listByTunnelNames(["first-tunnel", "second-tunnel"]);
+
+      expect(result.map((entry) => [entry.tunnelId, entry.recoveryEnabled])).toEqual([
+        ["tunnel-1", true],
+        ["tunnel-2", false],
+      ]);
+    }).pipe(Effect.provide(layerWithDb(fakeDb)));
+  });
+
+  it.effect("skips the database for an empty tunnel lookup", () =>
+    Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      expect(yield* allocations.listByTunnelNames([])).toEqual([]);
+    }).pipe(Effect.provide(layerWithDb({} as RelayDb.RelayDb["Service"]))),
+  );
+
   it.effect("returns a claim generation only when deprovision wins the allocation CAS", () => {
     let claimedAt: string | undefined;
     const fakeDb = {

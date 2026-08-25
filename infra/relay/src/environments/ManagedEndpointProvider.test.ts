@@ -159,6 +159,7 @@ function makeDnsClient(
 
 function makeAllocations(calls: AllocationCall[] = []) {
   const allocations = new Map<string, ManagedEndpointAllocations.ManagedEndpointAllocation>();
+  const recoveryEnabled = new Set<string>();
   let generation = 0;
   const mutate = (
     key: string,
@@ -214,6 +215,19 @@ function makeAllocations(calls: AllocationCall[] = []) {
           readyAt: "2026-06-02T00:00:00.000Z",
         }));
       }),
+    enableRecovery: (input) =>
+      Effect.sync(() => {
+        recoveryEnabled.add(allocationKey(input));
+      }),
+    listByTunnelNames: (tunnelNames) =>
+      Effect.sync(() =>
+        [...allocations.values()]
+          .filter((allocation) => tunnelNames.includes(allocation.tunnelName))
+          .map((allocation) => ({
+            ...allocation,
+            recoveryEnabled: recoveryEnabled.has(allocationKey(allocation)),
+          })),
+      ),
     claimRelease: (input) =>
       Effect.sync(() => {
         calls.push({ operation: "claimRelease", input });
@@ -936,6 +950,27 @@ describe("ManagedEndpointProvider", () => {
         "putConfiguration",
         "getToken",
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does not release a tunnel when the requested tunnel id is outdated", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const layer = providerLayer(
+      makePersistentTunnelClient(tunnelCalls),
+      makeDnsClient(),
+      makeAllocations(),
+    );
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+
+      expect(yield* provider.release({ ...key, expectedTunnelId: "old-tunnel-id" })).toBe(false);
+      expect(tunnelCalls.map((call) => call.operation)).not.toContain("delete");
     }).pipe(Effect.provide(layer));
   });
 
