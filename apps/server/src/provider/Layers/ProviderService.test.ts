@@ -1162,6 +1162,9 @@ routing.layer("ProviderServiceLive routing", (it) => {
           );
         }
       }
+
+      yield* provider.stopSession({ threadId });
+      routing.codex.sendTurn.mockClear();
     }),
   );
 

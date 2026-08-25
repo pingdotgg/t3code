@@ -23,6 +23,7 @@ import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "../../config.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { forkParked } from "../../serverActivation.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -536,7 +537,7 @@ export const ProviderThreadReconcilerLive = Layer.effectDiscard(
       ),
     );
 
-    yield* Effect.forkScoped(
+    yield* forkParked(
       Effect.forever(
         reconcile.pipe(
           Effect.flatMap((discoveredCount) =>
@@ -545,6 +546,6 @@ export const ProviderThreadReconcilerLive = Layer.effectDiscard(
         ),
       ),
     );
-    yield* Effect.forkScoped(Effect.forever(PubSub.take(changes).pipe(Effect.andThen(reconcile))));
+    yield* forkParked(Effect.forever(PubSub.take(changes).pipe(Effect.andThen(reconcile))));
   }),
 );
