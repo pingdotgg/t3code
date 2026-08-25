@@ -1,6 +1,7 @@
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
 import { hexToHsv, hsvToHex, type HsvColor } from "../../../../lib/mobileTheme";
@@ -17,6 +18,7 @@ const HUE_STOPS: ReadonlyArray<{ readonly offset: number; readonly color: string
 ];
 
 function clamp01(value: number): number {
+  "worklet";
   return Math.min(1, Math.max(0, value));
 }
 
@@ -29,8 +31,9 @@ function quantize(color: HsvColor): HsvColor {
 }
 
 /**
- * Saturation/brightness pad plus hue slider. The thumb tracks while dragging;
- * the color is committed once on release so a drag writes preferences once.
+ * Saturation/brightness pad plus hue slider. Thumbs track on the UI thread
+ * via shared values; the color is committed to React state and preferences
+ * once on release, so dragging never re-renders the SVG surfaces.
  */
 export function HsvColorPicker(props: {
   readonly disabled?: boolean;
@@ -42,8 +45,6 @@ export function HsvColorPicker(props: {
     () => hexToHsv(props.value) ?? { h: 210, s: 0.8, v: 0.9 },
   );
   const [syncedValue, setSyncedValue] = useState(props.value);
-  const [padSize, setPadSize] = useState({ height: 0, width: 0 });
-  const [hueWidth, setHueWidth] = useState(0);
 
   // Adopt external changes (hex field, preset then custom) without fighting
   // our own commits, which round-trip to the same hex.
@@ -53,55 +54,95 @@ export function HsvColorPicker(props: {
     if (parsed !== null && hsvToHex(hsv) !== props.value) setHsv(quantize(parsed));
   }
 
-  const latest = useRef({ hsv, hueWidth, onChange: props.onChange, padSize });
-  latest.current = { hsv, hueWidth, onChange: props.onChange, padSize };
+  const saturation = useSharedValue(hsv.s);
+  const brightness = useSharedValue(hsv.v);
+  const huePosition = useSharedValue(hsv.h / 360);
+  const padWidth = useSharedValue(0);
+  const padHeight = useSharedValue(0);
+  const hueWidth = useSharedValue(0);
+
+  useEffect(() => {
+    saturation.value = hsv.s;
+    brightness.value = hsv.v;
+    huePosition.value = hsv.h / 360;
+  }, [brightness, hsv, huePosition, saturation]);
+
+  const latest = useRef({ hsv, onChange: props.onChange });
+  latest.current = { hsv, onChange: props.onChange };
+
+  const commitPad = (s: number, v: number) => {
+    const next = quantize({ h: latest.current.hsv.h, s, v });
+    setHsv(next);
+    latest.current.onChange(hsvToHex(next));
+  };
+  const commitHue = (position: number) => {
+    const next = quantize({ ...latest.current.hsv, h: position * 360 });
+    setHsv(next);
+    latest.current.onChange(hsvToHex(next));
+  };
+  const commitPadRef = useRef(commitPad);
+  commitPadRef.current = commitPad;
+  const commitHueRef = useRef(commitHue);
+  commitHueRef.current = commitHue;
+
+  const runCommitPad = useMemo(() => (s: number, v: number) => commitPadRef.current(s, v), []);
+  const runCommitHue = useMemo(() => (position: number) => commitHueRef.current(position), []);
 
   const padGesture = useMemo(() => {
-    const apply = (x: number, y: number, commit: boolean) => {
-      const { padSize: size, hsv: current, onChange } = latest.current;
-      if (size.width <= 0 || size.height <= 0) return;
-      const next = quantize({
-        h: current.h,
-        s: clamp01(x / size.width),
-        v: clamp01(1 - y / size.height),
-      });
-      setHsv(next);
-      if (commit) onChange(hsvToHex(next));
+    const track = (x: number, y: number) => {
+      "worklet";
+      if (padWidth.value <= 0 || padHeight.value <= 0) return;
+      saturation.value = clamp01(x / padWidth.value);
+      brightness.value = clamp01(1 - y / padHeight.value);
     };
     const pan = Gesture.Pan()
       .enabled(!props.disabled)
-      .runOnJS(true)
       .activeOffsetX([-6, 6])
-      .onUpdate((event) => apply(event.x, event.y, false))
-      .onEnd((event) => apply(event.x, event.y, true));
+      .onUpdate((event) => track(event.x, event.y))
+      .onEnd(() => {
+        runOnJS(runCommitPad)(saturation.value, brightness.value);
+      });
     const tap = Gesture.Tap()
       .enabled(!props.disabled)
-      .runOnJS(true)
-      .onEnd((event) => apply(event.x, event.y, true));
+      .onEnd((event) => {
+        track(event.x, event.y);
+        runOnJS(runCommitPad)(saturation.value, brightness.value);
+      });
     return Gesture.Race(pan, tap);
-  }, [props.disabled]);
+  }, [brightness, padHeight, padWidth, props.disabled, runCommitPad, saturation]);
 
   const hueGesture = useMemo(() => {
-    const apply = (x: number, commit: boolean) => {
-      const { hueWidth: width, hsv: current, onChange } = latest.current;
-      if (width <= 0) return;
-      const next = quantize({ ...current, h: clamp01(x / width) * 360 });
-      setHsv(next);
-      if (commit) onChange(hsvToHex(next));
+    const track = (x: number) => {
+      "worklet";
+      if (hueWidth.value <= 0) return;
+      huePosition.value = clamp01(x / hueWidth.value);
     };
     const pan = Gesture.Pan()
       .enabled(!props.disabled)
-      .runOnJS(true)
       .activeOffsetX([-6, 6])
       .failOffsetY([-12, 12])
-      .onUpdate((event) => apply(event.x, false))
-      .onEnd((event) => apply(event.x, true));
+      .onUpdate((event) => track(event.x))
+      .onEnd(() => {
+        runOnJS(runCommitHue)(huePosition.value);
+      });
     const tap = Gesture.Tap()
       .enabled(!props.disabled)
-      .runOnJS(true)
-      .onEnd((event) => apply(event.x, true));
+      .onEnd((event) => {
+        track(event.x);
+        runOnJS(runCommitHue)(huePosition.value);
+      });
     return Gesture.Race(pan, tap);
-  }, [props.disabled]);
+  }, [hueWidth, huePosition, props.disabled, runCommitHue]);
+
+  const padThumbStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: saturation.value * padWidth.value - THUMB_SIZE / 2 },
+      { translateY: (1 - brightness.value) * padHeight.value - THUMB_SIZE / 2 },
+    ],
+  }));
+  const hueThumbStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: huePosition.value * hueWidth.value - THUMB_SIZE / 2 }],
+  }));
 
   const hueColor = hsvToHex({ h: hsv.h, s: 1, v: 1 });
   const currentColor = hsvToHex(hsv);
@@ -123,8 +164,8 @@ export function HsvColorPicker(props: {
           accessibilityLabel="Saturation and brightness"
           className="h-40 overflow-hidden rounded-2xl border border-border"
           onLayout={(event) => {
-            const { height, width } = event.nativeEvent.layout;
-            setPadSize({ height, width });
+            padWidth.value = event.nativeEvent.layout.width;
+            padHeight.value = event.nativeEvent.layout.height;
           }}
         >
           <Svg height="100%" width="100%">
@@ -142,15 +183,10 @@ export function HsvColorPicker(props: {
             <Rect fill={`url(#${idPrefix}-s)`} height="100%" width="100%" />
             <Rect fill={`url(#${idPrefix}-v)`} height="100%" width="100%" />
           </Svg>
-          <View
-            className="absolute rounded-full"
+          <Animated.View
+            className="absolute left-0 top-0 rounded-full"
             pointerEvents="none"
-            style={{
-              ...thumbStyle,
-              backgroundColor: currentColor,
-              left: hsv.s * padSize.width - THUMB_SIZE / 2,
-              top: (1 - hsv.v) * padSize.height - THUMB_SIZE / 2,
-            }}
+            style={[{ ...thumbStyle, backgroundColor: currentColor }, padThumbStyle]}
           />
         </View>
       </GestureDetector>
@@ -158,7 +194,9 @@ export function HsvColorPicker(props: {
         <View
           accessibilityLabel="Hue"
           className="h-11 justify-center"
-          onLayout={(event) => setHueWidth(event.nativeEvent.layout.width)}
+          onLayout={(event) => {
+            hueWidth.value = event.nativeEvent.layout.width;
+          }}
         >
           <View className="h-3 overflow-hidden rounded-full">
             <Svg height="100%" width="100%">
@@ -172,16 +210,10 @@ export function HsvColorPicker(props: {
               <Rect fill={`url(#${idPrefix}-hue)`} height="100%" width="100%" />
             </Svg>
           </View>
-          <View
-            className="absolute rounded-full"
+          <Animated.View
+            className="absolute left-0 rounded-full"
             pointerEvents="none"
-            style={{
-              ...thumbStyle,
-              backgroundColor: hueColor,
-              left: (hsv.h / 360) * hueWidth - THUMB_SIZE / 2,
-              top: "50%",
-              marginTop: -THUMB_SIZE / 2,
-            }}
+            style={[{ ...thumbStyle, backgroundColor: hueColor }, hueThumbStyle]}
           />
         </View>
       </GestureDetector>
