@@ -199,6 +199,7 @@ function makeTestLayer(input: {
   readonly createCount: Ref.Ref<number>;
   readonly mainWindow: Ref.Ref<Option.Option<Electron.BrowserWindow>>;
   readonly createdWindowOptions?: Electron.BrowserWindowConstructorOptions[];
+  readonly beforeWindowCreate?: Effect.Effect<void>;
   readonly desktopSettings?: DesktopAppSettings.DesktopSettings;
   readonly mainWindowBoundsUpdates?: DesktopAppSettings.DesktopWindowBounds[];
   readonly mainWindowMaximizedUpdates?: boolean[];
@@ -245,12 +246,14 @@ function makeTestLayer(input: {
 
   const electronWindowLayer = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: (options) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         input.createdWindowOptions?.push(options);
-      }).pipe(
-        Effect.andThen(Ref.update(input.createCount, (count) => count + 1)),
-        Effect.as(input.window),
-      ),
+        if (input.beforeWindowCreate) {
+          yield* input.beforeWindowCreate;
+        }
+        yield* Ref.update(input.createCount, (count) => count + 1);
+        return input.window;
+      }),
     main: Ref.get(input.mainWindow),
     currentMainOrFirst: Ref.get(input.mainWindow),
     focusedMainOrFirst: Ref.get(input.mainWindow),
@@ -480,6 +483,42 @@ describe("DesktopWindow", () => {
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["t3code-dev://app/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("creates one main window when backend readiness and activation race", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const createStarted = yield* Deferred.make<void>();
+      const allowCreate = yield* Deferred.make<void>();
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        beforeWindowCreate: Deferred.succeed(createStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowCreate)),
+        ),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          const readyFiber = yield* desktopWindow
+            .handleBackendReady(new URL("http://127.0.0.1:3773"))
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(createStarted);
+
+          const activationFiber = yield* desktopWindow.activate.pipe(Effect.forkScoped);
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(allowCreate, undefined);
+          yield* Fiber.join(readyFiber);
+          yield* Fiber.join(activationFiber);
+
+          assert.equal(yield* Ref.get(createCount), 1);
+        }).pipe(Effect.provide(layer)),
+      );
     }),
   );
 
