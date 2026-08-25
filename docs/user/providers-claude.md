@@ -59,6 +59,25 @@ The re-authenticate action runs against the same Claude provider you were using,
 so multi-account and custom-home setups (below) re-authenticate the correct
 account.
 
+## Reduce Context Usage
+
+In Settings, open your Claude provider and set **Auto-compact after** to a token count between
+`100000` and `1000000`. For example, `300000` compacts the conversation into a summary once it
+reaches about 300,000 tokens, without changing the model's context window. Leave the field
+empty to keep Claude Code's default behavior.
+
+On web and desktop, when you return to an older Claude thread with a large context, T3 Code
+offers to compact the conversation before you continue. You can also select **Compact context**
+from the context meter. On every client, you can enter `/compact` in the message composer, and
+Claude can show its own resume prompt when you continue an old session.
+
+## Where Claude Skills Are Loaded
+
+T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then
+`<workspace>/.agents/skills`, then `<workspace>/.claude/skills`.
+
+If the same skill name exists in more than one folder, the later folder wins.
+
 ## I Want Work And Personal Claude Accounts
 
 Use a different Claude config directory for each account.

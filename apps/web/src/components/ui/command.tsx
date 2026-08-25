@@ -16,6 +16,7 @@ import {
   AutocompleteSeparator,
 } from "~/components/ui/autocomplete";
 import { DIALOG_BACKDROP_CLASS, DIALOG_POPUP_CLASS } from "~/components/ui/dialog-styles";
+import { Button } from "~/components/ui/button";
 
 const CommandDialog = CommandDialogPrimitive.Root;
 
@@ -103,16 +104,21 @@ function CommandInput({
   wrapperClassName?: string | undefined;
 }) {
   return (
-    <div className={cn("px-1.25 py-1.5", wrapperClassName)}>
+    <div
+      className={cn(
+        "px-[var(--command-shell-inset)] py-1.5 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-shell-inset)+0.0625rem)]",
+        wrapperClassName,
+      )}
+    >
       <AutocompleteInput
         autoFocus
         className={cn(
-          "border-transparent! bg-transparent! shadow-none before:hidden has-focus-visible:ring-0 placeholder:text-muted-foreground/80 *:data-[slot=autocomplete-input]:ps-9! sm:*:data-[slot=autocomplete-input]:ps-8.5!",
+          "border-transparent! bg-transparent! shadow-none before:hidden has-focus-visible:ring-0 placeholder:text-placeholder *:data-[slot=autocomplete-input]:ps-9! sm:*:data-[slot=autocomplete-input]:ps-[calc(var(--command-shell-inset)+1.5rem)]!",
           className,
         )}
         placeholder={placeholder}
         size="lg"
-        startAddon={<SearchIcon className="translate-x-0.5 text-muted-foreground" />}
+        startAddon={<SearchIcon className="translate-x-0.5 text-icon-muted" />}
         {...props}
       />
     </div>
@@ -198,7 +204,7 @@ function CommandShortcut({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
       className={cn(
-        "ms-auto font-medium font-sans text-muted-foreground/70 text-xs tracking-widest",
+        "ms-auto font-medium font-sans text-secondary-label text-xs tracking-widest",
         className,
       )}
       data-slot="command-shortcut"
@@ -211,11 +217,25 @@ function CommandFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "relative flex items-center justify-between gap-2 rounded-b-[calc(var(--radius-2xl)-1px)] bg-foreground/[0.025] px-4 py-2.5 font-medium text-sm text-muted-foreground [&_[data-slot=kbd-group]]:font-sans [&_[data-slot=kbd]]:bg-foreground/[0.08] [&_[data-slot=kbd]]:text-foreground [&_[data-slot=kbd]]:ring-0",
+        "relative flex items-center justify-between gap-2 rounded-b-[calc(var(--radius-2xl)-1px)] bg-foreground/[0.025] px-[var(--command-content-inset)] py-2.5 font-medium text-sm text-muted-foreground [&_[data-slot=kbd-group]]:font-sans [&_[data-slot=kbd]]:bg-foreground/[0.08] [&_[data-slot=kbd]]:text-foreground [&_[data-slot=kbd]]:ring-0",
         className,
       )}
       data-slot="command-footer"
       {...props}
+    />
+  );
+}
+
+function CommandFooterAction({
+  className,
+  ...props
+}: Omit<React.ComponentProps<typeof Button>, "size" | "variant">) {
+  return (
+    <Button
+      {...props}
+      variant="ghost-muted"
+      size="xs"
+      className={cn("h-auto px-2 text-xs hover:bg-transparent", className)}
     />
   );
 }
@@ -229,6 +249,7 @@ export {
   CommandDialogTrigger,
   CommandEmpty,
   CommandFooter,
+  CommandFooterAction,
   CommandGroup,
   CommandGroupLabel,
   CommandInput,

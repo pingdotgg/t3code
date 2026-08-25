@@ -14,8 +14,16 @@ For the wider system diagram, see
 
 ## Application Keys
 
-T3 Connect is disabled in a fresh clone. To enable it for source builds, add a repository-root `.env`
-or `.env.local` file:
+T3 Connect is disabled in a fresh clone. To enable it for source builds against the production
+deployment, copy the repository-root example file:
+
+```sh
+cp .env.example .env
+```
+
+`.env.example` carries the production public identifiers (the same values baked into official
+release builds). To target a different Clerk application or relay, set the values yourself in a
+repository-root `.env` or `.env.local` file:
 
 ```dotenv
 T3CODE_CLERK_PUBLISHABLE_KEY=<publishable key>
@@ -82,9 +90,17 @@ In **Clerk Dashboard > OAuth applications**:
 5. Set `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID` in the repository-root `.env` file and release build
    environment to the generated public client ID.
 
-The CLI derives Clerk's frontend API URL from the publishable key and calls Clerk's
-`/oauth/authorize` and `/oauth/token` endpoints directly. The relay is not involved in the OAuth
-handshake; it only validates the issued Clerk bearer token when the CLI manages an environment link.
+Both CLI flows start at the hosted `/connect` page (`buildConnectAuthorizeRequestUrl` in
+`packages/shared/src/connectAuth.ts`), which waits for a Clerk session and then forwards the request
+to Clerk's `/oauth/authorize`. The CLI never opens `/oauth/authorize` directly: a signed-out browser
+sent there goes through Clerk's sign-in redirect, which drops the authorize query parameters and
+fails the flow with `unsupported_response_type` or an empty `state` (#5051). The loopback flow marks
+the request with a `port` fragment parameter so the hosted page asks Clerk to redirect the
+authorization code straight to `http://127.0.0.1:<port>/callback`; the out-of-band flow omits it and
+uses the hosted `/connect/callback` page instead. The CLI derives Clerk's frontend API URL from the
+publishable key and calls only the `/oauth/token` endpoint directly. The relay is not involved in
+the OAuth handshake; it only validates the issued Clerk bearer token when the CLI manages an
+environment link.
 
 The connect command group is:
 
