@@ -55,6 +55,14 @@ afterEach(() => {
 });
 
 describe("desktop system theme", () => {
+  it("keeps the filesystem root when it is the home directory", () => {
+    expect(desktopSystemThemePaths("/")).toEqual({
+      currentDirectory: "/.local/state/omarchy/current",
+      colorsFile: "/.local/state/omarchy/current/theme/colors.toml",
+      lightModeMarker: "/.local/state/omarchy/current/theme/light.mode",
+    });
+  });
+
   it("parses Omarchy's flat colors file and canonicalizes its palette", () => {
     const values = parseFlatColorsToml(DARK_COLORS);
     expect(values).not.toBeNull();

@@ -241,13 +241,14 @@
             storedTheme === null ? "" : (LEGACY_THEME_IDS[storedTheme] ?? storedTheme);
           const legacyMode = isLegacyT3ChatDark ? "dark" : null;
           const builtInModes = BUILT_IN_THEME_MODES[themeId] ?? null;
-          let desktopSystemTheme = null;
+          let bridgeSystemTheme = null;
           try {
             const candidate = window.desktopBridge?.getSystemTheme?.() ?? null;
-            if (isDesktopSystemTheme(candidate)) desktopSystemTheme = candidate;
+            if (isDesktopSystemTheme(candidate)) bridgeSystemTheme = candidate;
           } catch {
             // The desktop bridge is optional and unavailable on web builds.
           }
+          const desktopSystemTheme = themeId === DESKTOP_SYSTEM_THEME_ID ? bridgeSystemTheme : null;
           const customTheme = builtInModes || desktopSystemTheme ? null : findCustomTheme(themeId);
           const themeModes =
             builtInModes ??
@@ -301,7 +302,7 @@
               const halfId = LEGACY_THEME_IDS[candidate] ?? candidate;
               const halfBuiltIn = BUILT_IN_THEME_MODES[halfId] ?? null;
               const halfDesktopSystemTheme =
-                halfId === DESKTOP_SYSTEM_THEME_ID ? desktopSystemTheme : null;
+                halfId === DESKTOP_SYSTEM_THEME_ID ? bridgeSystemTheme : null;
               const halfCustom =
                 halfBuiltIn || halfDesktopSystemTheme ? null : findCustomTheme(halfId);
               const halfModes =
@@ -356,12 +357,12 @@
           // per role rather than dropping the theme.
           const builtInSplash =
             effectiveIsThemed && !effectiveCustomTheme && effectiveThemeMode
-              ? effectiveThemeId === DESKTOP_SYSTEM_THEME_ID && desktopSystemTheme
+              ? effectiveThemeId === DESKTOP_SYSTEM_THEME_ID && bridgeSystemTheme
                 ? {
-                    background: desktopSystemTheme.colors.background,
-                    foreground: desktopSystemTheme.colors.foreground,
-                    accent: desktopSystemTheme.colors.accent,
-                    chrome: desktopSystemTheme.colors.background,
+                    background: bridgeSystemTheme.colors.background,
+                    foreground: bridgeSystemTheme.colors.foreground,
+                    accent: bridgeSystemTheme.colors.accent,
+                    chrome: bridgeSystemTheme.colors.background,
                   }
                 : (BUILT_IN_THEME_PALETTES[effectiveThemeId]?.[effectiveThemeMode] ?? null)
               : null;

@@ -193,6 +193,28 @@ describe("index.html boot script", () => {
     expect(boot.isDark).toBe(false);
   });
 
+  it("does not apply the desktop snapshot to a selected custom theme", () => {
+    const boot = runBootScript({
+      storage: {
+        [THEME_STORAGE_KEY]: AURORA_DUAL.id,
+        [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([AURORA_DUAL]),
+      },
+      prefersDark: false,
+      desktopSystemTheme: {
+        appearance: "dark",
+        colors: {
+          background: "#282a36",
+          foreground: "#f8f8f2",
+          accent: "#bd93f9",
+        },
+      },
+    });
+
+    expect(boot.themeId).toBe(AURORA_DUAL.id);
+    expect(boot.isDark).toBe(false);
+    expect(boot.bootVariables["--boot-background"]).toBe(AURORA_DUAL.colors.canvas);
+  });
+
   it("uses the local desktop palette when it owns the resolved theme half", () => {
     const desktopSystemTheme = {
       appearance: "dark" as const,

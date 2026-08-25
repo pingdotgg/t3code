@@ -1456,8 +1456,20 @@ export function createDesktopSystemThemeColors(systemTheme: DesktopSystemTheme):
   colors = updateThemeColorFamily(appearance, colors, "error", semantic.red);
   colors = updateThemeColorFamily(appearance, colors, "warning", semantic.yellow);
   colors = updateThemeColorFamily(appearance, colors, "messageAction", semantic.magenta);
-  colors = updateThemeColorFamily(appearance, colors, "sidebarRowSelected", semantic.selection);
+  const canvas = parseThemeRgbColor(colors.canvas, THEME_BLACK_FOREGROUND);
+  const selection = parseThemeRgbColor(semantic.selection, canvas);
+  const sidebar = parseThemeRgbColor(colors.sidebar, canvas);
+  colors = updateThemeColorFamily(
+    appearance,
+    colors,
+    "sidebarRowSelected",
+    themeRgbToThemeColor(mixThemeRgbColors(sidebar, selection, 0.24)),
+  );
   const greenFamily = updateThemeColorFamily(appearance, colors, "accent", semantic.green);
+  const terminalBackground = parseThemeRgbColor(colors.terminalBackground, canvas);
+  const terminalSelection = themeRgbToThemeColor(
+    mixThemeRgbColors(terminalBackground, selection, appearance === "dark" ? 0.32 : 0.16),
+  );
 
   return {
     ...colors,
@@ -1471,7 +1483,7 @@ export function createDesktopSystemThemeColors(systemTheme: DesktopSystemTheme):
     updateForeground: greenFamily.updateForeground,
     updateSurface: greenFamily.updateSurface,
     terminalCursor: semantic.cyan,
-    terminalSelection: semantic.selection,
+    terminalSelection,
   };
 }
 

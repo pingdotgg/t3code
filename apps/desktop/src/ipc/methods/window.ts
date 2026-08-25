@@ -91,7 +91,7 @@ export const getSystemTheme = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SYSTEM_THEME_CHANNEL,
   result: Schema.NullOr(DesktopSystemThemeSchema),
   handler: Effect.fn("desktop.ipc.window.getSystemTheme")(function* () {
-    const systemTheme = yield* DesktopSystemTheme.DesktopSystemThemeService;
+    const systemTheme = yield* DesktopSystemTheme.DesktopSystemTheme;
     return yield* systemTheme.current;
   }),
 });

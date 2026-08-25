@@ -1,4 +1,7 @@
-import type { DesktopSystemTheme, DesktopSystemThemePalette } from "@t3tools/contracts";
+import type {
+  DesktopSystemTheme as DesktopSystemThemeValue,
+  DesktopSystemThemePalette,
+} from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeOS from "node:os";
 import * as Context from "effect/Context";
@@ -102,7 +105,7 @@ export const readDesktopSystemTheme = Effect.fn("desktop.systemTheme.read")(func
     const colors = normalizeSystemThemePalette(values);
     if (colors === null) return null;
     const declaredMode = (values.mode ?? values.theme_type)?.trim().toLowerCase();
-    const appearance: DesktopSystemTheme["appearance"] =
+    const appearance: DesktopSystemThemeValue["appearance"] =
       declaredMode === "light" || declaredMode === "dark"
         ? declaredMode
         : (yield* fileSystem.exists(paths.lightModeMarker)) ||
@@ -113,14 +116,17 @@ export const readDesktopSystemTheme = Effect.fn("desktop.systemTheme.read")(func
   }).pipe(Effect.orElseSucceed(() => null));
 });
 
-function themesEqual(left: DesktopSystemTheme | null, right: DesktopSystemTheme | null): boolean {
+function themesEqual(
+  left: DesktopSystemThemeValue | null,
+  right: DesktopSystemThemeValue | null,
+): boolean {
   return left === right || JSON.stringify(left) === JSON.stringify(right);
 }
 
-export class DesktopSystemThemeService extends Context.Service<
-  DesktopSystemThemeService,
-  { readonly current: Effect.Effect<DesktopSystemTheme | null> }
->()("@t3tools/desktop/theme/DesktopSystemTheme/DesktopSystemThemeService") {}
+export class DesktopSystemTheme extends Context.Service<
+  DesktopSystemTheme,
+  { readonly current: Effect.Effect<DesktopSystemThemeValue | null> }
+>()("@t3tools/desktop/theme/DesktopSystemTheme") {}
 
 export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
@@ -147,13 +153,14 @@ export const make = Effect.gen(function* () {
   if (input.platform === "linux" && (yield* fileSystem.exists(paths.currentDirectory))) {
     yield* fileSystem.watch(paths.currentDirectory).pipe(
       Stream.debounce(WATCH_DEBOUNCE),
-      Stream.runForEach(() => refresh),
+      Stream.runForEach(() => refresh.pipe(Effect.ignoreCause({ log: true }))),
       Effect.ignoreCause({ log: true }),
       Effect.forkScoped,
     );
+    yield* refresh;
   }
 
-  return DesktopSystemThemeService.of({ current: Ref.get(current) });
+  return DesktopSystemTheme.of({ current: Ref.get(current) });
 });
 
-export const layer = Layer.effect(DesktopSystemThemeService, make);
+export const layer = Layer.effect(DesktopSystemTheme, make);
