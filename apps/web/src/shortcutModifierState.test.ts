@@ -224,6 +224,17 @@ describe("shortcutModifierState", () => {
     expect(currentModifierState()).toEqual(emptyState());
   });
 
+  it("restores held modifiers from a pointer press after focus returns", () => {
+    const { window } = installShortcutModifierHook();
+    dispatchModifierEvent(window, "keydown", { key: "Meta", metaKey: true });
+    window.dispatchEvent(new Event("focus"));
+    expect(currentModifierState()).toEqual(emptyState());
+
+    dispatchModifierEvent(window, "pointerdown", { metaKey: true });
+
+    expect(currentModifierState()).toEqual({ ...emptyState(), metaKey: true });
+  });
+
   it.each(["paste", "input"])(
     "clears a synthetic Command press when dictated text triggers %s",
     (eventType) => {
@@ -238,4 +249,15 @@ describe("shortcutModifierState", () => {
       expect(currentModifierState()).toEqual(emptyState());
     },
   );
+
+  it("keeps Shift active when ordinary text input inserts an uppercase character", () => {
+    const { window } = installShortcutModifierHook();
+    dispatchModifierEvent(window, "keydown", { key: "Shift", shiftKey: true });
+    dispatchModifierEvent(window, "keydown", { key: "A", shiftKey: true });
+
+    window.dispatchEvent(new Event("input"));
+    dispatchModifierEvent(window, "keyup", { key: "A", shiftKey: true });
+
+    expect(currentModifierState()).toEqual({ ...emptyState(), shiftKey: true });
+  });
 });
