@@ -232,6 +232,10 @@ describe("theme failure handling", () => {
       "t3code:theme-halves:v1",
       JSON.stringify({ light: "grove", dark: "desktop:system" }),
     );
+    storage.setItem(
+      "t3code:themes:v1",
+      JSON.stringify([{ id: "paper", label: "Paper", appearance: "light", colors: {} }]),
+    );
     vi.doMock("react", () => ({
       useCallback: <A>(callback: A) => callback,
       useEffect: () => undefined,
@@ -278,6 +282,17 @@ describe("theme failure handling", () => {
       light: "grove",
       dark: "desktop:system",
     });
+
+    storage.setItem(
+      "t3code:theme-halves:v1",
+      JSON.stringify({ light: "paper", dark: "desktop:system" }),
+    );
+    systemThemeListener?.(initial);
+    expect(useTheme().desktopSystemTheme).toEqual(initial);
+    expect(JSON.parse(storage.getItem("t3code:theme-halves:v1") ?? "null")).toEqual({
+      light: "desktop:system",
+    });
+    expect(useTheme().themeHalves).toEqual({ light: "desktop:system" });
     expect(removeSystemThemeListener).toBeDefined();
   });
 });

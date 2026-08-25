@@ -26,6 +26,7 @@ import {
   IRIS_THEME,
   OCEAN_THEME,
   DESKTOP_SYSTEM_THEME_ID,
+  DESKTOP_SYSTEM_THEME_LABEL,
 } from "../../themePalette";
 import {
   AlertDialog,
@@ -800,7 +801,7 @@ export function ThemeLibrary({
               openThemeEditor({
                 editingThemeId: null,
                 seedThemeId: DESKTOP_SYSTEM_THEME_ID,
-                seedName: "System theme copy",
+                seedName: `${DESKTOP_SYSTEM_THEME_LABEL} copy`,
                 initialAppearance,
               })
             }

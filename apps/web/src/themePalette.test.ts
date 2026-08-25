@@ -100,7 +100,7 @@ function contrastRatio(first: string, second: string): number {
 
 describe("theme files", () => {
   it("keeps the optional desktop palette separate from imported themes", () => {
-    expect(DESKTOP_SYSTEM_THEME_LABEL).toBe("Follow system theme");
+    expect(DESKTOP_SYSTEM_THEME_LABEL).toBe("System Theme");
     expect(isKnownThemePreference(DESKTOP_SYSTEM_THEME_ID)).toBe(true);
     expect(getDesktopSystemThemeDefinition()).toBeNull();
 
@@ -112,7 +112,7 @@ describe("theme files", () => {
 
       expect(definition).toMatchObject({
         id: DESKTOP_SYSTEM_THEME_ID,
-        label: "Follow system theme",
+        label: "System Theme",
         appearance: "dark",
       });
       expect(Object.keys(colors).sort()).toEqual(Object.keys(T3_CHAT_THEME.colors).sort());

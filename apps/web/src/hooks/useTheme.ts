@@ -100,7 +100,11 @@ function alignDesktopSystemThemeHalf(theme: DesktopSystemTheme | null): boolean 
   const next: { light?: string; dark?: string } = { ...current };
   if (next.light === DESKTOP_SYSTEM_THEME_ID) delete next.light;
   if (next.dark === DESKTOP_SYSTEM_THEME_ID) delete next.dark;
-  if (previousAppearance !== theme.appearance && displacedTheme !== undefined) {
+  if (
+    previousAppearance !== theme.appearance &&
+    displacedTheme !== undefined &&
+    parseThemeHalves(JSON.stringify({ [previousAppearance]: displacedTheme })) !== null
+  ) {
     next[previousAppearance] = displacedTheme;
   }
   next[theme.appearance] = DESKTOP_SYSTEM_THEME_ID;

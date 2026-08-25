@@ -36,7 +36,7 @@ export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
 export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
 export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
 export const DESKTOP_SYSTEM_THEME_ID = "desktop:system" as const;
-export const DESKTOP_SYSTEM_THEME_LABEL = "Follow system theme";
+export const DESKTOP_SYSTEM_THEME_LABEL = "System Theme";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
