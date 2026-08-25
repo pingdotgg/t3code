@@ -38,6 +38,12 @@ export const PostHogReport = Schema.Struct({
   already_addressed: Schema.optional(Schema.NullOr(Schema.Boolean)),
   artefact_count: Schema.optional(Schema.NullOr(Schema.Number)),
   signal_count: Schema.optional(Schema.NullOr(Schema.Number)),
+  // Which PostHog products emitted the signals behind the report, e.g.
+  // "error_tracking", "conversations", "signals_scout".
+  source_products: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  // PostHog routed this report to the reading user: they are one of its
+  // suggested reviewers. The inbox's "For you" section is exactly this flag.
+  is_suggested_reviewer: Schema.optional(Schema.NullOr(Schema.Boolean)),
   charts: Schema.optional(Schema.NullOr(Schema.Array(PostHogReportChart))),
   implementation_pr_url: Schema.optional(Schema.NullOr(Schema.String)),
   implementation_pr_merged: Schema.optional(Schema.NullOr(Schema.Boolean)),
@@ -95,11 +101,34 @@ export const PostHogCodeReference = Schema.Struct({
 });
 export type PostHogCodeReference = typeof PostHogCodeReference.Type;
 
+/** A commit that put a reviewer on the hook, with the sentence explaining why. */
+export const PostHogRelevantCommit = Schema.Struct({
+  sha: Schema.String,
+  reason: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  url: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type PostHogRelevantCommit = typeof PostHogRelevantCommit.Type;
+
+/** PostHog enriches reviewers with the org member they resolved to at read time. */
+export const PostHogReviewerUser = Schema.Struct({
+  uuid: Schema.optional(Schema.NullOr(Schema.String)),
+  email: Schema.optional(Schema.NullOr(Schema.String)),
+  first_name: Schema.optional(Schema.NullOr(Schema.String)),
+  last_name: Schema.optional(Schema.NullOr(Schema.String)),
+});
+export type PostHogReviewerUser = typeof PostHogReviewerUser.Type;
+
 export const PostHogSuggestedReviewer = Schema.Struct({
   github_login: Schema.String,
   github_name: Schema.optional(Schema.NullOr(Schema.String)),
   reason: Schema.optional(Schema.NullOr(Schema.String)),
   is_skill_owner: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  // Why this person was named. Kept because this app has no pull request yet
+  // to carry the reasoning: the report is where the routing is justified.
+  relevant_commits: Schema.Array(PostHogRelevantCommit).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  user: Schema.optional(Schema.NullOr(PostHogReviewerUser)),
 });
 export type PostHogSuggestedReviewer = typeof PostHogSuggestedReviewer.Type;
 export const PostHogSuggestedReviewers = Schema.Array(PostHogSuggestedReviewer);
@@ -130,6 +159,35 @@ export const PostHogReportsListResult = Schema.Struct({
   count: Schema.Number,
 });
 export type PostHogReportsListResult = typeof PostHogReportsListResult.Type;
+
+/**
+ * One signal behind a report: the support ticket, error-tracking issue, or
+ * scout finding that triggered it. This is the report's primary evidence —
+ * distinct from `signal_finding` artefacts, which are the agent's own notes
+ * about investigating it.
+ */
+export const PostHogSignal = Schema.Struct({
+  signal_id: Schema.String,
+  content: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  source_product: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  source_type: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  source_id: Schema.optional(Schema.NullOr(Schema.String)),
+  timestamp: Schema.optional(Schema.NullOr(Schema.String)),
+  // Product-specific payload; its shape depends on the source, so it stays
+  // opaque here and each source's card reads the keys it knows.
+  extra: Schema.optional(Schema.Unknown),
+});
+export type PostHogSignal = typeof PostHogSignal.Type;
+
+export const PostHogReportSignalsInput = Schema.Struct({
+  reportId: PostHogReportId,
+});
+export type PostHogReportSignalsInput = typeof PostHogReportSignalsInput.Type;
+
+export const PostHogReportSignalsResult = Schema.Struct({
+  signals: Schema.Array(PostHogSignal),
+});
+export type PostHogReportSignalsResult = typeof PostHogReportSignalsResult.Type;
 
 export const PostHogReportArtefactsInput = Schema.Struct({
   reportId: PostHogReportId,
@@ -201,6 +259,37 @@ export const PostHogRpcError = Schema.Union([
   PostHogRequestError,
 ]);
 export type PostHogRpcError = typeof PostHogRpcError.Type;
+
+// ── Inbox sections ─────────────────────────────────────────────────────────
+
+/**
+ * What a section keeps. Every field is a narrowing: an empty array or an
+ * absent flag means "do not filter on this", so `{}` matches every report.
+ * Only fields the list payload already carries are filterable, so a section
+ * costs no extra request.
+ */
+export const PostHogInboxFilter = Schema.Struct({
+  statuses: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  priorities: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  actionabilities: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  sourceProducts: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** True keeps only reports PostHog routed to the reading user. */
+  forYou: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  hasPullRequest: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  alreadyAddressed: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  titleContains: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type PostHogInboxFilter = typeof PostHogInboxFilter.Type;
+
+/** A section the user named and defined. Built-in sections are not stored. */
+export const PostHogInboxSection = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  filter: PostHogInboxFilter,
+  /** Sections start folded when the reader collapsed them last. */
+  collapsed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type PostHogInboxSection = typeof PostHogInboxSection.Type;
 
 /** The report's page in the PostHog inbox. */
 export function postHogReportUrl(input: {

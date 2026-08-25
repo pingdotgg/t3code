@@ -133,6 +133,37 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   );
 }
 
+/*
+ * macOS hides the titlebar and floats the traffic lights over the window's
+ * top-left corner: they start at x=16 and run about 52px, so they reach past
+ * the 48px icon rail into whatever sits beside it. The wide sidebar is wide
+ * enough to hold them; the rail is not, so under the rail chrome the divider
+ * stops below the titlebar band and the page header starts clear of them.
+ *
+ * Windows and Linux use the Window Controls Overlay, which reserves its own
+ * space and puts the controls on the right — hence the `:not(.wco)`.
+ */
+html.electron:not(.wco) {
+  --workspace-rail-header-inset: 2rem;
+
+  [data-app-chrome="rail"] [data-rail-divider] {
+    top: var(--workspace-topbar-height);
+  }
+
+  /* The band the lights sit in reads as one surface across rail and content;
+     the rail's own colour and grain start below it. */
+  [data-app-chrome="rail"] [data-rail-titlebar] {
+    background-color: var(--background);
+  }
+
+  [data-app-chrome="rail"] .workspace-page-header {
+    padding-left: max(
+      var(--workspace-rail-header-inset),
+      calc(env(safe-area-inset-left) + 1.25rem)
+    );
+  }
+}
+
 /* The font tokens are declared outside the inline theme so utilities reference
    the variables and Settings -> Appearance can override them at runtime. The
    default stacks are mirrored in `appearanceFonts.ts`. */

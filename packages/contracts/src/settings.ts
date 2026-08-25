@@ -3,6 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { PostHogInboxSection } from "./posthog.ts";
 import { ThreadEnvMode } from "./environment.ts";
 import {
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -568,6 +569,19 @@ export const PostHogSettings = Schema.Struct({
   projectId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   apiKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   apiKeyConfigured: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Sections the reader defined, after the built-in ones. Server-held rather
+   * than client-local so they survive a reload and reach a remote client:
+   * one PostHog key per server makes server settings effectively per-user.
+   */
+  inboxSections: Schema.Array(PostHogInboxSection).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /**
+   * Reports the agent judged nothing can be done about. PostHog keeps these
+   * behind a staff-only tab in its own inbox, so they are off by default here.
+   */
+  showNotActionableReports: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type PostHogSettings = typeof PostHogSettings.Type;
 
@@ -902,6 +916,9 @@ export const ServerSettingsPatch = Schema.Struct({
       apiKey: Schema.optionalKey(TrimmedString),
       // `false` removes the stored key.
       apiKeyConfigured: Schema.optionalKey(Schema.Boolean),
+      // Replaces the whole list; the inbox sends the order it wants kept.
+      inboxSections: Schema.optionalKey(Schema.Array(PostHogInboxSection)),
+      showNotActionableReports: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   providers: Schema.optionalKey(

@@ -1,33 +1,8 @@
 /**
- * Pure list logic for the report inbox: which section a report belongs to,
- * whether it is unread, and the one-line summary a row shows.
+ * Pure row-level logic for the report inbox: how a report reads in a row.
+ * Which section it lands in lives in `inboxSections.logic.ts`.
  */
 import type { PostHogReport } from "@t3tools/contracts";
-
-export type InboxSection = "needs-you" | "watching" | "done";
-
-/** The sections a report can land in, in reading order. */
-export const INBOX_SECTIONS: ReadonlyArray<{
-  readonly id: Exclude<InboxSection, "done">;
-  readonly label: string;
-}> = [
-  { id: "needs-you", label: "Needs you" },
-  { id: "watching", label: "Watching" },
-];
-
-export function inboxSectionForStatus(status: string): InboxSection {
-  switch (status) {
-    case "ready":
-    case "pending_input":
-      return "needs-you";
-    case "resolved":
-    case "suppressed":
-    case "deleted":
-      return "done";
-    default:
-      return "watching";
-  }
-}
 
 /** Human labels for the statuses the inbox shows. Unknown statuses read as themselves. */
 const STATE_LABELS: Readonly<Record<string, string>> = {
@@ -44,6 +19,44 @@ const STATE_LABELS: Readonly<Record<string, string>> = {
 
 export function reportStateLabel(status: string): string {
   return STATE_LABELS[status] ?? status.replace(/_/g, " ");
+}
+
+/** PostHog's product keys read as product names, e.g. `error_tracking`. */
+const SOURCE_PRODUCT_LABELS: Readonly<Record<string, string>> = {
+  error_tracking: "Error tracking",
+  session_replay: "Session replay",
+  llm_analytics: "AI observability",
+  signals_scout: "Scout",
+  conversations: "Support",
+  health_checks: "Health checks",
+};
+
+export function sourceProductLabel(product: string): string {
+  return SOURCE_PRODUCT_LABELS[product] ?? product.replace(/_/g, " ");
+}
+
+/**
+ * Conventional-commit types PostHog's agents write titles with. Only these
+ * are stripped: `billing: fix the thing` is a sentence someone wrote, not a
+ * commit prefix, and mangling it would be worse than leaving it.
+ */
+const CONVENTIONAL_PREFIX =
+  /^(?:build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(?:\([^)]*\))?!?:\s*/i;
+
+/**
+ * A report title read as a brief rather than a commit. The agent writes
+ * `fix(tasks): Say which limit was hit`; a reader scanning an inbox wants
+ * "Say which limit was hit".
+ */
+export function humanizeReportTitle(title: string, fallback = "Untitled report"): string {
+  const trimmed = title.trim();
+  if (trimmed.length === 0) return fallback;
+  const stripped = trimmed.replace(CONVENTIONAL_PREFIX, "").trim();
+  // Nothing was stripped, so the title is as its author meant it. Only a
+  // sentence left headless by removing its prefix gets recapitalized.
+  if (stripped === trimmed) return trimmed;
+  if (stripped.length === 0) return trimmed;
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
 }
 
 const SENTENCE_END = /[.!?](?=\s|$)/;
@@ -82,36 +95,6 @@ export function isReportUnread(report: PostHogReport, seen: ReportSeenMap): bool
   const lastSeen = seen[report.id];
   if (lastSeen === undefined) return true;
   return report.updated_at > lastSeen;
-}
-
-export interface InboxSectionGroup {
-  readonly id: Exclude<InboxSection, "done">;
-  readonly label: string;
-  readonly reports: ReadonlyArray<PostHogReport>;
-}
-
-/** Newest first, matching how the list reads top to bottom. */
-function byUpdatedAtDescending(a: PostHogReport, b: PostHogReport): number {
-  return b.updated_at.localeCompare(a.updated_at);
-}
-
-/** The inbox view: "Needs you" then "Watching", each newest first. */
-export function groupInboxReports(
-  reports: ReadonlyArray<PostHogReport>,
-): ReadonlyArray<InboxSectionGroup> {
-  return INBOX_SECTIONS.map((section) => ({
-    ...section,
-    reports: reports
-      .filter((report) => inboxSectionForStatus(report.status) === section.id)
-      .sort(byUpdatedAtDescending),
-  })).filter((section) => section.reports.length > 0);
-}
-
-/** The done view: resolved and archived reports, newest first. */
-export function doneReports(reports: ReadonlyArray<PostHogReport>): ReadonlyArray<PostHogReport> {
-  return reports
-    .filter((report) => inboxSectionForStatus(report.status) === "done")
-    .sort(byUpdatedAtDescending);
 }
 
 /** The row focus lands on after a report leaves the list. */

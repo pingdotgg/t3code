@@ -1,36 +1,62 @@
 /**
- * The report inbox. One full-width list, read top to bottom: open a report,
- * act on it, move to the next one. Archiving and restoring write straight
- * through to PostHog; read state is local to this client.
+ * The report inbox. Sections the reader defined come first, then the built-in
+ * ones; every report lands in exactly one. Rows carry no rules between them —
+ * whitespace and hover do the separating, so a long queue reads as a list of
+ * reports rather than a table of cells.
+ *
+ * Triage is a focus state of this page rather than a route: `t` swaps the list
+ * for one report at a time, `esc` brings the list back, and the queue survives
+ * a trip into a conversation and back.
  */
-import type { EnvironmentId, PostHogReport } from "@t3tools/contracts";
+import type { EnvironmentId, PostHogInboxFilter, PostHogReport } from "@t3tools/contracts";
+import { PostHogReportId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { ArchiveRestoreIcon, ArchiveXIcon } from "lucide-react";
+import { ChevronRightIcon, EllipsisIcon, ListChecksIcon, PencilIcon, PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EmptyState } from "../../brand/EmptyState";
-import { statusColorVar } from "../../brand/statusColors";
 import { isElectron } from "../../env";
+import { useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { selectReportSeenMap, useReportSeenStore } from "../../reportSeenStore";
+import { useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { postHogEnvironment, reportsListAtom } from "../../state/posthog";
+import { useEnvironmentQuery } from "../../state/query";
+import { primaryServerSettingsAtom } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
-import { PriorityChip } from "../reports/PriorityChip";
+import { useAtomValue } from "@effect/atom-react";
+import { IMPLEMENT_INTENT } from "../reports/reportIntent";
+import type { ReportDecisionHandlers } from "../reports/ReportDecision";
 import { usePostHogQuery, type PostHogQueryError } from "../reports/reportsQuery";
 import { useReportOpener } from "../reports/useOpenReport";
 import { Button } from "../ui/button";
-import { SidebarInset } from "../ui/sidebar";
-import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { Kbd } from "../ui/kbd";
 import {
-  doneReports,
-  groupInboxReports,
-  isReportUnread,
-  nextFocusedReportId,
-  reportStateLabel,
-  summaryLine,
-} from "./inboxList.logic";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/menu";
+import { SidebarInset } from "../ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { isReportUnread, nextFocusedReportId } from "./inboxList.logic";
+import {
+  buildDoneSections,
+  buildInboxSections,
+  buildReportWork,
+  nextCustomSectionId,
+  NO_WORK,
+  SECTION_PAGE_SIZE,
+  visibleSectionReports,
+  type InboxScope,
+  type InboxSectionGroup,
+} from "./inboxSections.logic";
+import { ReportRow } from "./ReportRow";
+import { SectionEditorDialog } from "./SectionEditorDialog";
+import { TriageFocus } from "./TriageFocus";
+import { useTriageStore } from "./triageStore";
 
 export type InboxView = "inbox" | "done";
 
@@ -38,6 +64,9 @@ const VIEW_TITLES: Readonly<Record<InboxView, string>> = {
   inbox: "Inbox",
   done: "Done",
 };
+
+/** Sections whose reports are asking for something, in the order they read. */
+const DECISION_SECTION_IDS: ReadonlySet<string> = new Set(["needs-you"]);
 
 function PostHogErrorState({ error }: { readonly error: PostHogQueryError }) {
   const navigate = useNavigate();
@@ -76,77 +105,74 @@ function PostHogErrorState({ error }: { readonly error: PostHogQueryError }) {
   );
 }
 
-function ReportRow({
-  report,
-  unread,
-  focused,
-  busy,
-  view,
-  onOpen,
-  onArchive,
-  onRestore,
-  onFocus,
+function SectionHeading({
+  group,
+  collapsed,
+  onToggle,
+  onEdit,
 }: {
-  readonly report: PostHogReport;
-  readonly unread: boolean;
-  readonly focused: boolean;
-  readonly busy: boolean;
-  readonly view: InboxView;
-  readonly onOpen: () => void;
-  readonly onArchive: () => void;
-  readonly onRestore: () => void;
-  readonly onFocus: () => void;
+  readonly group: InboxSectionGroup;
+  readonly collapsed: boolean;
+  readonly onToggle: () => void;
+  readonly onEdit: (() => void) | null;
 }) {
-  const summary = summaryLine(report.summary);
   return (
-    <div
-      data-report-row={report.id}
-      data-focused={focused ? "" : undefined}
-      className={cn(
-        "group flex w-full items-center gap-3 border-b border-border/50 px-4 py-2.5 text-sm",
-        focused ? "bg-accent/60" : "hover:bg-accent/30",
-      )}
-      onMouseEnter={onFocus}
-    >
-      <span
-        aria-hidden
-        className="size-1.5 shrink-0 rounded-full"
-        style={unread ? { backgroundColor: statusColorVar("needsYou") } : undefined}
-      />
+    <div className="group/section mt-6 flex items-baseline gap-2 px-3 pb-1 first:mt-0">
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-baseline gap-2 text-left outline-hidden"
-        onClick={onOpen}
+        aria-expanded={!collapsed}
+        onClick={onToggle}
+        className="flex items-baseline gap-2 text-start"
       >
-        <span className={cn("shrink-0 truncate", unread ? "font-semibold" : "font-normal")}>
-          {report.title}
+        <ChevronRightIcon
+          className={cn(
+            "size-3 self-center text-muted-foreground/60 transition-transform",
+            !collapsed && "rotate-90",
+          )}
+        />
+        <h2 className="text-xs font-medium text-muted-foreground">{group.label}</h2>
+        <span className="text-xs tabular-nums text-muted-foreground/70">
+          {group.reports.length}
         </span>
-        {summary ? (
-          <span className="min-w-0 flex-1 truncate text-muted-foreground">{summary}</span>
-        ) : null}
       </button>
-      {report.priority ? <PriorityChip priority={report.priority} className="shrink-0" /> : null}
-      <span className="w-24 shrink-0 text-right text-xs text-muted-foreground">
-        {reportStateLabel(report.status)}
-      </span>
-      <span className="w-16 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-        {formatRelativeTimeLabel(report.updated_at)}
-      </span>
-      <Button
-        size="icon-micro"
-        variant="ghost"
-        className="shrink-0"
-        disabled={busy}
-        aria-label={view === "done" ? `Restore ${report.title}` : `Archive ${report.title}`}
-        onClick={view === "done" ? onRestore : onArchive}
-      >
-        {view === "done" ? (
-          <ArchiveRestoreIcon className="size-3.5" />
-        ) : (
-          <ArchiveXIcon className="size-3.5" />
-        )}
-      </Button>
+      {onEdit ? (
+        <Button
+          size="icon-micro"
+          variant="ghost"
+          aria-label={`Edit ${group.label}`}
+          className="opacity-0 transition-opacity group-hover/section:opacity-100"
+          onClick={onEdit}
+        >
+          <PencilIcon className="size-3" />
+        </Button>
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * Warms the focused report's artefacts so opening it paints rather than waits.
+ * Trails the focus by a beat: holding j to run down the list should not fire a
+ * request per row it passes through.
+ */
+function usePrefetchFocusedReport(
+  environmentId: EnvironmentId,
+  focusedReportId: string | null,
+): void {
+  const [settledReportId, setSettledReportId] = useState<string | null>(null);
+  useEffect(() => {
+    if (focusedReportId === null) return;
+    const timer = setTimeout(() => setSettledReportId(focusedReportId), 250);
+    return () => clearTimeout(timer);
+  }, [focusedReportId]);
+
+  useEnvironmentQuery(
+    settledReportId === null
+      ? null
+      : postHogEnvironment.artefacts({
+          environmentId,
+          input: { reportId: PostHogReportId.make(settledReportId) },
+        }),
   );
 }
 
@@ -174,16 +200,34 @@ function ConnectedInboxPage({
 }) {
   const reportsQuery = usePostHogQuery(reportsListAtom(environmentId));
   const seen = useReportSeenStore(selectReportSeenMap);
+  const serverSettings = useAtomValue(primaryServerSettingsAtom);
+  const updateSettings = useUpdatePrimarySettings();
+  const customSections = serverSettings.posthog.inboxSections;
+  const showNotActionable = serverSettings.posthog.showNotActionableReports;
+
   const setReportState = useAtomCommand(postHogEnvironment.setReportState, {
     reportFailure: false,
   });
   const { openReport, error: openError } = useReportOpener(environmentId);
+  const navigate = useNavigate();
+
+  const triageActive = useTriageStore((state) => state.active);
+  const setTriageActive = useTriageStore((state) => state.setActive);
+  const [scope, setScope] = useState<InboxScope>("for-you");
+
+  // The half of a report's state PostHog cannot see: conversations, worktrees,
+  // and agents running on this machine right now.
+  const threads = useThreadShells();
+  const work = useMemo(() => buildReportWork(threads), [threads]);
+
   // Archiving is written to PostHog and confirmed by the next list fetch; the
   // row leaves the list immediately so the reader keeps moving.
   const [statusOverrides, setStatusOverrides] = useState<Readonly<Record<string, string>>>({});
   const [busyReportId, setBusyReportId] = useState<string | null>(null);
   const [focusedReportId, setFocusedReportId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+  const [creatingSection, setCreatingSection] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   const reports = useMemo(() => {
@@ -199,12 +243,75 @@ function ConnectedInboxPage({
   const sections = useMemo(
     () =>
       view === "done"
-        ? [{ id: "done" as const, label: "Done", reports: doneReports(reports) }]
-        : groupInboxReports(reports),
-    [reports, view],
+        ? buildDoneSections(reports)
+        : buildInboxSections(reports, customSections, { showNotActionable, scope, work }).filter(
+            (group) => group.reports.length > 0 || !group.builtIn,
+          ),
+    [customSections, reports, scope, showNotActionable, view, work],
   );
+
+  const [collapsedSectionIds, setCollapsedSectionIds] = useState<ReadonlySet<string>>(
+    () => new Set(sections.filter((group) => group.defaultCollapsed).map((group) => group.id)),
+  );
+  const isCollapsed = useCallback(
+    (group: InboxSectionGroup) => collapsedSectionIds.has(group.id),
+    [collapsedSectionIds],
+  );
+  const [sectionLimits, setSectionLimits] = useState<Readonly<Record<string, number>>>({});
+  const revealMore = useCallback((id: string) => {
+    setSectionLimits((current) => ({
+      ...current,
+      [id]: (current[id] ?? SECTION_PAGE_SIZE) + SECTION_PAGE_SIZE,
+    }));
+  }, []);
+
+  // One place decides what is on screen, so the rows, the keyboard order, and
+  // the reveal control can never disagree about it.
+  const visibleBySection = useMemo(() => {
+    const entries = new Map<string, ReturnType<typeof visibleSectionReports>>();
+    for (const group of sections) {
+      entries.set(
+        group.id,
+        collapsedSectionIds.has(group.id)
+          ? { visible: [], hiddenCount: group.reports.length, nextRevealCount: 0 }
+          : visibleSectionReports(group.reports, sectionLimits[group.id] ?? SECTION_PAGE_SIZE),
+      );
+    }
+    return entries;
+  }, [collapsedSectionIds, sectionLimits, sections]);
+
+  const toggleSection = useCallback((id: string) => {
+    setCollapsedSectionIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Rows out of sight — folded away or below a section's cap — are rows j/k
+  // must not walk into.
   const orderedIds = useMemo<ReadonlyArray<string>>(
-    () => sections.flatMap((section) => section.reports.map((report) => String(report.id))),
+    () =>
+      sections.flatMap((section) =>
+        (visibleBySection.get(section.id)?.visible ?? []).map((report) => String(report.id)),
+      ),
+    [sections, visibleBySection],
+  );
+
+  // Counted across every section, folded ones included: whether the inbox is
+  // empty is a fact about the reports, not about what the reader has folded.
+  const reportCount = useMemo(
+    () => sections.reduce((sum, section) => sum + section.reports.length, 0),
+    [sections],
+  );
+
+  /** Reports that are asking for something, in list order. Triage walks these. */
+  const decisionQueue = useMemo(
+    () =>
+      sections
+        .filter((section) => !section.builtIn || DECISION_SECTION_IDS.has(section.id))
+        .flatMap((section) => section.reports),
     [sections],
   );
 
@@ -219,11 +326,11 @@ function ConnectedInboxPage({
   }, [orderedIds]);
 
   useEffect(() => {
-    if (focusedReportId === null) return;
+    if (focusedReportId === null || triageActive) return;
     listRef.current
       ?.querySelector(`[data-report-row="${CSS.escape(focusedReportId)}"]`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [focusedReportId]);
+  }, [focusedReportId, triageActive]);
 
   const changeState = useCallback(
     async (report: PostHogReport, state: "suppressed" | "potential") => {
@@ -255,12 +362,45 @@ function ConnectedInboxPage({
     [busyReportId, environmentId, orderedIds, reportsQuery, setReportState],
   );
 
+  const saveSections = useCallback(
+    (next: ReadonlyArray<(typeof customSections)[number]>) => {
+      updateSettings({ posthog: { inboxSections: next } });
+    },
+    [updateSettings],
+  );
+
   const focusedReport = useMemo(
     () => reports.find((report) => report.id === focusedReportId) ?? null,
     [focusedReportId, reports],
   );
 
+  const makeHandlers = useCallback(
+    (report: PostHogReport, advance: () => void): ReportDecisionHandlers => ({
+      onImplement: (direction) =>
+        openReport(report, {
+          intent: direction.length > 0 ? `${IMPLEMENT_INTENT}\n\n${direction}` : IMPLEMENT_INTENT,
+        }),
+      onAnswer: (answer) => openReport(report, { intent: answer }),
+      onAsk: () => openReport(report),
+      onContinue: () => openReport(report),
+      // Triage has no room for a diff; reviewing opens the report's page,
+      // which does.
+      onReviewPullRequest: () =>
+        void navigate({ to: "/inbox/$reportId", params: { reportId: report.id } }),
+      onOpenPullRequestExternally: () => {
+        const url = report.implementation_pr_url;
+        if (url) window.open(url, "_blank", "noopener,noreferrer");
+      },
+      onArchive: () => {
+        void changeState(report, "suppressed");
+        advance();
+      },
+    }),
+    [changeState, navigate, openReport],
+  );
+
   useEffect(() => {
+    if (triageActive) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -271,6 +411,11 @@ function ConnectedInboxPage({
           target.isContentEditable ||
           target.closest('[role="dialog"], [aria-modal="true"], [data-slot$="popup"]') !== null)
       ) {
+        return;
+      }
+      if (event.key === "t" && view === "inbox" && decisionQueue.length > 0) {
+        event.preventDefault();
+        setTriageActive(true);
         return;
       }
       if (event.key !== "j" && event.key !== "k" && event.key !== "Enter" && event.key !== "e") {
@@ -289,7 +434,7 @@ function ConnectedInboxPage({
       }
       if (focusedReport === null) return;
       if (event.key === "Enter") {
-        openReport(focusedReport);
+        void navigate({ to: "/inbox/$reportId", params: { reportId: focusedReport.id } });
         return;
       }
       void changeState(focusedReport, view === "done" ? "potential" : "suppressed");
@@ -297,32 +442,128 @@ function ConnectedInboxPage({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [changeState, focusedReport, openReport, orderedIds, view]);
+  }, [
+    changeState,
+    decisionQueue.length,
+    focusedReport,
+    navigate,
+    orderedIds,
+    setTriageActive,
+    triageActive,
+    view,
+  ]);
 
-  const total = orderedIds.length;
+  usePrefetchFocusedReport(environmentId, focusedReportId);
+
+  const editingSection = customSections.find((section) => section.id === editingSectionId) ?? null;
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <WorkspacePageHeader electron={isElectron} className="border-b border-border/60">
         <h1 className="text-sm font-semibold">{VIEW_TITLES[view]}</h1>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="ms-auto"
-          disabled={reportsQuery.isPending}
-          onClick={reportsQuery.refresh}
-        >
-          {reportsQuery.isPending ? "Loading…" : "Refresh"}
-        </Button>
+        {view === "inbox" && !triageActive ? (
+          <div className="ms-3 flex items-center rounded-[var(--control-radius)] bg-muted/60 p-0.5 text-xs">
+            {(
+              [
+                { value: "for-you", label: "For you" },
+                { value: "everyone", label: "Everyone" },
+              ] as const
+            ).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={scope === option.value}
+                onClick={() => setScope(option.value)}
+                className={cn(
+                  "rounded-[calc(var(--control-radius)-2px)] px-2 py-0.5 transition-colors",
+                  scope === option.value
+                    ? "bg-background text-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <div className="ms-auto flex items-center gap-1">
+          {view === "inbox" && !triageActive ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={decisionQueue.length === 0}
+                    onClick={() => setTriageActive(true)}
+                  >
+                    <ListChecksIcon className="size-3.5" />
+                    Triage
+                  </Button>
+                }
+              />
+              <TooltipPopup side="bottom">
+                <span className="flex items-center gap-1.5">
+                  One report at a time <Kbd>t</Kbd>
+                </span>
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={reportsQuery.isPending}
+            onClick={reportsQuery.refresh}
+          >
+            {reportsQuery.isPending ? "Loading…" : "Refresh"}
+          </Button>
+          {view === "inbox" ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button size="icon-micro" variant="ghost" aria-label="Inbox options">
+                    <EllipsisIcon className="size-3.5" />
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={() =>
+                    updateSettings({
+                      posthog: { showNotActionableReports: !showNotActionable },
+                    })
+                  }
+                >
+                  {showNotActionable ? "Hide" : "Show"} reports with nothing to do
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </div>
       </WorkspacePageHeader>
+
       {(actionError ?? openError) ? (
         <p className="border-b border-border/50 px-4 py-2 text-xs text-destructive">
           {actionError ?? openError}
         </p>
       ) : null}
+
       {reportsQuery.error ? (
         <PostHogErrorState error={reportsQuery.error} />
-      ) : total === 0 ? (
+      ) : triageActive && view === "inbox" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <TriageFocus
+            environmentId={environmentId}
+            reports={decisionQueue}
+            busy={busyReportId !== null}
+            onExit={() => setTriageActive(false)}
+            onOpenReport={(report) =>
+              void navigate({ to: "/inbox/$reportId", params: { reportId: report.id } })
+            }
+            makeHandlers={makeHandlers}
+          />
+        </div>
+      ) : reportCount === 0 && customSections.length === 0 ? (
         <div className="flex flex-1 items-center justify-center p-8">
           {reportsQuery.isPending ? (
             <EmptyState hoggie="loading" title="Loading reports" />
@@ -338,29 +579,108 @@ function ConnectedInboxPage({
         </div>
       ) : (
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
-          {sections.map((section) => (
-            <section key={section.id}>
-              <h2 className="sticky top-0 z-10 border-b border-border/50 bg-background/95 px-4 py-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground backdrop-blur">
-                {section.label}
-              </h2>
-              {section.reports.map((report) => (
-                <ReportRow
-                  key={report.id}
-                  report={report}
-                  view={view}
-                  unread={isReportUnread(report, seen)}
-                  focused={focusedReportId === report.id}
-                  busy={busyReportId === report.id}
-                  onFocus={() => setFocusedReportId(report.id)}
-                  onOpen={() => openReport(report)}
-                  onArchive={() => void changeState(report, "suppressed")}
-                  onRestore={() => void changeState(report, "potential")}
+          <div className="mx-auto w-full max-w-4xl px-4 py-4">
+            {sections.map((group) => (
+              <section key={group.id}>
+                <SectionHeading
+                  group={group}
+                  collapsed={isCollapsed(group)}
+                  onToggle={() => toggleSection(group.id)}
+                  onEdit={group.builtIn ? null : () => setEditingSectionId(group.id)}
                 />
-              ))}
-            </section>
-          ))}
+                {isCollapsed(group) ? null : group.reports.length === 0 ? (
+                  <p className="px-3 py-1.5 text-xs text-muted-foreground/70">
+                    Nothing here right now.
+                  </p>
+                ) : (
+                  (visibleBySection.get(group.id)?.visible ?? []).map((report) => (
+                    <ReportRow
+                      key={report.id}
+                      report={report}
+                      work={work.get(report.id) ?? NO_WORK}
+                      showsRouting={scope === "everyone"}
+                      unread={isReportUnread(report, seen)}
+                      focused={focusedReportId === report.id}
+                      busy={busyReportId === report.id}
+                      closed={view === "done"}
+                      onFocus={() => setFocusedReportId(report.id)}
+                      onOpen={() =>
+                        void navigate({
+                          to: "/inbox/$reportId",
+                          params: { reportId: report.id },
+                        })
+                      }
+                      onArchive={() => void changeState(report, "suppressed")}
+                      onRestore={() => void changeState(report, "potential")}
+                    />
+                  ))
+                )}
+                {!isCollapsed(group) && (visibleBySection.get(group.id)?.hiddenCount ?? 0) > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => revealMore(group.id)}
+                    className="ms-3 rounded-[var(--control-radius)] px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    Show {visibleBySection.get(group.id)?.nextRevealCount} more
+                    <span className="ms-1.5 tabular-nums opacity-60">
+                      {visibleBySection.get(group.id)?.hiddenCount} hidden
+                    </span>
+                  </button>
+                ) : null}
+              </section>
+            ))}
+
+            {view === "inbox" ? (
+              <button
+                type="button"
+                onClick={() => setCreatingSection(true)}
+                className={cn(
+                  "mt-6 flex items-center gap-1.5 rounded-[var(--control-radius)] px-3 py-1.5",
+                  "text-xs text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <PlusIcon className="size-3.5" />
+                New section
+              </button>
+            ) : null}
+          </div>
         </div>
       )}
+
+      {creatingSection ? (
+        <SectionEditorDialog
+          open
+          onOpenChange={(open) => !open && setCreatingSection(false)}
+          section={null}
+          reports={reports}
+          onDelete={null}
+          onSave={(label, filter: PostHogInboxFilter) =>
+            saveSections([
+              ...customSections,
+              { id: nextCustomSectionId(customSections), label, filter, collapsed: false },
+            ])
+          }
+        />
+      ) : null}
+
+      {editingSection ? (
+        <SectionEditorDialog
+          open
+          onOpenChange={(open) => !open && setEditingSectionId(null)}
+          section={editingSection}
+          reports={reports}
+          onDelete={() =>
+            saveSections(customSections.filter((section) => section.id !== editingSection.id))
+          }
+          onSave={(label, filter: PostHogInboxFilter) =>
+            saveSections(
+              customSections.map((section) =>
+                section.id === editingSection.id ? { ...section, label, filter } : section,
+              ),
+            )
+          }
+        />
+      ) : null}
     </SidebarInset>
   );
 }

@@ -30,6 +30,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import type { Project, ThreadShell } from "../../types";
 import { readReportArtefacts } from "./reportArtefacts";
+import { useReportIntentStore } from "./reportIntent";
 
 /** The report's live conversations, most recently updated first. */
 export function reportThreads(
@@ -64,9 +65,19 @@ export function resolveReportProject(
   );
 }
 
+export interface OpenReportOptions {
+  readonly forceNew?: boolean;
+  /**
+   * The first thing to say once the conversation opens. The chat view sends
+   * it on mount, so a decision made on the report screen arrives as the
+   * message that starts the work.
+   */
+  readonly intent?: string;
+}
+
 export interface ReportOpener {
   /** Open the report's most recent conversation, or start a fresh one. */
-  readonly openReport: (report: PostHogReport, options?: { readonly forceNew?: boolean }) => void;
+  readonly openReport: (report: PostHogReport, options?: OpenReportOptions) => void;
   /** The report currently being resolved into a conversation, if any. */
   readonly openingReportId: string | null;
   readonly error: string | null;
@@ -79,7 +90,9 @@ export function useReportOpener(environmentId: EnvironmentId | null): ReportOpen
   const serverSettings = useAtomValue(primaryServerSettingsAtom);
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const markSeen = useReportSeenStore((state) => state.markSeen);
+  const setIntent = useReportIntentStore((state) => state.setIntent);
   const [pending, setPending] = useState<PostHogReport | null>(null);
+  const [pendingIntent, setPendingIntent] = useState<string>("");
   const [awaiting, setAwaiting] = useState<{
     readonly environmentId: EnvironmentId;
     readonly threadId: ThreadShell["id"];
@@ -112,20 +125,23 @@ export function useReportOpener(environmentId: EnvironmentId | null): ReportOpen
   );
 
   const openReport = useCallback(
-    (report: PostHogReport, options?: { readonly forceNew?: boolean }) => {
+    (report: PostHogReport, options?: OpenReportOptions) => {
       if (environmentId === null || pending !== null || awaiting !== null) return;
       setError(null);
       markSeen(report.id, report.updated_at);
+      const intent = options?.intent ?? "";
       if (options?.forceNew !== true) {
         const existing = reportThreads(threads, report.id)[0];
         if (existing) {
+          if (intent.length > 0) setIntent(existing.id, intent);
           goToThread(existing.environmentId, existing.id);
           return;
         }
       }
+      setPendingIntent(intent);
       setPending(report);
     },
-    [awaiting, environmentId, goToThread, markSeen, pending, threads],
+    [awaiting, environmentId, goToThread, markSeen, pending, setIntent, threads],
   );
 
   const resolveIntoThread = useEffectEvent(
@@ -176,6 +192,8 @@ export function useReportOpener(environmentId: EnvironmentId | null): ReportOpen
           setError("Could not start a conversation for this report.");
           return;
         }
+        if (pendingIntent.length > 0) setIntent(threadId, pendingIntent);
+        setPendingIntent("");
         setAwaiting({ environmentId, threadId, reportId: report.id });
       })();
     },

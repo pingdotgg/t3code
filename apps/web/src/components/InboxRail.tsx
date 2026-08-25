@@ -42,10 +42,22 @@ export const InboxRail = memo(function InboxRail() {
   return (
     <nav
       aria-label="Main"
-      className="flex h-dvh w-12 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar surface-grain text-sidebar-foreground"
+      className="relative flex h-dvh w-12 shrink-0 flex-col items-center bg-sidebar surface-grain text-sidebar-foreground"
       data-app-rail=""
     >
+      {/* The divider is drawn rather than bordered so macOS can stop it below
+          the titlebar band, where the traffic lights would otherwise sit on
+          top of it. */}
+      <span
+        aria-hidden
+        className="absolute inset-y-0 end-0 w-px bg-sidebar-border"
+        data-rail-divider=""
+      />
+      {/* On macOS the traffic lights are wider than the rail, so this band
+          takes the page's own surface: the lights then sit on one continuous
+          strip instead of straddling the rail and the content beside it. */}
       <div
+        data-rail-titlebar=""
         className={cn(
           "h-[var(--workspace-topbar-height)] w-full shrink-0",
           isElectron && "drag-region",

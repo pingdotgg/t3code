@@ -3,6 +3,7 @@
  * artefact content open-ended, so each type is decoded leniently and anything
  * that does not match is skipped rather than failing the whole report.
  */
+import * as Effect from "effect/Effect";
 import {
   PostHogActionabilityAssessment,
   PostHogCodeReference,
@@ -16,12 +17,24 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+/**
+ * A `note` artefact: an update appended after the report was written, often
+ * by a scout that found fresher evidence. These are the most current thing on
+ * a report and routinely change its diagnosis.
+ */
+const PostHogReportNote = Schema.Struct({
+  note: Schema.String,
+  author: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type PostHogReportNote = typeof PostHogReportNote.Type;
+
 const decodeFinding = Schema.decodeUnknownOption(PostHogSignalFinding);
 const decodePriority = Schema.decodeUnknownOption(PostHogPriorityAssessment);
 const decodeActionability = Schema.decodeUnknownOption(PostHogActionabilityAssessment);
 const decodeCodeReference = Schema.decodeUnknownOption(PostHogCodeReference);
 const decodeReviewers = Schema.decodeUnknownOption(PostHogSuggestedReviewers);
 const decodeRepoSelection = Schema.decodeUnknownOption(PostHogRepoSelection);
+const decodeNote = Schema.decodeUnknownOption(PostHogReportNote);
 
 function decodeAll<A>(
   artefacts: ReadonlyArray<PostHogReportArtefact>,
@@ -48,6 +61,12 @@ export interface ReportArtefactView {
   }>;
   readonly reviewers: ReadonlyArray<PostHogSuggestedReviewer>;
   readonly repoSelection: PostHogRepoSelection | null;
+  /** Newest first: an update appended after the report was written. */
+  readonly notes: ReadonlyArray<{
+    readonly id: string;
+    readonly createdAt: string;
+    readonly value: PostHogReportNote;
+  }>;
 }
 
 /** Status artefacts are latest-wins on the PostHog side; the API lists newest first. */
@@ -62,5 +81,17 @@ export function readReportArtefacts(
     codeReferences: decodeAll(artefacts, "code_reference", decodeCodeReference),
     reviewers: decodeAll(artefacts, "suggested_reviewers", decodeReviewers)[0]?.value ?? [],
     repoSelection: decodeAll(artefacts, "repo_selection", decodeRepoSelection)[0]?.value ?? null,
+    // The scout that authors a report leaves a bookkeeping note saying so;
+    // it tells the reader nothing the page does not already show.
+    notes: artefacts
+      .filter((artefact) => artefact.type === "note")
+      .flatMap((artefact) =>
+        Option.toArray(decodeNote(artefact.content)).map((value) => ({
+          id: artefact.id,
+          createdAt: artefact.created_at,
+          value,
+        })),
+      )
+      .filter(({ value }) => !value.note.trim().startsWith("Authored directly by the")),
   };
 }

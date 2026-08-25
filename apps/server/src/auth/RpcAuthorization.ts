@@ -96,6 +96,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.gitPreparePullRequestThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.posthogReportsList]: AuthOrchestrationReadScope,
   [WS_METHODS.posthogReportArtefacts]: AuthOrchestrationReadScope,
+  [WS_METHODS.posthogReportSignals]: AuthOrchestrationReadScope,
   [WS_METHODS.posthogSetReportState]: AuthOrchestrationOperateScope,
   [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsCreateWorktree]: AuthOrchestrationOperateScope,

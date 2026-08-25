@@ -136,7 +136,9 @@ import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { ReportHeader } from "./reports/ReportHeader";
-import { ReportStarters } from "./reports/ReportStarters";
+import { useReportIntentStore } from "./reports/reportIntent";
+import { appendReportContextToPrompt } from "../lib/reportContext";
+import { ReportContextInlineChip } from "./chat/ReportContextInlineChip";
 import { useReportThreadContext } from "./reports/useReportThreadContext";
 
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -5641,10 +5643,15 @@ function ChatViewContent(props: ChatViewProps) {
       composerReviewCommentsSnapshot,
     );
     // The report is context for the whole conversation, so it rides along with
-    // the first message. The bubble collapses it, since it is long.
+    // the first message — appended as a tagged block, the way terminal and
+    // element selections travel, so the timeline can lift it back out and show
+    // a chip instead of a page of markdown above what the person wrote.
     const messageTextWithReport =
       isFirstMessage && reportThreadContext.reportPrompt
-        ? `${reportThreadContext.reportPrompt}\n---\n\n${messageTextForSend}`
+        ? appendReportContextToPrompt(messageTextForSend, {
+            title: reportThreadContext.reportTitle ?? "Report",
+            markdown: reportThreadContext.reportPrompt,
+          })
         : messageTextForSend;
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
@@ -6026,6 +6033,28 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  // A decision made on the report screen arrives as the conversation's first
+  // message. Taken once: the store clears the intent as it hands it over, so
+  // a remount cannot re-send the same instruction.
+  const takeReportIntent = useReportIntentStore((state) => state.takeIntent);
+  const sendReportIntentRef = useRef(onSend);
+  sendReportIntentRef.current = onSend;
+  useEffect(() => {
+    if (!activeThreadReportId || !activeServerThread) return;
+    if (timelineEntries.length > 0 || isWorking) return;
+    if (reportThreadContext.reportPrompt === null) return;
+    const intent = takeReportIntent(activeServerThread.id);
+    if (intent === null || intent.trim().length === 0) return;
+    void sendReportIntentRef.current(undefined, "foreground", undefined, intent);
+  }, [
+    activeServerThread,
+    activeThreadReportId,
+    isWorking,
+    reportThreadContext.reportPrompt,
+    takeReportIntent,
+    timelineEntries.length,
+  ]);
 
   const onInterrupt = async () => {
     if (!activeThread) return;
@@ -6939,7 +6968,6 @@ function ChatViewContent(props: ChatViewProps) {
                   environmentId={activeServerThread.environmentId}
                   reportId={activeThreadReportId}
                   threadId={activeServerThread.id}
-                  threadHasMessages={timelineEntries.length > 0}
                   onOpenTerminal={() => setTerminalOpen(true)}
                 />
               ) : null}
@@ -7036,10 +7064,18 @@ function ChatViewContent(props: ChatViewProps) {
                   ) : (
                     <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   )}
-                  {activeThreadReportId && timelineEntries.length === 0 && !isWorking ? (
-                    <ReportStarters
-                      onStart={(text) => void onSend(undefined, "foreground", undefined, text)}
-                    />
+                  {/* What the first message will carry, shown before it does.
+                      Constrained to the composer's own measure — a full-width
+                      row here would sit left of the centred composer. */}
+                  {activeThreadReportId &&
+                  timelineEntries.length === 0 &&
+                  reportThreadContext.reportPrompt ? (
+                    <div className="mx-auto mb-1.5 flex w-full max-w-3xl flex-wrap gap-1.5 px-1">
+                      <ReportContextInlineChip
+                        title={reportThreadContext.reportTitle ?? "Report"}
+                        markdown={reportThreadContext.reportPrompt}
+                      />
+                    </div>
                   ) : null}
                   {threadSyncPhase && !activeEnvironmentUnavailable ? (
                     <ThreadSyncStatusPill phase={threadSyncPhase} />

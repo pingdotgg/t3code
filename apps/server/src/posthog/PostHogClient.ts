@@ -14,6 +14,9 @@ import {
   type PostHogReportArtefactsResult,
   type PostHogReportsListInput,
   type PostHogReportsListResult,
+  type PostHogReportSignalsInput,
+  type PostHogReportSignalsResult,
+  PostHogSignal,
   PostHogRequestError,
   type PostHogRpcError,
   type PostHogSetReportStateInput,
@@ -45,6 +48,12 @@ const PaginatedArtefacts = Schema.Struct({
 });
 const decodePaginatedReports = Schema.decodeUnknownEffect(PaginatedReports);
 const decodePaginatedArtefacts = Schema.decodeUnknownEffect(PaginatedArtefacts);
+// The signals endpoint answers with the report plus its full signal list, not
+// a paginated envelope.
+const ReportSignalsBody = Schema.Struct({
+  signals: Schema.Array(PostHogSignal),
+});
+const decodeReportSignals = Schema.decodeUnknownEffect(ReportSignalsBody);
 const decodeReport = Schema.decodeUnknownEffect(PostHogReport);
 
 export class PostHogClient extends Context.Service<
@@ -56,6 +65,9 @@ export class PostHogClient extends Context.Service<
     readonly listReportArtefacts: (
       input: PostHogReportArtefactsInput,
     ) => Effect.Effect<PostHogReportArtefactsResult, PostHogRpcError>;
+    readonly listReportSignals: (
+      input: PostHogReportSignalsInput,
+    ) => Effect.Effect<PostHogReportSignalsResult, PostHogRpcError>;
     readonly setReportState: (
       input: PostHogSetReportStateInput,
     ) => Effect.Effect<PostHogSetReportStateResult, PostHogRpcError>;
@@ -222,6 +234,27 @@ export const make = Effect.gen(function* () {
     return { artefacts: page.results };
   });
 
+  const listReportSignals: PostHogClient["Service"]["listReportSignals"] = Effect.fn(
+    "PostHogClient.listReportSignals",
+  )(function* (input) {
+    const connection = yield* resolveConnection;
+    const body = yield* getJson(
+      connection,
+      `/signals/reports/${encodeURIComponent(input.reportId)}/signals/`,
+      {},
+    );
+    const decoded = yield* decodeReportSignals(body).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({
+            message: "PostHog returned an unexpected signal list.",
+            cause,
+          }),
+      ),
+    );
+    return { signals: decoded.signals };
+  });
+
   const setReportState: PostHogClient["Service"]["setReportState"] = Effect.fn(
     "PostHogClient.setReportState",
   )(function* (input) {
@@ -240,7 +273,12 @@ export const make = Effect.gen(function* () {
     return { report };
   });
 
-  return { listReports, listReportArtefacts, setReportState } satisfies PostHogClient["Service"];
+  return {
+    listReports,
+    listReportArtefacts,
+    listReportSignals,
+    setReportState,
+  } satisfies PostHogClient["Service"];
 });
 
 export const layer = Layer.effect(PostHogClient, make);

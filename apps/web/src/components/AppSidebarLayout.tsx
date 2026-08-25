@@ -213,7 +213,12 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const showWideSidebar = isOnSettings || legacySidebarEnabled;
 
   return (
-    <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
+    <SidebarProvider
+      className="h-dvh! min-h-0!"
+      defaultOpen
+      data-app-chrome={showWideSidebar ? "sidebar" : "rail"}
+      style={sidebarProviderStyle}
+    >
       <ProjectProjectionRetention />
       {showWideSidebar ? (
         <Sidebar

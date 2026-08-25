@@ -40,11 +40,17 @@ export function resolveReportBranchName(
 export interface ReportThreadContext {
   /** The report and its artefacts as markdown, or null while it loads. */
   readonly reportPrompt: string | null;
+  /** What the message's report chip reads. */
+  readonly reportTitle: string | null;
   /** `posthog/<report>` with a numeric suffix when that branch already exists. */
   readonly worktreeBranchName: string | null;
 }
 
-const EMPTY_CONTEXT: ReportThreadContext = { reportPrompt: null, worktreeBranchName: null };
+const EMPTY_CONTEXT: ReportThreadContext = {
+  reportPrompt: null,
+  reportTitle: null,
+  worktreeBranchName: null,
+};
 
 export function useReportThreadContext({
   environmentId,
@@ -99,7 +105,7 @@ export function useReportThreadContext({
             baseBranch,
             (refsQuery.data?.refs ?? []).map((ref) => ref.name),
           );
-    return { reportPrompt, worktreeBranchName };
+    return { reportPrompt, reportTitle: report?.title ?? null, worktreeBranchName };
   }, [
     active,
     artefactsQuery.data,

@@ -2,10 +2,10 @@ import type { PostHogReport } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  doneReports,
-  groupInboxReports,
+  humanizeReportTitle,
   isReportUnread,
   nextFocusedReportId,
+  sourceProductLabel,
   summaryLine,
 } from "./inboxList.logic";
 
@@ -21,35 +21,6 @@ function report(overrides: Partial<Omit<PostHogReport, "id">> & { id: string }):
 }
 
 describe("inbox list", () => {
-  it("splits reports into Needs you, Watching, and Done", () => {
-    const reports = [
-      report({ id: "a", status: "ready" }),
-      report({ id: "b", status: "pending_input" }),
-      report({ id: "c", status: "in_progress" }),
-      report({ id: "d", status: "failed" }),
-      report({ id: "e", status: "potential" }),
-      report({ id: "f", status: "resolved" }),
-      report({ id: "g", status: "suppressed" }),
-    ];
-
-    expect(
-      groupInboxReports(reports).map((section) => [section.id, section.reports.length]),
-    ).toEqual([
-      ["needs-you", 2],
-      ["watching", 3],
-    ]);
-    expect(doneReports(reports).map((entry) => entry.id)).toEqual(["f", "g"]);
-  });
-
-  it("orders each section newest first", () => {
-    const reports = [
-      report({ id: "old", status: "ready", updated_at: "2026-01-01T00:00:00Z" }),
-      report({ id: "new", status: "ready", updated_at: "2026-02-01T00:00:00Z" }),
-    ];
-
-    expect(groupInboxReports(reports)[0]?.reports.map((entry) => entry.id)).toEqual(["new", "old"]);
-  });
-
   it("marks a report unread until it is seen at its current update time", () => {
     const entry = report({ id: "a", updated_at: "2026-02-01T00:00:00Z" });
 
@@ -70,5 +41,29 @@ describe("inbox list", () => {
     expect(nextFocusedReportId(["a", "b", "c"], "b")).toBe("c");
     expect(nextFocusedReportId(["a", "b", "c"], "c")).toBe("b");
     expect(nextFocusedReportId(["a"], "a")).toBe(null);
+  });
+
+  it("names PostHog's source products, and passes unknown ones through", () => {
+    expect(sourceProductLabel("error_tracking")).toBe("Error tracking");
+    expect(sourceProductLabel("conversations")).toBe("Support");
+    expect(sourceProductLabel("some_new_product")).toBe("some new product");
+  });
+
+  it("strips conventional-commit prefixes from report titles", () => {
+    expect(humanizeReportTitle("fix(tasks): Say which limit was hit")).toBe(
+      "Say which limit was hit",
+    );
+    expect(humanizeReportTitle("feat: add the thing")).toBe("Add the thing");
+    expect(humanizeReportTitle("fix(desktop)!: drop the flag")).toBe("Drop the flag");
+  });
+
+  it("leaves a prefix that is not a conventional-commit type alone", () => {
+    expect(humanizeReportTitle("billing: emails are wrong")).toBe("billing: emails are wrong");
+    expect(humanizeReportTitle("Fix billing emails")).toBe("Fix billing emails");
+  });
+
+  it("keeps the original when stripping would empty the title", () => {
+    expect(humanizeReportTitle("chore:")).toBe("chore:");
+    expect(humanizeReportTitle("")).toBe("Untitled report");
   });
 });
