@@ -13,7 +13,7 @@ import type {
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ThreadLinkedPullRequest } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
@@ -29,6 +29,35 @@ export { snoozeWakeLabel };
  */
 export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
+
+export interface ThreadListV2ChangeRequestState extends ChangeRequestSettleSource {
+  readonly linkedPullRequestKey?: string | null;
+}
+
+function linkedPullRequestKey(
+  linkedPullRequest: ThreadLinkedPullRequest | null | undefined,
+): string | null {
+  if (linkedPullRequest == null) return null;
+  return JSON.stringify([
+    linkedPullRequest.projectId,
+    linkedPullRequest.repository.toLowerCase(),
+    linkedPullRequest.number,
+  ]);
+}
+
+/** Keep the previous linked PR state while its detail query reloads. */
+export function resolveThreadListV2ChangeRequestState(input: {
+  readonly linkedPullRequest: ThreadLinkedPullRequest | null | undefined;
+  readonly state: ChangeRequestSettleSource["state"] | null;
+  readonly updatedAt: string | null;
+}): ThreadListV2ChangeRequestState | null | undefined {
+  if (input.state === null) return input.linkedPullRequest == null ? null : undefined;
+  return {
+    state: input.state,
+    updatedAt: input.updatedAt,
+    linkedPullRequestKey: linkedPullRequestKey(input.linkedPullRequest),
+  };
+}
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
@@ -322,7 +351,7 @@ export function buildThreadListV2Items(input: {
   readonly searchQuery: string;
   readonly matchedThreadKeys?: ReadonlySet<string>;
   /** Per-row PR reported up by visible rows ("env:threadId" keys). */
-  readonly changeRequestByKey?: ReadonlyMap<string, ChangeRequestSettleSource>;
+  readonly changeRequestByKey?: ReadonlyMap<string, ThreadListV2ChangeRequestState>;
   /** Environments whose server supports thread.settle/unsettle. Threads on
       other environments never classify as settled — the user could neither
       un-settle nor pin them. Absent = no gating (tests). */
@@ -384,12 +413,15 @@ export function buildThreadListV2Items(input: {
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
-    const changeRequest =
+    const cachedChangeRequest =
       input.changeRequestByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
-    // Visibility parity with web: snooze outranks everything, including a
-    // pin — a snoozed thread leaves the list until it wakes (or raises its
-    // hand). The pin (and its pinOrderKey) survives underneath, so a woken
-    // thread reappears at its exact spot in the pinned block.
+    const changeRequest =
+      cachedChangeRequest !== null &&
+      (cachedChangeRequest.linkedPullRequestKey ?? null) ===
+        linkedPullRequestKey(thread.linkedPullRequest)
+        ? cachedChangeRequest
+        : null;
+    // Snooze outranks settlement and pinning until the thread wakes.
     if (supportsSnooze && effectiveSnoozed(thread, { now: snoozeNow })) {
       snoozed.push(thread);
       if (
@@ -399,12 +431,6 @@ export function buildThreadListV2Items(input: {
       ) {
         nextSnoozeWakeAt = thread.snoozedUntil;
       }
-      continue;
-    }
-    // A pin otherwise overrides the lifecycle: pinned threads render above
-    // the inbox and never auto-settle out of sight.
-    if (thread.pinnedAt != null) {
-      pinned.push(thread);
       continue;
     }
     if (
@@ -417,6 +443,8 @@ export function buildThreadListV2Items(input: {
       })
     ) {
       settled.push(thread);
+    } else if (thread.pinnedAt != null) {
+      pinned.push(thread);
     } else {
       active.push(thread);
     }
