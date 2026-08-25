@@ -643,6 +643,25 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("preserves valid provider flags when another settings field is invalid", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"addProjectBaseDirectory":42,"providers":{"cursor":{"enabled":false},"grok":{"enabled":true}}}',
+      );
+      yield* recordProviderUsage("cursor");
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.isFalse(settings.providers.cursor.enabled);
+      assert.isTrue(settings.providers.grok.enabled);
+      assert.isFalse(settings.providers.opencode.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("restores providers from persisted runtime sessions", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -691,6 +710,30 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       assert.isFalse(JSON.parse(raw).providers.grok.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists explicit provider enables before their first use", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      yield* serverSettings.updateSettings({
+        providers: {
+          cursor: { enabled: true },
+          grok: { enabled: true },
+          opencode: { enabled: true },
+        },
+      });
+      yield* serverSettings.updateSettings({ addProjectBaseDirectory: "~/Development" });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const persisted = JSON.parse(raw);
+      assert.isTrue(persisted.providers.cursor.enabled);
+      assert.isTrue(persisted.providers.grok.enabled);
+      assert.isTrue(persisted.providers.opencode.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

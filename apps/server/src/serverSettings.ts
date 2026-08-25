@@ -326,14 +326,14 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "textGenerationModelSelection",
 ]);
 
-// Preserve explicit disables because provider history can restore an omitted enabled flag.
-const PERSISTED_SERVER_SETTINGS_DEFAULTS: ServerSettings = {
+// Preserve both enabled states because provider history cannot recover a new opt-in.
+const PERSISTED_SERVER_SETTINGS_DEFAULTS = {
   ...DEFAULT_SERVER_SETTINGS,
   providers: {
     ...DEFAULT_SERVER_SETTINGS.providers,
-    cursor: { ...DEFAULT_SERVER_SETTINGS.providers.cursor, enabled: true },
-    grok: { ...DEFAULT_SERVER_SETTINGS.providers.grok, enabled: true },
-    opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: true },
+    cursor: { ...DEFAULT_SERVER_SETTINGS.providers.cursor, enabled: undefined },
+    grok: { ...DEFAULT_SERVER_SETTINGS.providers.grok, enabled: undefined },
+    opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: undefined },
   },
 };
 
@@ -418,6 +418,9 @@ const make = Effect.gen(function* () {
       const raw = yield* readRawConfig;
       const decoded = decodeServerSettingsJsonExit(raw);
       const persistedSettings = decodePersistedOptionalProviderSettingsJsonExit(raw);
+      if (persistedSettings._tag === "Success") {
+        persisted = persistedSettings.value;
+      }
       if (decoded._tag === "Failure" || persistedSettings._tag === "Failure") {
         const failure = decoded._tag === "Failure" ? decoded : persistedSettings;
         if (failure._tag === "Failure") {
@@ -429,7 +432,6 @@ const make = Effect.gen(function* () {
         }
       } else {
         settings = decoded.value;
-        persisted = persistedSettings.value;
       }
     }
 
