@@ -160,10 +160,7 @@ export class GiteaCliCommandError extends Schema.TaggedErrorClass<GiteaCliComman
 
 export class GiteaPullRequestListDecodeError extends Schema.TaggedErrorClass<GiteaPullRequestListDecodeError>()(
   "GiteaPullRequestListDecodeError",
-  {
-    ...giteaCliDecodeErrorContext,
-    operation: Schema.Literal("listPullRequests"),
-  },
+  giteaCliDecodeErrorContext,
 ) {
   get detail(): string {
     return "Gitea CLI returned invalid pull request list JSON.";
@@ -599,34 +596,22 @@ export const make = Effect.gen(function* () {
         } catch (error) {
           return Effect.fail(
             new GiteaPullRequestListDecodeError({
-              operation: "listPullRequests",
               command: "tea",
               cwd: input.cwd,
               cause: error,
             }),
           );
         }
-        if (!Array.isArray(parsed)) {
-          return Effect.fail(
-            new GiteaPullRequestListDecodeError({
-              operation: "listPullRequests",
-              command: "tea",
-              cwd: input.cwd,
-              cause: new Error("Expected a JSON array"),
-            }),
-          );
-        }
-        const rawList = parsed as ReadonlyArray<unknown>;
+        const rawCount = Array.isArray(parsed) ? parsed.length : 0;
         return Effect.sync(() => decodeGiteaPullRequestListJson(raw)).pipe(
           Effect.flatMap((decoded) =>
             Result.isSuccess(decoded)
               ? Effect.succeed({
                   entries: decoded.success.map(toSummaryWithOptionalUpdatedAt),
-                  rawCount: rawList.length,
+                  rawCount,
                 })
               : Effect.fail(
                   new GiteaPullRequestListDecodeError({
-                    operation: "listPullRequests",
                     command: "tea",
                     cwd: input.cwd,
                     cause: decoded.failure,
