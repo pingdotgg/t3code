@@ -27,6 +27,7 @@ import {
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
+  resolveBranchAfterEnvModeChange,
   resolveDraftPromotionNavigationTarget,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
@@ -75,6 +76,38 @@ describe("draft hero submission transition", () => {
         backgroundSubmissionPending: true,
       }),
     ).toBeNull();
+  });
+});
+
+describe("environment mode branch selection", () => {
+  it("drops the checkout branch when entering new-worktree mode", () => {
+    expect(
+      resolveBranchAfterEnvModeChange({
+        currentMode: "local",
+        nextMode: "worktree",
+        currentBranch: "feature/current-checkout",
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps an explicit base while already in new-worktree mode", () => {
+    expect(
+      resolveBranchAfterEnvModeChange({
+        currentMode: "worktree",
+        nextMode: "worktree",
+        currentBranch: "origin/main",
+      }),
+    ).toBe("origin/main");
+  });
+
+  it("keeps the selected branch when returning to the current checkout", () => {
+    expect(
+      resolveBranchAfterEnvModeChange({
+        currentMode: "worktree",
+        nextMode: "local",
+        currentBranch: "origin/main",
+      }),
+    ).toBe("origin/main");
   });
 });
 
