@@ -99,7 +99,7 @@ export function escapeXmlText(value: string): string {
 /** Pure renderer: launch agents cannot rely on the user's shell or PATH. */
 export function renderBootServicePlist(
   plan: BootServicePlan,
-  options: { readonly homeDir: string },
+  options: { readonly homeDir: string; readonly environmentPath: string },
 ): string {
   // KeepAlive + ThrottleInterval mirror Restart=always + RestartSec=5. launchd
   // has no StartLimitBurst analog; a hard crash loop respawns every 5s forever.
@@ -127,6 +127,8 @@ export function renderBootServicePlist(
     `  </array>`,
     `  <key>EnvironmentVariables</key>`,
     `  <dict>`,
+    `    <key>PATH</key>`,
+    `    <string>${escapeXmlText(options.environmentPath)}</string>`,
     `    <key>T3CODE_HOME</key>`,
     `    <string>${escapeXmlText(plan.baseDir)}</string>`,
     `    <key>${BOOT_SERVICE_UNIT_ENV}</key>`,
@@ -268,6 +270,7 @@ export function launchdManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
   readonly uid: number;
+  readonly environmentPath: string;
 }): BootServiceManager {
   const unitPath = input.path.join(
     input.homeDir,
@@ -287,7 +290,11 @@ export function launchdManager(input: {
   return {
     kind: "launchd",
     unitPath,
-    render: (plan) => renderBootServicePlist(plan, { homeDir: input.homeDir }),
+    render: (plan) =>
+      renderBootServicePlist(plan, {
+        homeDir: input.homeDir,
+        environmentPath: input.environmentPath,
+      }),
     // Without --wait, bootout returns in milliseconds while the job drains
     // for up to ExitTimeOut, and a bootstrap during the drain fails EIO.
     // --wait (present on modern macOS, absent from the man page) blocks until
@@ -346,6 +353,7 @@ export function selectBootServiceManager(input: {
   readonly homeDir: string;
   readonly uid: number | undefined;
   readonly path: Path.Path;
+  readonly environmentPath: string;
 }): BootServiceManager | undefined {
   if (input.homeDir === "") {
     return undefined;
@@ -354,7 +362,12 @@ export function selectBootServiceManager(input: {
     return systemdManager({ path: input.path, homeDir: input.homeDir });
   }
   if (input.platform === "darwin" && input.uid !== undefined) {
-    return launchdManager({ path: input.path, homeDir: input.homeDir, uid: input.uid });
+    return launchdManager({
+      path: input.path,
+      homeDir: input.homeDir,
+      uid: input.uid,
+      environmentPath: input.environmentPath,
+    });
   }
   return undefined;
 }
@@ -441,12 +454,32 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const platform = yield* HostProcessPlatform;
   const uid = yield* HostProcessUserId;
   const homeDir = yield* Config.string("HOME").pipe(Config.withDefault(""));
+  const installerPath = yield* Config.string("PATH").pipe(Config.withDefault(""));
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
+  const environmentPath =
+    installerPath ||
+    Array.from(
+      new Set([
+        path.dirname(host.execPath),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+      ]),
+    ).join(":");
 
-  const detectedManager = selectBootServiceManager({ platform, homeDir, uid, path });
+  const detectedManager = selectBootServiceManager({
+    platform,
+    homeDir,
+    uid,
+    path,
+    environmentPath,
+  });
   const unitPath = detectedManager?.unitPath ?? "";
   const logPath = path.join(input.logsDir, "boot-service.log");
   const launcherPath = path.join(input.baseDir, "runtime", SERVICE_LAUNCHER_FILE);

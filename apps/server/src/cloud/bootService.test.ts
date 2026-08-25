@@ -56,17 +56,26 @@ const macPlan = {
   logPath: "/Users/theo/.t3/userdata/logs/boot-service.log",
   unitPath: "/Users/theo/Library/LaunchAgents/com.t3tools.t3code.service.plist",
 };
+const macInstallerPath =
+  "/opt/homebrew/bin:/Users/theo/.npm-global/bin:/Users/theo/.nvm/versions/node/v22.16.0/bin:/usr/bin:/bin";
+const macRenderOptions = { homeDir: "/Users/theo", environmentPath: macInstallerPath };
 
 it("keeps launchd pinned to the stable launcher rather than a versioned server", () => {
-  const plist = BootService.renderBootServicePlist(macPlan, { homeDir: "/Users/theo" });
+  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
 
   expect(plist).toContain("<string>/opt/homebrew/bin/node</string>");
   expect(plist).toContain("<string>/Users/theo/.t3/runtime/service-launcher.mjs</string>");
   expect(plist).not.toContain("versions/1.2.3");
 });
 
+it("preserves the installer's provider search path in the launch agent", () => {
+  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
+
+  expect(plist).toContain(`    <key>PATH</key>\n    <string>${macInstallerPath}</string>`);
+});
+
 it("restarts the launch agent on the systemd cadence", () => {
-  const plist = BootService.renderBootServicePlist(macPlan, { homeDir: "/Users/theo" });
+  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
 
   expect(plist).toContain("<key>RunAtLoad</key>\n  <true/>");
   expect(plist).toContain("<key>KeepAlive</key>\n  <true/>");
@@ -75,7 +84,7 @@ it("restarts the launch agent on the systemd cadence", () => {
 });
 
 it("appends both stdio streams to the boot service log", () => {
-  const plist = BootService.renderBootServicePlist(macPlan, { homeDir: "/Users/theo" });
+  const plist = BootService.renderBootServicePlist(macPlan, macRenderOptions);
 
   expect(plist).toContain(
     "<key>StandardOutPath</key>\n  <string>/Users/theo/.t3/userdata/logs/boot-service.log</string>",
@@ -88,15 +97,17 @@ it("appends both stdio streams to the boot service log", () => {
 it("escapes XML in host paths", () => {
   const plist = BootService.renderBootServicePlist(
     { ...macPlan, baseDir: "/Users/theo/T3 & <Co>" },
-    { homeDir: "/Users/theo" },
+    { homeDir: "/Users/theo", environmentPath: "/Users/theo/Tools & <Scripts>:/usr/bin" },
   );
 
   expect(plist).toContain("<string>/Users/theo/T3 &amp; &lt;Co&gt;</string>");
+  expect(plist).toContain("<string>/Users/theo/Tools &amp; &lt;Scripts&gt;:/usr/bin</string>");
 });
 
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
   usePinnedLauncher = false,
+  installerPath: string | undefined = macInstallerPath,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -151,7 +162,11 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
         Layer.succeed(HostProcessUserId, 501),
         Layer.succeed(HostProcessExecutablePath, "/usr/bin/node"),
         Layer.succeed(HostProcessArguments, ["/usr/bin/node", path.join(home, "bin.mjs")]),
-        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { HOME: home } })),
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: { HOME: home, ...(installerPath === "" ? {} : { PATH: installerPath }) },
+          }),
+        ),
       ),
     ),
   );
@@ -266,6 +281,9 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(plan.unitPath.endsWith("Library/LaunchAgents/com.t3tools.t3code.service.plist")).toBe(
         true,
       );
+      expect(yield* fs.readFileString(plan.unitPath)).toContain(
+        `    <key>PATH</key>\n    <string>${macInstallerPath}</string>`,
+      );
       expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.3",
@@ -300,6 +318,18 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         `launchctl bootstrap gui/501 ${plistPath}`,
         `launchctl bootstrap gui/501 ${plistPath}`,
       ]);
+    }),
+  );
+
+  it.effect("reconstructs a launch agent search path when the installer has no PATH", () =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness("darwin", false, "");
+      const plan = yield* service.install;
+
+      expect(yield* fs.readFileString(plan.unitPath)).toContain(
+        "    <key>PATH</key>\n    <string>/usr/bin:/opt/homebrew/bin:/usr/local/bin:/bin:/usr/sbin:/sbin</string>",
+      );
+      expect((yield* service.status).current).toBe(true);
     }),
   );
 
