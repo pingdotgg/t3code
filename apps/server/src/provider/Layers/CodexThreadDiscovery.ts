@@ -65,6 +65,9 @@ export function selectCodexThreadsForRead(
     ) {
       return false;
     }
+    if (discoveryInput?.forceReadProviderThreadIds?.has(thread.id) === true) {
+      return true;
+    }
     const knownCursor = discoveryInput?.cursorByProviderThreadId.get(thread.id);
     return knownCursor !== discoveryCursorForThread(thread);
   });

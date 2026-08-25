@@ -72,6 +72,8 @@ export interface ProviderPersistedThread {
 export interface ProviderPersistedThreadDiscoveryInput {
   readonly excludeProviderThreadIds: ReadonlySet<string>;
   readonly cursorByProviderThreadId: ReadonlyMap<string, string>;
+  /** Known imports may need rehoming even when their provider cursor is unchanged. */
+  readonly forceReadProviderThreadIds?: ReadonlySet<string>;
   /** Only threads belonging to explicitly opened workspaces are eligible. */
   readonly workspaceRoots?: ReadonlySet<string>;
 }

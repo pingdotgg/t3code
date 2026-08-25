@@ -200,6 +200,20 @@ it("filters persisted threads to explicitly opened workspace roots", () => {
   expect(selected.map((thread) => thread.id)).toEqual(["project"]);
 });
 
+it("re-reads known imports so scoped discovery can rehome them", () => {
+  const selected = selectCodexThreadsForRead(
+    [makeListedThread("known", { cwd: "/work/project" })],
+    {
+      excludeProviderThreadIds: new Set(),
+      cursorByProviderThreadId: new Map([["known", "2026-05-03T03:09:20.000Z:idle"]]),
+      forceReadProviderThreadIds: new Set(["known"]),
+      workspaceRoots: new Set(["/work/project"]),
+    },
+  );
+
+  expect(selected.map((thread) => thread.id)).toEqual(["known"]);
+});
+
 it.effect("keeps readable threads when a sibling disappears between list and read", () =>
   Effect.gen(function* () {
     const threads = [makeListedThread("deleted"), makeListedThread("healthy")];

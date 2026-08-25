@@ -153,6 +153,7 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
     const threadByProviderIdentity = new Map<string, ThreadId>();
     const excludedThreadIdsByContinuation = new Map<string, Set<string>>();
     const cursorByThreadIdByContinuation = new Map<string, Map<string, string>>();
+    const forceReadThreadIdsByContinuation = new Map<string, Set<string>>();
     const importedOwnerInstanceIdsByContinuation = new Map<string, Set<string>>();
     const unresolvedNativeProviderThreadIds = new Set<string>();
 
@@ -186,6 +187,9 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
         excluded.add(binding.resumeCursor.threadId);
         excludedThreadIdsByContinuation.set(continuationKey, excluded);
       } else {
+        const forceRead = forceReadThreadIdsByContinuation.get(continuationKey) ?? new Set();
+        forceRead.add(binding.resumeCursor.threadId);
+        forceReadThreadIdsByContinuation.set(continuationKey, forceRead);
         const importedOwners =
           importedOwnerInstanceIdsByContinuation.get(continuationKey) ?? new Set();
         importedOwners.add(binding.providerInstanceId);
@@ -242,6 +246,8 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
                 cursorByProviderThreadId: ownerChanged
                   ? new Map()
                   : (cursorByThreadIdByContinuation.get(continuationKey) ?? new Map()),
+                forceReadProviderThreadIds:
+                  forceReadThreadIdsByContinuation.get(continuationKey) ?? new Set(),
                 workspaceRoots: input.workspaceRoots,
               });
               return { instance, model, discovered } as const;
