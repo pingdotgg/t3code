@@ -3,19 +3,16 @@
  * right. Reads through the primary server, which holds the PostHog key.
  */
 import type { PostHogReport } from "@t3tools/contracts";
-import { useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 
 import { isElectron } from "../../env";
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { postHogEnvironment } from "../../state/posthog";
+import { reportsListAtom } from "../../state/posthog";
 import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { ReportDetailPanel } from "./ReportDetailPanel";
 import { usePostHogQuery, type PostHogQueryError } from "./reportsQuery";
-
-const REPORT_STATUSES = "ready,in_progress,pending_input,candidate";
 
 function formatUpdatedAt(value: string): string {
   const date = new Date(value);
@@ -89,13 +86,14 @@ function ConnectedReportsPage({
 }: {
   readonly environmentId: NonNullable<ReturnType<typeof usePrimaryEnvironmentId>>;
 }) {
-  const reportsQuery = usePostHogQuery(
-    postHogEnvironment.reports({ environmentId, input: { status: REPORT_STATUSES, limit: 50 } }),
-  );
-  const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const reportsQuery = usePostHogQuery(reportsListAtom(environmentId));
+  const selectedReportId = useSearch({ from: "/_chat/reports", select: (s) => s.reportId });
   const reports = reportsQuery.data?.reports ?? [];
   const selectedReport =
     reports.find((report) => report.id === selectedReportId) ?? reports[0] ?? null;
+  const selectReport = (reportId: string) =>
+    void navigate({ to: "/reports", search: { reportId }, replace: true });
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -122,7 +120,7 @@ function ConnectedReportsPage({
                 key={report.id}
                 report={report}
                 selected={selectedReport?.id === report.id}
-                onSelect={() => setSelectedReportId(report.id)}
+                onSelect={() => selectReport(report.id)}
               />
             ))}
           </ul>
