@@ -32,9 +32,9 @@ export function MarkdownFrontmatterTable({
       chainVerticalScroll
       scrollFade
       hideScrollbars
-      className="chat-markdown w-full max-w-full rounded-none"
+      className="w-full max-w-full rounded-none"
     >
-      <table>
+      <table className="markdown-table">
         <tbody>
           {entries.map((entry) => (
             <tr key={entry.key}>

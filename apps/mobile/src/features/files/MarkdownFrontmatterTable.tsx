@@ -1,7 +1,11 @@
 import type { MarkdownFrontmatterEntry } from "@t3tools/client-runtime/markdown-frontmatter";
+import { useState } from "react";
 import { ScrollView, Text as NativeText, View } from "react-native";
 
 import { useThemeColor } from "../../lib/useThemeColor";
+
+const MIN_KEY_COLUMN_WIDTH = 160;
+const MIN_VALUE_COLUMN_WIDTH = 400;
 
 function MarkdownFrontmatterList({
   items,
@@ -41,6 +45,18 @@ export function MarkdownFrontmatterTable({
   const textColor = String(useThemeColor("--color-md-body"));
   const strongColor = String(useThemeColor("--color-md-strong"));
   const codeColor = String(useThemeColor("--color-md-code-text"));
+  const [keyWidths, setKeyWidths] = useState<ReadonlyMap<string, number>>(() => new Map());
+  let measuredKeyColumnWidth = MIN_KEY_COLUMN_WIDTH;
+  let hasEveryKeyWidth = true;
+  for (const entry of entries) {
+    const keyWidth = keyWidths.get(entry.key);
+    if (keyWidth === undefined) {
+      hasEveryKeyWidth = false;
+      break;
+    }
+    measuredKeyColumnWidth = Math.max(measuredKeyColumnWidth, keyWidth);
+  }
+  const keyColumnWidth = hasEveryKeyWidth ? measuredKeyColumnWidth : null;
 
   return (
     <ScrollView
@@ -49,13 +65,34 @@ export function MarkdownFrontmatterTable({
       contentContainerStyle={{ minWidth: "100%" }}
       showsHorizontalScrollIndicator={false}
     >
-      <View className="min-w-[560px] flex-1 overflow-hidden border border-border">
+      <View
+        className="flex-1 overflow-hidden border border-border"
+        style={{ minWidth: (keyColumnWidth ?? MIN_KEY_COLUMN_WIDTH) + MIN_VALUE_COLUMN_WIDTH }}
+      >
         {entries.map((entry, index) => (
           <View
             key={entry.key}
             className={index === 0 ? "flex-row" : "flex-row border-t border-border"}
           >
-            <View className="min-w-40 shrink-0 items-end justify-center border-r border-border bg-card px-3 py-2">
+            <View
+              className="min-w-40 shrink-0 items-end justify-center border-r border-border bg-card px-3 py-2"
+              style={keyColumnWidth === null ? undefined : { width: keyColumnWidth }}
+              onLayout={
+                keyColumnWidth === null
+                  ? (event) => {
+                      const measuredWidth = Math.ceil(event.nativeEvent.layout.width);
+                      setKeyWidths((current) => {
+                        if (current.get(entry.key) === measuredWidth) {
+                          return current;
+                        }
+                        const next = new Map(current);
+                        next.set(entry.key, measuredWidth);
+                        return next;
+                      });
+                    }
+                  : undefined
+              }
+            >
               <NativeText
                 numberOfLines={1}
                 className="font-t3-bold text-sm"

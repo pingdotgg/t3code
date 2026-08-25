@@ -2343,7 +2343,8 @@ code {
    wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
    characters and defeat the overflow — restore word-boundary wrapping so the
    min column width is the longest word. */
-.chat-markdown table {
+.chat-markdown table,
+.markdown-table {
   width: 100%;
   min-width: max-content;
   border-collapse: collapse;
@@ -2353,12 +2354,15 @@ code {
 }
 
 .chat-markdown th,
-.chat-markdown td {
+.chat-markdown td,
+.markdown-table th,
+.markdown-table td {
   padding: 0.45rem 0.75rem;
   text-align: left;
 }
 
-.chat-markdown thead th {
+.chat-markdown thead th,
+.markdown-table thead th {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
   padding-block: 0.55rem;
   font-weight: 600;
@@ -2366,7 +2370,9 @@ code {
 }
 
 .chat-markdown tbody th,
-.chat-markdown tbody td {
+.chat-markdown tbody td,
+.markdown-table tbody th,
+.markdown-table tbody td {
   border-bottom: 1px solid color-mix(in srgb, var(--contrast-border) 60%, transparent);
 }
 
