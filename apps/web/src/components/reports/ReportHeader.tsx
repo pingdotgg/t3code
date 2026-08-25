@@ -449,8 +449,8 @@ function useReportThreadWorktreePath(threadId: ThreadId): string | null {
 }
 
 /**
- * `u` goes back to the inbox, the way it does in a mail client. Only while
- * nothing is focused: once the reader is in the composer, `u` is a letter.
+ * `u` goes back to the inbox, the way it does in a mail client. Not while the
+ * reader is typing: inside the composer, `u` is a letter.
  */
 function useBackToInboxShortcut(): void {
   const navigate = useNavigate();
@@ -458,7 +458,16 @@ function useBackToInboxShortcut(): void {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "u" || event.defaultPrevented) return;
       if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
-      if (event.target !== document.body) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable ||
+          target.closest('[role="dialog"], [aria-modal="true"], [data-slot$="popup"]') !== null)
+      ) {
+        return;
+      }
       event.preventDefault();
       void navigate({ to: "/inbox" });
     };
