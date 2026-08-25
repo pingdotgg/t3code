@@ -80,6 +80,11 @@ export function useReportOpener(environmentId: EnvironmentId | null): ReportOpen
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const markSeen = useReportSeenStore((state) => state.markSeen);
   const [pending, setPending] = useState<PostHogReport | null>(null);
+  const [awaiting, setAwaiting] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadShell["id"];
+    readonly reportId: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const environmentProjects = useMemo(
@@ -108,7 +113,7 @@ export function useReportOpener(environmentId: EnvironmentId | null): ReportOpen
 
   const openReport = useCallback(
     (report: PostHogReport, options?: { readonly forceNew?: boolean }) => {
-      if (environmentId === null || pending !== null) return;
+      if (environmentId === null || pending !== null || awaiting !== null) return;
       setError(null);
       markSeen(report.id, report.updated_at);
       if (options?.forceNew !== true) {
@@ -120,7 +125,7 @@ export function useReportOpener(environmentId: EnvironmentId | null): ReportOpen
       }
       setPending(report);
     },
-    [environmentId, goToThread, markSeen, pending, threads],
+    [awaiting, environmentId, goToThread, markSeen, pending, threads],
   );
 
   const resolveIntoThread = useEffectEvent(
@@ -171,15 +176,33 @@ export function useReportOpener(environmentId: EnvironmentId | null): ReportOpen
           setError("Could not start a conversation for this report.");
           return;
         }
-        goToThread(environmentId, threadId);
+        setAwaiting({ environmentId, threadId, reportId: report.id });
       })();
     },
   );
+
+  // The thread route treats a thread whose shell has not synced yet as
+  // missing and bounces to the inbox, so navigation waits for the shell.
+  useEffect(() => {
+    if (awaiting === null) return;
+    if (threads.some((thread) => thread.id === awaiting.threadId)) {
+      setAwaiting(null);
+      goToThread(awaiting.environmentId, awaiting.threadId);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setAwaiting(null);
+      setError(
+        "The conversation was created but has not synced yet. Try opening the report again.",
+      );
+    }, 10_000);
+    return () => clearTimeout(timer);
+  }, [awaiting, goToThread, threads]);
 
   useEffect(() => {
     if (pending === null || artefactsQuery.isPending) return;
     resolveIntoThread(pending, artefactsQuery.data?.artefacts ?? []);
   }, [artefactsQuery.data, artefactsQuery.isPending, pending]);
 
-  return { openReport, openingReportId: pending?.id ?? null, error };
+  return { openReport, openingReportId: pending?.id ?? awaiting?.reportId ?? null, error };
 }
