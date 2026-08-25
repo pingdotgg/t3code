@@ -16,11 +16,58 @@ import {
   describeMcpElicitation,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
+  makeCodexGoalRequests,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+describe("makeCodexGoalRequests", () => {
+  it.effect("targets the active provider thread with native Goal methods", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly method: string; readonly payload: unknown }> = [];
+      const goal = {
+        threadId: "provider-thread-42",
+        objective: "Ship Goal controls",
+        status: "active" as const,
+        tokensUsed: 0,
+        timeUsedSeconds: 0,
+        createdAt: 1_777_000_000,
+        updatedAt: 1_777_000_000,
+      };
+      const client = {
+        request: <M extends CodexRpc.ClientRequestMethod>(
+          method: M,
+          payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push({ method, payload });
+          const response = method === "thread/goal/clear" ? { cleared: true } : { goal };
+          return Effect.succeed(response as CodexRpc.ClientRequestResponsesByMethod[M]);
+        },
+      };
+      const requests = makeCodexGoalRequests(client, Effect.succeed("provider-thread-42"));
+
+      yield* requests.getGoal;
+      yield* requests.setGoal({ objective: "Steer Goal", status: "paused", tokenBudget: 42 });
+      yield* requests.clearGoal;
+
+      NodeAssert.deepStrictEqual(calls, [
+        { method: "thread/goal/get", payload: { threadId: "provider-thread-42" } },
+        {
+          method: "thread/goal/set",
+          payload: {
+            threadId: "provider-thread-42",
+            objective: "Steer Goal",
+            status: "paused",
+            tokenBudget: 42,
+          },
+        },
+        { method: "thread/goal/clear", payload: { threadId: "provider-thread-42" } },
+      ]);
+    }),
+  );
+});
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {

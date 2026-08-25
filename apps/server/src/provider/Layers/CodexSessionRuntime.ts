@@ -235,6 +235,20 @@ export type CodexSessionRuntimeError =
   | CodexSessionRuntimeInvalidUserInputAnswersError
   | CodexSessionRuntimeThreadIdMissingError;
 
+export const makeCodexGoalRequests = <E>(
+  client: Pick<CodexClient.CodexAppServerClient["Service"], "request">,
+  readProviderThreadId: Effect.Effect<string, E>,
+) => {
+  const threadId = readProviderThreadId;
+  const request = client.request;
+  return {
+    getGoal: Effect.flatMap(threadId, (id) => request("thread/goal/get", { threadId: id })),
+    setGoal: (input: Parameters<CodexSessionRuntimeShape["setGoal"]>[0]) =>
+      Effect.flatMap(threadId, (id) => request("thread/goal/set", { threadId: id, ...input })),
+    clearGoal: Effect.flatMap(threadId, (id) => request("thread/goal/clear", { threadId: id })),
+  };
+};
+
 export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
   "CodexSessionRuntimePendingApprovalNotFoundError",
   {
@@ -2436,22 +2450,7 @@ export const makeCodexSessionRuntime = (
             threadId: providerThreadId,
           });
         }),
-      getGoal: Effect.gen(function* () {
-        const providerThreadId = yield* readProviderThreadId;
-        return yield* client.request("thread/goal/get", { threadId: providerThreadId });
-      }),
-      setGoal: (input) =>
-        Effect.gen(function* () {
-          const providerThreadId = yield* readProviderThreadId;
-          return yield* client.request("thread/goal/set", {
-            threadId: providerThreadId,
-            ...input,
-          });
-        }),
-      clearGoal: Effect.gen(function* () {
-        const providerThreadId = yield* readProviderThreadId;
-        return yield* client.request("thread/goal/clear", { threadId: providerThreadId });
-      }),
+      ...makeCodexGoalRequests(client, readProviderThreadId),
       respondToRequest: (requestId, decision) =>
         Effect.gen(function* () {
           const pending = (yield* Ref.get(pendingApprovalsRef)).get(requestId);
