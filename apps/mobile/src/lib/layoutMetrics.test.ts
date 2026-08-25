@@ -4,6 +4,7 @@ import {
   ANDROID_SIDEBAR_PAGE_TITLE_FONT_SIZE,
   ANDROID_SIDEBAR_PAGE_TITLE_LINE_HEIGHT,
   ANDROID_SIDEBAR_PAGE_TITLE_ROW_MIN_HEIGHT,
+  androidSidebarPageTitleTextStyle,
 } from "./layoutMetrics";
 
 describe("Android sidebar page title geometry", () => {
@@ -14,5 +15,13 @@ describe("Android sidebar page title geometry", () => {
     expect(ANDROID_SIDEBAR_PAGE_TITLE_ROW_MIN_HEIGHT).toBeGreaterThanOrEqual(
       ANDROID_SIDEBAR_PAGE_TITLE_LINE_HEIGHT,
     );
+  });
+
+  it("paints the title at that line box with Android font padding off", () => {
+    expect(androidSidebarPageTitleTextStyle()).toEqual({
+      fontSize: ANDROID_SIDEBAR_PAGE_TITLE_FONT_SIZE,
+      lineHeight: ANDROID_SIDEBAR_PAGE_TITLE_LINE_HEIGHT,
+      includeFontPadding: false,
+    });
   });
 });

@@ -14,6 +14,20 @@ export const ANDROID_SIDEBAR_PAGE_TITLE_FONT_SIZE = 34;
 export const ANDROID_SIDEBAR_PAGE_TITLE_LINE_HEIGHT = 41;
 export const ANDROID_SIDEBAR_PAGE_TITLE_ROW_MIN_HEIGHT = 50;
 
+/** Paint style for the Android split-view Threads heading. `includeFontPadding`
+ * must be off: the default extra ascent clips a 34px glyph inside the 50px row. */
+export function androidSidebarPageTitleTextStyle(): {
+  readonly fontSize: number;
+  readonly lineHeight: number;
+  readonly includeFontPadding: false;
+} {
+  return {
+    fontSize: ANDROID_SIDEBAR_PAGE_TITLE_FONT_SIZE,
+    lineHeight: ANDROID_SIDEBAR_PAGE_TITLE_LINE_HEIGHT,
+    includeFontPadding: false,
+  };
+}
+
 /**
  * Height of the native iOS navigation bar below the safe-area inset, used as
  * a fallback when the measured HeaderHeightContext is unavailable.
