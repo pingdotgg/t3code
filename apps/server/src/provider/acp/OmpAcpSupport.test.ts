@@ -6,6 +6,7 @@ import {
   applyOmpRequestedSessionConfiguration,
   buildOmpAcpSpawnInput,
   buildOmpTextGenerationAcpSpawnInput,
+  resolveEmptyOmpElicitationResponse,
   resolveOmpAcpConfigUpdates,
   shouldAutoApproveOmpPermission,
 } from "./OmpAcpSupport.ts";
@@ -139,6 +140,31 @@ describe("shouldAutoApproveOmpPermission", () => {
   it("keeps commands gated unless the session has full access", () => {
     expect(shouldAutoApproveOmpPermission("auto-accept-edits", commandRequest)).toBe(false);
     expect(shouldAutoApproveOmpPermission("full-access", commandRequest)).toBe(true);
+  });
+});
+
+describe("resolveEmptyOmpElicitationResponse", () => {
+  it("accepts optional-only forms and cancels unrenderable required forms", () => {
+    const optionalForm = {
+      mode: "form",
+      sessionId: "session-1",
+      message: "Optional context",
+      requestedSchema: {
+        type: "object",
+        properties: { context: { type: "string", title: "Context" } },
+        required: [],
+      },
+    } as const;
+
+    expect(resolveEmptyOmpElicitationResponse(optionalForm)).toEqual({
+      action: { action: "accept", content: {} },
+    });
+    expect(
+      resolveEmptyOmpElicitationResponse({
+        ...optionalForm,
+        requestedSchema: { ...optionalForm.requestedSchema, required: ["missing"] },
+      }),
+    ).toEqual({ action: { action: "cancel" } });
   });
 });
 

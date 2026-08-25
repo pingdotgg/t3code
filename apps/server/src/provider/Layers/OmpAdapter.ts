@@ -58,6 +58,7 @@ import {
   buildOmpElicitationContent,
   makeOmpAcpRuntime,
   getOmpAcpCurrentModel,
+  resolveEmptyOmpElicitationResponse,
   ompElicitationQuestions,
   parseOmpResume,
   selectAutoApprovedOmpPermissionOption,
@@ -476,7 +477,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
                     }
                     const questions = ompElicitationQuestions(params);
                     if (questions.length === 0) {
-                      return { action: { action: "cancel" as const } };
+                      return resolveEmptyOmpElicitationResponse(params);
                     }
                     const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
                     const runtimeRequestId = RuntimeRequestId.make(requestId);

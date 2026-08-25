@@ -292,6 +292,13 @@ export function ompElicitationQuestions(
   });
 }
 
+export function resolveEmptyOmpElicitationResponse(
+  request: Extract<EffectAcpSchema.ElicitationRequest, { readonly mode: "form" }>,
+): EffectAcpSchema.ElicitationResponse {
+  return (request.requestedSchema.required?.length ?? 0) > 0
+    ? { action: { action: "cancel" } }
+    : { action: { action: "accept", content: {} } };
+}
 function normalizeElicitationAnswer(
   answer: unknown,
   schema: EffectAcpSchema.ElicitationPropertySchema,
