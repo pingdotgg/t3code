@@ -795,7 +795,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           className={cn("min-w-0 flex-1 rounded-none", ownsDesktopTitleBar && "drag-region")}
           data-right-panel-tab-list
         >
-          <div className="flex h-full w-max min-w-full items-center gap-1">
+          <div className="flex h-full w-max items-center gap-1">
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
