@@ -50,3 +50,25 @@ export function resolveStartWorkspace(
 
   return { mode: "worktree", branch: preferredBranch.name, worktreePath: input.worktreePath };
 }
+
+/**
+ * Whether a New Thread may be committed now, or must wait for the default
+ * workspace mode to settle. `resolveStartWorkspace` answers *what* workspace to
+ * start with once we've decided to start; this answers *whether* it is safe to
+ * decide yet.
+ *
+ * A worktree thread with no chosen branch is held while the default mode is
+ * still provisional (the t3.json read has not settled and no higher-priority
+ * source decided): committing the interim mode could start a worktree thread
+ * that a late t3.json `local` default would have overridden. This is a brief
+ * load-time hold, not the permanent dead-end a missing branch used to cause —
+ * once settled, the worktree-with-no-branch case resolves to a startable
+ * workspace instead. Every other case (explicit branch, local mode, or already
+ * settled) is safe to start immediately.
+ */
+export function canCommitStartWorkspace(
+  input: Pick<ResolvedWorkspace, "mode" | "branch">,
+  defaultWorkspaceModeSettled: boolean,
+): boolean {
+  return defaultWorkspaceModeSettled || input.mode !== "worktree" || input.branch !== null;
+}
