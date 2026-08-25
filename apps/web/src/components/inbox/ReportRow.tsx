@@ -4,9 +4,9 @@
  * between rows — whitespace and hover carry the separation, so a long list
  * reads as prose instead of a spreadsheet.
  *
- * The trailing meta and the row's actions occupy the same place. Meta is what
- * you scan; actions are what you reach for, and only one of those is true at
- * a time.
+ * The title is the thing being ruled on, so it takes the width it needs and
+ * the lede yields. Time and actions sit in their own slots: hover must not
+ * take away the staleness you are deciding on.
  */
 import type { PostHogReport } from "@t3tools/contracts";
 import { ArchiveRestoreIcon, ArchiveXIcon, MessagesSquareIcon } from "lucide-react";
@@ -14,11 +14,15 @@ import { ArchiveRestoreIcon, ArchiveXIcon, MessagesSquareIcon } from "lucide-rea
 import { statusColorVar } from "../../brand/statusColors";
 import type { ReportWork } from "./inboxSections.logic";
 import { cn } from "../../lib/utils";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { PriorityChip } from "../reports/PriorityChip";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { humanizeReportTitle, sourceProductLabel, summaryLine } from "./inboxList.logic";
+import {
+  humanizeReportTitle,
+  rowTimeLabel,
+  sourceProductLabel,
+  summaryLine,
+} from "./inboxList.logic";
 
 export function ReportRow({
   report,
@@ -49,6 +53,11 @@ export function ReportRow({
   readonly onOpen: () => void;
   readonly onArchive: () => void;
   readonly onRestore: () => void;
+  /**
+   * Move the keyboard cursor here. Wired to real focus rather than hover:
+   * the cursor decides what `e` archives, and a mouse resting on a row the
+   * reader never chose must not become the target of a destructive key.
+   */
   readonly onFocus: () => void;
 }) {
   const lede = summaryLine(report.summary);
@@ -59,19 +68,20 @@ export function ReportRow({
     <div
       data-report-row={report.id}
       data-focused={focused ? "" : undefined}
-      onMouseEnter={onFocus}
+      onFocus={onFocus}
       className={cn(
         "group/row relative flex items-baseline gap-3 rounded-[var(--control-radius)] py-1.5 pe-2 ps-3 text-sm",
         focused ? "bg-accent/50" : "hover:bg-accent/25",
       )}
     >
-      {/* The focus bar sits in the row's own padding so nothing reflows when
-          selection moves. */}
+      {/* The cursor bar sits in the row's own padding so nothing reflows when
+          selection moves. Neutral, not tangerine: where you are standing is
+          not something asking for you. */}
       <span
         aria-hidden
         className={cn(
           "absolute inset-y-0.5 start-0 w-0.5 rounded-full",
-          focused ? "bg-primary" : "bg-transparent",
+          focused ? "bg-foreground/30" : "bg-transparent",
         )}
       />
       <span
@@ -82,18 +92,20 @@ export function ReportRow({
       <button
         type="button"
         onClick={onOpen}
-        className="flex min-w-0 flex-1 items-baseline gap-2 text-start outline-hidden"
+        className="flex min-w-0 flex-1 items-baseline gap-2 rounded-[var(--control-radius)] text-start outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <span
           className={cn(
-            "max-w-[52%] shrink-0 truncate",
+            "max-w-full shrink-0 truncate sm:max-w-[72%]",
             unread ? "font-semibold text-foreground" : "text-foreground/80",
           )}
         >
           {title}
         </span>
         {lede ? (
-          <span className="min-w-0 flex-1 truncate text-muted-foreground">{lede}</span>
+          <span className="hidden min-w-0 flex-1 truncate text-muted-foreground sm:inline">
+            {lede}
+          </span>
         ) : null}
       </button>
 
@@ -122,27 +134,26 @@ export function ReportRow({
         {source ? (
           <span className="hidden truncate sm:inline">{sourceProductLabel(source)}</span>
         ) : null}
-        {/* Time and actions share the slot: whichever the reader needs is the
-            one showing. Fixed width so the column never jitters on hover. */}
-        <span className="relative flex w-14 justify-end">
-          <span className="tabular-nums group-hover/row:invisible group-focus-within/row:invisible">
-            {formatRelativeTimeLabel(report.updated_at)}
-          </span>
-          <span className="absolute inset-0 hidden items-center justify-end group-hover/row:flex group-focus-within/row:flex">
-            <Button
-              size="icon-micro"
-              variant="ghost"
-              disabled={busy}
-              aria-label={closed ? `Restore ${title}` : `Archive ${title}`}
-              onClick={closed ? onRestore : onArchive}
-            >
-              {closed ? (
-                <ArchiveRestoreIcon className="size-3.5" />
-              ) : (
-                <ArchiveXIcon className="size-3.5" />
-              )}
-            </Button>
-          </span>
+        {/* Fixed width so the column never jitters as relative labels change. */}
+        <span className="w-10 shrink-0 text-end tabular-nums">
+          {rowTimeLabel(report.updated_at)}
+        </span>
+        {/* Its own reserved slot rather than the timestamp's: deciding whether
+            to archive is exactly when you want to know how old this is. */}
+        <span className="flex w-5 shrink-0 justify-end self-center opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100">
+          <Button
+            size="icon-micro"
+            variant="ghost"
+            disabled={busy}
+            aria-label={closed ? `Restore ${title}` : `Archive ${title}`}
+            onClick={closed ? onRestore : onArchive}
+          >
+            {closed ? (
+              <ArchiveRestoreIcon className="size-3.5" />
+            ) : (
+              <ArchiveXIcon className="size-3.5" />
+            )}
+          </Button>
         </span>
       </div>
     </div>

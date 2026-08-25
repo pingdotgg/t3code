@@ -11,7 +11,15 @@
 import type { EnvironmentId, PostHogInboxFilter, PostHogReport } from "@t3tools/contracts";
 import { PostHogReportId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronRightIcon, EllipsisIcon, ListChecksIcon, PencilIcon, PlusIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  EllipsisIcon,
+  ListChecksIcon,
+  PencilIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  XIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EmptyState } from "../../brand/EmptyState";
@@ -65,6 +73,15 @@ const VIEW_TITLES: Readonly<Record<InboxView, string>> = {
   done: "Done",
 };
 
+const SCOPE_OPTIONS = [
+  { value: "for-you", label: "For you", hint: "Reports PostHog named you a reviewer on" },
+  { value: "everyone", label: "Everyone", hint: "Every report in the project" },
+] as const satisfies ReadonlyArray<{
+  readonly value: InboxScope;
+  readonly label: string;
+  readonly hint: string;
+}>;
+
 /** Sections whose reports are asking for something, in the order they read. */
 const DECISION_SECTION_IDS: ReadonlySet<string> = new Set(["needs-you"]);
 
@@ -117,12 +134,14 @@ function SectionHeading({
   readonly onEdit: (() => void) | null;
 }) {
   return (
-    <div className="group/section mt-6 flex items-baseline gap-2 px-3 pb-1 first:mt-0">
+    // Sticky: a long run down the list should never leave you unsure which
+    // queue you are in.
+    <div className="group/section sticky top-0 z-10 flex items-baseline gap-2 bg-background px-3 pt-2 pb-1.5">
       <button
         type="button"
         aria-expanded={!collapsed}
         onClick={onToggle}
-        className="flex items-baseline gap-2 text-start"
+        className="flex items-baseline gap-2 rounded-sm text-start outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <ChevronRightIcon
           className={cn(
@@ -130,8 +149,11 @@ function SectionHeading({
             !collapsed && "rotate-90",
           )}
         />
-        <h2 className="text-xs font-medium text-muted-foreground">{group.label}</h2>
-        <span className="text-xs tabular-nums text-muted-foreground/70">
+        {/* Weight and color rather than small caps: these labels are written
+            as sentences, and "PostHog is still investigating" shouted is
+            harder to read, not more structural. */}
+        <h2 className="text-xs font-semibold text-foreground/70">{group.label}</h2>
+        <span className="text-xs tabular-nums text-muted-foreground/60">
           {group.reports.length}
         </span>
       </button>
@@ -208,7 +230,7 @@ function ConnectedInboxPage({
   const setReportState = useAtomCommand(postHogEnvironment.setReportState, {
     reportFailure: false,
   });
-  const { openReport, error: openError } = useReportOpener(environmentId);
+  const { openReport, error: openError, dismissError } = useReportOpener(environmentId);
   const navigate = useNavigate();
 
   const triageActive = useTriageStore((state) => state.active);
@@ -462,27 +484,32 @@ function ConnectedInboxPage({
       <WorkspacePageHeader electron={isElectron} className="border-b border-border/60">
         <h1 className="text-sm font-semibold">{VIEW_TITLES[view]}</h1>
         {view === "inbox" && !triageActive ? (
-          <div className="ms-3 flex items-center rounded-[var(--control-radius)] bg-muted/60 p-0.5 text-xs">
-            {(
-              [
-                { value: "for-you", label: "For you" },
-                { value: "everyone", label: "Everyone" },
-              ] as const
-            ).map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={scope === option.value}
-                onClick={() => setScope(option.value)}
-                className={cn(
-                  "rounded-[calc(var(--control-radius)-2px)] px-2 py-0.5 transition-colors",
-                  scope === option.value
-                    ? "bg-background text-foreground shadow-xs"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {option.label}
-              </button>
+          <div
+            role="group"
+            aria-label="Whose reports"
+            className="ms-3 flex items-center rounded-[var(--control-radius)] bg-muted/60 p-0.5 text-xs"
+          >
+            {SCOPE_OPTIONS.map((option) => (
+              <Tooltip key={option.value}>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-pressed={scope === option.value}
+                      onClick={() => setScope(option.value)}
+                      className={cn(
+                        "rounded-[calc(var(--control-radius)-2px)] px-2 py-0.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+                        scope === option.value
+                          ? "bg-background text-foreground shadow-xs"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  }
+                />
+                <TooltipPopup side="bottom">{option.hint}</TooltipPopup>
+              </Tooltip>
             ))}
           </div>
         ) : null}
@@ -491,11 +518,15 @@ function ConnectedInboxPage({
             <Tooltip>
               <TooltipTrigger
                 render={
+                  // `aria-disabled` rather than `disabled`: a disabled button
+                  // emits no pointer events, so the tooltip explaining why it
+                  // is unavailable would never appear.
                   <Button
                     size="sm"
                     variant="ghost"
-                    disabled={decisionQueue.length === 0}
-                    onClick={() => setTriageActive(true)}
+                    aria-disabled={decisionQueue.length === 0}
+                    className="aria-disabled:cursor-default aria-disabled:opacity-64 aria-disabled:hover:bg-transparent"
+                    onClick={() => decisionQueue.length > 0 && setTriageActive(true)}
                   >
                     <ListChecksIcon className="size-3.5" />
                     Triage
@@ -503,20 +534,39 @@ function ConnectedInboxPage({
                 }
               />
               <TooltipPopup side="bottom">
-                <span className="flex items-center gap-1.5">
-                  One report at a time <Kbd>t</Kbd>
-                </span>
+                {decisionQueue.length === 0 ? (
+                  "Nothing is waiting on a decision right now"
+                ) : (
+                  <span className="flex items-center gap-1.5">
+                    One report at a time <Kbd>t</Kbd>
+                  </span>
+                )}
               </TooltipPopup>
             </Tooltip>
           ) : null}
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={reportsQuery.isPending}
-            onClick={reportsQuery.refresh}
-          >
-            {reportsQuery.isPending ? "Loading…" : "Refresh"}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-micro"
+                  variant="ghost"
+                  aria-label="Refresh reports"
+                  disabled={reportsQuery.isPending}
+                  onClick={reportsQuery.refresh}
+                >
+                  <RefreshCwIcon
+                    className={cn(
+                      "size-3.5",
+                      reportsQuery.isPending && "animate-spin motion-reduce:animate-none",
+                    )}
+                  />
+                </Button>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {reportsQuery.isPending ? "Fetching reports…" : "Refresh"}
+            </TooltipPopup>
+          </Tooltip>
           {view === "inbox" ? (
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -543,9 +593,23 @@ function ConnectedInboxPage({
       </WorkspacePageHeader>
 
       {(actionError ?? openError) ? (
-        <p className="border-b border-border/50 px-4 py-2 text-xs text-destructive">
-          {actionError ?? openError}
-        </p>
+        <div
+          role="alert"
+          className="flex items-center gap-2 border-b border-border/50 px-4 py-2 text-xs text-destructive"
+        >
+          <span className="min-w-0 flex-1">{actionError ?? openError}</span>
+          <Button
+            size="icon-micro"
+            variant="ghost"
+            aria-label="Dismiss"
+            onClick={() => {
+              setActionError(null);
+              dismissError();
+            }}
+          >
+            <XIcon className="size-3.5" />
+          </Button>
+        </div>
       ) : null}
 
       {reportsQuery.error ? (
@@ -563,11 +627,13 @@ function ConnectedInboxPage({
             makeHandlers={makeHandlers}
           />
         </div>
+      ) : reportsQuery.isPending && reports.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center p-8">
+          <EmptyState hoggie="loading" title="Loading reports" />
+        </div>
       ) : reportCount === 0 && customSections.length === 0 ? (
         <div className="flex flex-1 items-center justify-center p-8">
-          {reportsQuery.isPending ? (
-            <EmptyState hoggie="loading" title="Loading reports" />
-          ) : view === "done" ? (
+          {view === "done" ? (
             <EmptyState hoggie="done" title="Nothing archived yet" />
           ) : (
             <EmptyState
@@ -581,7 +647,7 @@ function ConnectedInboxPage({
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-4xl px-4 py-4">
             {sections.map((group) => (
-              <section key={group.id}>
+              <section key={group.id} className="mt-7 first:mt-0">
                 <SectionHeading
                   group={group}
                   collapsed={isCollapsed(group)}
@@ -590,7 +656,7 @@ function ConnectedInboxPage({
                 />
                 {isCollapsed(group) ? null : group.reports.length === 0 ? (
                   <p className="px-3 py-1.5 text-xs text-muted-foreground/70">
-                    Nothing here right now.
+                    {group.description}
                   </p>
                 ) : (
                   (visibleBySection.get(group.id)?.visible ?? []).map((report) => (
@@ -619,7 +685,7 @@ function ConnectedInboxPage({
                   <button
                     type="button"
                     onClick={() => revealMore(group.id)}
-                    className="ms-3 rounded-[var(--control-radius)] px-1 py-1 text-xs text-muted-foreground hover:text-foreground"
+                    className="ms-3 rounded-[var(--control-radius)] px-1.5 py-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     Show {visibleBySection.get(group.id)?.nextRevealCount} more
                     <span className="ms-1.5 tabular-nums opacity-60">
@@ -635,8 +701,9 @@ function ConnectedInboxPage({
                 type="button"
                 onClick={() => setCreatingSection(true)}
                 className={cn(
-                  "mt-6 flex items-center gap-1.5 rounded-[var(--control-radius)] px-3 py-1.5",
-                  "text-xs text-muted-foreground hover:text-foreground",
+                  "mt-7 flex items-center gap-1.5 rounded-[var(--control-radius)] px-3 py-1.5",
+                  "text-xs text-muted-foreground outline-none hover:text-foreground",
+                  "focus-visible:ring-2 focus-visible:ring-ring",
                 )}
               >
                 <PlusIcon className="size-3.5" />

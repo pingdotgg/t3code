@@ -55,3 +55,14 @@ export function priorityColorVar(priority: string): string {
     priority in PRIORITY_COLORS ? priorityColor(priority as Priority) : NEUTRAL_PRIORITY;
   return brandColorVar(known);
 }
+
+/**
+ * The priorities that carry their color into the chip itself. Only the two
+ * that are asking to be read first: tinting P2 and below turns a queue into a
+ * wall of chips and costs P0 the thing that made it stand out.
+ */
+const URGENT_PRIORITIES: ReadonlySet<string> = new Set(["P0", "P1"]);
+
+export function priorityIsUrgent(priority: string): boolean {
+  return URGENT_PRIORITIES.has(priority);
+}

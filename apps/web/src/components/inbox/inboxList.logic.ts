@@ -4,6 +4,8 @@
  */
 import type { PostHogReport } from "@t3tools/contracts";
 
+import { formatRelativeTime } from "../../timestampFormat";
+
 /** Human labels for the statuses the inbox shows. Unknown statuses read as themselves. */
 const STATE_LABELS: Readonly<Record<string, string>> = {
   ready: "Ready",
@@ -105,4 +107,15 @@ export function nextFocusedReportId(
   const index = orderedIds.indexOf(removedId);
   if (index === -1) return orderedIds[0] ?? null;
   return orderedIds[index + 1] ?? orderedIds[index - 1] ?? null;
+}
+
+/**
+ * A report's age in the width a list column can spare. Every row carries one,
+ * so "ago" gets said twenty-five times down a queue and tells the reader
+ * nothing the column does not already say.
+ */
+export function rowTimeLabel(isoDate: string): string {
+  const relative = formatRelativeTime(isoDate);
+  if (relative === null) return "";
+  return relative.value === "just now" ? "now" : relative.value;
 }

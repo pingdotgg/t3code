@@ -81,6 +81,8 @@ export interface ReportOpener {
   /** The report currently being resolved into a conversation, if any. */
   readonly openingReportId: string | null;
   readonly error: string | null;
+  /** Put the error away. Nothing else clears it until the next open attempt. */
+  readonly dismissError: () => void;
 }
 
 export function useReportOpener(environmentId: EnvironmentId | null): ReportOpener {
@@ -222,5 +224,12 @@ export function useReportOpener(environmentId: EnvironmentId | null): ReportOpen
     resolveIntoThread(pending, artefactsQuery.data?.artefacts ?? []);
   }, [artefactsQuery.data, artefactsQuery.isPending, pending]);
 
-  return { openReport, openingReportId: pending?.id ?? awaiting?.reportId ?? null, error };
+  const dismissError = useCallback(() => setError(null), []);
+
+  return {
+    openReport,
+    openingReportId: pending?.id ?? awaiting?.reportId ?? null,
+    error,
+    dismissError,
+  };
 }

@@ -5,6 +5,7 @@ import {
   humanizeReportTitle,
   isReportUnread,
   nextFocusedReportId,
+  rowTimeLabel,
   sourceProductLabel,
   summaryLine,
 } from "./inboxList.logic";
@@ -65,5 +66,20 @@ describe("inbox list", () => {
   it("keeps the original when stripping would empty the title", () => {
     expect(humanizeReportTitle("chore:")).toBe("chore:");
     expect(humanizeReportTitle("")).toBe("Untitled report");
+  });
+});
+
+describe("rowTimeLabel", () => {
+  it("drops the ago suffix the column position already implies", () => {
+    expect(rowTimeLabel(new Date(Date.now() - 5 * 3_600_000).toISOString())).toBe("5h");
+    expect(rowTimeLabel(new Date(Date.now() - 3 * 86_400_000).toISOString())).toBe("3d");
+  });
+
+  it("shortens the fresh case to fit the same column", () => {
+    expect(rowTimeLabel(new Date().toISOString())).toBe("now");
+  });
+
+  it("renders nothing for an unparseable timestamp", () => {
+    expect(rowTimeLabel("not a date")).toBe("");
   });
 });
