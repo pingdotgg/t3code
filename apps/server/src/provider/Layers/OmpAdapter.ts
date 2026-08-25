@@ -909,6 +909,9 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             Effect.exit,
           );
           if (Exit.isFailure(promptExit)) {
+            if (ctx.stopped) {
+              return yield* Effect.interrupt;
+            }
             const ownsActiveTurn =
               ctx.activeTurnId === turnId && ctx.session.activeTurnId === turnId && !ctx.stopped;
             if (ownsActiveTurn) {
@@ -935,7 +938,10 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
           }
 
           const result = promptExit.value;
-          if (ctx.stopped || ctx.activeTurnId !== turnId || ctx.session.activeTurnId !== turnId) {
+          if (ctx.stopped) {
+            return yield* Effect.interrupt;
+          }
+          if (ctx.activeTurnId !== turnId || ctx.session.activeTurnId !== turnId) {
             return yield* new ProviderAdapterProcessError({
               provider: PROVIDER,
               threadId: input.threadId,

@@ -6,6 +6,7 @@ import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -413,13 +414,16 @@ ompAdapterTestLayer("OmpAdapterLive", (it) => {
       });
       const turnFiber = yield* adapter
         .sendTurn({ threadId, input: "request approval", attachments: [] })
-        .pipe(Effect.result, Effect.forkChild);
+        .pipe(Effect.exit, Effect.forkChild);
 
       const request = yield* Fiber.join(requestFiber);
       assert.equal(request._tag, "Some");
       yield* adapter.stopSession(threadId).pipe(Effect.timeout("2 seconds"));
       const turnResult = yield* Fiber.join(turnFiber);
       assert.equal(turnResult._tag, "Failure");
+      if (turnResult._tag === "Failure") {
+        assert.isTrue(Cause.hasInterruptsOnly(turnResult.cause), Cause.pretty(turnResult.cause));
+      }
       assert.isFalse(yield* adapter.hasSession(threadId));
     }),
   );
@@ -452,7 +456,7 @@ ompAdapterTestLayer("OmpAdapterLive", (it) => {
       });
       const turnFiber = yield* adapter
         .sendTurn({ threadId, input: "request approval", attachments: [] })
-        .pipe(Effect.result, Effect.forkChild);
+        .pipe(Effect.exit, Effect.forkChild);
 
       const request = yield* Fiber.join(requestFiber);
       assert.equal(request._tag, "Some");
@@ -467,6 +471,9 @@ ompAdapterTestLayer("OmpAdapterLive", (it) => {
       assert.equal(replacement.status, "ready");
       const turnResult = yield* Fiber.join(turnFiber);
       assert.equal(turnResult._tag, "Failure");
+      if (turnResult._tag === "Failure") {
+        assert.isTrue(Cause.hasInterruptsOnly(turnResult.cause), Cause.pretty(turnResult.cause));
+      }
       assert.isTrue(yield* adapter.hasSession(threadId));
       yield* adapter.stopSession(threadId);
     }),
