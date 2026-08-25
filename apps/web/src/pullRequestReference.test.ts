@@ -80,6 +80,21 @@ describe("parsePullRequestReference", () => {
     );
   });
 
+  it("rejects public github.com and bitbucket.org /pulls/ URLs", () => {
+    expect(parsePullRequestReference("https://github.com/owner/repo/pulls/42")).toBeNull();
+    expect(parsePullRequestReference("https://bitbucket.org/owner/repo/pulls/42")).toBeNull();
+    expect(parsePullRequestReference("http://github.com/o/r/pulls/1")).toBeNull();
+  });
+
+  it("accepts self-hosted Gitea URLs on github.internal and bitbucket.internal", () => {
+    expect(parsePullRequestReference("https://github.internal/owner/repo/pulls/42")).toBe(
+      "https://github.internal/owner/repo/pulls/42",
+    );
+    expect(parsePullRequestReference("https://bitbucket.internal/owner/repo/pulls/42")).toBe(
+      "https://bitbucket.internal/owner/repo/pulls/42",
+    );
+  });
+
   it("accepts tea pulls checkout commands", () => {
     expect(parsePullRequestReference("tea pulls checkout 42")).toBe("42");
     expect(parsePullRequestReference("tea pulls checkout #42")).toBe("42");

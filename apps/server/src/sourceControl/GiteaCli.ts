@@ -192,7 +192,12 @@ export class GiteaRepositoryDecodeError extends Schema.TaggedErrorClass<GiteaRep
   "GiteaRepositoryDecodeError",
   {
     ...giteaCliDecodeErrorContext,
-    operation: Schema.Literals(["getRepositoryCloneUrls", "createRepository", "getDefaultBranch"]),
+    operation: Schema.Literals([
+      "getRepositoryCloneUrls",
+      "createRepository",
+      "getDefaultBranch",
+      "checkoutPullRequest",
+    ]),
     repository: Schema.optional(Schema.String),
   },
 ) {
@@ -817,27 +822,68 @@ export const make = Effect.gen(function* () {
     // `tea pulls checkout` is a real subcommand that exits non-zero on failure, so it keeps the
     // ordinary exit-code error mapping instead of the `tea api` status handling.
     checkoutPullRequest: (input) =>
-      run(
-        {
-          cwd: input.cwd,
-          args: [
-            "pulls",
-            "checkout",
-            parseGiteaPullRequestReference(input.reference)?.index ?? input.reference,
-            "--branch",
-            ...(input.force ? ["--force"] : []),
-          ],
-        },
-        (error) =>
-          GiteaPullRequestNotFoundError.fromVcsError(
-            {
+      Effect.gen(function* () {
+        const reference = parseGiteaPullRequestReference(input.reference);
+        if (reference === null) {
+          return yield* Effect.fail(
+            new GiteaPullRequestNotFoundError({
               command: "tea",
               cwd: input.cwd,
               reference: input.reference,
-            },
-            error,
-          ),
-      ).pipe(Effect.asVoid),
+            }),
+          );
+        }
+
+        if (reference.repository !== undefined) {
+          const raw = yield* api({
+            cwd: input.cwd,
+            args: ["repos/{owner}/{repo}"],
+          });
+
+          const decoded = yield* decodeGiteaRepository(raw).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GiteaRepositoryDecodeError({
+                  operation: "checkoutPullRequest",
+                  command: "tea",
+                  cwd: input.cwd,
+                  cause,
+                }),
+            ),
+          );
+          if (decoded.full_name.toLowerCase() !== reference.repository.toLowerCase()) {
+            return yield* Effect.fail(
+              new GiteaPullRequestNotFoundError({
+                command: "tea",
+                cwd: input.cwd,
+                reference: input.reference,
+              }),
+            );
+          }
+        }
+
+        return yield* run(
+          {
+            cwd: input.cwd,
+            args: [
+              "pulls",
+              "checkout",
+              reference.index,
+              "--branch",
+              ...(input.force ? ["--force"] : []),
+            ],
+          },
+          (error) =>
+            GiteaPullRequestNotFoundError.fromVcsError(
+              {
+                command: "tea",
+                cwd: input.cwd,
+                reference: input.reference,
+              },
+              error,
+            ),
+        );
+      }).pipe(Effect.asVoid),
   });
 });
 

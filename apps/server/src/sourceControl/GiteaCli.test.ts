@@ -616,6 +616,15 @@ layer("GiteaCli.layer", (it) => {
 
   it.effect("checks out by index when handed a full PR URL", () =>
     Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          apiJson({
+            full_name: "owner/repo",
+            clone_url: "https://git.example.com/owner/repo.git",
+            ssh_url: "ssh://git.example.com/owner/repo.git",
+          }),
+        ),
+      );
       mockedRun.mockReturnValueOnce(Effect.succeed(apiOutput("")));
 
       const tea = yield* GiteaCli.GiteaCli;
@@ -890,6 +899,57 @@ layer("GiteaCli failures", (it) => {
       yield* tea.checkoutPullRequest({ cwd: "/repo", reference: "42" });
 
       expect(lastArgs()).toEqual(["pulls", "checkout", "42", "--branch"]);
+    }),
+  );
+
+  it.effect(
+    "rejects a full-URL reference whose repository differs from the current repository",
+    () =>
+      Effect.gen(function* () {
+        mockedRun.mockReturnValueOnce(
+          Effect.succeed(
+            apiJson({
+              full_name: "owner/current",
+              clone_url: "https://git.example.com/owner/current.git",
+              ssh_url: "ssh://git.example.com/owner/current.git",
+            }),
+          ),
+        );
+
+        const tea = yield* GiteaCli.GiteaCli;
+        const error = yield* Effect.flip(
+          tea.checkoutPullRequest({
+            cwd: "/repo",
+            reference: "https://git.example.com/other/repo/pulls/42",
+          }),
+        );
+
+        expect(error._tag).toBe("GiteaPullRequestNotFoundError");
+        expect(mockedRun).toHaveBeenCalledTimes(1);
+      }),
+  );
+
+  it.effect("checks out a same-repository full URL when the current repository matches", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          apiJson({
+            full_name: "owner/repo",
+            clone_url: "https://git.example.com/owner/repo.git",
+            ssh_url: "ssh://git.example.com/owner/repo.git",
+          }),
+        ),
+      );
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiOutput("")));
+
+      const tea = yield* GiteaCli.GiteaCli;
+      yield* tea.checkoutPullRequest({
+        cwd: "/repo",
+        reference: "https://git.example.com/owner/repo/pulls/42",
+      });
+
+      const checkoutArgs = mockedRun.mock.calls.at(-1)?.[0].args;
+      expect(checkoutArgs).toEqual(["pulls", "checkout", "42", "--branch"]);
     }),
   );
 
