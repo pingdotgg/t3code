@@ -140,15 +140,16 @@ export function makeAcpTextGeneration(
       }
       const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson));
       return yield* decodeOutput(extractJsonObject(rawResult)).pipe(
-        Effect.catchTag("SchemaError", (cause) =>
-          Effect.fail(
-            new TextGenerationError({
-              operation: input.operation,
-              detail: `${config.providerLabel} returned invalid structured output.`,
-              cause,
-            }),
-          ),
-        ),
+        Effect.catchTags({
+          SchemaError: (cause) =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: input.operation,
+                detail: `${config.providerLabel} returned invalid structured output.`,
+                cause,
+              }),
+            ),
+        }),
       );
     }).pipe(
       Effect.mapError((cause) =>
