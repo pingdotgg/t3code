@@ -23,6 +23,21 @@ adapter in a child scope. Adapter implementations live beside them in
 [`ProviderAdapter.ts`][adapter]. Read the driver plus its adapter to see how a specific agent's
 transport, config, and event shapes are mapped.
 
+### OpenCode protocol generations
+
+The `opencode` driver supports both OpenCode 1 (`opencode`) and OpenCode 2 (`opencode2`). OpenCode 1
+uses the legacy `@opencode-ai/sdk/v2` export; despite its name, that export is not the OpenCode 2
+API. OpenCode 2 uses `@opencode-ai/client`, authenticated `/api/*` endpoints, and a different event
+format.
+
+[`opencodeRuntime.ts`][opencode-runtime] discovers the available executable, detects the upstream
+protocol, and carries server credentials into each connection. The [OpenCode 2 compatibility
+client][opencode-v2] normalizes models, sessions, permissions, forms, and streaming events at the
+existing adapter boundary. Restricted permission modes are applied to locally spawned OpenCode
+processes through compatible configuration; externally managed OpenCode servers retain their own
+permission policies. Orchestration and the web, desktop, and mobile clients continue to use the
+same provider-neutral contracts for either generation.
+
 ## Registry and routing
 
 Two registries separate configuration from live processes:
@@ -81,6 +96,8 @@ when a request opens (approval) or user input is requested, via
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
+[opencode-runtime]: ../../apps/server/src/provider/opencodeRuntime.ts
+[opencode-v2]: ../../apps/server/src/provider/openCodeV2Client.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts
 [registry]: ../../apps/server/src/provider/Services/ProviderAdapterRegistry.ts

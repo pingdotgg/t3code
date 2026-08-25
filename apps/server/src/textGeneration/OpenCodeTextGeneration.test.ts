@@ -14,12 +14,32 @@ import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 import * as OpenCodeTextGeneration from "./OpenCodeTextGeneration.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 
+type OpenCodeServerMetadata = Pick<
+  OpenCodeRuntime.OpenCodeServerConnection,
+  "apiVersion" | "serverPassword"
+>;
+
 const runtimeMock = {
   state: {
     startCalls: [] as string[],
+    startEnvironments: [] as Array<NodeJS.ProcessEnv | undefined>,
+    connectCalls: [] as Array<{
+      readonly binaryPath: string;
+      readonly serverUrl?: string | null;
+      readonly serverPassword?: string;
+    }>,
+    clientCalls: [] as Array<
+      OpenCodeServerMetadata & {
+        readonly baseUrl: string;
+        readonly directory: string;
+      }
+    >,
     promptUrls: [] as string[],
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
+    localServerMetadata: {} as OpenCodeServerMetadata,
+    externalServerMetadata: {} as OpenCodeServerMetadata,
+    connectionError: undefined as OpenCodeRuntime.OpenCodeRuntimeError | undefined,
     sessionCreateError: undefined as unknown,
     sessionResult: undefined as { data?: { id: string } } | undefined,
     promptRequestError: undefined as unknown,
@@ -29,9 +49,15 @@ const runtimeMock = {
   },
   reset() {
     this.state.startCalls.length = 0;
+    this.state.startEnvironments.length = 0;
+    this.state.connectCalls.length = 0;
+    this.state.clientCalls.length = 0;
     this.state.promptUrls.length = 0;
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
+    this.state.localServerMetadata = {};
+    this.state.externalServerMetadata = {};
+    this.state.connectionError = undefined;
     this.state.sessionCreateError = undefined;
     this.state.sessionResult = undefined;
     this.state.promptRequestError = undefined;
@@ -40,11 +66,12 @@ const runtimeMock = {
 };
 
 const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
-  startOpenCodeServerProcess: ({ binaryPath }) =>
+  startOpenCodeServerProcess: ({ binaryPath, environment }) =>
     Effect.gen(function* () {
       const index = runtimeMock.state.startCalls.length + 1;
       const url = `http://127.0.0.1:${4_300 + index}`;
       runtimeMock.state.startCalls.push(binaryPath);
+      runtimeMock.state.startEnvironments.push(environment);
       // The production runtime binds server lifetime to the caller's scope.
       // Mirror that here so the closeCalls probe observes scope close.
       yield* Effect.addFinalizer(() =>
@@ -55,17 +82,36 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
       return {
         url,
         exitCode: Effect.never,
+        ...runtimeMock.state.localServerMetadata,
       };
     }),
-  connectToOpenCodeServer: ({ serverUrl }) =>
-    Effect.succeed({
+  connectToOpenCodeServer: (input) => {
+    const { binaryPath, serverUrl, serverPassword } = input;
+    runtimeMock.state.connectCalls.push({
+      binaryPath,
+      ...(serverUrl ? { serverUrl } : {}),
+      ...(serverPassword ? { serverPassword } : {}),
+    });
+    if (runtimeMock.state.connectionError) {
+      return Effect.fail(runtimeMock.state.connectionError);
+    }
+    return Effect.succeed({
       url: serverUrl ?? "http://127.0.0.1:4301",
       exitCode: null,
       external: Boolean(serverUrl),
-    }),
+      ...runtimeMock.state.externalServerMetadata,
+    });
+  },
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
-  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
-    ({
+  createOpenCodeSdkClient: (input) => {
+    const { baseUrl, directory, apiVersion, serverPassword } = input;
+    runtimeMock.state.clientCalls.push({
+      baseUrl,
+      directory,
+      ...(apiVersion ? { apiVersion } : {}),
+      ...(serverPassword ? { serverPassword } : {}),
+    });
+    return {
       session: {
         create: async () => {
           if (runtimeMock.state.sessionCreateError !== undefined) {
@@ -98,7 +144,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           );
         },
       },
-    }) as unknown as ReturnType<OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+    } as unknown as ReturnType<OpenCodeRuntime.OpenCodeRuntimeShape["createOpenCodeSdkClient"]>;
+  },
   loadOpenCodeInventory: () =>
     Effect.fail(
       new OpenCodeRuntime.OpenCodeRuntimeError({
@@ -130,6 +177,19 @@ const DEFAULT_COMMIT_MESSAGE_INPUT = {
 };
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL_MS = 30_000;
+const decodeOpenCodeTextGenerationConfig = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      model: Schema.optional(Schema.String),
+      permission: Schema.String,
+      permissions: Schema.optional(
+        Schema.Array(
+          Schema.Struct({ action: Schema.String, resource: Schema.String, effect: Schema.String }),
+        ),
+      ),
+    }),
+  ),
+);
 
 const OpenCodeTextGenerationTestLayer = Layer.succeed(
   OpenCodeRuntime.OpenCodeRuntime,
@@ -169,9 +229,13 @@ const EXISTING_SERVER_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
 function withOpenCodeTextGeneration<A, E, R>(
   settings: OpenCodeSettings,
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  environment?: NodeJS.ProcessEnv,
 ) {
   return Effect.gen(function* () {
-    const textGeneration = yield* OpenCodeTextGeneration.makeOpenCodeTextGeneration(settings);
+    const textGeneration = yield* OpenCodeTextGeneration.makeOpenCodeTextGeneration(
+      settings,
+      environment,
+    );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
 }
@@ -217,6 +281,91 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
         expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("forwards local OpenCode V2 metadata and generated credentials across warm reuse", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.localServerMetadata = {
+          apiVersion: "v2",
+          serverPassword: "generated-local-password",
+        };
+
+        yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+        yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+
+        expect(runtimeMock.state.startCalls).toEqual(["fake-opencode"]);
+        expect(runtimeMock.state.connectCalls).toEqual([]);
+        expect(
+          decodeOpenCodeTextGenerationConfig(
+            runtimeMock.state.startEnvironments[0]?.OPENCODE_CONFIG_CONTENT ?? "{}",
+          ),
+        ).toMatchObject({ permission: "deny" });
+        expect(runtimeMock.state.clientCalls).toEqual([
+          {
+            baseUrl: "http://127.0.0.1:4301",
+            directory: process.cwd(),
+            apiVersion: "v2",
+            serverPassword: "generated-local-password",
+          },
+          {
+            baseUrl: "http://127.0.0.1:4301",
+            directory: process.cwd(),
+            apiVersion: "v2",
+            serverPassword: "generated-local-password",
+          },
+        ]);
+        expect(runtimeMock.state.authHeaders).toEqual([
+          `Basic ${btoa("opencode:generated-local-password")}`,
+          `Basic ${btoa("opencode:generated-local-password")}`,
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("keeps background OpenCode generation tool-free with native v2 configuration", () =>
+    withOpenCodeTextGeneration(
+      DEFAULT_OPENCODE_SETTINGS,
+      (textGeneration) =>
+        Effect.gen(function* () {
+          yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+
+          const config = decodeOpenCodeTextGenerationConfig(
+            runtimeMock.state.startEnvironments[0]?.OPENCODE_CONFIG_CONTENT ?? "{}",
+          );
+          expect(config.model).toBe("test/preview");
+          expect(config.permission).toBe("deny");
+          expect(config.permissions).toEqual([
+            { action: "edit", resource: "*", effect: "allow" },
+            { action: "*", resource: "*", effect: "deny" },
+          ]);
+        }),
+      {
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          model: "test/preview",
+          permissions: [{ action: "edit", resource: "*", effect: "allow" }],
+        }),
+      },
+    ),
+  );
+
+  it.effect("preserves unauthenticated local OpenCode V1 clients", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.localServerMetadata = { apiVersion: "v1" };
+
+        yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+
+        expect(runtimeMock.state.clientCalls).toEqual([
+          {
+            baseUrl: "http://127.0.0.1:4301",
+            directory: process.cwd(),
+            apiVersion: "v1",
+          },
+        ]);
+        expect(runtimeMock.state.authHeaders).toEqual([null]);
+      }),
+    ),
   );
 
   it.effect("starts a new server after the warm server idles out", () =>
@@ -437,6 +586,30 @@ it.layer(OpenCodeTextGenerationExistingServerTestLayer)(
           });
 
           expect(runtimeMock.state.startCalls).toEqual([]);
+          expect(runtimeMock.state.connectCalls).toEqual([
+            {
+              binaryPath: "fake-opencode",
+              serverUrl: "http://127.0.0.1:9999",
+              serverPassword: "secret-password",
+            },
+            {
+              binaryPath: "fake-opencode",
+              serverUrl: "http://127.0.0.1:9999",
+              serverPassword: "secret-password",
+            },
+          ]);
+          expect(runtimeMock.state.clientCalls).toEqual([
+            {
+              baseUrl: "http://127.0.0.1:9999",
+              directory: process.cwd(),
+              serverPassword: "secret-password",
+            },
+            {
+              baseUrl: "http://127.0.0.1:9999",
+              directory: process.cwd(),
+              serverPassword: "secret-password",
+            },
+          ]);
           expect(runtimeMock.state.promptUrls).toEqual([
             "http://127.0.0.1:9999",
             "http://127.0.0.1:9999",
@@ -451,6 +624,84 @@ it.layer(OpenCodeTextGenerationExistingServerTestLayer)(
           expect(runtimeMock.state.closeCalls).toEqual([]);
         }),
       ).pipe(Effect.provide(TestClock.layer())),
+    );
+
+    it.effect("detects external OpenCode V2 and forwards its configured credentials", () =>
+      withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          runtimeMock.state.externalServerMetadata = {
+            apiVersion: "v2",
+            serverPassword: "secret-password",
+          };
+
+          yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+
+          expect(runtimeMock.state.startCalls).toEqual([]);
+          expect(runtimeMock.state.connectCalls).toEqual([
+            {
+              binaryPath: "fake-opencode",
+              serverUrl: "http://127.0.0.1:9999",
+              serverPassword: "secret-password",
+            },
+          ]);
+          expect(runtimeMock.state.clientCalls).toEqual([
+            {
+              baseUrl: "http://127.0.0.1:9999",
+              directory: process.cwd(),
+              apiVersion: "v2",
+              serverPassword: "secret-password",
+            },
+          ]);
+          expect(runtimeMock.state.authHeaders).toEqual([
+            `Basic ${btoa("opencode:secret-password")}`,
+          ]);
+        }),
+      ),
+    );
+
+    it.effect("preserves authenticated external OpenCode V1 clients", () =>
+      withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          runtimeMock.state.externalServerMetadata = { apiVersion: "v1" };
+
+          yield* textGeneration.generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT);
+
+          expect(runtimeMock.state.startCalls).toEqual([]);
+          expect(runtimeMock.state.clientCalls).toEqual([
+            {
+              baseUrl: "http://127.0.0.1:9999",
+              directory: process.cwd(),
+              apiVersion: "v1",
+              serverPassword: "secret-password",
+            },
+          ]);
+          expect(runtimeMock.state.authHeaders).toEqual([
+            `Basic ${btoa("opencode:secret-password")}`,
+          ]);
+        }),
+      ),
+    );
+
+    it.effect("preserves configured-server connection failures as text-generation errors", () =>
+      withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          const connectionError = new OpenCodeRuntime.OpenCodeRuntimeError({
+            operation: "connectToOpenCodeServer",
+            detail: "Unable to detect the OpenCode server API version.",
+          });
+          runtimeMock.state.connectionError = connectionError;
+
+          const error = yield* textGeneration
+            .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+            .pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(TextGenerationError);
+          expect(error.message).toContain("Unable to detect the OpenCode server API version.");
+          expect(error.cause).toBe(connectionError);
+          expect(runtimeMock.state.startCalls).toEqual([]);
+          expect(runtimeMock.state.clientCalls).toEqual([]);
+        }),
+      ),
     );
   },
 );

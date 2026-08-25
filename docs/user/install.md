@@ -54,13 +54,13 @@ yay -S t3code-nightly-bin
 T3 Code drives provider CLIs; it does not ship them. Install the CLI for each provider you want
 to use, then authenticate it.
 
-| Provider   | CLI                                                   | Default binary | Log in with           |
-| ---------- | ----------------------------------------------------- | -------------- | --------------------- |
-| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`        | `codex login`         |
-| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`       | `claude auth login`   |
-| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent` | `agent login`         |
-| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`         | `grok login`          |
-| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode`     | `opencode auth login` |
+| Provider   | CLI                                                   | Default binary            | Log in with                                     |
+| ---------- | ----------------------------------------------------- | ------------------------- | ----------------------------------------------- |
+| Codex      | [Codex CLI](https://developers.openai.com/codex/cli)  | `codex`                   | `codex login`                                   |
+| Claude     | [Claude Code](https://claude.com/product/claude-code) | `claude`                  | `claude auth login`                             |
+| Cursor     | [Cursor CLI](https://cursor.com/cli)                  | `cursor-agent`            | `agent login`                                   |
+| Grok Build | [Grok Build CLI](https://x.ai/cli)                    | `grok`                    | `grok login`                                    |
+| OpenCode   | [OpenCode](https://opencode.ai)                       | `opencode` or `opencode2` | `opencode auth login` or `opencode2 auth login` |
 
 Codex and Claude are on by default. Cursor, Grok Build, and OpenCode are off by default; turn
 them on in **Settings** → the provider's card when you want to use them.
@@ -70,6 +70,29 @@ T3 Code looks for, but authenticate with `agent login`, not `cursor-agent login`
 
 Run the login command on the machine running the T3 Code server, not on the device you browse
 from.
+
+### OpenCode 1 and OpenCode 2
+
+OpenCode 1 uses the `opencode` executable, while OpenCode 2 uses `opencode2`. Both versions can be
+installed side by side:
+
+```bash
+npm install -g opencode-ai
+npm install -g @opencode-ai/cli@beta
+```
+
+Authenticate the version you want to use:
+
+```bash
+opencode auth login
+opencode2 auth login
+```
+
+T3 Code defaults to `opencode` and automatically tries `opencode2` when `opencode` is not available.
+If both versions are installed and you want OpenCode 2, set **Settings** → **OpenCode** → **Binary
+path** to `opencode2` or the full path to that executable. An explicitly configured path is used
+instead of automatic discovery. OpenCode 1 requires version `1.14.19` or newer; OpenCode 2 beta and
+preview versions are also supported.
 
 ### Binary Discovery
 

@@ -31,6 +31,38 @@ describe("runtimeEventToActivities approval details", () => {
     expect((activity?.payload as Record<string, unknown> | undefined)?.detail).toBe(detail);
   });
 
+  it("keeps OpenCode v2 project-wide approval choices available to every client", () => {
+    const options = [
+      { decision: "decline", label: "Decline" },
+      { decision: "acceptAlways", label: "Always allow this project" },
+      { decision: "accept", label: "Allow once" },
+    ] as const;
+    const event = {
+      type: "request.opened",
+      eventId: EventId.make("evt-opencode-approval"),
+      provider: ProviderDriverKind.make("opencode"),
+      createdAt: "2026-08-25T00:00:00.000Z",
+      threadId: ThreadId.make("thread-opencode"),
+      requestId: RuntimeRequestId.make("approval-opencode"),
+      payload: {
+        requestType: "command_execution_approval",
+        detail: "git status",
+        options,
+      },
+    } satisfies ProviderRuntimeEvent;
+
+    const [activity] = runtimeEventToActivities(event);
+
+    expect(activity).toMatchObject({
+      kind: "approval.requested",
+      payload: {
+        requestId: "approval-opencode",
+        requestKind: "command",
+        options,
+      },
+    });
+  });
+
   it("keeps app details and approval options available to remote clients", () => {
     const options = [
       { decision: "decline", label: "Decline" },

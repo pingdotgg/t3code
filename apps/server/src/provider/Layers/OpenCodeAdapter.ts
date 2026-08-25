@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type RuntimeMode,
   RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
@@ -45,6 +46,7 @@ import {
   openCodeQuestionId,
   openCodeRuntimeErrorDetail,
   parseOpenCodeModelSlug,
+  resolveOpenCodeConfigContent,
   runOpenCodeSdk,
   toOpenCodeFileParts,
   toOpenCodePermissionReply,
@@ -88,8 +90,9 @@ function parseOpenCodeResume(raw: unknown): { readonly sessionId: string } | und
  * is `throwOnError: true`, so `session.get` rejects on every non-2xx) must
  * propagate, or a transient blip resets a live thread to an empty one — the
  * #3604 silent context loss. Decides on structured signals only, never free
- * text: a numeric 404 or the exact `NotFoundError` name, found via a bounded walk
- * over `cause`/`body`/`error`/`data`. An explicit non-404 status seals its
+ * text: a numeric 404, the exact `NotFoundError` name, or OpenCode v2's
+ * `SessionNotFoundError` tag, found via a bounded walk over
+ * `cause`/`body`/`error`/`data`. An explicit non-404 status seals its
  * subtree so a wrapped "NotFound" name can't reclassify a real failure.
  * Exported for unit testing.
  */
@@ -117,6 +120,10 @@ export function isOpenCodeNotFound(cause: unknown): boolean {
     }
     if (statuses.length > 0) {
       continue;
+    }
+
+    if (record._tag === "SessionNotFoundError") {
+      return true;
     }
 
     const name = record.name;
@@ -237,6 +244,7 @@ interface OpenCodeSessionContext {
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
+  eventAbortController: AbortController | undefined;
   /**
    * One-shot guard flipped by `stopOpenCodeContext` / `emitUnexpectedExit`.
    * The session lifecycle is owned by `sessionScope`; this Ref exists only
@@ -302,7 +310,11 @@ type EventBaseInput = {
 
 function toToolLifecycleItemType(toolName: string): ToolLifecycleItemType {
   const normalized = toolName.toLowerCase();
-  if (normalized.includes("bash") || normalized.includes("command")) {
+  if (
+    normalized.includes("bash") ||
+    normalized.includes("shell") ||
+    normalized.includes("command")
+  ) {
     return "command_execution";
   }
   if (
@@ -337,6 +349,7 @@ function mapPermissionToRequestType(
 ): "command_execution_approval" | "file_read_approval" | "file_change_approval" | "unknown" {
   switch (permission) {
     case "bash":
+    case "shell":
       return "command_execution_approval";
     case "read":
       return "file_read_approval";
@@ -357,6 +370,57 @@ function mapPermissionDecision(reply: "once" | "always" | "reject"): string {
     default:
       return "decline";
   }
+}
+
+function withOpenCodeRuntimePermissions(
+  environment: NodeJS.ProcessEnv | undefined,
+  runtimeMode: RuntimeMode,
+): NodeJS.ProcessEnv {
+  const parsedConfig: unknown = JSON.parse(resolveOpenCodeConfigContent(environment));
+  if (!parsedConfig || typeof parsedConfig !== "object" || Array.isArray(parsedConfig)) {
+    throw new Error("OpenCode configuration content must be a JSON object.");
+  }
+
+  const config = parsedConfig as Record<string, unknown>;
+  const existingPermissions =
+    config.permission && typeof config.permission === "object" && !Array.isArray(config.permission)
+      ? config.permission
+      : {};
+  const configuredPermissions = Array.isArray(config.permissions)
+    ? (config.permissions as unknown[])
+    : undefined;
+  const rules = buildOpenCodePermissionRules(runtimeMode);
+  const permissions = rules.map((rule) => ({
+    action: rule.permission === "bash" ? "shell" : rule.permission,
+    resource: rule.pattern,
+    effect: rule.action,
+  }));
+
+  return {
+    ...(environment ?? process.env),
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      ...config,
+      permission: {
+        ...existingPermissions,
+        ...Object.fromEntries(rules.map((rule) => [rule.permission, rule.action])),
+      },
+      ...(configuredPermissions
+        ? {
+            permissions: [
+              ...configuredPermissions,
+              ...permissions,
+              ...configuredPermissions.filter(
+                (rule) =>
+                  rule !== null &&
+                  typeof rule === "object" &&
+                  "effect" in rule &&
+                  rule.effect === "deny",
+              ),
+            ],
+          }
+        : {}),
+    }),
+  };
 }
 
 function resolveTurnSnapshot(
@@ -411,7 +475,7 @@ function normalizeQuestionRequest(request: QuestionRequest): ReadonlyArray<UserI
     question: question.question,
     options: question.options.map((option) => ({
       label: option.label,
-      description: option.description,
+      description: option.description?.trim() || option.label,
     })),
     ...(question.multiple ? { multiSelect: true } : {}),
   }));
@@ -570,9 +634,8 @@ const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
     context.client.session.abort({ sessionID: context.openCodeSessionId }),
   ).pipe(Effect.ignore({ log: true }));
 
-  // Closing the session scope interrupts every fiber forked into it and
-  // runs each finalizer we registered — the `AbortController.abort()` call,
-  // the child-process termination, etc.
+  // Abort the HTTP stream before scope finalizers wait for its event-pump fiber.
+  context.eventAbortController?.abort();
   yield* Scope.close(context.sessionScope, Exit.void);
   return true;
 });
@@ -729,6 +792,7 @@ export function makeOpenCodeAdapter(
       yield* runOpenCodeSdk("session.abort", () =>
         context.client.session.abort({ sessionID: context.openCodeSessionId }),
       ).pipe(Effect.ignore({ log: true }));
+      context.eventAbortController?.abort();
       yield* Scope.close(context.sessionScope, Exit.void);
     });
 
@@ -971,6 +1035,15 @@ export function makeOpenCodeAdapter(
                 event.properties.patterns.length > 0
                   ? event.properties.patterns.join("\n")
                   : event.properties.permission,
+              ...(context.server.apiVersion === "v2"
+                ? {
+                    options: [
+                      { decision: "decline" as const, label: "Decline" },
+                      { decision: "acceptAlways" as const, label: "Always allow this project" },
+                      { decision: "accept" as const, label: "Allow once" },
+                    ],
+                  }
+                : {}),
               args: event.properties.metadata,
             },
           });
@@ -989,7 +1062,10 @@ export function makeOpenCodeAdapter(
             type: "request.resolved",
             payload: {
               requestType: "unknown",
-              decision: mapPermissionDecision(event.properties.reply),
+              decision:
+                context.server.apiVersion === "v2" && event.properties.reply === "always"
+                  ? "acceptAlways"
+                  : mapPermissionDecision(event.properties.reply),
             },
           });
           break;
@@ -1143,6 +1219,7 @@ export function makeOpenCodeAdapter(
       // shutdown) and cancels the in-flight `event.subscribe` fetch so
       // the async iterable unwinds cleanly.
       const eventsAbortController = new AbortController();
+      context.eventAbortController = eventsAbortController;
       yield* Scope.addFinalizer(
         context.sessionScope,
         Effect.sync(() => eventsAbortController.abort()),
@@ -1221,15 +1298,22 @@ export function makeOpenCodeAdapter(
               // The runtime binds the server's lifetime to the Scope.Scope
               // we provide below — closing `sessionScope` kills the child
               // process automatically. No manual `server.close()` needed.
+              const environment =
+                !serverUrl && input.runtimeMode !== "full-access"
+                  ? withOpenCodeRuntimePermissions(options?.environment, input.runtimeMode)
+                  : options?.environment;
               const server = yield* openCodeRuntime.connectToOpenCodeServer({
                 binaryPath,
                 serverUrl,
-                ...(options?.environment ? { environment: options.environment } : {}),
+                ...(serverPassword ? { serverPassword } : {}),
+                ...(environment ? { environment } : {}),
               });
+              const resolvedServerPassword = server.serverPassword ?? serverPassword;
               const client = openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
                 directory,
-                ...(server.external && serverPassword ? { serverPassword } : {}),
+                ...(server.apiVersion ? { apiVersion: server.apiVersion } : {}),
+                ...(resolvedServerPassword ? { serverPassword: resolvedServerPassword } : {}),
               });
               const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
               if (mcpSession && !server.external) {
@@ -1402,6 +1486,7 @@ export function makeOpenCodeAdapter(
           activeTurnId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
+          eventAbortController: undefined,
           stopped: yield* Ref.make(false),
           sessionScope: started.sessionScope,
         };
@@ -1588,10 +1673,16 @@ export function makeOpenCodeAdapter(
         });
       }
 
+      const reply =
+        context.server.apiVersion === "v2" && decision === "acceptForSession"
+          ? "once"
+          : decision === "acceptAlways"
+            ? "always"
+            : toOpenCodePermissionReply(decision);
       yield* runOpenCodeSdk("permission.reply", () =>
         context.client.permission.reply({
           requestID: requestId,
-          reply: toOpenCodePermissionReply(decision),
+          reply,
         }),
       ).pipe(Effect.mapError(toRequestError));
     });

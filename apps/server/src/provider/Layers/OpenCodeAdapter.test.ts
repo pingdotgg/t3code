@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -16,6 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { beforeEach } from "vite-plus/test";
 
 import {
+  ApprovalRequestId,
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -60,6 +62,12 @@ const runtimeMock = {
     sessionCreateUrls: [] as string[],
     sessionCreateInputs: [] as Array<Record<string, unknown>>,
     authHeaders: [] as Array<string | null>,
+    permissionReplies: [] as Array<{ requestID: string; reply: string }>,
+    clientApiVersions: [] as Array<"v1" | "v2" | undefined>,
+    connectionPasswords: [] as Array<string | null>,
+    connectionEnvironments: [] as Array<NodeJS.ProcessEnv | undefined>,
+    serverApiVersion: undefined as "v1" | "v2" | undefined,
+    generatedServerPassword: undefined as string | undefined,
     abortCalls: [] as string[],
     closeCalls: [] as string[],
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
@@ -68,8 +76,12 @@ const runtimeMock = {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
+    keepEventStreamOpen: false,
+    eventStreamAbortCount: 0,
+    onEventStreamOpened: null as (() => void) | null,
     sessionGetIds: [] as string[],
     missingSessionIds: new Set<string>(),
+    v2MissingSessionIds: new Set<string>(),
     transientErrorSessionIds: new Set<string>(),
     sessionDirectoryById: new Map<string, string>(),
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
@@ -80,6 +92,12 @@ const runtimeMock = {
     this.state.sessionCreateUrls.length = 0;
     this.state.sessionCreateInputs.length = 0;
     this.state.authHeaders.length = 0;
+    this.state.permissionReplies.length = 0;
+    this.state.clientApiVersions.length = 0;
+    this.state.connectionPasswords.length = 0;
+    this.state.connectionEnvironments.length = 0;
+    this.state.serverApiVersion = undefined;
+    this.state.generatedServerPassword = undefined;
     this.state.abortCalls.length = 0;
     this.state.closeCalls.length = 0;
     this.state.revertCalls.length = 0;
@@ -88,8 +106,12 @@ const runtimeMock = {
     this.state.closeError = null;
     this.state.messages = [];
     this.state.subscribedEvents = [];
+    this.state.keepEventStreamOpen = false;
+    this.state.eventStreamAbortCount = 0;
+    this.state.onEventStreamOpened = null;
     this.state.sessionGetIds.length = 0;
     this.state.missingSessionIds.clear();
+    this.state.v2MissingSessionIds.clear();
     this.state.transientErrorSessionIds.clear();
     this.state.sessionDirectoryById.clear();
     this.state.sessionUpdateCalls.length = 0;
@@ -115,9 +137,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         exitCode: Effect.never,
       };
     }),
-  connectToOpenCodeServer: ({ serverUrl }) =>
+  connectToOpenCodeServer: ({ serverUrl, serverPassword, environment }) =>
     Effect.gen(function* () {
       const url = serverUrl ?? "http://127.0.0.1:4301";
+      runtimeMock.state.connectionPasswords.push(serverPassword ?? null);
+      runtimeMock.state.connectionEnvironments.push(environment);
       // Always register a finalizer so the closeCalls/closeError probes fire;
       // production attaches none for external servers.
       yield* Effect.addFinalizer(() =>
@@ -132,11 +156,18 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         url,
         exitCode: null,
         external: Boolean(serverUrl),
+        ...(runtimeMock.state.serverApiVersion
+          ? { apiVersion: runtimeMock.state.serverApiVersion }
+          : {}),
+        ...(runtimeMock.state.generatedServerPassword
+          ? { serverPassword: runtimeMock.state.generatedServerPassword }
+          : {}),
       };
     }),
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
-  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
-    ({
+  createOpenCodeSdkClient: ({ baseUrl, serverPassword, apiVersion }) => {
+    runtimeMock.state.clientApiVersions.push(apiVersion);
+    return {
       session: {
         create: async (input: Record<string, unknown>) => {
           runtimeMock.state.sessionCreateUrls.push(baseUrl);
@@ -157,6 +188,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
             throw new Error(`Session not found: ${sessionID}`, {
               cause: { status: 404, body: { name: "NotFoundError" } },
             });
+          }
+          if (runtimeMock.state.v2MissingSessionIds.has(sessionID)) {
+            return Promise.reject({ _tag: "SessionNotFoundError", sessionID });
           }
           const directory = runtimeMock.state.sessionDirectoryById.get(sessionID);
           return { data: { id: sessionID, ...(directory ? { directory } : {}) } };
@@ -204,15 +238,35 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         },
       },
       event: {
-        subscribe: async () => ({
+        subscribe: async (_parameters?: unknown, options?: { readonly signal?: AbortSignal }) => ({
           stream: (async function* () {
+            runtimeMock.state.onEventStreamOpened?.();
             for (const event of runtimeMock.state.subscribedEvents) {
               yield event;
+            }
+            if (runtimeMock.state.keepEventStreamOpen) {
+              await new Promise<void>((resolve) => {
+                const finish = () => {
+                  runtimeMock.state.eventStreamAbortCount += 1;
+                  resolve();
+                };
+                if (options?.signal?.aborted) {
+                  finish();
+                } else {
+                  options?.signal?.addEventListener("abort", finish, { once: true });
+                }
+              });
             }
           })(),
         }),
       },
-    }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+      permission: {
+        reply: async ({ requestID, reply }: { requestID: string; reply: string }) => {
+          runtimeMock.state.permissionReplies.push({ requestID, reply });
+        },
+      },
+    } as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>;
+  },
   loadOpenCodeInventory: () =>
     Effect.fail(
       new OpenCodeRuntimeError({
@@ -246,7 +300,19 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
 // the layer graph reach for it — but the routing values the assertions
 // probe (serverUrl, serverPassword) must be threaded directly through the
 // decoded `OpenCodeSettings`.
-const openCodeAdapterTestSettings = Schema.decodeSync(OpenCodeSettings)({
+const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
+const decodeOpenCodeRuntimeConfig = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      model: Schema.String,
+      permission: Schema.Record(Schema.String, Schema.String),
+      permissions: Schema.Array(
+        Schema.Struct({ action: Schema.String, resource: Schema.String, effect: Schema.String }),
+      ),
+    }),
+  ),
+);
+const openCodeAdapterTestSettings = decodeOpenCodeSettings({
   binaryPath: "fake-opencode",
   serverUrl: "http://127.0.0.1:9999",
   serverPassword: "secret-password",
@@ -300,6 +366,125 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       ]);
     }),
   );
+
+  it.effect("passes OpenCode v2 API generation and server credentials to the client", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      runtimeMock.state.serverApiVersion = "v2";
+      runtimeMock.state.generatedServerPassword = "generated-v2-password";
+
+      const threadId = asThreadId("thread-opencode-v2");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.connectionPasswords, ["secret-password"]);
+      NodeAssert.deepEqual(runtimeMock.state.clientApiVersions, ["v2"]);
+      NodeAssert.deepEqual(runtimeMock.state.authHeaders, [
+        `Basic ${btoa("opencode:generated-v2-password")}`,
+      ]);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("authenticates locally spawned OpenCode v2 servers with generated credentials", () => {
+    const localSettings = decodeOpenCodeSettings({ binaryPath: "opencode2" });
+    const adapterLayer = Layer.effect(OpenCodeAdapter, makeOpenCodeAdapter(localSettings)).pipe(
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-v2-local");
+      runtimeMock.state.serverApiVersion = "v2";
+      runtimeMock.state.generatedServerPassword = "generated-local-password";
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.connectionPasswords, [null]);
+      NodeAssert.deepEqual(runtimeMock.state.connectionEnvironments, [undefined]);
+      NodeAssert.deepEqual(runtimeMock.state.clientApiVersions, ["v2"]);
+      NodeAssert.deepEqual(runtimeMock.state.authHeaders, [
+        `Basic ${btoa("opencode:generated-local-password")}`,
+      ]);
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.provide(adapterLayer));
+  });
+
+  it.effect("enforces restricted permission modes on locally spawned OpenCode v2 servers", () => {
+    const localSettings = decodeOpenCodeSettings({ binaryPath: "opencode2" });
+    const adapterLayer = Layer.effect(
+      OpenCodeAdapter,
+      makeOpenCodeAdapter(localSettings, {
+        environment: {
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+            model: "openai/gpt-test",
+            permissions: [{ action: "read", resource: "secrets/*", effect: "deny" }],
+          }),
+        },
+      }),
+    ).pipe(
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      runtimeMock.state.serverApiVersion = "v2";
+
+      for (const [runtimeMode, editEffect] of [
+        ["approval-required", "ask"],
+        ["auto", "ask"],
+        ["auto-accept-edits", "allow"],
+      ] as const) {
+        const threadId = asThreadId(`thread-opencode-v2-${runtimeMode}`);
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode,
+        });
+
+        const configContent =
+          runtimeMock.state.connectionEnvironments.at(-1)?.OPENCODE_CONFIG_CONTENT;
+        NodeAssert.ok(configContent);
+        const config = decodeOpenCodeRuntimeConfig(configContent);
+        NodeAssert.equal(config.model, "openai/gpt-test");
+        NodeAssert.equal(config.permission["*"], "ask");
+        NodeAssert.equal(config.permission.bash, "ask");
+        NodeAssert.equal(config.permission.edit, editEffect);
+        NodeAssert.equal(config.permission.question, "allow");
+        NodeAssert.deepEqual(config.permissions[0], {
+          action: "read",
+          resource: "secrets/*",
+          effect: "deny",
+        });
+        NodeAssert.deepEqual(config.permissions.at(-1), {
+          action: "read",
+          resource: "secrets/*",
+          effect: "deny",
+        });
+        NodeAssert.ok(
+          config.permissions.some(
+            (rule) => rule.action === "shell" && rule.resource === "*" && rule.effect === "ask",
+          ),
+        );
+        yield* adapter.stopSession(threadId);
+      }
+    }).pipe(Effect.provide(adapterLayer));
+  });
 
   it.effect("returns a durable resume cursor for a freshly created session", () =>
     Effect.gen(function* () {
@@ -410,6 +595,28 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         sessionId: "http://127.0.0.1:9999/session",
       });
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("starts a fresh session when OpenCode v2 reports a missing persisted session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-v2-stale");
+      runtimeMock.state.v2MissingSessionIds.add("ses_v2_stale");
+
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+        resumeCursor: { schemaVersion: 1, sessionId: "ses_v2_stale" },
+      });
+
+      NodeAssert.deepEqual(runtimeMock.state.sessionGetIds, ["ses_v2_stale"]);
+      NodeAssert.deepEqual(session.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: "http://127.0.0.1:9999/session",
+      });
       yield* adapter.stopSession(threadId);
     }),
   );
@@ -599,6 +806,30 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         runtimeMock.state.abortCalls.includes("http://127.0.0.1:9999/session"),
         true,
       );
+    }),
+  );
+
+  it.effect("aborts an open OpenCode v2 event stream before closing the session scope", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-v2-open-stream");
+      const opened = yield* Deferred.make<void>();
+      runtimeMock.state.serverApiVersion = "v2";
+      runtimeMock.state.keepEventStreamOpen = true;
+      runtimeMock.state.onEventStreamOpened = () => {
+        Deferred.doneUnsafe(opened, Effect.void);
+      };
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* Deferred.await(opened);
+      yield* adapter.stopSession(threadId).pipe(Effect.timeout("1 second"));
+
+      NodeAssert.equal(runtimeMock.state.eventStreamAbortCount, 1);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
     }),
   );
 
@@ -997,6 +1228,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(isOpenCodeNotFound({ statusCode: 404 }), true);
       // OpenCode NotFoundError body name with no status.
       NodeAssert.equal(isOpenCodeNotFound({ body: { name: "NotFoundError" } }), true);
+      NodeAssert.equal(isOpenCodeNotFound({ _tag: "SessionNotFoundError" }), true);
+      NodeAssert.equal(
+        isOpenCodeNotFound({ cause: { _tag: "SessionNotFoundError", sessionID: "ses_x" } }),
+        true,
+      );
 
       // NOT a miss: only structured signals count, never free text. A non-404
       // error whose message/detail merely contains "not found" must propagate,
@@ -1010,6 +1246,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       // body echoes a NotFoundError name — or that is itself named
       // *NotFound* — is a real failure, never a miss.
       NodeAssert.equal(isOpenCodeNotFound({ status: 500, body: { name: "NotFoundError" } }), false);
+      NodeAssert.equal(isOpenCodeNotFound({ _tag: "SessionNotFoundError", status: 500 }), false);
       NodeAssert.equal(isOpenCodeNotFound({ name: "UpstreamNotFoundError", status: 500 }), false);
       // A "NotFound"-flavored name that isn't OpenCode's exact `NotFoundError`
       // is not a confirmed miss even without a sealing status.
@@ -1147,6 +1384,203 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       if (completed?.type === "item.completed") {
         NodeAssert.equal(completed.payload.detail, "A BBonus");
       }
+    }),
+  );
+
+  it.effect("keeps OpenCode v2 form options valid when descriptions are absent", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-v2-form");
+      runtimeMock.state.serverApiVersion = "v2";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "question.asked",
+          properties: {
+            id: "form-choice",
+            sessionID: "http://127.0.0.1:9999/session",
+            questions: [
+              {
+                header: "Choose",
+                question: "Which option should be used?",
+                options: [{ label: "Keep existing", description: "" }],
+              },
+            ],
+          },
+        },
+      ];
+      const formFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) => event.threadId === threadId && event.type === "user-input.requested",
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const events = Array.from(yield* Fiber.join(formFiber).pipe(Effect.timeout("1 second")));
+      const event = events[0];
+
+      NodeAssert.ok(event && event.type === "user-input.requested");
+      NodeAssert.deepEqual(event.payload.questions[0]?.options, [
+        { label: "Keep existing", description: "Keep existing" },
+      ]);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("classifies OpenCode v2 shell tools and approvals as command execution", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-v2-shell");
+      runtimeMock.state.serverApiVersion = "v2";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              id: "part-shell",
+              sessionID: "http://127.0.0.1:9999/session",
+              messageID: "msg-shell",
+              callID: "call-shell",
+              type: "tool",
+              tool: "shell",
+              state: {
+                status: "pending",
+                input: { command: "git status" },
+              },
+            },
+          },
+        },
+        {
+          type: "permission.asked",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            id: "permission-shell",
+            permission: "shell",
+            patterns: ["git status"],
+            metadata: { command: "git status" },
+          },
+        },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const toolEvent = events.find((event) => event.type === "item.started");
+      const approvalEvent = events.find((event) => event.type === "request.opened");
+
+      NodeAssert.ok(toolEvent);
+      NodeAssert.equal(toolEvent.payload.itemType, "command_execution");
+      NodeAssert.ok(approvalEvent);
+      NodeAssert.equal(approvalEvent.payload.requestType, "command_execution_approval");
+      NodeAssert.deepEqual(approvalEvent.payload.options, [
+        { decision: "decline", label: "Decline" },
+        { decision: "acceptAlways", label: "Always allow this project" },
+        { decision: "accept", label: "Allow once" },
+      ]);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("distinguishes session-only and project-wide OpenCode v2 approvals", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-v2-session-approval");
+      runtimeMock.state.serverApiVersion = "v2";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "permission.asked",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            id: "permission-session-only",
+            permission: "shell",
+            patterns: ["git status"],
+            metadata: { command: "git status" },
+          },
+        },
+      ];
+      const approvalFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "request.opened"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      yield* Fiber.join(approvalFiber).pipe(Effect.timeout("1 second"));
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make("permission-session-only"),
+        "acceptForSession",
+      );
+      yield* adapter.respondToRequest(
+        threadId,
+        ApprovalRequestId.make("permission-session-only"),
+        "acceptAlways",
+      );
+
+      NodeAssert.deepEqual(runtimeMock.state.permissionReplies, [
+        { requestID: "permission-session-only", reply: "once" },
+        { requestID: "permission-session-only", reply: "always" },
+      ]);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("labels OpenCode v2 persisted approval responses as project-wide", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-v2-persisted-approval");
+      runtimeMock.state.serverApiVersion = "v2";
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "permission.replied",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            requestID: "permission-persisted",
+            reply: "always",
+          },
+        },
+      ];
+      const approvalFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "request.resolved"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      const events = Array.from(yield* Fiber.join(approvalFiber).pipe(Effect.timeout("1 second")));
+
+      NodeAssert.equal(events[0]?.type, "request.resolved");
+      if (events[0]?.type === "request.resolved") {
+        NodeAssert.equal(events[0].payload.decision, "acceptAlways");
+      }
+      yield* adapter.stopSession(threadId);
     }),
   );
 

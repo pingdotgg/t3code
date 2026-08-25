@@ -24,7 +24,8 @@ Supervised.
 unattended until it finishes or asks a question of its own.
 
 Approvals appear inline in the conversation. Approve or reject one and the agent continues from
-there.
+there. For OpenCode 2, **Always allow this project** also applies to later sessions in the same
+project; choose **Allow once** when you do not want to save the approval.
 
 ## Choosing a Mode
 
@@ -43,5 +44,9 @@ translates the mode into its approval policy and sandbox level, so **Supervised*
 with prompting enabled and a restricted workspace while **Full access** disables both. The
 labels above describe what you get; the exact per-provider translation is internal and may
 change.
+
+When you connect to an externally managed OpenCode 2 server, that server controls its permission
+rules. Configure the OpenCode server to ask before sensitive actions if you need supervised
+behavior; T3 Code cannot make a separately managed server stricter for an individual thread.
 
 Mobile offers the same four modes with the same labels and descriptions.

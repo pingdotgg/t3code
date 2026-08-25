@@ -19,6 +19,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import {
+  isOpenCodeV2VersionOutput,
   OpenCodeRuntime,
   openCodeRuntimeErrorDetail,
   type OpenCodeInventory,
@@ -107,7 +108,7 @@ function formatOpenCodeProbeError(input: {
   if (lower.includes("enoent") || lower.includes("notfound")) {
     return {
       installed: false,
-      message: "OpenCode CLI (`opencode`) is not installed or not on PATH.",
+      message: "OpenCode CLI (`opencode` or `opencode2`) is not installed or not on PATH.",
     };
   }
 
@@ -373,6 +374,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   }
 
   let version: string | null = null;
+  let apiVersion: "v1" | "v2" = "v1";
   if (!isExternalServer) {
     const versionExit = yield* Effect.exit(
       openCodeRuntime
@@ -390,17 +392,24 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     if (versionExit._tag === "Failure") {
       return fallback(Cause.squash(versionExit.cause));
     }
-    version = parseGenericCliVersion(versionExit.value.stdout) ?? null;
+    const versionOutput = versionExit.value.stdout.replace(/\bv(?=\d+\.\d+\.\d+)/gi, "");
+    apiVersion = isOpenCodeV2VersionOutput(versionExit.value.stdout, openCodeSettings.binaryPath)
+      ? "v2"
+      : "v1";
+    version =
+      apiVersion === "v2"
+        ? (versionOutput.match(/\b\d+\.\d+\.\d+(?:-[\da-z.-]+)?(?:\+[\da-z.-]+)?\b/i)?.[0] ?? null)
+        : parseGenericCliVersion(versionOutput);
 
     if (!version) {
       return fallback(
         new Error(
-          `Unable to determine OpenCode version from \`opencode --version\` output. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
+          `Unable to determine OpenCode version from \`${openCodeSettings.binaryPath} --version\` output. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer, or OpenCode 2.`,
         ),
         null,
       );
     }
-    if (compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
+    if (apiVersion === "v1" && compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
       return buildServerProvider({
         presentation: OPENCODE_PRESENTATION,
         enabled: openCodeSettings.enabled,
@@ -425,14 +434,17 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
               binaryPath: openCodeSettings.binaryPath,
               serverUrl: openCodeSettings.serverUrl,
               environment: resolvedEnvironment,
+              ...(openCodeSettings.serverPassword
+                ? { serverPassword: openCodeSettings.serverPassword }
+                : {}),
             });
+            const serverPassword = server.serverPassword ?? openCodeSettings.serverPassword;
             return yield* openCodeRuntime.loadOpenCodeInventory(
               openCodeRuntime.createOpenCodeSdkClient({
                 baseUrl: server.url,
                 directory: cwd,
-                ...(openCodeSettings.serverPassword
-                  ? { serverPassword: openCodeSettings.serverPassword }
-                  : {}),
+                ...(server.apiVersion ? { apiVersion: server.apiVersion } : {}),
+                ...(serverPassword ? { serverPassword } : {}),
               }),
             );
           }),
@@ -441,6 +453,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           binaryPath: openCodeSettings.binaryPath,
           cwd,
           environment: resolvedEnvironment,
+          apiVersion,
         })
     ).pipe(
       Effect.mapError(
