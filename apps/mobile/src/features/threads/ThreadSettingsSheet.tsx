@@ -121,10 +121,8 @@ function ModelRow(props: {
       )}
     >
       <View className="min-w-0 flex-1">
-        <View className="flex-row items-center gap-2">
-          <Text
-            className="min-w-0 shrink text-base font-t3-medium text-foreground"
-          >
+        <View className="flex-row flex-wrap items-center gap-2">
+          <Text className="min-w-0 shrink text-base font-t3-medium text-foreground">
             {props.option.label}
           </Text>
           {props.option.isDefault ? (
