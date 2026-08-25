@@ -1,0 +1,40 @@
+name: opencode-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  opencode-review:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Configure git identity for opencode commits
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "opencode[bot]"
+
+      - name: Run opencode
+        uses: anomalyco/opencode/github@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          META_MODEL_API_KEY: ${{ secrets.META_MODEL_API_KEY }}
+        with:
+          model: meta/muse-spark-1.2-contributor
+          use_github_token: true
+          # ponytail: OIDC workaround for repos created after 2026-07-15 (immutable sub format → p.rest). Remove when https://github.com/anomalyco/opencode/issues/37823 is fixed upstream
+          prompt: |
+            Review this pull request:
+            - Check for code quality issues
+            - Look for potential bugs
+            - Suggest improvements
