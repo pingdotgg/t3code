@@ -97,7 +97,7 @@ interface OmpSessionContext {
   session: ProviderSession;
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
-  readonly defaultModel: string | undefined;
+  defaultModel: string | undefined;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
   exitFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
@@ -247,7 +247,15 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
           },
           threadId,
         );
-      });
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError("Failed to write an OMP native notification log.", {
+            cause: Cause.pretty(cause),
+            method,
+            threadId,
+          }),
+        ),
+      );
 
     const emitPlanUpdate = (
       ctx: OmpSessionContext,
@@ -833,6 +841,13 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
           const turnModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
           const model = turnModelSelection?.model ?? ctx.session.model;
+          if (
+            ctx.defaultModel === undefined &&
+            ctx.session.model === "default" &&
+            model !== "default"
+          ) {
+            ctx.defaultModel = getOmpAcpCurrentModel(yield* ctx.acp.getConfigOptions);
+          }
           yield* applyOmpRequestedSessionConfiguration({
             runtime: ctx.acp,
             ...(input.interactionMode

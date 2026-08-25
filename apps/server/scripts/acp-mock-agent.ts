@@ -42,6 +42,9 @@ const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "
 const exitOnPrompt = process.env.T3_ACP_EXIT_ON_PROMPT === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
+const omitCreateConfigOptions = process.env.T3_ACP_OMIT_CREATE_CONFIG_OPTIONS === "1";
+const emitConfigOptionsOnPrompt = process.env.T3_ACP_EMIT_CONFIG_OPTIONS_ON_PROMPT === "1";
+const echoCurrentModel = process.env.T3_ACP_ECHO_CURRENT_MODEL === "1";
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
@@ -316,7 +319,7 @@ const program = Effect.gen(function* () {
       sessionId,
       modes: modeState(),
       models: modelState(),
-      configOptions: configOptions(),
+      ...(omitCreateConfigOptions ? {} : { configOptions: configOptions() }),
     }),
   );
 
@@ -864,6 +867,16 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
+      if (emitConfigOptionsOnPrompt) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "config_option_update",
+            configOptions: configOptions(),
+          },
+        });
+      }
+
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,
         update: {
@@ -887,7 +900,10 @@ const program = Effect.gen(function* () {
         sessionId: requestedSessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: promptResponseText ?? "hello from mock" },
+          content: {
+            type: "text",
+            text: echoCurrentModel ? currentModelId : (promptResponseText ?? "hello from mock"),
+          },
         },
       });
 

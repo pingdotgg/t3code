@@ -201,7 +201,7 @@ describe("OMP permission mapping", () => {
 });
 
 faultingNativeLogOmpAdapterTestLayer("OmpAdapter notification recovery", (it) => {
-  it.effect("continues consuming notifications after one handler failure", () =>
+  it.effect("publishes the current and later notifications after a native log failure", () =>
     Effect.gen(function* () {
       const adapter = yield* FaultingNativeLogOmpAdapter;
       const serverSettings = yield* ServerSettingsService;
@@ -210,9 +210,11 @@ faultingNativeLogOmpAdapterTestLayer("OmpAdapter notification recovery", (it) =>
         providers: { omp: { binaryPath: wrapperPath, enabled: true } },
       });
       const threadId = ThreadId.make("omp-notification-recovery-thread");
-      const contentEventFiber = yield* adapter.streamEvents.pipe(
-        Stream.filter((event) => event.type === "content.delta"),
-        Stream.take(1),
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) => event.type === "turn.plan.updated" || event.type === "content.delta",
+        ),
+        Stream.take(2),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -229,8 +231,11 @@ faultingNativeLogOmpAdapterTestLayer("OmpAdapter notification recovery", (it) =>
         attachments: [],
       });
 
-      const contentEvents = yield* Fiber.join(contentEventFiber);
-      assert.equal(contentEvents.length, 1);
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.deepStrictEqual(
+        runtimeEvents.map((event) => event.type),
+        ["turn.plan.updated", "content.delta"],
+      );
       yield* adapter.stopSession(threadId);
     }),
   );
@@ -289,6 +294,66 @@ ompAdapterTestLayer("OmpAdapterLive", (it) => {
         assert.include(eventTypes, eventType);
       }
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+  it.effect("restores a configured default model that arrives after session start", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OmpAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_OMIT_CREATE_CONFIG_OPTIONS: "1",
+          T3_ACP_EMIT_CONFIG_OPTIONS_ON_PROMPT: "1",
+          T3_ACP_ECHO_CURRENT_MODEL: "1",
+        }),
+      );
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      const threadId = ThreadId.make("omp-late-default-model-thread");
+      const contentEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "content.delta"),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("omp"),
+          model: "default",
+        },
+      });
+      yield* adapter.sendTurn({ threadId, input: "default", attachments: [] });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "override",
+        attachments: [],
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("omp"),
+          model: "composer-2",
+        },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "restore",
+        attachments: [],
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("omp"),
+          model: "default",
+        },
+      });
+
+      const contentEvents = Array.from(yield* Fiber.join(contentEventsFiber));
+      assert.deepStrictEqual(
+        contentEvents.map((event) => event.payload.delta),
+        ["default", "composer-2", "default"],
+      );
       yield* adapter.stopSession(threadId);
     }),
   );
