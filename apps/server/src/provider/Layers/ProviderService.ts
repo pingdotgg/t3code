@@ -51,6 +51,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
@@ -1224,6 +1225,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     () => reconcileInstanceSubscriptions,
   ).pipe(Effect.forkScoped);
 
+  const recoveryLocks = yield* Ref.make<ReadonlyMap<ThreadId, Semaphore.Semaphore>>(new Map());
+  const getRecoveryLock = (threadId: ThreadId) =>
+    Ref.modify(recoveryLocks, (locks) => {
+      const existing = locks.get(threadId);
+      if (existing) return [existing, locks] as const;
+      const lock = Semaphore.makeUnsafe(1);
+      const next = new Map(locks);
+      next.set(threadId, lock);
+      return [lock, next] as const;
+    });
+
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
     readonly operation: string;
@@ -1300,6 +1312,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       return { adapter, session: resumed } as const;
     }).pipe(
+      (recover) =>
+        Effect.flatMap(getRecoveryLock(input.binding.threadId), (lock) => lock.withPermit(recover)),
       withMetrics({
         counter: providerSessionsTotal,
         attributes: providerMetricAttributes(input.binding.provider, {
