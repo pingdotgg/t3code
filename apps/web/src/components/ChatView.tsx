@@ -6188,21 +6188,6 @@ export default function ChatView(props: ChatViewProps) {
     }
     const sendCtx = composerRef.current?.getSendContext();
     if (!sendCtx?.providerAvailable) {
-      if (
-        sendCtx !== undefined &&
-        !directAnnotation &&
-        sendCtx.images.length === 0 &&
-        selectedProvider === "codex" &&
-        parseCodexGoalCommand(promptRef.current) !== null
-      ) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "info",
-            title: "Provider still loading",
-            description: "Wait for the thread's provider to load before running a Goal command.",
-          }),
-        );
-      }
       notifyDirectAnnotationAttached();
       return;
     }
