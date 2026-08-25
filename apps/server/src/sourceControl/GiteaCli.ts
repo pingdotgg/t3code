@@ -583,7 +583,7 @@ export const make = Effect.gen(function* () {
     api({
       cwd: input.cwd,
       args: [
-        `repos/{owner}/{repo}/pulls?state=${listStateParameter(input.state)}&limit=${LIST_PAGE_SIZE}&page=${input.page}`,
+        `repos/{owner}/{repo}/pulls?state=${listStateParameter(input.state)}&sort=recentupdate&limit=${LIST_PAGE_SIZE}&page=${input.page}`,
       ],
     }).pipe(
       Effect.flatMap((raw) => {
@@ -796,7 +796,6 @@ export const make = Effect.gen(function* () {
     createPullRequest: (input) =>
       api({
         cwd: input.cwd,
-        reference: input.headSelector,
         args: [
           "-X",
           "POST",

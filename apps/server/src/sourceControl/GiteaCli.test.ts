@@ -252,7 +252,9 @@ layer("GiteaCli.layer", (it) => {
       });
 
       expect(result.map((entry) => entry.number)).toEqual([2]);
-      expect(lastArgs()[2]).toBe("repos/{owner}/{repo}/pulls?state=open&limit=50&page=1");
+      expect(lastArgs()[2]).toBe(
+        "repos/{owner}/{repo}/pulls?state=open&sort=recentupdate&limit=50&page=1",
+      );
     }),
   );
 
@@ -304,7 +306,9 @@ layer("GiteaCli.layer", (it) => {
 
       expect(result.map((entry) => entry.number)).toEqual([77]);
       expect(mockedRun).toHaveBeenCalledTimes(2);
-      expect(lastArgs()[2]).toBe("repos/{owner}/{repo}/pulls?state=open&limit=50&page=2");
+      expect(lastArgs()[2]).toBe(
+        "repos/{owner}/{repo}/pulls?state=open&sort=recentupdate&limit=50&page=2",
+      );
     }),
   );
 
@@ -980,6 +984,53 @@ layer("GiteaCli failures", (it) => {
       );
 
       expect(error._tag).toBe("GiteaPullRequestListDecodeError");
+    }),
+  );
+
+  it.effect("maps a createPullRequest HTTP 404 to GiteaCliCommandError, not not-found", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(apiOutput('{"message":"repository not found"}', 404)),
+      );
+
+      const tea = yield* GiteaCli.GiteaCli;
+      const error = yield* Effect.flip(
+        tea.createPullRequest({
+          cwd: "/repo",
+          baseBranch: "main",
+          headSelector: "feature",
+          title: "t",
+          bodyFile: "/tmp/b.md",
+        }),
+      );
+
+      expect(error._tag).toBe("GiteaCliCommandError");
+    }),
+  );
+
+  it.effect("still maps a getPullRequest HTTP 404 to GiteaPullRequestNotFoundError", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiOutput('{"message":"not found"}', 404)));
+
+      const tea = yield* GiteaCli.GiteaCli;
+      const error = yield* Effect.flip(tea.getPullRequest({ cwd: "/repo", reference: "42" }));
+
+      expect(error._tag).toBe("GiteaPullRequestNotFoundError");
+    }),
+  );
+
+  it.effect("sends sort=recentupdate in listPullRequests query", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(apiOutput("[]")));
+
+      const tea = yield* GiteaCli.GiteaCli;
+      yield* tea.listPullRequests({
+        cwd: "/repo",
+        headSelector: "feature",
+        state: "open",
+      });
+
+      expect(lastArgs()[2]).toContain("sort=recentupdate");
     }),
   );
 });
