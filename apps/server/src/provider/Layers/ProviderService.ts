@@ -2064,24 +2064,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
-  const resolveCodexGoalRoute = Effect.fn("resolveCodexGoalRoute")(function* (input: {
-    readonly threadId: ThreadId;
-    readonly operation: string;
-    readonly allowRecovery: boolean;
-  }) {
-    let routed = yield* resolveRoutableSession({
-      threadId: input.threadId,
-      operation: input.operation,
-      allowRecovery: false,
-    });
+  const resolveCodexGoalRoute = Effect.fn("resolveCodexGoalRoute")(function* (
+    threadId: ThreadId,
+    operation: "get" | "set" | "clear",
+    allowRecovery = true,
+  ) {
+    const operationName = `ProviderService.${operation}CodexGoal`;
+    const routeInput = { threadId, operation: operationName };
+    let routed = yield* resolveRoutableSession({ ...routeInput, allowRecovery: false });
     const unsupported = () =>
       toValidationError(
-        input.operation,
+        operationName,
         `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
       );
     if (!routed.adapter.codexGoal) return yield* unsupported();
-    if (!routed.isActive && input.allowRecovery) {
-      routed = yield* resolveRoutableSession({ ...input, allowRecovery: true });
+    if (!routed.isActive && allowRecovery) {
+      routed = yield* resolveRoutableSession({ ...routeInput, allowRecovery: true });
     }
     const goal = routed.adapter.codexGoal;
     if (!goal) return yield* unsupported();
@@ -2090,11 +2088,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const getCodexGoal: ProviderServiceMethod<"getCodexGoal"> = Effect.fn("getCodexGoal")(
     function* (threadId, options) {
-      const { routed, goal } = yield* resolveCodexGoalRoute({
+      const { routed, goal } = yield* resolveCodexGoalRoute(
         threadId,
-        operation: "ProviderService.getCodexGoal",
-        allowRecovery: options?.allowRecovery !== false,
-      });
+        "get",
+        options?.allowRecovery !== false,
+      );
       if (!routed.isActive) {
         if (options?.failIfInactive === true) {
           return yield* toValidationError(
@@ -2110,22 +2108,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const setCodexGoal: ProviderServiceMethod<"setCodexGoal"> = Effect.fn("setCodexGoal")(
     function* (input) {
-      const { goal } = yield* resolveCodexGoalRoute({
-        threadId: input.threadId,
-        operation: "ProviderService.setCodexGoal",
-        allowRecovery: true,
-      });
+      const { goal } = yield* resolveCodexGoalRoute(input.threadId, "set");
       return yield* goal.set(input);
     },
   );
 
   const clearCodexGoal: ProviderServiceMethod<"clearCodexGoal"> = Effect.fn("clearCodexGoal")(
     function* (threadId) {
-      const { routed, goal } = yield* resolveCodexGoalRoute({
-        threadId,
-        operation: "ProviderService.clearCodexGoal",
-        allowRecovery: true,
-      });
+      const { routed, goal } = yield* resolveCodexGoalRoute(threadId, "clear");
       return yield* goal.clear(routed.threadId);
     },
   );

@@ -3,7 +3,6 @@ import {
   type CodexGoalSetInput,
   type CodexGoalStatus,
   type CodexGoalStreamEvent,
-  type CodexGoalThreadInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -177,7 +176,7 @@ export function createThreadEnvironmentAtoms<R, E>(
   const scheduler = createAtomCommandScheduler();
   const concurrency = {
     mode: "serial" as const,
-    key: ({ environmentId, input }: { environmentId: string; input: CodexGoalThreadInput }) =>
+    key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
   };
   const codexGoal = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
