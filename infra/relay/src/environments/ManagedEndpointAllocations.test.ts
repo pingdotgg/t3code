@@ -12,18 +12,18 @@ const layerWithDb = (db: RelayDb.RelayDb["Service"]) =>
   ManagedEndpointAllocations.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, db)));
 
 describe("ManagedEndpointAllocations", () => {
-  it.effect("clears endpoint readiness when recording a replacement tunnel", () => {
+  it.effect("clears endpoint readiness only when the recorded tunnel changes", () => {
     let updated:
       | {
           readonly tunnelId: string;
-          readonly readyAt: string | null;
+          readonly readyAt: unknown;
         }
       | undefined;
     const fakeDb = {
       update: (table: unknown) => {
         expect(table).toBe(relayManagedEndpointAllocations);
         return {
-          set: (values: { readonly tunnelId: string; readonly readyAt: string | null }) => {
+          set: (values: { readonly tunnelId: string; readonly readyAt: unknown }) => {
             updated = values;
             return {
               where: () => ({
@@ -46,7 +46,11 @@ describe("ManagedEndpointAllocations", () => {
         }),
       ).toBe(8);
       expect(updated?.tunnelId).toBe("replacement-tunnel");
-      expect(updated?.readyAt).toBeNull();
+      const query = new PgDialect().sqlToQuery(updated?.readyAt as never);
+      expect(query.sql).toBe(
+        'case when "relay_managed_endpoint_allocations"."tunnel_id" = $1 then "relay_managed_endpoint_allocations"."ready_at" else null end',
+      );
+      expect(query.params).toEqual(["replacement-tunnel"]);
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
 

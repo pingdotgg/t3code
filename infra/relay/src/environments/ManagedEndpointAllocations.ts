@@ -288,7 +288,7 @@ export const make = Effect.gen(function* () {
         .update(relayManagedEndpointAllocations)
         .set({
           tunnelId: input.tunnelId,
-          readyAt: null,
+          readyAt: sql`case when ${relayManagedEndpointAllocations.tunnelId} = ${input.tunnelId} then ${relayManagedEndpointAllocations.readyAt} else null end`,
           updatedAt: DateTime.formatIso(yield* DateTime.now),
           generation: sql`${relayManagedEndpointAllocations.generation} + 1`,
         })

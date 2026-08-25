@@ -234,7 +234,7 @@ function makeAllocations(calls: AllocationCall[] = []) {
         mutate(allocationKey(input), (allocation) => ({
           ...allocation,
           tunnelId: input.tunnelId,
-          readyAt: null,
+          readyAt: allocation.tunnelId === input.tunnelId ? allocation.readyAt : null,
         }));
         return allocations.get(allocationKey(input))?.generation ?? null;
       }),
@@ -807,7 +807,8 @@ describe("ManagedEndpointProvider", () => {
         }).pipe(Effect.andThen(Effect.fail(failure))),
       deleteRecord: () => Effect.void,
     });
-    const layer = providerLayer(makePersistentTunnelClient(), dnsClient, makeAllocations());
+    const allocations = makeAllocations();
+    const layer = providerLayer(makePersistentTunnelClient(), dnsClient, allocations);
 
     return Effect.gen(function* () {
       const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
@@ -830,6 +831,10 @@ describe("ManagedEndpointProvider", () => {
         "createRecord",
         "updateRecord",
       ]);
+      expect(yield* allocations.get(request)).toMatchObject({
+        tunnelId: "tunnel-id",
+        readyAt: "2026-06-02T00:00:00.000Z",
+      });
     }).pipe(Effect.provide(layer));
   });
 
