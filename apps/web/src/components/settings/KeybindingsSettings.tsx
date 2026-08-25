@@ -908,7 +908,8 @@ function KeybindingRowMenu({
 }) {
   const canReset = row.source === "Custom" && row.defaultKey !== null;
   const canRemove = row.source !== "Default";
-  if (!canReset && !canRemove) return null;
+  // Keep the slot occupied so shortcut pills share a right edge across rows.
+  if (!canReset && !canRemove) return <span className="size-7 shrink-0" aria-hidden />;
 
   return (
     <Menu>
