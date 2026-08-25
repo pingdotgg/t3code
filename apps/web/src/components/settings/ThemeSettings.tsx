@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { cn } from "../../lib/utils";
 import {
   getThemeDefinition,
+  getDesktopSystemThemeDefinition,
   getThemeModes,
   removeCustomThemes,
   serializeThemeFile,
@@ -24,6 +25,7 @@ import {
   GROVE_THEME,
   IRIS_THEME,
   OCEAN_THEME,
+  DESKTOP_SYSTEM_THEME_ID,
 } from "../../themePalette";
 import {
   AlertDialog,
@@ -523,6 +525,7 @@ export function ThemeLibrary({
   setThemeHalf: (appearance: ThemeAppearance, themeId: string | null) => boolean;
 }) {
   const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
+  const desktopSystemTheme = getDesktopSystemThemeDefinition();
   const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
@@ -788,6 +791,24 @@ export function ThemeLibrary({
             theme={standardTheme}
           />
         ))}
+        {desktopSystemTheme ? (
+          <ThemeLibraryCard
+            activeModes={pickedModesFor(DESKTOP_SYSTEM_THEME_ID)}
+            isActive={false}
+            key={DESKTOP_SYSTEM_THEME_ID}
+            onDuplicate={() =>
+              openThemeEditor({
+                editingThemeId: null,
+                seedThemeId: DESKTOP_SYSTEM_THEME_ID,
+                seedName: "System theme copy",
+                initialAppearance,
+              })
+            }
+            onUse={() => persistTheme(DESKTOP_SYSTEM_THEME_ID)}
+            onUseMode={handlePairPick(DESKTOP_SYSTEM_THEME_ID)}
+            theme={getThemeCardDefinition(desktopSystemTheme)}
+          />
+        ) : null}
         {MAINTAINER_THEMES.map((maintainerTheme) => {
           const card = getThemeCardDefinition(maintainerTheme);
           return (

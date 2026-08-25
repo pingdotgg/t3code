@@ -18,6 +18,7 @@
         const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
         const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
         const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+        const DESKTOP_SYSTEM_THEME_ID = "desktop:system";
         const SPLASH_COLORS = {
           light: {
             background: "#ffffff",
@@ -139,6 +140,7 @@
           "ocean",
           "ember",
           "iris",
+          DESKTOP_SYSTEM_THEME_ID,
           "t3-chat-dark",
           "t3-grove",
           "t3-ocean",
@@ -182,6 +184,11 @@
         const isThemePreferenceMode = (value) =>
           value === "light" || value === "dark" || value === "system";
         const isThemeAppearance = (value) => value === "light" || value === "dark";
+        const isDesktopSystemTheme = (value) =>
+          isRecord(value) &&
+          isThemeAppearance(value.appearance) &&
+          isRecord(value.colors) &&
+          ["background", "foreground", "accent"].every((key) => isThemeColor(value.colors[key]));
         const isStoredCustomTheme = (value) => {
           if (
             !isRecord(value) ||
@@ -234,9 +241,19 @@
             storedTheme === null ? "" : (LEGACY_THEME_IDS[storedTheme] ?? storedTheme);
           const legacyMode = isLegacyT3ChatDark ? "dark" : null;
           const builtInModes = BUILT_IN_THEME_MODES[themeId] ?? null;
-          const customTheme = builtInModes ? null : findCustomTheme(themeId);
+          let desktopSystemTheme = null;
+          if (themeId === DESKTOP_SYSTEM_THEME_ID) {
+            try {
+              const candidate = window.desktopBridge?.getSystemTheme?.() ?? null;
+              if (isDesktopSystemTheme(candidate)) desktopSystemTheme = candidate;
+            } catch {
+              // The desktop bridge is optional and unavailable on web builds.
+            }
+          }
+          const customTheme = builtInModes || desktopSystemTheme ? null : findCustomTheme(themeId);
           const themeModes =
             builtInModes ??
+            (desktopSystemTheme ? [desktopSystemTheme.appearance] : null) ??
             (customTheme
               ? ["light", "dark"].filter(
                   (mode) => mode === customTheme.appearance || customTheme.variants?.[mode],
@@ -247,10 +264,12 @@
             storedTheme === "light" ||
             storedTheme === "dark" ||
             storedTheme === "system" ||
+            storedTheme === DESKTOP_SYSTEM_THEME_ID ||
             themeModes !== null;
           const theme = isKnownTheme && storedTheme ? storedTheme : "system";
           const isThemed = isKnownTheme && themeModes !== null;
-          const baseAppearance = customTheme ? customTheme.appearance : "light";
+          const baseAppearance =
+            desktopSystemTheme?.appearance ?? (customTheme ? customTheme.appearance : "light");
           const systemMode = prefersDark ? "dark" : "light";
           const storedAppearanceMode = window.localStorage.getItem(
             THEME_APPEARANCE_MODE_STORAGE_KEY,
@@ -335,7 +354,14 @@
           // per role rather than dropping the theme.
           const builtInSplash =
             effectiveIsThemed && !effectiveCustomTheme && effectiveThemeMode
-              ? (BUILT_IN_THEME_PALETTES[effectiveThemeId]?.[effectiveThemeMode] ?? null)
+              ? effectiveThemeId === DESKTOP_SYSTEM_THEME_ID && desktopSystemTheme
+                ? {
+                    background: desktopSystemTheme.colors.background,
+                    foreground: desktopSystemTheme.colors.foreground,
+                    accent: desktopSystemTheme.colors.accent,
+                    chrome: desktopSystemTheme.colors.background,
+                  }
+                : (BUILT_IN_THEME_PALETTES[effectiveThemeId]?.[effectiveThemeMode] ?? null)
               : null;
           const fallbackSplash = isDark ? SPLASH_COLORS.dark : SPLASH_COLORS.light;
           const customSplash = customColors

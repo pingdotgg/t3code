@@ -203,4 +203,65 @@ describe("theme failure handling", () => {
       expect(JSON.stringify(attributes)).not.toContain(cause.message);
     }
   });
+
+  it("reads and subscribes to the optional desktop system palette", async () => {
+    const initial = {
+      appearance: "dark" as const,
+      colors: {
+        background: "#101010",
+        foreground: "#f0f0f0",
+        accent: "#3366ff",
+        selection: "#303030",
+        red: "#ff0000",
+        green: "#00ff00",
+        yellow: "#ffff00",
+        blue: "#0000ff",
+        magenta: "#ff00ff",
+        cyan: "#00ffff",
+      },
+    };
+    const updated = {
+      ...initial,
+      colors: { ...initial.colors, background: "#202020" },
+    };
+    let systemThemeListener: ((theme: typeof initial | null) => void) | undefined;
+    let removeSystemThemeListener: ReturnType<typeof vi.fn> | undefined;
+    vi.doMock("react", () => ({
+      useCallback: <A>(callback: A) => callback,
+      useEffect: () => undefined,
+      useSyncExternalStore: (
+        subscribe: (listener: () => void) => () => void,
+        getSnapshot: () => unknown,
+      ) => {
+        subscribe(() => undefined);
+        return getSnapshot();
+      },
+    }));
+    vi.stubGlobal("window", {
+      addEventListener: () => undefined,
+      desktopBridge: {
+        getSystemTheme: () => initial,
+        onSystemThemeChange: (listener: (theme: typeof initial | null) => void) => {
+          systemThemeListener = listener;
+          removeSystemThemeListener = vi.fn();
+          return removeSystemThemeListener;
+        },
+        setTheme: vi.fn().mockResolvedValue(undefined),
+      },
+      localStorage: createStorage(),
+      matchMedia: () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+      removeEventListener: () => undefined,
+    });
+
+    const { useTheme } = await import("./useTheme");
+    expect(useTheme().desktopSystemTheme).toEqual(initial);
+
+    systemThemeListener?.(updated);
+    expect(useTheme().desktopSystemTheme).toEqual(updated);
+    expect(removeSystemThemeListener).toBeDefined();
+  });
 });

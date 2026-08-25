@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import "culori/css";
 import { converter, parse } from "culori/fn";
+import type { DesktopSystemTheme } from "@t3tools/contracts";
 import {
   BUILT_IN_THEMES,
   EMBER_THEME,
@@ -34,6 +35,8 @@ export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
 export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
 export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+export const DESKTOP_SYSTEM_THEME_ID = "desktop:system" as const;
+export const DESKTOP_SYSTEM_THEME_LABEL = "Follow system theme";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
@@ -65,6 +68,7 @@ const RESERVED_THEME_IDS = new Set([
   OCEAN_THEME_ID,
   EMBER_THEME_ID,
   IRIS_THEME_ID,
+  DESKTOP_SYSTEM_THEME_ID,
   LEGACY_T3_CHAT_DARK_THEME_ID,
   "t3-grove",
   "t3-ocean",
@@ -85,6 +89,30 @@ type CustomThemeLibrarySnapshot =
 let customThemeLibrarySnapshot: CustomThemeLibrarySnapshot | null = null;
 const themePreviewListeners = new Set<() => void>();
 let themePreviewSidebarArtwork: boolean | null = null;
+let desktopSystemTheme: DesktopSystemTheme | null = readDesktopSystemTheme();
+
+function readDesktopSystemTheme(): DesktopSystemTheme | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.desktopBridge?.getSystemTheme?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function getDesktopSystemTheme(): DesktopSystemTheme | null {
+  return desktopSystemTheme;
+}
+
+export function refreshDesktopSystemTheme(): boolean {
+  return setDesktopSystemTheme(readDesktopSystemTheme());
+}
+
+export function setDesktopSystemTheme(next: DesktopSystemTheme | null): boolean {
+  if (JSON.stringify(desktopSystemTheme) === JSON.stringify(next)) return false;
+  desktopSystemTheme = next;
+  return true;
+}
 
 export function getThemePreviewSidebarArtwork(): boolean | null {
   return themePreviewSidebarArtwork;
@@ -1419,8 +1447,49 @@ export function updateThemeColorFamily(
 
 const BUILT_IN_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> = BUILT_IN_THEMES;
 
+/** Expand the compact desktop palette into every role used by the web renderer. */
+export function createDesktopSystemThemeColors(systemTheme: DesktopSystemTheme): ThemeColors {
+  const { appearance, colors: semantic } = systemTheme;
+  let colors = createManagedThemeColors(appearance, semantic.background, semantic.accent, {
+    exactSeeds: true,
+  });
+  colors = updateThemeColorFamily(appearance, colors, "error", semantic.red);
+  colors = updateThemeColorFamily(appearance, colors, "warning", semantic.yellow);
+  colors = updateThemeColorFamily(appearance, colors, "messageAction", semantic.magenta);
+  colors = updateThemeColorFamily(appearance, colors, "sidebarRowSelected", semantic.selection);
+  const greenFamily = updateThemeColorFamily(appearance, colors, "accent", semantic.green);
+
+  return {
+    ...colors,
+    text: semantic.foreground,
+    toolbarForeground: semantic.foreground,
+    toolbarControlForeground: semantic.foreground,
+    codeForeground: semantic.foreground,
+    terminalForeground: semantic.foreground,
+    focus: semantic.blue,
+    update: greenFamily.update,
+    updateForeground: greenFamily.updateForeground,
+    updateSurface: greenFamily.updateSurface,
+    terminalCursor: semantic.cyan,
+    terminalSelection: semantic.selection,
+  };
+}
+
+export function getDesktopSystemThemeDefinition(): ThemeDefinition | null {
+  const systemTheme = getDesktopSystemTheme();
+  return systemTheme === null
+    ? null
+    : {
+        id: DESKTOP_SYSTEM_THEME_ID,
+        label: DESKTOP_SYSTEM_THEME_LABEL,
+        appearance: systemTheme.appearance,
+        colors: createDesktopSystemThemeColors(systemTheme),
+      };
+}
+
 export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | null {
   const themeId = themeIdFromPreference(theme);
+  if (themeId === DESKTOP_SYSTEM_THEME_ID) return getDesktopSystemThemeDefinition();
   return (
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId) ??
     getCustomThemes().find((definition) => definition.id === themeId) ??
@@ -1883,6 +1952,9 @@ export function resolveThemeAppearance(
   appearanceMode?: ThemePreferenceMode,
   halves?: ThemeHalves | null,
 ): "light" | "dark" {
+  if (theme === DESKTOP_SYSTEM_THEME_ID && desktopSystemTheme !== null) {
+    return desktopSystemTheme.appearance;
+  }
   const systemAppearance = systemDark ? "dark" : "light";
   const mode = appearanceMode ?? ((followSystem ?? theme === "system") ? "system" : null);
   if (mode === "system") {
@@ -1910,6 +1982,9 @@ export function resolveDesktopTheme(
   appearanceMode?: ThemePreferenceMode,
   halves?: ThemeHalves | null,
 ): "light" | "dark" | "system" {
+  if (theme === DESKTOP_SYSTEM_THEME_ID && desktopSystemTheme !== null) {
+    return desktopSystemTheme.appearance;
+  }
   const mode = appearanceMode ?? ((followSystem ?? theme === "system") ? "system" : null);
   if (mode === "system") {
     const definition = getThemeDefinition(theme);
@@ -1934,6 +2009,7 @@ export function resolveDesktopTheme(
 
 export function isKnownThemePreference(theme: string): boolean {
   if (theme === "light" || theme === "dark" || theme === "system") return true;
+  if (theme === DESKTOP_SYSTEM_THEME_ID) return true;
   return getThemeDefinition(theme) !== null;
 }
 

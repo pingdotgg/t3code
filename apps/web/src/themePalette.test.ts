@@ -34,13 +34,33 @@ import {
   updateCustomTheme,
   CUSTOM_THEMES_STORAGE_KEY,
   createManagedThemeColors,
+  createDesktopSystemThemeColors,
   createVividThemeColors,
+  DESKTOP_SYSTEM_THEME_ID,
+  DESKTOP_SYSTEM_THEME_LABEL,
   getDefaultThemeColors,
+  getDesktopSystemThemeDefinition,
   themeColorToHex,
   toCanonicalThemeColor,
   THEME_FILE_VERSION,
+  setDesktopSystemTheme,
 } from "./themePalette";
 
+const DESKTOP_SYSTEM_THEME = {
+  appearance: "dark",
+  colors: {
+    background: "#282a36",
+    foreground: "#f8f8f2",
+    accent: "#bd93f9",
+    selection: "#44475a",
+    red: "#ff5555",
+    green: "#50fa7b",
+    yellow: "#f1fa8c",
+    blue: "#6272a4",
+    magenta: "#ff79c6",
+    cyan: "#8be9fd",
+  },
+} as const;
 function asHex(value: string): string {
   const hex = themeColorToHex(value);
   if (!hex) throw new Error(`Expected a theme color, received ${value}`);
@@ -79,6 +99,33 @@ function contrastRatio(first: string, second: string): number {
 }
 
 describe("theme files", () => {
+  it("keeps the optional desktop palette separate from imported themes", () => {
+    expect(DESKTOP_SYSTEM_THEME_LABEL).toBe("Follow system theme");
+    expect(isKnownThemePreference(DESKTOP_SYSTEM_THEME_ID)).toBe(true);
+    expect(getDesktopSystemThemeDefinition()).toBeNull();
+
+    try {
+      expect(setDesktopSystemTheme(DESKTOP_SYSTEM_THEME)).toBe(true);
+      expect(setDesktopSystemTheme({ ...DESKTOP_SYSTEM_THEME })).toBe(false);
+      const definition = getDesktopSystemThemeDefinition();
+      const colors = createDesktopSystemThemeColors(DESKTOP_SYSTEM_THEME);
+
+      expect(definition).toMatchObject({
+        id: DESKTOP_SYSTEM_THEME_ID,
+        label: "Follow system theme",
+        appearance: "dark",
+      });
+      expect(Object.keys(colors).sort()).toEqual(Object.keys(T3_CHAT_THEME.colors).sort());
+      expect(asHex(colors.text)).toBe(DESKTOP_SYSTEM_THEME.colors.foreground);
+      expect(asHex(colors.error)).toBe(DESKTOP_SYSTEM_THEME.colors.red);
+      expect(asHex(colors.warning)).toBe(DESKTOP_SYSTEM_THEME.colors.yellow);
+      expect(asHex(colors.update)).toBe(DESKTOP_SYSTEM_THEME.colors.green);
+      expect(asHex(colors.messageAction)).toBe(DESKTOP_SYSTEM_THEME.colors.magenta);
+      expect(asHex(colors.terminalCursor)).toBe(DESKTOP_SYSTEM_THEME.colors.cyan);
+    } finally {
+      setDesktopSystemTheme(null);
+    }
+  });
   it("keeps every built-in palette value in canonical OKLCH form", () => {
     for (const theme of BUILT_IN_THEMES) {
       for (const colors of [theme.colors, ...Object.values(theme.variants ?? {})]) {

@@ -154,6 +154,22 @@ export type DesktopUpdateStatus =
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
+export interface DesktopSystemThemePalette {
+  background: string;
+  foreground: string;
+  accent: string;
+  selection: string;
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+}
+export interface DesktopSystemTheme {
+  appearance: "light" | "dark";
+  colors: DesktopSystemThemePalette;
+}
 export type DesktopUpdateChannel = "latest" | "nightly";
 export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly";
 
@@ -169,6 +185,22 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
 ]);
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
+export const DesktopSystemThemePaletteSchema = Schema.Struct({
+  background: Schema.String,
+  foreground: Schema.String,
+  accent: Schema.String,
+  selection: Schema.String,
+  red: Schema.String,
+  green: Schema.String,
+  yellow: Schema.String,
+  blue: Schema.String,
+  magenta: Schema.String,
+  cyan: Schema.String,
+});
+export const DesktopSystemThemeSchema = Schema.Struct({
+  appearance: Schema.Literals(["light", "dark"]),
+  colors: DesktopSystemThemePaletteSchema,
+});
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
 
@@ -1118,6 +1150,10 @@ export interface DesktopBridge {
    * web callers fall back to a plain file input.
    */
   pickThemeFiles?: () => Promise<readonly PickedThemeFile[] | null>;
+  /** Optional while older desktop shells can host a newer web client. */
+  getSystemTheme?: () => DesktopSystemTheme | null;
+  /** Optional while older desktop shells can host a newer web client. */
+  onSystemThemeChange?: (listener: (theme: DesktopSystemTheme | null) => void) => () => void;
   setTheme: (theme: DesktopTheme) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],

@@ -2,6 +2,7 @@ import {
   ContextMenuItemSchema,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
+  DesktopSystemThemeSchema,
   DesktopThemeSchema,
   EDITORS,
   EditorId,
@@ -27,6 +28,7 @@ import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
+import * as DesktopSystemTheme from "../../theme/DesktopSystemTheme.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
@@ -82,6 +84,15 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const window = yield* electronWindow.currentMainOrFirst;
     return Option.isSome(window) && window.value.isFullScreen();
+  }),
+});
+
+export const getSystemTheme = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_SYSTEM_THEME_CHANNEL,
+  result: Schema.NullOr(DesktopSystemThemeSchema),
+  handler: Effect.fn("desktop.ipc.window.getSystemTheme")(function* () {
+    const systemTheme = yield* DesktopSystemTheme.DesktopSystemThemeService;
+    return yield* systemTheme.current;
   }),
 });
 

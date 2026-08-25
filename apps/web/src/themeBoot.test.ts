@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import indexHtml from "../index.html?raw";
 import {
   CUSTOM_THEMES_STORAGE_KEY,
+  DESKTOP_SYSTEM_THEME_ID,
   getDefaultThemeColors,
   getThemeColorsForMode,
   invalidateCustomThemes,
@@ -42,6 +43,10 @@ function runBootScript(options: {
   storage?: Record<string, string>;
   storageThrows?: boolean;
   prefersDark: boolean;
+  desktopSystemTheme?: {
+    appearance: "light" | "dark";
+    colors: Record<string, string>;
+  } | null;
 }): BootResult {
   const classes = new Set<string>();
   const bootVariables: Record<string, string> = {};
@@ -82,6 +87,10 @@ function runBootScript(options: {
       },
     },
     matchMedia: () => ({ matches: options.prefersDark }),
+    desktopBridge:
+      options.desktopSystemTheme === undefined
+        ? undefined
+        : { getSystemTheme: () => options.desktopSystemTheme },
   };
 
   const fakeCss = {
@@ -149,6 +158,41 @@ const CHARCOAL_DARK_ONLY = {
 };
 
 describe("index.html boot script", () => {
+  it("uses the local desktop system palette before React mounts", () => {
+    const desktopSystemTheme = {
+      appearance: "dark" as const,
+      colors: {
+        background: "#282a36",
+        foreground: "#f8f8f2",
+        accent: "#bd93f9",
+      },
+    };
+    const boot = runBootScript({
+      storage: { [THEME_STORAGE_KEY]: DESKTOP_SYSTEM_THEME_ID },
+      prefersDark: false,
+      desktopSystemTheme,
+    });
+
+    expect(boot.themeId).toBe(DESKTOP_SYSTEM_THEME_ID);
+    expect(boot.isDark).toBe(true);
+    expect(boot.backgroundColor).toBe(desktopSystemTheme.colors.background);
+    expect(boot.bootVariables).toMatchObject({
+      "--boot-background": desktopSystemTheme.colors.background,
+      "--boot-foreground": desktopSystemTheme.colors.foreground,
+      "--boot-accent": desktopSystemTheme.colors.accent,
+    });
+  });
+
+  it("falls back cleanly when the optional desktop palette is unavailable", () => {
+    const boot = runBootScript({
+      storage: { [THEME_STORAGE_KEY]: DESKTOP_SYSTEM_THEME_ID },
+      prefersDark: false,
+      desktopSystemTheme: null,
+    });
+    expect(boot.themeId).toBeUndefined();
+    expect(boot.isDark).toBe(false);
+  });
+
   const parityCases: ReadonlyArray<{
     name: string;
     storage: Record<string, string>;

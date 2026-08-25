@@ -1,4 +1,4 @@
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopSystemTheme } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
@@ -7,12 +7,15 @@ import {
   CUSTOM_THEMES_STORAGE_KEY,
   invalidateCustomThemes,
   canonicalThemePreference,
+  getDesktopSystemTheme,
   isKnownThemePreference,
   getThemePreferenceMode,
   parseThemeHalves,
   resolveDesktopTheme,
   resolveThemeAppearance,
   resolveThemeHalf,
+  refreshDesktopSystemTheme,
+  setDesktopSystemTheme,
   THEME_APPEARANCE_MODE_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
   THEME_HALVES_STORAGE_KEY,
@@ -29,6 +32,7 @@ type ThemeSnapshot = {
   followSystem: boolean;
   appearanceMode: ThemePreferenceMode;
   themeHalves: ThemeHalves | null;
+  desktopSystemTheme: DesktopSystemTheme | null;
 };
 
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
@@ -41,6 +45,7 @@ const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
   followSystem: true,
   appearanceMode: "system",
   themeHalves: null,
+  desktopSystemTheme: null,
 };
 
 /** Live read of the stored appearance mix, for callers that must not rely on
@@ -288,12 +293,14 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
+  const desktopSystemTheme = getDesktopSystemTheme();
   if (
     lastAppliedTheme?.theme === theme &&
     lastAppliedTheme.systemDark === systemDark &&
     lastAppliedTheme.followSystem === followSystem &&
     lastAppliedTheme.appearanceMode === appearanceMode &&
-    themeHalvesSignature(lastAppliedTheme.themeHalves) === themeHalvesSignature(themeHalves)
+    themeHalvesSignature(lastAppliedTheme.themeHalves) === themeHalvesSignature(themeHalves) &&
+    JSON.stringify(lastAppliedTheme.desktopSystemTheme) === JSON.stringify(desktopSystemTheme)
   ) {
     syncDesktopTheme(theme, followSystem, appearanceMode);
     return;
@@ -312,7 +319,14 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
   const isDark = resolvedAppearance === "dark";
   document.documentElement.classList.toggle("dark", isDark);
-  lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
+  lastAppliedTheme = {
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+    desktopSystemTheme,
+  };
   syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);
   if (suppressTransitions) {
@@ -385,6 +399,7 @@ function getSnapshot(): ThemeSnapshot {
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
+  const desktopSystemTheme = getDesktopSystemTheme();
 
   if (
     lastSnapshot &&
@@ -392,12 +407,20 @@ function getSnapshot(): ThemeSnapshot {
     lastSnapshot.systemDark === systemDark &&
     lastSnapshot.followSystem === followSystem &&
     lastSnapshot.appearanceMode === appearanceMode &&
-    themeHalvesSignature(lastSnapshot.themeHalves) === themeHalvesSignature(themeHalves)
+    themeHalvesSignature(lastSnapshot.themeHalves) === themeHalvesSignature(themeHalves) &&
+    JSON.stringify(lastSnapshot.desktopSystemTheme) === JSON.stringify(desktopSystemTheme)
   ) {
     return lastSnapshot;
   }
 
-  lastSnapshot = { theme, systemDark, followSystem, appearanceMode, themeHalves };
+  lastSnapshot = {
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+    desktopSystemTheme,
+  };
   return lastSnapshot;
 }
 
@@ -431,6 +454,13 @@ function handleStorageChange(e: StorageEvent) {
   }
 }
 
+function handleDesktopSystemThemeChange(theme: DesktopSystemTheme | null) {
+  if (!setDesktopSystemTheme(theme)) return;
+  lastAppliedTheme = null;
+  applyTheme(getStored(), true);
+  emitChange();
+}
+
 let removeWindowListeners: (() => void) | null = null;
 
 function subscribe(listener: () => void): () => void {
@@ -441,11 +471,20 @@ function subscribe(listener: () => void): () => void {
   // subscribers; each event applies the theme once and notifies everyone.
   if (!removeWindowListeners) {
     const mq = typeof window.matchMedia === "function" ? window.matchMedia(MEDIA_QUERY) : null;
+    const removeSystemThemeListener = window.desktopBridge?.onSystemThemeChange?.(
+      handleDesktopSystemThemeChange,
+    );
+    if (refreshDesktopSystemTheme()) {
+      lastAppliedTheme = null;
+      applyTheme(getStored(), true);
+      snapshotStale = true;
+    }
     mq?.addEventListener("change", handleSystemAppearanceChange);
     window.addEventListener("storage", handleStorageChange);
     removeWindowListeners = () => {
       mq?.removeEventListener("change", handleSystemAppearanceChange);
       window.removeEventListener("storage", handleStorageChange);
+      removeSystemThemeListener?.();
     };
   }
 
@@ -633,5 +672,6 @@ export function useTheme() {
     appearanceMode: snapshot.appearanceMode,
     resolvedTheme,
     themeHalves: snapshot.themeHalves,
+    desktopSystemTheme: snapshot.desktopSystemTheme,
   } as const;
 }

@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopSystemTheme,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -10,6 +11,32 @@ import { contextBridge, ipcRenderer } from "electron";
 import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
+
+function isSystemTheme(value: unknown): value is DesktopSystemTheme {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("appearance" in value) ||
+    !("colors" in value)
+  ) {
+    return false;
+  }
+  if (value.appearance !== "light" && value.appearance !== "dark") return false;
+  if (typeof value.colors !== "object" || value.colors === null) return false;
+  const colors = value.colors as Record<string, unknown>;
+  return [
+    "background",
+    "foreground",
+    "accent",
+    "selection",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+  ].every((key) => typeof colors[key] === "string");
+}
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -104,6 +131,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   pickProjectFavicon: (initialPath) =>
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   pickThemeFiles: () => ipcRenderer.invoke(IpcChannels.PICK_THEME_FILES_CHANNEL, undefined),
+  getSystemTheme: () => {
+    const result: unknown = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_THEME_CHANNEL);
+    return isSystemTheme(result) ? result : null;
+  },
+  onSystemThemeChange: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, theme: unknown) => {
+      listener(isSystemTheme(theme) ? theme : null);
+    };
+    ipcRenderer.on(IpcChannels.SYSTEM_THEME_CHANGED_CHANNEL, wrappedListener);
+    return () =>
+      ipcRenderer.removeListener(IpcChannels.SYSTEM_THEME_CHANGED_CHANNEL, wrappedListener);
+  },
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.SET_THEME_CHANNEL, theme),
   showContextMenu: (items, position) =>
     ipcRenderer.invoke(IpcChannels.CONTEXT_MENU_CHANNEL, {
