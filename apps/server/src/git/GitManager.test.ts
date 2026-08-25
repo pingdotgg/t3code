@@ -1535,6 +1535,46 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       }),
   );
 
+  it.effect(
+    "status does not inherit a PR from a hierarchical base whose tail matches the branch name",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["remote", "set-head", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "release/v2"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "release/v2"]);
+        yield* runGit(repoDir, ["checkout", "-b", "v2", "origin/release/v2"]);
+
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: {
+            prListSequence: [
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify([
+                {
+                  number: 61,
+                  title: "Release v2",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/61",
+                  baseRefName: "main",
+                  headRefName: "release/v2",
+                  state: "OPEN",
+                  updatedAt: "2026-08-20T09:00:00Z",
+                },
+              ]),
+            ],
+          },
+        });
+
+        const status = yield* manager.status({ cwd: repoDir });
+        expect(status.refName).toBe("v2");
+        expect(status.pr).toBeNull();
+        expect(ghCalls.some((call) => call.includes("pr list"))).toBe(false);
+      }),
+  );
+
   it.effect("status prefers open PR when merged PR has newer updatedAt", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

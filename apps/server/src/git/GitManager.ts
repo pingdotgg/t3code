@@ -945,23 +945,22 @@ export const make = Effect.gen(function* () {
       };
       return Effect.gen(function* () {
         const headContext = yield* resolveBranchHeadContext(cwd, details);
-        // A local branch named after the tail of its upstream ref was created to
-        // track that ref: `git checkout --track my-org/upstream/effect-atom`
-        // cannot name it "effect-atom", so it keeps "upstream/effect-atom". Its
-        // upstream is still its published head.
-        const localBranchTracksUpstreamHead =
-          details.upstreamRef !== null && details.upstreamRef.endsWith(`/${details.branch}`);
-        // Any other branch tracking a differently named ref was cut from it, the
-        // way `git worktree add -b feature origin/dev` is, so that upstream is
-        // the branch's base and not its published head. Looking up PRs for it
-        // attaches the base branch's own change request (an old reverse merge
-        // from the default branch, or an integration branch's release PR) to an
-        // unrelated feature thread.
-        if (
-          headContext.headBranch !== details.branch &&
-          !localBranchTracksUpstreamHead &&
-          !headContext.isCrossRepository
-        ) {
+        // A local branch whose name ends with the parsed head was created to
+        // track that head under a git-mangled name: `git checkout --track
+        // my-org/upstream/effect-atom` cannot name it "effect-atom", so it
+        // keeps "upstream/effect-atom". Its upstream is still its published
+        // head. The suffix runs this way only; a local "v2" tracking
+        // origin/release/v2 was cut from release/v2, not published to it.
+        const localBranchIsAliasOfHead =
+          details.branch === headContext.headBranch ||
+          details.branch.endsWith(`/${headContext.headBranch}`);
+        // Any other branch tracking a differently named ref was cut from it,
+        // the way `git worktree add -b feature origin/dev` is, so that
+        // upstream is the branch's base and not its published head. Looking up
+        // PRs for it attaches the base branch's own change request (an old
+        // reverse merge from the default branch, or an integration branch's
+        // release PR) to an unrelated feature thread.
+        if (!localBranchIsAliasOfHead && !headContext.isCrossRepository) {
           return { latest: null, headContext };
         }
         // Only skip when the branch is untracked as well: anything carrying an
