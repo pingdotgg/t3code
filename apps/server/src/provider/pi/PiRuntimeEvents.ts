@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   RuntimeItemId,
   RuntimeRequestId,
+  type AssistantMessagePhase,
   type ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ThreadId,
@@ -26,9 +27,14 @@ interface PiRuntimeEventMapperOptions {
 
 interface PiContentState {
   readonly itemId: RuntimeItemId;
+  readonly sourceKind: "assistant_text" | "reasoning_text";
   readonly streamKind: "assistant_text" | "reasoning_text";
   readonly itemType: "assistant_message" | "reasoning";
+  readonly isProgress: boolean;
   emittedText: string;
+  readonly emittedTextByContentIndex: Map<number, string>;
+  completed: boolean;
+  messagePhase?: AssistantMessagePhase;
 }
 
 interface PiToolState {
@@ -152,18 +158,109 @@ function extractText(value: unknown): string | undefined {
 function contentSnapshot(
   value: unknown,
 ):
-  | { readonly streamKind: "assistant_text"; readonly text: string }
-  | { readonly streamKind: "reasoning_text"; readonly text: string }
+  | { readonly sourceKind: "assistant_text"; readonly text: string }
+  | { readonly sourceKind: "reasoning_text"; readonly text: string }
   | undefined {
   const record = asRecord(value);
   if (!record) return undefined;
   if (record.type === "text" && typeof record.text === "string" && record.text.trim()) {
-    return { streamKind: "assistant_text", text: record.text };
+    return { sourceKind: "assistant_text", text: record.text };
   }
   if (record.type === "thinking" && typeof record.thinking === "string" && record.thinking.trim()) {
-    return { streamKind: "reasoning_text", text: record.thinking };
+    return { sourceKind: "reasoning_text", text: record.thinking };
   }
   return undefined;
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> | null {
+  const record = asRecord(value);
+  if (record) return record;
+  if (typeof value !== "string") return null;
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
+function messagePhaseFromSignature(value: unknown): AssistantMessagePhase | undefined {
+  const phase = jsonRecord(value)?.phase;
+  return phase === "commentary" || phase === "final_answer" ? phase : undefined;
+}
+
+function isOmpProgressMessage(value: unknown): boolean {
+  const message = asRecord(value);
+  if (!message) return false;
+  if (message.api === "openai-responses" || message.api === "openai-codex-responses") return true;
+  if (asRecord(message.providerPayload)?.type === "openaiResponsesHistory") return true;
+  if (!Array.isArray(message.content)) return false;
+  return message.content.some((contentValue) => {
+    const content = asRecord(contentValue);
+    if (content?.type !== "thinking") return false;
+    const signature = jsonRecord(content.thinkingSignature);
+    return (
+      signature?.type === "reasoning" &&
+      Array.isArray(signature.summary) &&
+      signature.summary.some((summaryValue) => asRecord(summaryValue)?.type === "summary_text")
+    );
+  });
+}
+
+function ompTextMessagePhase(
+  content: unknown,
+  message: Record<string, unknown>,
+): AssistantMessagePhase {
+  const contentRecord = asRecord(content);
+  const signedPhase =
+    messagePhaseFromSignature(contentRecord?.textSignature) ??
+    messagePhaseFromSignature(contentRecord?.signature) ??
+    messagePhaseFromSignature(message.textSignature);
+  if (signedPhase) return signedPhase;
+  return message.stopReason === "toolUse" ||
+    message.stopReason === "aborted" ||
+    message.stopReason === "error"
+    ? "commentary"
+    : "final_answer";
+}
+
+function todoPlanStatus(value: unknown): "pending" | "inProgress" | "completed" | undefined {
+  switch (value) {
+    case "pending":
+    case "blocked":
+      return "pending";
+    case "in_progress":
+    case "inProgress":
+      return "inProgress";
+    case "completed":
+    case "abandoned":
+      return "completed";
+    default:
+      return undefined;
+  }
+}
+
+function todoPlanSnapshot(value: unknown):
+  | ReadonlyArray<{
+      readonly step: string;
+      readonly status: "pending" | "inProgress" | "completed";
+    }>
+  | undefined {
+  const phases = asRecord(asRecord(value)?.details)?.phases;
+  if (!Array.isArray(phases)) return undefined;
+  const plan: Array<{ step: string; status: "pending" | "inProgress" | "completed" }> = [];
+  for (const phaseValue of phases) {
+    const tasks = asRecord(phaseValue)?.tasks;
+    if (!Array.isArray(tasks)) return undefined;
+    for (const taskValue of tasks) {
+      const task = asRecord(taskValue);
+      const step = nonEmptyString(task?.content);
+      if (!task || !step) return undefined;
+      const status = todoPlanStatus(task.status);
+      if (!status) return undefined;
+      plan.push({ step, status });
+    }
+  }
+  return plan;
 }
 
 function missingSnapshotSuffix(emittedText: string, snapshot: string): string | undefined {
@@ -230,6 +327,7 @@ function inputQuestion(request: Record<string, unknown>, providerName: string) {
 export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
   const provider = options.provider ?? PI_DRIVER;
   const providerName = options.providerName ?? "Pi";
+  const isOmp = provider === "omp";
   let sequence = 0;
   const now = options.now ?? (() => new Date().toISOString());
   const nextId = options.nextId ?? ((prefix: string) => `${prefix}-${++sequence}`);
@@ -313,33 +411,121 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
     ];
   };
 
-  const contentItem = (streamKind: "assistant_text" | "reasoning_text", contentIndex: number) => {
-    const key = `${streamKind}:${contentIndex}`;
+  const contentItem = (
+    sourceKind: "assistant_text" | "reasoning_text",
+    contentIndex: number,
+    mapThinkingToProgress = false,
+  ) => {
+    const existingProgress =
+      isOmp && sourceKind === "reasoning_text"
+        ? contentItems.get("reasoning_text:progress")
+        : undefined;
+    if (existingProgress) return { state: existingProgress, started: false };
+    const isProgress = isOmp && sourceKind === "reasoning_text" && mapThinkingToProgress;
+    const key = isProgress ? "reasoning_text:progress" : `${sourceKind}:${contentIndex}`;
     const existing = contentItems.get(key);
     if (existing) return { state: existing, started: false };
+    const streamKind = isProgress ? "assistant_text" : sourceKind;
     const state: PiContentState = {
       itemId: RuntimeItemId.make(nextId(`pi-${streamKind}`)),
+      sourceKind,
       streamKind,
       itemType: streamKind === "reasoning_text" ? "reasoning" : "assistant_message",
+      isProgress,
       emittedText: "",
+      emittedTextByContentIndex: new Map(),
+      completed: false,
+      ...(isProgress ? { messagePhase: "commentary" as const } : {}),
     };
     contentItems.set(key, state);
     return { state, started: true };
   };
 
-  const completeOpenContent = (raw?: PiRpcOutput) => {
-    const completed = [...contentItems.values()].map((state) =>
-      event(
-        "item.completed",
-        {
-          itemType: state.itemType,
-          status: "completed",
-        },
-        { itemId: state.itemId, ...(raw ? { raw } : {}) },
-      ),
+  const completeContentItem = (state: PiContentState, raw?: PiRpcOutput) => {
+    state.completed = true;
+    return event(
+      "item.completed",
+      {
+        itemType: state.itemType,
+        status: "completed",
+        ...(state.messagePhase ? { messagePhase: state.messagePhase } : {}),
+      },
+      { itemId: state.itemId, ...(raw ? { raw } : {}) },
     );
+  };
+
+  const completeOpenContent = (raw?: PiRpcOutput) => {
+    const completed = [...contentItems.values()]
+      .filter((state) => !state.completed)
+      .map((state) => completeContentItem(state, raw));
     contentItems.clear();
     return completed;
+  };
+
+  const completeOmpProgress = (raw: PiRpcOutput) =>
+    [...contentItems.values()]
+      .filter((state) => state.isProgress && !state.completed)
+      .map((state) => completeContentItem(state, raw));
+
+  const appendContentDelta = (
+    state: PiContentState,
+    contentIndex: number,
+    delta: string,
+    raw: PiRpcOutput,
+  ) => {
+    const emittedForIndex = state.emittedTextByContentIndex.get(contentIndex) ?? "";
+    const separator =
+      state.isProgress &&
+      emittedForIndex.length === 0 &&
+      state.emittedText.length > 0 &&
+      !state.emittedText.endsWith("\n") &&
+      !delta.startsWith("\n")
+        ? "\n\n"
+        : "";
+    state.emittedTextByContentIndex.set(contentIndex, emittedForIndex + delta);
+    state.emittedText += separator + delta;
+    return event(
+      "content.delta",
+      { streamKind: state.streamKind, delta: separator + delta, contentIndex },
+      { itemId: state.itemId, raw },
+    );
+  };
+
+  const missingContentSnapshotSuffix = (
+    state: PiContentState,
+    contentIndex: number,
+    snapshot: string,
+  ) => missingSnapshotSuffix(state.emittedTextByContentIndex.get(contentIndex) ?? "", snapshot);
+
+  const syncOmpProgressSnapshot = (value: unknown, raw: PiRpcOutput) => {
+    const content = asRecord(value)?.content;
+    if (!isOmpProgressMessage(value) || !Array.isArray(content)) return [];
+    const events: ProviderRuntimeEvent[] = [];
+    for (let contentIndex = 0; contentIndex < content.length; contentIndex += 1) {
+      const snapshot = contentSnapshot(content[contentIndex]);
+      if (snapshot?.sourceKind !== "reasoning_text") continue;
+      const item = contentItem(snapshot.sourceKind, contentIndex, true);
+      const state = item.state;
+      if (state.completed) continue;
+      if (item.started) {
+        events.push(
+          event(
+            "item.started",
+            {
+              itemType: state.itemType,
+              status: "inProgress",
+              messagePhase: "commentary",
+            },
+            { itemId: state.itemId, raw },
+          ),
+        );
+      }
+      const suffix = missingContentSnapshotSuffix(state, contentIndex, snapshot.text);
+      if (suffix !== undefined) {
+        events.push(appendContentDelta(state, contentIndex, suffix, raw));
+      }
+    }
+    return events;
   };
 
   const completeOpenTools = (
@@ -425,45 +611,37 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
     const isText = delta.type.startsWith("text_");
     const isThinking = delta.type.startsWith("thinking_");
     if (!isText && !isThinking) return [];
-    const streamKind = isThinking ? "reasoning_text" : "assistant_text";
+    const sourceKind = isThinking ? "reasoning_text" : "assistant_text";
     const contentIndex = nonNegativeInt(delta.contentIndex) ?? 0;
-    const item = contentItem(streamKind, contentIndex);
-    const state = item.state;
+    const mapThinkingToProgress = isOmp && isOmpProgressMessage(delta.partial);
     const events: ProviderRuntimeEvent[] = [];
+    if (isOmp && isText) {
+      events.push(...syncOmpProgressSnapshot(delta.partial, raw), ...completeOmpProgress(raw));
+    }
+    const item = contentItem(sourceKind, contentIndex, mapThinkingToProgress);
+    const state = item.state;
+    if (state.completed) return events;
     if (item.started) {
       events.push(
         event(
           "item.started",
           {
-            itemType: isThinking ? "reasoning" : "assistant_message",
+            itemType: state.itemType,
             status: "inProgress",
+            ...(state.messagePhase ? { messagePhase: state.messagePhase } : {}),
           },
           { itemId: state.itemId, raw },
         ),
       );
     }
     if (delta.type.endsWith("_delta") && typeof delta.delta === "string") {
-      state.emittedText += delta.delta;
-      events.push(
-        event(
-          "content.delta",
-          { streamKind, delta: delta.delta, contentIndex },
-          { itemId: state.itemId, raw },
-        ),
-      );
+      events.push(appendContentDelta(state, contentIndex, delta.delta, raw));
     }
     if (delta.type.endsWith("_end")) {
       if (typeof delta.content === "string") {
-        const suffix = missingSnapshotSuffix(state.emittedText, delta.content);
+        const suffix = missingContentSnapshotSuffix(state, contentIndex, delta.content);
         if (suffix !== undefined) {
-          state.emittedText += suffix;
-          events.push(
-            event(
-              "content.delta",
-              { streamKind, delta: suffix, contentIndex },
-              { itemId: state.itemId, raw },
-            ),
-          );
+          events.push(appendContentDelta(state, contentIndex, suffix, raw));
         }
       }
     }
@@ -482,34 +660,76 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
       attemptErrorMessage = outcome.errorMessage;
     }
     if (!Array.isArray(message.content)) return [];
+    const mapThinkingToProgress = isOmp && isOmpProgressMessage(message);
     const events: ProviderRuntimeEvent[] = [];
     for (let contentIndex = 0; contentIndex < message.content.length; contentIndex += 1) {
-      const snapshot = contentSnapshot(message.content[contentIndex]);
+      const content = message.content[contentIndex];
+      const snapshot = contentSnapshot(content);
       if (!snapshot) continue;
-      const item = contentItem(snapshot.streamKind, contentIndex);
+      if (isOmp && snapshot.sourceKind === "assistant_text") {
+        events.push(...completeOmpProgress(raw));
+      }
+      const item = contentItem(snapshot.sourceKind, contentIndex, mapThinkingToProgress);
       const state = item.state;
+      if (state.completed) continue;
+      if (isOmp) {
+        if (state.isProgress) {
+          state.messagePhase = "commentary";
+        } else if (snapshot.sourceKind === "assistant_text") {
+          state.messagePhase = ompTextMessagePhase(content, message);
+        }
+      }
       if (item.started) {
         events.push(
           event(
             "item.started",
-            { itemType: state.itemType, status: "inProgress" },
+            {
+              itemType: state.itemType,
+              status: "inProgress",
+              ...(state.messagePhase ? { messagePhase: state.messagePhase } : {}),
+            },
             { itemId: state.itemId, raw },
           ),
         );
       }
-      const suffix = missingSnapshotSuffix(state.emittedText, snapshot.text);
+      const suffix = missingContentSnapshotSuffix(state, contentIndex, snapshot.text);
       if (suffix !== undefined) {
-        state.emittedText += suffix;
-        events.push(
-          event(
-            "content.delta",
-            { streamKind: state.streamKind, delta: suffix, contentIndex },
-            { itemId: state.itemId, raw },
-          ),
-        );
+        events.push(appendContentDelta(state, contentIndex, suffix, raw));
       }
     }
-    return [...events, ...completeOpenContent(raw)];
+    const hasNonProgressReasoning = [...contentItems.values()].some(
+      (state) =>
+        !state.completed &&
+        state.sourceKind === "reasoning_text" &&
+        !state.isProgress &&
+        state.emittedText.trim().length > 0,
+    );
+    const hasAssistantText = [...contentItems.values()].some(
+      (state) =>
+        !state.completed &&
+        state.sourceKind === "assistant_text" &&
+        state.emittedText.trim().length > 0,
+    );
+    const completedContent = completeOpenContent(raw);
+    const needsOmpToolBoundary =
+      isOmp && message.stopReason === "toolUse" && hasNonProgressReasoning && !hasAssistantText;
+    return [
+      ...events,
+      ...completedContent,
+      ...(needsOmpToolBoundary
+        ? [
+            event(
+              "item.completed",
+              {
+                itemType: "assistant_message",
+                status: "completed",
+                messagePhase: "commentary",
+              },
+              { itemId: RuntimeItemId.make(nextId("pi-assistant-boundary")), raw },
+            ),
+          ]
+        : []),
+    ];
   };
 
   const mapTool = (raw: PiRpcOutput, record: Record<string, unknown>) => {
@@ -565,18 +785,24 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
       ];
     }
     tools.delete(toolCallId);
+    const completed = event(
+      "item.completed",
+      {
+        itemType: tool.itemType,
+        status: record.isError === true ? "failed" : "completed",
+        title: toolName,
+        ...(detail ? { detail } : {}),
+        data,
+      },
+      { itemId: tool.itemId, raw },
+    );
+    const plan =
+      isOmp && toolName.toLowerCase() === "todo" && record.isError !== true
+        ? todoPlanSnapshot(result)
+        : undefined;
     return [
-      event(
-        "item.completed",
-        {
-          itemType: tool.itemType,
-          status: record.isError === true ? "failed" : "completed",
-          title: toolName,
-          ...(detail ? { detail } : {}),
-          data,
-        },
-        { itemId: tool.itemId, raw },
-      ),
+      completed,
+      ...(plan !== undefined ? [event("turn.plan.updated", { plan }, { raw })] : []),
     ];
   };
 
@@ -591,6 +817,8 @@ export function makePiRuntimeEventMapper(options: PiRuntimeEventMapperOptions) {
       case "tool_execution_update":
       case "tool_execution_end":
         return mapTool(raw, record);
+      case "todo_auto_clear":
+        return isOmp ? [event("turn.plan.updated", { plan: [] }, { raw })] : [];
       case "agent_end": {
         if (!activeTurnId) return [];
         const events = [...completeOpenContent(raw)];

@@ -41,6 +41,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { makePiRuntimeEventMapper } from "../../provider/pi/PiRuntimeEvents.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -1090,6 +1091,191 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.text).toBe("hello world");
     expect(message?.streaming).toBe(false);
     expect(message?.phase).toBe("final_answer");
+  });
+
+  it("projects OMP progress and tool turns as commentary before the final answer", async () => {
+    const harness = await createHarness();
+    let id = 0;
+    let timestamp = 0;
+    const mapper = makePiRuntimeEventMapper({
+      provider: ProviderDriverKind.make("omp"),
+      providerName: "Oh My Pi",
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      threadId: asThreadId("thread-1"),
+      now: () => `2026-08-25T00:00:00.${String(timestamp++).padStart(3, "0")}Z`,
+      nextId: (prefix) => `${prefix}-${++id}`,
+    });
+    const turnId = asTurnId("turn-omp-tool-turn");
+
+    const events = [
+      ...mapper.startTurn({ turnId }),
+      ...mapper.map({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          api: "openai-responses",
+          content: [{ type: "thinking", thinking: "**Inspecting the adapter**" }],
+          stopReason: "toolUse",
+        },
+      }),
+      ...mapper.map({
+        type: "tool_execution_start",
+        toolCallId: "tool-1",
+        toolName: "read",
+        args: { path: "README.md" },
+      }),
+      ...mapper.map({
+        type: "tool_execution_end",
+        toolCallId: "tool-1",
+        toolName: "read",
+        result: { content: [{ type: "text", text: "done" }] },
+        isError: false,
+      }),
+      ...mapper.map({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          api: "openai-responses",
+          content: [
+            { type: "thinking", thinking: "**Preparing the answer**" },
+            {
+              type: "text",
+              text: "Final answer",
+              textSignature: JSON.stringify({ v: 1, phase: "final_answer" }),
+            },
+          ],
+          stopReason: "stop",
+        },
+      }),
+      ...mapper.completeTurn("completed"),
+    ];
+    for (const event of events) harness.emit(event);
+
+    const thread = await waitForThread(harness.readModel, (entry) => {
+      const messages = entry.messages.filter(
+        (message: ProviderRuntimeTestMessage) => message.turnId === turnId && !message.streaming,
+      );
+      return messages.length === 3 && entry.session?.status === "ready";
+    });
+    const messages = thread.messages.filter(
+      (message: ProviderRuntimeTestMessage) => message.turnId === turnId,
+    );
+
+    expect(messages.map((message: ProviderRuntimeTestMessage) => message.text)).toEqual([
+      "**Inspecting the adapter**",
+      "**Preparing the answer**",
+      "Final answer",
+    ]);
+    expect(messages.map((message: ProviderRuntimeTestMessage) => message.phase)).toEqual([
+      "commentary",
+      "commentary",
+      "final_answer",
+    ]);
+    expect(
+      messages.every(
+        (message: ProviderRuntimeTestMessage) => (message.reasoningText?.length ?? 0) === 0,
+      ),
+    ).toBe(true);
+    const toolActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) =>
+        activity.turnId === turnId && activity.kind === "tool.completed",
+    );
+    expect(toolActivity).toBeDefined();
+    expect(messages[0]?.updatedAt.localeCompare(toolActivity?.createdAt ?? "")).toBeLessThanOrEqual(
+      0,
+    );
+    expect(toolActivity?.createdAt.localeCompare(messages[1]?.updatedAt ?? "")).toBeLessThanOrEqual(
+      0,
+    );
+    expect(thread.session?.status).toBe("ready");
+  });
+
+  it("projects non-Responses OMP reasoning as a separate tool turn", async () => {
+    const harness = await createHarness();
+    let id = 0;
+    let timestamp = 0;
+    const mapper = makePiRuntimeEventMapper({
+      provider: ProviderDriverKind.make("omp"),
+      providerName: "Oh My Pi",
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      threadId: asThreadId("thread-1"),
+      now: () => `2026-08-25T00:00:01.${String(timestamp++).padStart(3, "0")}Z`,
+      nextId: (prefix) => `${prefix}-${++id}`,
+    });
+    const turnId = asTurnId("turn-omp-anthropic-tool-turn");
+
+    const events = [
+      ...mapper.startTurn({ turnId }),
+      ...mapper.map({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          api: "anthropic-messages",
+          content: [
+            { type: "thinking", thinking: "Internal tool reasoning" },
+            { type: "toolCall", id: "tool-1", name: "read", arguments: {} },
+          ],
+          stopReason: "toolUse",
+        },
+      }),
+      ...mapper.map({
+        type: "tool_execution_start",
+        toolCallId: "tool-1",
+        toolName: "read",
+        args: { path: "README.md" },
+      }),
+      ...mapper.map({
+        type: "tool_execution_end",
+        toolCallId: "tool-1",
+        toolName: "read",
+        result: { content: [{ type: "text", text: "done" }] },
+        isError: false,
+      }),
+      ...mapper.map({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          api: "anthropic-messages",
+          content: [
+            { type: "thinking", thinking: "Internal final reasoning" },
+            { type: "text", text: "Final answer" },
+          ],
+          stopReason: "stop",
+        },
+      }),
+      ...mapper.completeTurn("completed"),
+    ];
+    for (const event of events) harness.emit(event);
+
+    const thread = await waitForThread(harness.readModel, (entry) => {
+      const messages = entry.messages.filter(
+        (message: ProviderRuntimeTestMessage) => message.turnId === turnId && !message.streaming,
+      );
+      return messages.length === 2 && entry.session?.status === "ready";
+    });
+    const messages = thread.messages.filter(
+      (message: ProviderRuntimeTestMessage) => message.turnId === turnId,
+    );
+
+    expect(messages.map((message: ProviderRuntimeTestMessage) => message.text)).toEqual([
+      "",
+      "Final answer",
+    ]);
+    expect(messages.map((message: ProviderRuntimeTestMessage) => message.reasoningText)).toEqual([
+      "Internal tool reasoning",
+      "Internal final reasoning",
+    ]);
+    expect(messages.map((message: ProviderRuntimeTestMessage) => message.phase)).toEqual([
+      "commentary",
+      "final_answer",
+    ]);
+    expect(
+      thread.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.turnId === turnId && activity.kind === "tool.completed",
+      ),
+    ).toBe(true);
+    expect(thread.session?.status).toBe("ready");
   });
 
   it("captures reasoning deltas alongside the assistant response", async () => {
