@@ -126,6 +126,7 @@ import {
   pendingServiceUpdateExists,
   reconcileDesiredCloudLink,
   recoverManagedCloudTunnel,
+  registerManagedCloudTunnelRecovery,
   releaseManagedTunnelOnShutdown,
 } from "./cloud/http.ts";
 import { serverRelayBrokerTracingLayer } from "./cloud/relayTracing.ts";
@@ -793,8 +794,27 @@ const makeServerLayer = Layer.unwrap(
                   ),
                 )
               : false;
-            if (wantsCliLink) {
-              yield* reconcileDesiredCloudLink(localOrigin).pipe(
+            const desiredCliLinkMode = wantsCliLink
+              ? yield* CloudCliState.readCliDesiredLinkMode
+              : null;
+            const registerManagedTunnel = registerManagedCloudTunnelRecovery().pipe(
+              Effect.tap((registered) =>
+                registered
+                  ? Effect.logInfo("T3 Connect managed tunnel recovery registered")
+                  : Effect.void,
+              ),
+              Effect.catchCause((cause) =>
+                Cause.hasInterrupts(cause)
+                  ? Effect.interrupt
+                  : Effect.logWarning("Failed to register T3 Connect managed tunnel recovery", {
+                      cause,
+                    }).pipe(Effect.as(false)),
+              ),
+            );
+            const registered =
+              desiredCliLinkMode === "publish_only" ? false : yield* registerManagedTunnel;
+            if (wantsCliLink && !registered) {
+              const reconciled = yield* reconcileDesiredCloudLink(localOrigin).pipe(
                 Effect.retry({
                   while: (error) =>
                     error._tag !== "EnvironmentHttpBadRequestError" &&
@@ -808,14 +828,17 @@ const makeServerLayer = Layer.unwrap(
                   ),
                 }),
                 Effect.tap(() => Effect.logInfo("T3 Connect desired link reconciled on startup")),
+                Effect.as(true),
                 Effect.catch((cause) =>
                   Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
                     cause,
-                  }),
+                  }).pipe(Effect.as(false)),
                 ),
               );
+              if (reconciled && desiredCliLinkMode === "managed") {
+                yield* registerManagedTunnel;
+              }
             }
-            yield* recoverManagedTunnel;
           }),
         );
         yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);

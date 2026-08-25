@@ -478,6 +478,33 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
   },
 );
 
+export const registerEnvironmentTunnelRecovery = Effect.fn(
+  "relay.api.server.registerEnvironmentTunnelRecovery",
+)(function* (input: {
+  readonly userId: string;
+  readonly environmentId: string;
+  readonly environmentPublicKey: string;
+  readonly tunnelId: string;
+}) {
+  const links = yield* EnvironmentLinks.EnvironmentLinks;
+  const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+  const link = yield* links.getForUser({
+    userId: input.userId,
+    environmentId: input.environmentId,
+  });
+  if (
+    link === null ||
+    link.environmentPublicKey !== input.environmentPublicKey ||
+    link.endpoint.providerKind !== "cloudflare_tunnel"
+  ) {
+    return yield* new HttpApiError.Unauthorized({});
+  }
+  if (!(yield* allocations.enableRecovery(input))) {
+    return yield* new HttpApiError.Unauthorized({});
+  }
+  return { ok: true };
+});
+
 export const recoverEnvironmentTunnelRecord = Effect.fn(
   "relay.api.server.recoverEnvironmentTunnelRecord",
 )(function* (input: {
@@ -512,6 +539,22 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
     recovered.endpoint.httpBaseUrl !== link.endpoint.httpBaseUrl ||
     recovered.endpoint.wsBaseUrl !== link.endpoint.wsBaseUrl
   ) {
+    if (recoveredTunnelId !== undefined) {
+      const owner = { userId: input.userId, environmentId: input.environmentId };
+      const target = yield* managedEndpointProvider.prepareDeprovision(owner);
+      if (target?.tunnelId === recoveredTunnelId) {
+        yield* managedEndpointProvider.deprovision({ ...owner, target }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to clean up a tunnel with a mismatched endpoint", {
+              userId: input.userId,
+              environmentId: input.environmentId,
+              tunnelId: recoveredTunnelId,
+              cause,
+            }),
+          ),
+        );
+      }
+    }
     return yield* new HttpApiError.Unauthorized({});
   }
 
@@ -1086,35 +1129,55 @@ export const serverApi = HttpApiBuilder.group(
       ),
     );
 
-    return activityHandlers.handle(
-      "recoverManagedEndpoint",
-      Effect.fn("relay.api.server.recoverManagedEndpoint")(
-        function* ({ params, payload }) {
+    return activityHandlers
+      .handle(
+        "registerManagedEndpointRecovery",
+        Effect.fn("relay.api.server.registerManagedEndpointRecovery")(function* ({
+          params,
+          payload,
+        }) {
           const principal = yield* RelayEnvironmentPrincipal;
           if (principal.environmentId !== params.environmentId) {
             return yield* new HttpApiError.Unauthorized({});
           }
           yield* appendRelayCredentialResponseHeaders;
-          return yield* recoverEnvironmentTunnelRecord({
+          return yield* registerEnvironmentTunnelRecovery({
             userId: payload.cloudUserId,
             environmentId: params.environmentId,
             environmentPublicKey: principal.environmentPublicKey,
-            origin: payload.origin,
+            tunnelId: payload.tunnelId,
           });
-        },
-        Effect.catchTags({
-          ManagedEndpointOriginNotAllowed: () => Effect.fail(new HttpApiError.Unauthorized({})),
-          ManagedEndpointProvisioningNotConfigured: () =>
-            relayInternalErrorResponse("upstream_unavailable"),
-          ManagedEndpointProvisioningFailed: () =>
-            relayInternalErrorResponse("upstream_unavailable"),
-          ManagedEndpointDeprovisioningFailed: () =>
-            relayInternalErrorResponse("upstream_unavailable"),
-          ManagedTunnelLimitExceeded: () => relayInternalErrorResponse("upstream_unavailable"),
-        }),
-        mapRelayCommonApiErrors("not_authorized"),
-      ),
-    );
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "recoverManagedEndpoint",
+        Effect.fn("relay.api.server.recoverManagedEndpoint")(
+          function* ({ params, payload }) {
+            const principal = yield* RelayEnvironmentPrincipal;
+            if (principal.environmentId !== params.environmentId) {
+              return yield* new HttpApiError.Unauthorized({});
+            }
+            yield* appendRelayCredentialResponseHeaders;
+            return yield* recoverEnvironmentTunnelRecord({
+              userId: payload.cloudUserId,
+              environmentId: params.environmentId,
+              environmentPublicKey: principal.environmentPublicKey,
+              origin: payload.origin,
+            });
+          },
+          Effect.catchTags({
+            ManagedEndpointOriginNotAllowed: () => Effect.fail(new HttpApiError.Unauthorized({})),
+            ManagedEndpointProvisioningNotConfigured: () =>
+              relayInternalErrorResponse("upstream_unavailable"),
+            ManagedEndpointProvisioningFailed: () =>
+              relayInternalErrorResponse("upstream_unavailable"),
+            ManagedEndpointDeprovisioningFailed: () =>
+              relayInternalErrorResponse("upstream_unavailable"),
+            ManagedTunnelLimitExceeded: () => relayInternalErrorResponse("upstream_unavailable"),
+          }),
+          mapRelayCommonApiErrors("not_authorized"),
+        ),
+      );
   }),
 );
 

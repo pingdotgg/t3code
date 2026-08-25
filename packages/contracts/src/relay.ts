@@ -192,6 +192,13 @@ export const RelayManagedEndpointRecoveryRequest = Schema.Struct({
 });
 export type RelayManagedEndpointRecoveryRequest = typeof RelayManagedEndpointRecoveryRequest.Type;
 
+export const RelayManagedEndpointRecoveryRegistrationRequest = Schema.Struct({
+  cloudUserId: TrimmedNonEmptyString,
+  tunnelId: TrimmedNonEmptyString,
+});
+export type RelayManagedEndpointRecoveryRegistrationRequest =
+  typeof RelayManagedEndpointRecoveryRegistrationRequest.Type;
+
 export const RelayManagedEndpointRecoveryResponse = Schema.Struct({
   endpoint: RelayManagedEndpoint,
   endpointRuntime: RelayManagedEndpointRuntimeConfig,
@@ -1102,6 +1109,18 @@ const RelayDpopClientGroup = HttpApiGroup.make("dpopClient")
 
 const RelayServerGroup = HttpApiGroup.make("server")
   .add(
+    HttpApiEndpoint.post(
+      "registerManagedEndpointRecovery",
+      "/v1/environments/:environmentId/tunnel/recovery",
+      {
+        params: Schema.Struct({
+          environmentId: EnvironmentId,
+        }),
+        payload: RelayManagedEndpointRecoveryRegistrationRequest,
+        success: RelayOkResponse,
+        error: RelayAuthAndInternalErrors,
+      },
+    ).annotate(OpenApi.Summary, "Register managed tunnel recovery without provisioning"),
     HttpApiEndpoint.post("recoverManagedEndpoint", "/v1/environments/:environmentId/tunnel", {
       params: Schema.Struct({
         environmentId: EnvironmentId,

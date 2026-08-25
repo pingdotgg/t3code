@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
@@ -84,6 +84,8 @@ interface ActiveConnector {
 const RELAY_RESTART_STABLE_UPTIME_MS = 30_000;
 const RELAY_RESTART_BACKOFF_BASE_MS = 1_000;
 const RELAY_RESTART_BACKOFF_MAX_MS = 60_000;
+// Newly created tunnels can fail authorization briefly while Cloudflare propagates their token.
+const TUNNEL_AUTHORIZATION_FAILURES_BEFORE_RECOVERY = 4;
 
 export function classifyRelayClientOutput(line: string): "connected" | "warning" | "debug" {
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
@@ -93,6 +95,15 @@ export function classifyRelayClientOutput(line: string): "connected" | "warning"
   // severe than ERR, so they must surface at least as loudly — without them a
   // fatal connector failure would be logged at debug and hidden.
   return /\b(?:ERR|WRN|FTL|PNC)\b/u.test(line) ? "warning" : "debug";
+}
+
+export function isRejectedRelayClientTunnelOutput(line: string): boolean {
+  return (
+    /\bRegister tunnel error from server side\b/iu.test(line) &&
+    /\bUnauthorized:\s*(?:Failed to get tunnel|Record for tunnel not found|Invalid tunnel secret)\b/iu.test(
+      line,
+    )
+  );
 }
 
 /** Connector startup failures can clear after installation or a later spawn attempt. */
@@ -133,7 +144,7 @@ export const make = Effect.gen(function* () {
   const relayClient = yield* RelayClient.RelayClient;
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
-  const recoveryRequests = yield* PubSub.sliding<RelayManagedEndpointRuntimeConfig>(1);
+  const recoveryRequests = yield* Queue.sliding<RelayManagedEndpointRuntimeConfig>(1);
   const reconcileSemaphore = yield* Semaphore.make(1);
   const restartDelayRef = yield* Ref.make(0);
   const linkStateSemaphore = yield* Semaphore.make(1);
@@ -209,7 +220,7 @@ export const make = Effect.gen(function* () {
             tunnelId: connector.config.tunnelId,
             tunnelName: connector.config.tunnelName,
           });
-          yield* PubSub.publish(recoveryRequests, connector.config);
+          yield* Queue.offer(recoveryRequests, connector.config);
           yield* reconcileConfig(desiredConfig);
         }),
       );
@@ -217,8 +228,11 @@ export const make = Effect.gen(function* () {
       Effect.catchCause((cause) => Effect.logWarning("Relay client supervisor failed", { cause })),
     );
 
-  const observeConnectorOutput = (connector: ActiveConnector) =>
-    connector.child.all.pipe(
+  const observeConnectorOutput = (connector: ActiveConnector) => {
+    let rejectedRegistrations = 0;
+    let recoveryRequested = false;
+
+    return connector.child.all.pipe(
       Stream.decodeText(),
       Stream.splitLines,
       Stream.map((line) => line.trim()),
@@ -233,8 +247,25 @@ export const make = Effect.gen(function* () {
         };
         switch (classifyRelayClientOutput(line)) {
           case "connected":
+            rejectedRegistrations = 0;
             return Effect.logInfo("Relay client tunnel connection registered", attributes);
           case "warning":
+            if (isRejectedRelayClientTunnelOutput(line)) {
+              rejectedRegistrations += 1;
+              if (
+                !recoveryRequested &&
+                rejectedRegistrations >= TUNNEL_AUTHORIZATION_FAILURES_BEFORE_RECOVERY
+              ) {
+                recoveryRequested = true;
+                return Effect.logWarning(
+                  "Relay client tunnel was rejected; requesting recovery",
+                  attributes,
+                ).pipe(
+                  Effect.andThen(Queue.offer(recoveryRequests, connector.config)),
+                  Effect.asVoid,
+                );
+              }
+            }
             return Effect.logWarning("Relay client reported a transport warning", attributes);
           case "debug":
             return Effect.logDebug("Relay client output", attributes);
@@ -249,6 +280,7 @@ export const make = Effect.gen(function* () {
         }),
       ),
     );
+  };
 
   reconcileConfig = Effect.fn("CloudManagedEndpointRuntime.reconcileConfig")(function* (config) {
     if (!config || config.providerKind !== "cloudflare_tunnel") {
@@ -379,8 +411,8 @@ export const make = Effect.gen(function* () {
 
   const runtime = CloudManagedEndpointRuntime.of({
     applyConfig,
-    recoveryRequests: Stream.fromPubSub(recoveryRequests),
-    requestRecovery: (config) => PubSub.publish(recoveryRequests, config).pipe(Effect.asVoid),
+    recoveryRequests: Stream.fromQueue(recoveryRequests),
+    requestRecovery: (config) => Queue.offer(recoveryRequests, config).pipe(Effect.asVoid),
     withLinkStateLock: linkStateSemaphore.withPermits(1),
   });
 

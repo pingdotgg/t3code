@@ -45,6 +45,7 @@ import {
   relayEnvironmentAuthLayer,
   relayNotFoundRoute,
   recoverEnvironmentTunnelRecord,
+  registerEnvironmentTunnelRecovery,
   relayDpopFailureReason,
   revokeEnvironmentLinkRecord,
   serverApi,
@@ -361,6 +362,107 @@ const linkedEnvironmentRecord = {
 } as const;
 
 describe("relay managed tunnel recovery", () => {
+  it.effect("registers recovery for an existing tunnel without provisioning it", () => {
+    let recoveryEnabledFor: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly tunnelId: string;
+      readonly environmentPublicKey: string;
+    } | null = null;
+
+    return Effect.gen(function* () {
+      expect(
+        yield* registerEnvironmentTunnelRecovery({
+          userId: "user-1",
+          environmentId: "environment-1",
+          environmentPublicKey: "public-key",
+          tunnelId: "existing-tunnel",
+        }),
+      ).toEqual({ ok: true });
+      expect(recoveryEnabledFor).toEqual({
+        userId: "user-1",
+        environmentId: "environment-1",
+        tunnelId: "existing-tunnel",
+        environmentPublicKey: "public-key",
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          relayUnlinkTestLayer({
+            getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+            provision: () => Effect.die("registration must not provision a tunnel"),
+          }),
+          Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
+            enableRecovery: (input) =>
+              Effect.sync(() => {
+                recoveryEnabledFor = input;
+                return true;
+              }),
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("rejects recovery registration for a different environment key", () => {
+    let recoveryEnabled = false;
+
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        registerEnvironmentTunnelRecovery({
+          userId: "user-1",
+          environmentId: "environment-1",
+          environmentPublicKey: "different-public-key",
+          tunnelId: "existing-tunnel",
+        }),
+      );
+
+      expect(error).toMatchObject({ _tag: "Unauthorized" });
+      expect(recoveryEnabled).toBe(false);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          relayUnlinkTestLayer({
+            getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+          }),
+          Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
+            enableRecovery: () =>
+              Effect.sync(() => {
+                recoveryEnabled = true;
+                return true;
+              }),
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("rejects recovery registration when the recorded tunnel changed", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        registerEnvironmentTunnelRecovery({
+          userId: "user-1",
+          environmentId: "environment-1",
+          environmentPublicKey: "public-key",
+          tunnelId: "stale-tunnel",
+        }),
+      );
+
+      expect(error).toMatchObject({ _tag: "Unauthorized" });
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          relayUnlinkTestLayer({
+            getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+          }),
+          Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
+            enableRecovery: () => Effect.succeed(false),
+          }),
+        ),
+      ),
+    ),
+  );
+
   it.effect("recovers a linked environment and marks its tunnel as recoverable", () => {
     let recoveryEnabledFor: {
       readonly userId: string;
@@ -485,6 +587,18 @@ describe("relay managed tunnel recovery", () => {
 
   it.effect("rejects a recovered tunnel that changes the linked endpoint", () => {
     let recoveryEnabled = false;
+    const cleaned: Array<string> = [];
+    const target = {
+      userId: "user-1",
+      environmentId: "environment-1",
+      hostname: "different.example.test",
+      tunnelId: "replacement-tunnel",
+      tunnelName: "environment-1-tunnel",
+      dnsRecordId: "dns-1",
+      readyAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "replacement-generation",
+      generation: 3,
+    } satisfies ManagedEndpointProvider.ManagedEndpointDeprovisionTarget;
 
     return Effect.gen(function* () {
       const error = yield* Effect.flip(
@@ -497,6 +611,7 @@ describe("relay managed tunnel recovery", () => {
       );
       expect(error).toMatchObject({ _tag: "Unauthorized" });
       expect(recoveryEnabled).toBe(false);
+      expect(cleaned).toEqual(["replacement-tunnel"]);
     }).pipe(
       Effect.provide(
         Layer.merge(
@@ -514,6 +629,14 @@ describe("relay managed tunnel recovery", () => {
                   connectorToken: "token",
                   tunnelId: "replacement-tunnel",
                 },
+              }),
+            prepareDeprovision: () => Effect.succeed(target),
+            deprovision: ({ target: captured }) =>
+              Effect.sync(() => {
+                if (captured?.tunnelId) {
+                  cleaned.push(captured.tunnelId);
+                }
+                return true;
               }),
           }),
           Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({

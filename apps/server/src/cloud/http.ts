@@ -73,6 +73,7 @@ import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
+  decodeRuntimeConfig,
   encodeEndpointRuntimeConfigJson,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -652,6 +653,43 @@ export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileD
     );
   },
 );
+
+export const registerManagedCloudTunnelRecovery = Effect.fn(
+  "environment.cloud.registerManagedCloudTunnelRecovery",
+)(function* () {
+  const dependencies = yield* cloudHttpDependencies;
+  const [runtimeConfig, relayUrl, cloudUserId, environmentCredential] = yield* Effect.all([
+    dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+    dependencies.secrets.get(RELAY_URL_SECRET),
+    dependencies.secrets.get(CLOUD_LINKED_USER_ID),
+    dependencies.secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+  ]);
+  if (
+    Option.isNone(runtimeConfig) ||
+    Option.isNone(relayUrl) ||
+    Option.isNone(cloudUserId) ||
+    Option.isNone(environmentCredential)
+  ) {
+    return false;
+  }
+
+  const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeConfig.value)));
+  if (config?.providerKind !== "cloudflare_tunnel" || config.tunnelId === undefined) {
+    return false;
+  }
+
+  const environmentId = yield* dependencies.environment.getEnvironmentId;
+  const registered = yield* relayClientRequest(dependencies, {
+    url: `${bytesToString(relayUrl.value)}/v1/environments/${encodeURIComponent(environmentId)}/tunnel/recovery`,
+    token: bytesToString(environmentCredential.value),
+    payload: {
+      cloudUserId: bytesToString(cloudUserId.value),
+      tunnelId: config.tunnelId,
+    },
+    schema: RelayOkResponse,
+  });
+  return registered.ok;
+});
 
 export const recoverManagedCloudTunnel = Effect.fn("environment.cloud.recoverManagedCloudTunnel")(
   function* (localOrigin: string) {

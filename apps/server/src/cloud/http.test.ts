@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import * as Stream from "effect/Stream";
@@ -32,7 +33,10 @@ import {
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
-import type { RelayLinkProofRequest } from "@t3tools/contracts/relay";
+import {
+  RelayManagedEndpointRecoveryRegistrationRequest,
+  type RelayLinkProofRequest,
+} from "@t3tools/contracts/relay";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
@@ -47,6 +51,7 @@ import {
   pendingServiceUpdateExists,
   reconcileDesiredCloudLink,
   recoverManagedCloudTunnel,
+  registerManagedCloudTunnelRecovery,
   releaseManagedTunnelOnShutdown,
 } from "./http.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
@@ -64,6 +69,9 @@ const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   });
 
 const unusedSecretStoreOperation = () => Effect.die("unused secret-store operation");
+const decodeManagedTunnelRecoveryRegistration = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(RelayManagedEndpointRecoveryRegistrationRequest),
+);
 
 function makeSecretStore(
   create: ServerSecretStore.ServerSecretStore["Service"]["create"],
@@ -646,6 +654,61 @@ describe("releaseManagedTunnelOnShutdown", () => {
         respond: () => Response.json({ ok: false }, { status: 503 }),
       }),
     );
+  });
+
+  it.effect("registers an existing tunnel without provisioning or restarting it", () => {
+    const { store } = makeMemorySecretStore([
+      [
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}',
+      ],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      expect(yield* registerManagedCloudTunnelRecovery()).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.method).toBe("POST");
+      expect(requests[0]?.url).toBe(
+        "https://relay.example.test/v1/environments/env_123/tunnel/recovery",
+      );
+      expect(requests[0]?.headers.authorization).toBe("Bearer environment-credential");
+      const body = requests[0]?.body;
+      expect(body?._tag).toBe("Uint8Array");
+      if (body?._tag === "Uint8Array") {
+        expect(
+          yield* decodeManagedTunnelRecoveryRegistration(new TextDecoder().decode(body.body)),
+        ).toEqual({
+          cloudUserId: "user-123",
+          tunnelId: "existing-tunnel",
+        });
+      }
+      expect(applyConfigCalls).toEqual([]);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
+  it.effect("does not register recovery without a recorded tunnel ID", () => {
+    const { store } = makeMemorySecretStore([
+      [
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"token"}',
+      ],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      expect(yield* registerManagedCloudTunnelRecovery()).toBe(false);
+      expect(requests).toEqual([]);
+      expect(applyConfigCalls).toEqual([]);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
   it.effect("recovers a web-linked tunnel with its environment credential", () => {
