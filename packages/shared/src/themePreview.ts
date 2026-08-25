@@ -6,18 +6,18 @@ export type ThemePreviewColors = Readonly<{
   messageAction: string;
 }>;
 
-/** The standard T3 Code artwork is not a built-in theme, so its preview colors live here. */
+/** The standard PostHog artwork is not a built-in theme, so its preview colors live here. */
 export const STANDARD_THEME_PREVIEW_COLORS: Readonly<Record<ThemeAppearance, ThemePreviewColors>> =
   {
     light: {
-      canvas: "#fcfcfc",
-      accent: "#f4f4f5",
-      messageAction: "#4f46e5",
+      canvas: "#eeefe9",
+      accent: "#dfe0d8",
+      messageAction: "#ff5c1c",
     },
     dark: {
-      canvas: "#0a0a0a",
-      accent: "#1c1c1f",
-      messageAction: "#8b9cff",
+      canvas: "#1d1f27",
+      accent: "#343643",
+      messageAction: "#ff5c1c",
     },
   };
 

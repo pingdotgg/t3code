@@ -516,37 +516,38 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @layer base {
   :root {
-    /* Keep the original T3 Code artwork palettes as the defaults. Built-in
-       themes override them with their own pigments in the components layer. */
-    --stage-art-top: oklch(0.782169 0.123386 240.226);
-    --stage-art-mid: oklch(0.616111 0.195824 259.735);
-    --stage-art-bottom: oklch(0.441553 0.232394 265.474);
-    --stage-art-highlight: oklch(0.951597 0.037289 215.482);
-    --stage-art-secondary: oklch(0.794668 0.12136 235.46);
-    --stage-art-tertiary: oklch(0.678991 0.170261 275.365);
-    --stage-art-line: oklch(0.959666 0.029238 218.179);
-    --stage-art-celeste-highlight: oklch(0.968763 0.045822 196.42);
-    --stage-art-celeste-secondary: oklch(0.827395 0.126071 211.26);
-    --stage-art-violet-highlight: oklch(0.895381 0.053248 286.447);
-    --stage-art-grid-line: oklch(0.966822 0.01757 239.99);
-    --stage-night-base-top: oklch(0.283792 0.117327 297.201);
-    --stage-night-base-mid: oklch(0.227147 0.086086 277.99);
-    --stage-night-base-bottom: oklch(0.200528 0.055699 261.216);
+    /* The default stage art is drawn in tangerine, so the dev and nightly
+       header channels stay on the one accent the app spends. Built-in themes
+       override them with their own pigments in the components layer. */
+    --stage-art-top: oklch(0.84 0.087 45);
+    --stage-art-mid: oklch(0.687 0.2 38);
+    --stage-art-bottom: oklch(0.42 0.14 40);
+    --stage-art-highlight: oklch(0.95 0.03 60);
+    --stage-art-secondary: oklch(0.8 0.13 50);
+    --stage-art-tertiary: oklch(0.8 0.16 80);
+    --stage-art-line: oklch(0.96 0.02 60);
+    --stage-art-celeste-highlight: oklch(0.95 0.05 90);
+    --stage-art-celeste-secondary: oklch(0.85 0.13 85);
+    --stage-art-violet-highlight: oklch(0.9 0.05 50);
+    --stage-art-grid-line: oklch(0.96 0.015 60);
+    --stage-night-base-top: oklch(0.3 0.02 275);
+    --stage-night-base-mid: oklch(0.26 0.018 275);
+    --stage-night-base-bottom: oklch(0.235 0.016 275);
     --stage-night-top: var(--stage-night-base-top);
     --stage-night-mid: var(--stage-night-base-mid);
     --stage-night-bottom: var(--stage-night-base-bottom);
-    --stage-night-highlight: oklch(0.707246 0.157418 252.091);
-    --stage-night-secondary: oklch(0.600473 0.182225 277.296);
-    --stage-night-tertiary: oklch(0.62583 0.210886 305.994);
-    --stage-night-line: oklch(0.938794 0.029114 273.103);
-    --stage-night-glow-highlight: oklch(0.553749 0.176543 271.958);
-    --stage-night-glow-secondary: oklch(0.345571 0.117466 273.568);
-    --stage-night-sparkle: oklch(0.880867 0.057747 269.011);
+    --stage-night-highlight: oklch(0.687 0.2 38);
+    --stage-night-secondary: oklch(0.62 0.17 45);
+    --stage-night-tertiary: oklch(0.8 0.15 80);
+    --stage-night-line: oklch(0.95 0.02 60);
+    --stage-night-glow-highlight: oklch(0.55 0.16 40);
+    --stage-night-glow-secondary: oklch(0.34 0.09 40);
+    --stage-night-sparkle: oklch(0.9 0.05 70);
 
     @variant dark {
-      --stage-art-top: oklch(0.581473 0.149124 256.9);
-      --stage-art-mid: oklch(0.456509 0.159377 261.945);
-      --stage-art-bottom: oklch(0.291327 0.136578 267.649);
+      --stage-art-top: oklch(0.58 0.17 40);
+      --stage-art-mid: oklch(0.46 0.15 40);
+      --stage-art-bottom: oklch(0.32 0.11 40);
     }
   }
 
