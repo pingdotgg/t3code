@@ -24,7 +24,6 @@ import { cn } from "~/lib/utils";
 interface Props {
   url: string;
   loading: boolean;
-  loadProgress: number;
   canGoBack: boolean;
   canGoForward: boolean;
   refreshDisabled: boolean;
@@ -65,7 +64,6 @@ const NOOP = () => {};
 export function PreviewChromeRow({
   url,
   loading,
-  loadProgress,
   canGoBack,
   canGoForward,
   refreshDisabled,
@@ -109,7 +107,11 @@ export function PreviewChromeRow({
 
   return (
     <div className="relative">
-      <form onSubmit={submit} className="surface-subheader gap-1 px-2" data-surface-subheader>
+      <form
+        onSubmit={submit}
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        data-surface-subheader
+      >
         <div className="flex items-center gap-0.5" role="group" aria-label="Navigation">
           <Tooltip>
             <TooltipTrigger
@@ -164,7 +166,7 @@ export function PreviewChromeRow({
           </Tooltip>
         </div>
 
-        <InputGroup variant="ghost" className="group/address h-7 flex-1 rounded-md">
+        <InputGroup variant="ghost" className="group/address h-7 flex-1">
           <Tooltip>
             <TooltipTrigger
               render={
@@ -304,16 +306,12 @@ export function PreviewChromeRow({
         ) : null}
         {trailingActions}
       </form>
-      {loadProgress > 0 ? (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute bottom-0 left-0 z-10 h-0.5 rounded-r-full bg-primary transition-all duration-150 ease-out"
-          style={{
-            width: `${loadProgress}%`,
-            boxShadow: "0 0 6px 1px var(--color-ring)",
-          }}
-        />
-      ) : null}
+      <div
+        aria-hidden
+        data-loading={loading}
+        className="preview-loading-progress pointer-events-none absolute bottom-0 left-0 z-10 h-0.5 w-full origin-left rounded-r-full bg-primary"
+        style={{ boxShadow: "0 0 6px 1px var(--color-ring)" }}
+      />
     </div>
   );
 }

@@ -2,12 +2,19 @@
  * Pull-request-specific annotations: conversations already on the host and comments queued for
  * the review being written. New comment composition uses the shared diff annotation.
  */
-import type { PullRequestReviewThread } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestRef,
+  PullRequestReviewThread,
+  PullRequestThreadCommentsResult,
+  PullRequestThreadComment,
+} from "@t3tools/contracts";
 import {
   CheckCircle2Icon,
   CircleIcon,
   HammerIcon,
   MessageSquareIcon,
+  PencilIcon,
   Trash2Icon,
 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -18,8 +25,14 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
+import {
+  editPullRequestThreadComment,
+  mergePullRequestThreadComments,
+} from "./pullRequestDetail.logic";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
+import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
 
 const CARD_CLASS =
@@ -82,30 +95,78 @@ export function ReviewThreadCard({
   workspaceRoot,
   canReply,
   canResolve,
+  canReact,
+  environmentId,
+  reference,
   pending,
   fixPending,
+  fixLabel = "Fix in a thread",
   onFix,
   onReply,
+  onLoadMore,
+  canEditComment,
+  onEditComment,
   onToggleResolved,
+  onReacted,
 }: {
   thread: PullRequestReviewThread;
   workspaceRoot: string;
   canReply: boolean;
   canResolve: boolean;
+  canReact: boolean;
+  environmentId: EnvironmentId;
+  reference: PullRequestRef;
   pending: boolean;
   /** True while this thread's own hand-off is preparing, so only its button says so. */
   fixPending?: boolean;
+  fixLabel?: string;
   /** Absent where a thread is shown outside the pull request page's reach. */
   onFix?: () => void;
   /** Resolves to whether the host took it, so a reply that failed keeps the words it was given. */
   onReply: (body: string) => Promise<boolean>;
+  /** Reads one more page only after the reader asks for it. */
+  onLoadMore: (cursor: string) => Promise<PullRequestThreadCommentsResult | null>;
+  /** Whether this reader wrote this remark, which is what rewriting one takes. */
+  canEditComment: (comment: PullRequestThreadComment) => boolean;
+  /** Resolves to whether the host took it, like `onReply`. */
+  onEditComment: (commentId: string, body: string) => Promise<boolean>;
   onToggleResolved: () => void;
+  onReacted: () => void;
 }) {
   // A resolved thread is finished work, so it opens collapsed and stays one line until asked for.
   const [expanded, setExpanded] = useState(!thread.isResolved);
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
   const sendingRef = useRef(false);
+  const [loadedPage, setLoadedPage] = useState<
+    (PullRequestThreadCommentsResult & { readonly threadId: string }) | null
+  >(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const currentPage = loadedPage?.threadId === thread.id ? loadedPage : null;
+  const comments = mergePullRequestThreadComments(thread.comments, currentPage?.comments ?? []);
+  const nextCommentsCursor =
+    currentPage === null ? (thread.nextCommentsCursor ?? null) : currentPage.nextCursor;
+  const commentCount = thread.commentCount ?? comments.length;
+
+  const saveEdit = async (commentId: string, body: string) => {
+    if (savingEdit) return;
+    setSavingEdit(true);
+    const saved = await onEditComment(commentId, body);
+    setSavingEdit(false);
+    if (saved) {
+      setLoadedPage((previous) =>
+        previous?.threadId === thread.id
+          ? {
+              ...previous,
+              comments: editPullRequestThreadComment(previous.comments, commentId, body),
+            }
+          : previous,
+      );
+      setEditingId(null);
+    }
+  };
 
   const send = async () => {
     const trimmed = reply.trim();
@@ -115,11 +176,39 @@ export function ReviewThreadCard({
     // empty box, and the words have to be written again.
     try {
       if (await onReply(trimmed)) {
+        // The mutation returns no comment. Keep what the reader loaded and reopen its cursor so
+        // the new reply remains reachable without spending requests until they ask to load it.
+        setLoadedPage((previous) =>
+          previous?.threadId === thread.id
+            ? {
+                ...previous,
+                nextCursor: previous.nextCursor ?? thread.nextCommentsCursor ?? null,
+              }
+            : previous,
+        );
         setReply("");
         setReplying(false);
       }
     } finally {
       sendingRef.current = false;
+    }
+  };
+  const loadMore = async () => {
+    if (nextCommentsCursor === null || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await onLoadMore(nextCommentsCursor);
+      if (page === null) return;
+      setLoadedPage((previous) => ({
+        threadId: thread.id,
+        comments: mergePullRequestThreadComments(
+          previous?.threadId === thread.id ? previous.comments : [],
+          page.comments,
+        ),
+        nextCursor: page.nextCursor,
+      }));
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -141,8 +230,8 @@ export function ReviewThreadCard({
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          {thread.isResolved ? "Resolved" : "Open"} · {thread.comments.length}{" "}
-          {thread.comments.length === 1 ? "comment" : "comments"}
+          {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
+          {commentCount === 1 ? "comment" : "comments"}
         </button>
         {thread.isOutdated ? <span>outdated</span> : null}
         {onFix ? (
@@ -154,7 +243,7 @@ export function ReviewThreadCard({
             onClick={onFix}
           >
             <HammerIcon className="size-3" />
-            {fixPending ? "Preparing..." : "Fix in a thread"}
+            {fixPending ? "Preparing..." : fixLabel}
           </Button>
         ) : null}
         {canResolve ? (
@@ -173,20 +262,69 @@ export function ReviewThreadCard({
       {expanded ? (
         <>
           <div className="mt-2 space-y-3">
-            {thread.comments.map((comment) => (
-              <article key={comment.id} className="min-w-0">
+            {comments.map((comment) => (
+              <article key={comment.id} className="group min-w-0">
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <PullRequestActorLabel actor={comment.author} className="text-foreground" />
                   <span>{formatRelativeTimeLabel(comment.createdAt)}</span>
                 </div>
-                <PullRequestMarkdown
-                  className="mt-1 text-sm"
-                  text={comment.body}
-                  cwd={workspaceRoot}
+                {editingId === comment.id ? (
+                  <PullRequestMarkdownEditor
+                    className="mt-1"
+                    value={comment.body}
+                    cwd={workspaceRoot}
+                    environmentId={environmentId}
+                    label="Edit comment"
+                    saving={savingEdit}
+                    onSave={(body) => void saveEdit(comment.id, body)}
+                    onCancel={() => setEditingId(null)}
+                  />
+                ) : (
+                  <div className="mt-1 flex items-start gap-1">
+                    <PullRequestMarkdown
+                      className="min-w-0 flex-1 text-sm"
+                      text={comment.body}
+                      cwd={workspaceRoot}
+                      environmentId={environmentId}
+                    />
+                    {canEditComment(comment) ? (
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus-visible:opacity-100"
+                        aria-label="Edit comment"
+                        onClick={() => setEditingId(comment.id)}
+                      >
+                        <PencilIcon className="size-3" />
+                      </Button>
+                    ) : null}
+                  </div>
+                )}
+                <PullRequestReactionBar
+                  className="mt-1.5"
+                  reactions={comment.reactions ?? []}
+                  canReact={canReact}
+                  subjectId={comment.id}
+                  environmentId={environmentId}
+                  reference={reference}
+                  onRefresh={onReacted}
                 />
               </article>
             ))}
           </div>
+          {nextCommentsCursor !== null ? (
+            <div className="mt-2">
+              <Button
+                size="xs"
+                variant="ghost"
+                className="px-1"
+                disabled={loadingMore}
+                onClick={() => void loadMore()}
+              >
+                {loadingMore ? "Loading..." : "Load more comments"}
+              </Button>
+            </div>
+          ) : null}
 
           {canReply ? (
             replying ? (

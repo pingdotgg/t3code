@@ -10,11 +10,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ChangeRequestStateLike } from "@t3tools/client-runtime/state/thread-settled";
+import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
 import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -22,6 +23,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import GitActionsControl from "../GitActionsControl";
+import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
@@ -30,6 +32,7 @@ import ProjectScriptsControl, {
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
 import { OpenInPicker } from "./OpenInPicker";
+import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
@@ -50,8 +53,8 @@ interface ChatHeaderProps {
   activeThreadTitle: string;
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
-  /** PR state feeding the settled classification, resolved by ChatView. */
-  changeRequestState: ChangeRequestStateLike | null;
+  /** PR feeding the settled classification, resolved by ChatView. */
+  changeRequest: ChangeRequestSettleSource | null;
   activeProjectName: string | undefined;
   activeProjectCwd: string | null;
   activeProjectFaviconPath: string | null;
@@ -87,16 +90,31 @@ export function resolveRenameCommit(input: {
   return { action: "commit", title: trimmed };
 }
 
+// How long a click on the thread title waits before opening the action menu,
+// so a double-click-to-rename can cancel it first. Only the native desktop
+// menu needs this: it swallows input while open, so the wait must cover the
+// OS double-click interval. The browser fallback menu keeps seeing DOM
+// events (the second click dismisses it and dblclick still fires), so it
+// opens immediately.
+const TITLE_MENU_OPEN_DELAY_MS = 500;
+
 export function shouldShowOpenInPicker(input: {
   readonly activeProjectName: string | undefined;
   readonly activeThreadEnvironmentId: EnvironmentId;
   readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly remoteOpenMode: RemoteOpenMode;
 }): boolean {
-  return (
-    Boolean(input.activeProjectName) &&
+  if (!input.activeProjectName) return false;
+  if (
     input.primaryEnvironmentId !== null &&
     input.activeThreadEnvironmentId === input.primaryEnvironmentId
-  );
+  ) {
+    return true;
+  }
+  // Remote environments get the picker in deep-link mode (or its explicit
+  // "no SSH route" state). Non-primary local backends (e.g. WSL) keep it
+  // hidden, matching pre-remote behavior.
+  return input.remoteOpenMode !== "local-exec";
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -105,7 +123,7 @@ export const ChatHeader = memo(function ChatHeader({
   draftId,
   activeThreadTitle,
   isServerThread,
-  changeRequestState,
+  changeRequest,
   activeProjectName,
   activeProjectCwd,
   activeProjectFaviconPath,
@@ -128,10 +146,12 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     activeProjectScripts ? activeProjectCwd : null,
   );
+  const remoteOpenState = useRemoteOpenState(activeThreadEnvironmentId);
   const showOpenInPicker = shouldShowOpenInPicker({
     activeProjectName,
     activeThreadEnvironmentId,
     primaryEnvironmentId,
+    remoteOpenMode: remoteOpenState.mode,
   });
   const activeThreadRef = useMemo(
     () => scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
@@ -178,31 +198,81 @@ export const ChatHeader = memo(function ChatHeader({
     },
     [activeThreadEnvironmentId, activeThreadId, activeThreadTitle, updateThreadMetadata],
   );
-  const { openMenu } = useThreadActionMenu({
+  const { openMenu, closeMenu } = useThreadActionMenu({
     threadRef: isServerThread ? activeThreadRef : null,
     projectCwd: activeProjectCwd,
-    changeRequestState,
+    changeRequest,
     onStartRename: startRename,
   });
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);
-  const openMenuFromTitle = useCallback(() => {
+  const titleMenuTimerRef = useRef<number | null>(null);
+  const cancelPendingTitleMenu = useCallback(() => {
+    if (titleMenuTimerRef.current === null) return;
+    clearTimeout(titleMenuTimerRef.current);
+    titleMenuTimerRef.current = null;
+  }, []);
+  // Drop a pending menu-open when the thread changes or the header unmounts,
+  // so it can never fire for a thread the user already left.
+  useEffect(
+    () => () => {
+      cancelPendingTitleMenu();
+    },
+    [activeThreadId, cancelPendingTitleMenu],
+  );
+  const openTitleMenuNow = useCallback(() => {
+    cancelPendingTitleMenu();
     const rect = titleButtonRef.current?.getBoundingClientRect();
     if (!rect) return;
     openMenu({ x: rect.left, y: rect.bottom + 4 });
-  }, [openMenu]);
+  }, [cancelPendingTitleMenu, openMenu]);
+  const openMenuFromTitle = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      // The trailing click of a double-click belongs to rename, not the menu.
+      if (isTrailingDoubleClick(event.detail)) return;
+      // Keyboard activation and the explicit chevron affordance can never be
+      // the first half of a double-click, so they open without waiting.
+      const clickedChevron =
+        (event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null;
+      if (event.detail === 0 || clickedChevron || window.desktopBridge === undefined) {
+        openTitleMenuNow();
+        return;
+      }
+      // Stay pending long enough for dblclick to cancel the open before the
+      // native menu appears and swallows the second click.
+      cancelPendingTitleMenu();
+      titleMenuTimerRef.current = window.setTimeout(() => {
+        titleMenuTimerRef.current = null;
+        openTitleMenuNow();
+      }, TITLE_MENU_OPEN_DELAY_MS);
+    },
+    [cancelPendingTitleMenu, openTitleMenuNow],
+  );
+  const handleTitleDoubleClick = useCallback(
+    (event: ReactMouseEvent) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      // The chevron is the explicit menu affordance; only the title text renames.
+      if ((event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null) return;
+      cancelPendingTitleMenu();
+      closeMenu();
+      startRename();
+    },
+    [cancelPendingTitleMenu, closeMenu, startRename],
+  );
   const handleHeaderContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       if (!isServerThread || renamingTitle !== null) return;
       // The right-side controls (git, scripts, open-in) keep their own
       // behavior; only the breadcrumb area opens the thread menu.
       if ((event.target as HTMLElement).closest("[data-chat-header-actions]")) return;
+      cancelPendingTitleMenu();
       event.preventDefault();
       openMenu({ x: event.clientX, y: event.clientY });
     },
-    [isServerThread, openMenu, renamingTitle],
+    [cancelPendingTitleMenu, isServerThread, openMenu, renamingTitle],
   );
   const handleRenameKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter") {
         renameCommittedRef.current = true;
         commitRename(event.currentTarget.value);
@@ -274,6 +344,8 @@ export const ChatHeader = memo(function ChatHeader({
                     aria-label={`Thread actions for ${activeThreadTitle}`}
                     aria-haspopup="menu"
                     onClick={openMenuFromTitle}
+                    onDoubleClick={handleTitleDoubleClick}
+                    onBlur={cancelPendingTitleMenu}
                     className="group/thread-title inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 }
@@ -281,6 +353,7 @@ export const ChatHeader = memo(function ChatHeader({
                 <h2 className="min-w-0 truncate">{activeThreadTitle}</h2>
                 <ChevronDownIcon
                   aria-hidden
+                  data-thread-title-chevron
                   className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/thread-title:opacity-100 group-focus-visible/thread-title:opacity-100"
                 />
               </TooltipTrigger>

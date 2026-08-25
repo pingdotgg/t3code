@@ -1,4 +1,5 @@
 import * as React from "react";
+import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
@@ -14,7 +15,7 @@ import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
-export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
+export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription. Each prewarmed
 // thread holds a live, fully hydrated detail subscription (all messages and
@@ -22,6 +23,12 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // so this limit is a direct renderer-heap and server-load multiplier — keep
 // it small; cold opens still render instantly from the cached snapshot.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
+
+// The list already reaches its destination through sortable transforms while
+// the pointer is down. dnd-kit's default also animates the committed DOM order
+// after release, replaying the same movement across every affected row.
+export const animatePinnedLayoutChanges: AnimateLayoutChanges = (args) =>
+  args.isSorting ? defaultAnimateLayoutChanges(args) : false;
 
 type SidebarProject = {
   id: string;
@@ -272,6 +279,35 @@ export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null
 // still count as a normal single activation.
 export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
+}
+
+function nodeClosest(node: object | null, selector: string): unknown {
+  if (node === null || !("closest" in node) || typeof node.closest !== "function") return null;
+  return node.closest(selector);
+}
+
+/** Clicks on a nested link keep the link's meaning. The row must not treat them as multi-select. */
+export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
+  if (target == null || typeof target !== "object") return false;
+  if (nodeClosest(target, "a[href]") !== null) return true;
+  const parent =
+    "parentElement" in target &&
+    target.parentElement !== null &&
+    typeof target.parentElement === "object"
+      ? target.parentElement
+      : null;
+  return nodeClosest(parent, "a[href]") !== null;
+}
+
+// Shift+click on the new thread button creates directly in the current
+// project, skipping the command palette's project picker. With a single
+// project there is nothing to pick, so a plain click already creates
+// immediately and the modifier changes nothing.
+export function shouldCreateNewThreadInCurrentProject(
+  shiftKey: boolean,
+  projectGroupCount: number,
+): boolean {
+  return shiftKey || projectGroupCount <= 1;
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {

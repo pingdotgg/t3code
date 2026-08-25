@@ -168,16 +168,22 @@ export function buildSelectOptionDescriptor(input: {
   readonly id: string;
   readonly label: string;
   readonly options:
-    | ReadonlyArray<{ value: string; label: string; isDefault?: boolean | undefined }>
+    | ReadonlyArray<{
+        value: string;
+        label: string;
+        description?: string | undefined;
+        isDefault?: boolean | undefined;
+      }>
     | undefined;
   readonly description?: string;
   readonly promptInjectedValues?: ReadonlyArray<string>;
 }) {
-  const options = (input.options ?? []).map((option) =>
-    option.isDefault
-      ? { id: option.value, label: option.label, isDefault: true }
-      : { id: option.value, label: option.label },
-  );
+  const options = (input.options ?? []).map((option) => ({
+    id: option.value,
+    label: option.label,
+    ...(option.description ? { description: option.description } : {}),
+    ...(option.isDefault ? { isDefault: true } : {}),
+  }));
   const currentValue = options.find((option) => option.isDefault)?.id;
   return {
     id: input.id,
@@ -249,5 +255,6 @@ export function buildServerProvider(input: {
 
 export const collectStreamAsString = <E>(
   stream: Stream.Stream<Uint8Array, E>,
+  options?: { readonly maxBytes?: number | undefined },
 ): Effect.Effect<string, E> =>
-  collectUint8StreamText({ stream }).pipe(Effect.map((collected) => collected.text));
+  collectUint8StreamText({ stream, ...options }).pipe(Effect.map((collected) => collected.text));

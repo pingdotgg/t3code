@@ -364,4 +364,26 @@ layer("GitLabCli.layer", (it) => {
       assert.strictEqual(error.cause, cause);
     }),
   );
+
+  it.effect("preserves rate-limit failures as a distinct error", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        cwd: "/repo",
+        exitCode: 1,
+        detail: "API rate limit exceeded.",
+        failureKind: "rate-limited",
+      });
+      mockedRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const error = yield* glab
+        .execute({ cwd: "/repo", args: ["api", "projects"] })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitLabCliRateLimitError");
+      assert.strictEqual(error.cause, cause);
+    }),
+  );
 });

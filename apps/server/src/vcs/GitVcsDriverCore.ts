@@ -39,6 +39,10 @@ import {
 import { ServerConfig } from "../config.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// `git worktree add` checks out the full tree, so on large repositories it can
+// take well beyond the default 30s (e.g. a 375k-file repo takes ~40s on an idle
+// machine). Give it generous headroom while still bounding a genuinely hung git.
+const WORKTREE_ADD_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
@@ -89,6 +93,7 @@ const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetail
 });
 const NON_REPOSITORY_REMOTE_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitRemoteStatusDetails>({
   isRepo: false,
+  defaultBranch: null,
   isDefaultBranch: false,
   branch: null,
   upstreamRef: null,
@@ -139,7 +144,7 @@ interface GitRefsSnapshot {
 
 interface ExecuteGitOptions {
   stdin?: string | undefined;
-  timeoutMs?: number | undefined;
+  timeoutMs?: number | null | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorDetail?: string | undefined;
   env?: NodeJS.ProcessEnv | undefined;
@@ -420,9 +425,21 @@ function isNonRepositoryGitStderr(stderr: string): boolean {
   return stderr.toLowerCase().includes("not a git repository");
 }
 function isUnbornHeadStderr(stderr: string): boolean {
+  const normalized = stderr.toLowerCase();
   return (
-    stderr.toLowerCase().includes("unknown revision") &&
-    stderr.toLowerCase().includes("path not in the working tree")
+    normalized.includes("bad revision 'head'") ||
+    (normalized.includes("unknown revision") && normalized.includes("path not in the working tree"))
+  );
+}
+
+// Matches `git worktree remove` on a path git no longer tracks: "is not a
+// working tree" when the registration is gone, "cannot remove working tree"
+// when older gits fail validation on a registered-but-deleted directory.
+function isMissingWorktreeStderr(stderr: string): boolean {
+  const normalized = stderr.toLowerCase();
+  return (
+    normalized.includes("is not a working tree") ||
+    normalized.includes("cannot remove working tree")
   );
 }
 
@@ -711,7 +728,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...input,
         args: [...input.args],
       } as const;
-      const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const timeoutMs = input.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : input.timeoutMs;
       const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
       const appendTruncationMarker = input.appendTruncationMarker ?? false;
 
@@ -812,8 +829,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         } satisfies GitVcsDriver.ExecuteGitResult;
       });
 
-      return yield* runGitCommand().pipe(
-        Effect.scoped,
+      const execution = runGitCommand().pipe(Effect.scoped);
+      if (timeoutMs === null) {
+        return yield* execution;
+      }
+
+      return yield* execution.pipe(
         Effect.timeoutOption(timeoutMs),
         Effect.flatMap((result) =>
           Option.match(result, {
@@ -904,9 +925,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     operation: string,
     cwd: string,
     args: readonly string[],
-    allowNonZeroExit = false,
+    options: ExecuteGitOptions = {},
   ): Effect.Effect<void, GitCommandError> =>
-    executeGit(operation, cwd, args, { allowNonZeroExit }).pipe(Effect.asVoid);
+    executeGit(operation, cwd, args, options).pipe(Effect.asVoid);
 
   const runGitStdout = (
     operation: string,
@@ -1477,25 +1498,35 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (branchResult === null) {
       return NON_REPOSITORY_REMOTE_STATUS_DETAILS;
     }
+    let branch: string | null;
     if (branchResult.exitCode !== 0) {
       if (isNonRepositoryGitStderr(branchResult.stderr)) {
         return NON_REPOSITORY_REMOTE_STATUS_DETAILS;
       }
-      return yield* new GitCommandError({
-        ...gitCommandContext({
-          operation: "GitVcsDriver.statusDetailsRemote.branch",
-          cwd,
-          args: ["rev-parse", "--abbrev-ref", "HEAD"],
-        }),
-        detail: "Git branch lookup failed.",
-        exitCode: branchResult.exitCode,
-        stdoutLength: branchResult.stdout.length,
-        stderrLength: branchResult.stderr.length,
-      });
-    }
+      if (!isUnbornHeadStderr(branchResult.stderr)) {
+        return yield* new GitCommandError({
+          ...gitCommandContext({
+            operation: "GitVcsDriver.statusDetailsRemote.branch",
+            cwd,
+            args: ["rev-parse", "--abbrev-ref", "HEAD"],
+          }),
+          detail: "Git branch lookup failed.",
+          exitCode: branchResult.exitCode,
+          stdoutLength: branchResult.stdout.length,
+          stderrLength: branchResult.stderr.length,
+        });
+      }
 
-    const branchValue = branchResult.stdout.trim();
-    const branch = branchValue.length > 0 && branchValue !== "HEAD" ? branchValue : null;
+      const branchValue = yield* runGitStdout(
+        "GitVcsDriver.statusDetailsRemote.unbornBranch",
+        cwd,
+        ["symbolic-ref", "--quiet", "--short", "HEAD"],
+      );
+      branch = branchValue.trim() || null;
+    } else {
+      const branchValue = branchResult.stdout.trim();
+      branch = branchValue.length > 0 && branchValue !== "HEAD" ? branchValue : null;
+    }
     const upstream = yield* resolveCurrentUpstream(cwd);
     const upstreamRef = upstream?.upstreamRef ?? null;
     let aheadCount = 0;
@@ -1535,6 +1566,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     return {
       isRepo: true,
+      defaultBranch,
       isDefaultBranch,
       branch,
       upstreamRef,
@@ -1590,7 +1622,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         executeGitWithStableDiagnostics(
           "GitVcsDriver.statusDetails.numstat",
           cwd,
-          ["diff", "HEAD", "--numstat"],
+          ["diff", "HEAD", "--numstat", "--"],
           { allowNonZeroExit: true },
         ).pipe(
           Effect.flatMap((result) => {
@@ -1632,7 +1664,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 ...gitCommandContext({
                   operation: "GitVcsDriver.statusDetails.numstat",
                   cwd,
-                  args: ["diff", "HEAD", "--numstat"],
+                  args: ["diff", "HEAD", "--numstat", "--"],
                 }),
                 detail: "git diff HEAD --numstat failed.",
                 exitCode: result.exitCode,
@@ -1894,12 +1926,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runGit("GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote", cwd, [
-        "push",
-        "-u",
-        requestedRemoteName,
-        `HEAD:refs/heads/${publishBranch}`,
-      ]);
+      yield* runGit(
+        "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
+        cwd,
+        ["push", "-u", requestedRemoteName, `HEAD:refs/heads/${publishBranch}`],
+        { timeoutMs: null },
+      );
       return {
         status: "pushed" as const,
         branch,
@@ -1957,12 +1989,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         });
       }
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-      yield* runGit("GitVcsDriver.pushCurrentBranch.pushWithUpstream", cwd, [
-        "push",
-        "-u",
-        publishRemoteName,
-        `HEAD:refs/heads/${publishBranch}`,
-      ]);
+      yield* runGit(
+        "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
+        cwd,
+        ["push", "-u", publishRemoteName, `HEAD:refs/heads/${publishBranch}`],
+        { timeoutMs: null },
+      );
       return {
         status: "pushed" as const,
         branch,
@@ -1975,11 +2007,61 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => null),
     );
     if (currentUpstream) {
-      yield* runGit("GitVcsDriver.pushCurrentBranch.pushUpstream", cwd, [
-        "push",
-        currentUpstream.remoteName,
-        `HEAD:refs/heads/${currentUpstream.branchName}`,
-      ]);
+      // A branch tracking a differently named ref was cut from it, the way
+      // `git checkout -b feature origin/dev` and our own worktree flow leave
+      // it. That upstream is the branch's base, not its publish target, and
+      // pushing HEAD onto it would write feature commits to a shared branch
+      // (bare `git push` refuses this under push.default=simple). The one
+      // same-repo tracking setup that legitimately differs is a git-mangled
+      // alias such as local `upstream/effect-atom` for my-org/upstream's
+      // `effect-atom`: the branch name ends in the upstream head while the
+      // upstream ref ends in the branch name.
+      const isAliasOfUpstreamHead =
+        branch === currentUpstream.branchName ||
+        (branch.endsWith(`/${currentUpstream.branchName}`) &&
+          currentUpstream.upstreamRef.endsWith(`/${branch}`));
+      if (!isAliasOfUpstreamHead) {
+        const publishRemoteName = yield* resolvePushRemoteName(cwd, branch).pipe(
+          Effect.orElseSucceed(() => null),
+        );
+        const remoteName = publishRemoteName ?? currentUpstream.remoteName;
+        const publishBranch = yield* resolvePublishBranchName(cwd, branch);
+        // `-u` retargets the upstream to the published branch, so keep the
+        // base recorded first; base resolution reads gh-merge-base before the
+        // upstream ref.
+        const configuredMergeBase = yield* runGitStdout(
+          "GitVcsDriver.pushCurrentBranch.readMergeBase",
+          cwd,
+          ["config", "--get", `branch.${branch}.gh-merge-base`],
+          true,
+        ).pipe(Effect.map((stdout) => stdout.trim()));
+        if (configuredMergeBase.length === 0) {
+          yield* runGit("GitVcsDriver.pushCurrentBranch.recordMergeBase", cwd, [
+            "config",
+            `branch.${branch}.gh-merge-base`,
+            currentUpstream.branchName,
+          ]);
+        }
+        yield* runGit(
+          "GitVcsDriver.pushCurrentBranch.pushOwnBranch",
+          cwd,
+          ["push", "-u", remoteName, `HEAD:refs/heads/${publishBranch}`],
+          { timeoutMs: null },
+        );
+        return {
+          status: "pushed" as const,
+          branch,
+          upstreamBranch: `${remoteName}/${publishBranch}`,
+          setUpstream: true,
+        };
+      }
+
+      yield* runGit(
+        "GitVcsDriver.pushCurrentBranch.pushUpstream",
+        cwd,
+        ["push", currentUpstream.remoteName, `HEAD:refs/heads/${currentUpstream.branchName}`],
+        { timeoutMs: null },
+      );
       return {
         status: "pushed" as const,
         branch,
@@ -1988,7 +2070,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"]);
+    yield* runGit("GitVcsDriver.pushCurrentBranch.push", cwd, ["push"], { timeoutMs: null });
     return {
       status: "pushed" as const,
       branch,
@@ -2751,7 +2833,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
       fallbackErrorDetail: "git worktree add failed",
+      timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
     });
+
+    // `git worktree add` leaves submodules empty, so a repo that keeps agent
+    // skills, tooling or source in one gets a worktree that is quietly missing
+    // them. Best-effort: the objects are usually already in the parent's
+    // `.git/modules`, but a first-ever clone needs the network, and failing to
+    // populate a submodule must not roll back the caller's thread.
+    const hasSubmodules = yield* fileSystem
+      .exists(path.join(worktreePath, ".gitmodules"))
+      .pipe(Effect.orElseSucceed(() => false));
+    if (hasSubmodules) {
+      yield* runGit("GitVcsDriver.createWorktree.updateSubmodules", worktreePath, [
+        "submodule",
+        "update",
+        "--init",
+        "--recursive",
+      ]).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("worktree submodule checkout failed; submodule paths are empty", {
+            worktreePath,
+            cause,
+          }),
+        ),
+      );
+    }
 
     if (input.newRefName && input.baseRefName) {
       const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
@@ -2964,9 +3071,47 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       args.push("--force");
     }
     args.push(input.path);
-    yield* executeGit("GitVcsDriver.removeWorktree", input.cwd, args, {
+    const result = yield* executeGitWithStableDiagnostics(
+      "GitVcsDriver.removeWorktree",
+      input.cwd,
+      args,
+      { timeoutMs: 15_000, allowNonZeroExit: true },
+    );
+    if (result.exitCode === 0) {
+      return;
+    }
+    // Threads can share a worktree path, and worktrees get removed or pruned
+    // outside the app, so a worktree that is already gone is a no-op rather
+    // than an error. Prune so no stale registration lingers to block a later
+    // `worktree add` at the same path.
+    const alreadyGone =
+      isMissingWorktreeStderr(result.stderr) &&
+      !(yield* fileSystem.exists(input.path).pipe(Effect.orElseSucceed(() => false)));
+    if (alreadyGone) {
+      yield* pruneWorktrees({ cwd: input.cwd });
+      return;
+    }
+    // Raw stderr stays out of both the wire error and the log (it can carry
+    // secrets); log bounded diagnostics so a genuine failure is visible
+    // server-side.
+    yield* Effect.logWarning(
+      `GitVcsDriver.removeWorktree: git worktree remove exited with code ${result.exitCode} for ${input.path} (stderr length ${result.stderr.length}).`,
+    );
+    return yield* new GitCommandError({
+      ...gitCommandContext({ operation: "GitVcsDriver.removeWorktree", cwd: input.cwd, args }),
+      detail: "git worktree remove failed",
+      ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+      stdoutLength: result.stdout.length,
+      stderrLength: result.stderr.length,
+    });
+  });
+
+  const pruneWorktrees: GitVcsDriver.GitVcsDriver["Service"]["pruneWorktrees"] = Effect.fn(
+    "pruneWorktrees",
+  )(function* (input) {
+    yield* executeGit("GitVcsDriver.pruneWorktrees", input.cwd, ["worktree", "prune"], {
       timeoutMs: 15_000,
-      fallbackErrorDetail: "git worktree remove failed",
+      fallbackErrorDetail: "git worktree prune failed",
     });
   });
 
@@ -3166,6 +3311,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(input.cwd, refreshCheckedOutBranch(input)),
     ensureRemote: (input) => withListRefsInvalidation(input.cwd, ensureRemote(input)),
     resolvePrimaryRemoteName,
+    resolveDefaultBranchName,
     fetchRemote: (input) => withListRefsInvalidation(input.cwd, fetchRemote(input)),
     remoteExists,
     resolveRemoteTrackingCommit,
@@ -3174,6 +3320,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(input.cwd, fetchRemoteTrackingBranch(input)),
     setBranchUpstream: (input) => withListRefsInvalidation(input.cwd, setBranchUpstream(input)),
     removeWorktree: (input) => withListRefsInvalidation(input.cwd, removeWorktree(input)),
+    pruneWorktrees: (input) => withListRefsInvalidation(input.cwd, pruneWorktrees(input)),
     renameBranch: (input) => withListRefsInvalidation(input.cwd, renameBranch(input)),
     createRef: (input) => withListRefsInvalidation(input.cwd, createRef(input)),
     switchRef: (input) => withListRefsInvalidation(input.cwd, switchRef(input)),

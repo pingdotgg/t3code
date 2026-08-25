@@ -8,12 +8,14 @@ name: Mobile EAS Production
 #
 # Every merge to main that touches the mobile app reconciles, per platform:
 #   1. Store builds: if the latest production build's version differs from
-#      app.config.ts, cut a new build with --auto-submit (TestFlight +
-#      Play internal track). Bumping `version` is therefore all it takes to
+#      app.config.ts, cut a new build and submit it (TestFlight + Play internal
+#      track). Bumping `version` is therefore all it takes to
 #      start the next release train — the first build of a version enters
 #      external-TestFlight beta review immediately, and later builds of the
-#      same version auto-approve. Releasing to the App Store stays a manual
-#      App Store Connect step.
+#      same version auto-approve until that version is released. After App
+#      Store approval, Apple closes the release train and `version` must be
+#      bumped before another iOS build can be submitted. Releasing to the App
+#      Store stays a manual App Store Connect step.
 #   2. OTA: publish a production-channel update for each platform where at
 #      least one finished production build matches the current native
 #      fingerprint. Old-version binaries with a matching fingerprint receive
@@ -42,6 +44,10 @@ on:
           - ios
           - android
           - all
+      version:
+        description: "Optional build version override (blank uses app.config.ts; an override is committed before building)"
+        required: false
+        type: string
       message:
         description: "OTA update message (mode=update only)"
         required: false
@@ -89,11 +95,21 @@ jobs:
             echo "EXPO_TOKEN is not available; skipping EAS production job."
           fi
 
+      - id: version_app_token
+        name: Mint release app token for version override
+        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build' && inputs.version != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Checkout
         if: steps.expo-token.outputs.present == 'true'
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ steps.version_app_token.outputs.token || github.token }}
           # No sparse-checkout here: it makes actions/checkout fetch with
           # --filter=blob:none, and eas-cli archives the project via
           # `git clone --depth 1 file://<workspace>`, which fails (exit 128)
@@ -135,6 +151,65 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: eas env:pull production --non-interactive
 
+      - name: Apply manual version override
+        if: steps.version_app_token.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.version_app_token.outputs.token }}
+          APP_SLUG: ${{ steps.version_app_token.outputs.app-slug }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" != "branch" ]; then
+            echo "Version overrides require dispatching this workflow from a branch; received $GITHUB_REF_TYPE '$GITHUB_REF_NAME'." >&2
+            exit 1
+          fi
+          if ! [[ "$RELEASE_VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+            echo "Version override must contain two or three dot-separated integers; received '$RELEASE_VERSION'." >&2
+            exit 1
+          fi
+
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const path = "apps/mobile/app.config.ts";
+            const source = fs.readFileSync(path, "utf8");
+            const next = source.replace(
+              /^(  version: ")[^"]+(".*)$/m,
+              `$1${process.env.RELEASE_VERSION}$2`,
+            );
+            if (next === source && !source.includes(`  version: "${process.env.RELEASE_VERSION}"`)) {
+              throw new Error("Could not update app version");
+            }
+            fs.writeFileSync(path, next);
+          '
+          vp fmt apps/mobile/app.config.ts
+
+          if git diff --quiet -- apps/mobile/app.config.ts; then
+            echo "app.config.ts is already at $RELEASE_VERSION; no version commit needed."
+            exit 0
+          fi
+
+          user_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git add apps/mobile/app.config.ts
+          git commit \
+            -m "chore(mobile): bump app version to $RELEASE_VERSION" \
+            -m "Co-authored-by: codex <codex@users.noreply.github.com>"
+          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+
+      - name: Summarize manual build version
+        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build'
+        working-directory: apps/mobile
+        run: |
+          version="$(npx expo config --json --type public | jq -r '.version')"
+          {
+            echo "## Manual production build"
+            echo
+            echo "- App version: \`$version\`"
+            echo "- Platform: \`${{ inputs.platform }}\`"
+            echo
+            echo "> Apple closes an iOS release train after App Store approval. Before building iOS, confirm \`$version\` is newer than the approved App Store version."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build and submit (manual)
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build'
         working-directory: apps/mobile
@@ -157,10 +232,8 @@ jobs:
 
       # No --status filter on build:list: an in-queue/in-progress build must
       # count as existing, or every merge during the build window would cut a
-      # duplicate. Builds started here stay attached to this serialized run so
-      # the queued run for a later merge cannot overtake them and lose its OTA.
-      # After an errored build, retry via workflow_dispatch mode=build — pushes
-      # won't re-trigger it until the app version changes.
+      # duplicate. After an errored build, retry via workflow_dispatch
+      # mode=build — pushes won't re-trigger it until the app version changes.
       - id: store_builds
         name: Ensure store builds exist for the current app version
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'push'
@@ -178,8 +251,8 @@ jobs:
               continue
             fi
             echo "$platform: latest production build is $latest, app.config.ts says $version — building"
-            if eas build --platform "$platform" --profile production --auto-submit --non-interactive; then
-              echo ":building_construction: $platform: cut production build for $version (auto-submitted)" >> "$GITHUB_STEP_SUMMARY"
+            if eas build --platform "$platform" --profile production --auto-submit --non-interactive --no-wait; then
+              echo ":building_construction: $platform: scheduled production build and submission for $version" >> "$GITHUB_STEP_SUMMARY"
             else
               failed=1
               echo ":x: $platform: production build or submission failed for $version" >> "$GITHUB_STEP_SUMMARY"

@@ -45,6 +45,7 @@ import {
   parseActiveThreadPath,
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
+import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
@@ -429,13 +430,23 @@ function AdaptiveWorkspaceLayoutContent(
   );
 
   const handleOpenSettings = useCallback(() => {
-    navigation.navigate("SettingsSheet", { screen: "Settings" });
+    navigation.navigate("SettingsSheet", {
+      screen: "SettingsContent",
+      params: { screen: "Settings" },
+    });
+  }, [navigation]);
+
+  const handleStartNewTask = useCallback(() => {
+    navigation.navigate("NewTaskSheet", { screen: "NewTask" });
   }, [navigation]);
 
   // Minted here (root stack navigation) so the sidebar pane stays free of
   // navigation hooks — on iOS it renders inside an independent nav tree.
   const handleOpenEnvironmentSettings = useCallback(() => {
-    navigation.navigate("SettingsSheet", { screen: "SettingsEnvironments" });
+    navigation.navigate("SettingsSheet", {
+      screen: "SettingsContent",
+      params: { screen: "SettingsEnvironments" },
+    });
   }, [navigation]);
 
   const handleNewThreadInProject = useCallback(
@@ -522,18 +533,22 @@ function AdaptiveWorkspaceLayoutContent(
               pointerEvents={panes.primarySidebarVisible ? "auto" : "none"}
               style={sidebarAnimatedStyle}
             >
-              <ThreadNavigationSidebar
-                width={layout.listPaneWidth}
-                visible={panes.primarySidebarVisible}
-                onRequestVisibility={revealPrimarySidebar}
-                selectedThreadKey={selectedThreadKey}
-                onOpenSettings={handleOpenSettings}
-                onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
-                onNewThreadInProject={handleNewThreadInProject}
-                onSelectThread={handleSelectThread}
-                onSearchQueryChange={setPrimarySidebarSearchQuery}
-                searchQuery={primarySidebarSearchQuery}
-              />
+              <View className="flex-1" style={{ width: layout.listPaneWidth }}>
+                <AndroidHomeFabLayout onStartNewTask={handleStartNewTask}>
+                  <ThreadNavigationSidebar
+                    width={layout.listPaneWidth}
+                    visible={panes.primarySidebarVisible}
+                    onRequestVisibility={revealPrimarySidebar}
+                    selectedThreadKey={selectedThreadKey}
+                    onOpenSettings={handleOpenSettings}
+                    onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
+                    onNewThreadInProject={handleNewThreadInProject}
+                    onSelectThread={handleSelectThread}
+                    onSearchQueryChange={setPrimarySidebarSearchQuery}
+                    searchQuery={primarySidebarSearchQuery}
+                  />
+                </AndroidHomeFabLayout>
+              </View>
             </Animated.View>
           ) : null}
           <View className="flex-1 overflow-hidden bg-screen" collapsable={false}>

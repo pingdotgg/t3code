@@ -56,4 +56,17 @@ describe("searchProviderSkills", () => {
 
     expect(searchProviderSkills(skills, "ui").map((skill) => skill.name)).toEqual([]);
   });
+
+  it("returns every enabled skill for an empty query", () => {
+    const skills = [
+      makeSkill({ name: "unslop" }),
+      makeSkill({ name: "browser" }),
+      makeSkill({ name: "disabled", enabled: false }),
+    ];
+
+    expect(searchProviderSkills(skills, "").map((skill) => skill.name)).toEqual([
+      "unslop",
+      "browser",
+    ]);
+  });
 });
