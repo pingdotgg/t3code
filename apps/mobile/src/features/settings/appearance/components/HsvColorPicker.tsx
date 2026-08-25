@@ -47,11 +47,12 @@ export function HsvColorPicker(props: {
   const [syncedValue, setSyncedValue] = useState(props.value);
 
   // Adopt external changes (hex field, preset then custom) without fighting
-  // our own commits, which round-trip to the same hex.
+  // our own commits, which round-trip to the same hex. Adopt the parsed HSV
+  // exactly — quantizing here would drift the color off the typed hex.
   if (props.value !== syncedValue) {
     setSyncedValue(props.value);
     const parsed = hexToHsv(props.value);
-    if (parsed !== null && hsvToHex(hsv) !== props.value) setHsv(quantize(parsed));
+    if (parsed !== null && hsvToHex(hsv) !== props.value) setHsv(parsed);
   }
 
   const saturation = useSharedValue(hsv.s);
