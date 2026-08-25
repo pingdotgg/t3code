@@ -373,10 +373,16 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     return [{ permission: "*", pattern: "*", action: "allow" }];
   }
 
+  // "Auto-accept edits" is documented as "auto-approve edits, ask before other
+  // actions", so prompting for every edit ignores the mode the user picked.
+  // "auto" is left asking on purpose: the docs say providers without an AI
+  // reviewer, OpenCode among them, fall back to Supervised for that mode.
+  const editAction = runtimeMode === "auto-accept-edits" ? "allow" : "ask";
+
   return [
     { permission: "*", pattern: "*", action: "ask" },
     { permission: "bash", pattern: "*", action: "ask" },
-    { permission: "edit", pattern: "*", action: "ask" },
+    { permission: "edit", pattern: "*", action: editAction },
     { permission: "webfetch", pattern: "*", action: "ask" },
     { permission: "websearch", pattern: "*", action: "ask" },
     { permission: "codesearch", pattern: "*", action: "ask" },
