@@ -33,7 +33,7 @@ import { CommandId, type EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
@@ -565,39 +565,52 @@ export function AddProjectSourceScreen() {
   );
 }
 
-function useCreateProject(environment: EnvironmentOption | null) {
+// Adding a path the environment already tracks should feel like picking that
+// project from the list, so callers hand off to its draft instead of failing.
+// Returns whether the path matched an existing project.
+function useOpenExistingProject(environment: EnvironmentOption | null) {
   const navigation = useNavigation();
-  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const projects = useProjects();
 
   return useCallback(
-    async (workspaceRoot: string) => {
-      if (!environment || !canCreateProjectInEnvironment(environment.connectionState)) return;
-
+    (workspaceRoot: string) => {
+      if (!environment) return false;
       const existing = findExistingAddProject({
         projects,
         environmentId: environment.environmentId,
         path: workspaceRoot,
       });
-      if (existing) {
-        Alert.alert("Project already exists", existing.title);
-        navigation.dispatch(
-          CommonActions.reset({
-            index: 0,
-            routes: [
-              {
-                name: "NewTaskDraft",
-                params: {
-                  environmentId: existing.environmentId,
-                  projectId: existing.id,
-                  title: existing.title,
-                },
+      if (!existing) return false;
+      navigation.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [
+            {
+              name: "NewTaskDraft",
+              params: {
+                environmentId: existing.environmentId,
+                projectId: existing.id,
+                title: existing.title,
               },
-            ],
-          }),
-        );
-        return;
-      }
+            },
+          ],
+        }),
+      );
+      return true;
+    },
+    [environment, navigation, projects],
+  );
+}
+
+function useCreateProject(environment: EnvironmentOption | null) {
+  const navigation = useNavigation();
+  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const openExistingProject = useOpenExistingProject(environment);
+
+  return useCallback(
+    async (workspaceRoot: string) => {
+      if (!environment || !canCreateProjectInEnvironment(environment.connectionState)) return;
+      if (openExistingProject(workspaceRoot)) return;
 
       const projectId = ProjectId.make(uuidv4());
       const command = buildProjectCreateCommand({
@@ -630,7 +643,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
       );
       return result;
     },
-    [createProject, environment, projects, navigation],
+    [createProject, environment, navigation, openExistingProject],
   );
 }
 
@@ -894,6 +907,7 @@ export function AddProjectDestinationScreen(props: {
   });
   const environment = useEnvironmentFromParam(props.environmentId);
   const createProject = useCreateProject(environment);
+  const openExistingProject = useOpenExistingProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
   // A lookup derives this from "owner/repo", a pasted clone URL from its own
@@ -920,6 +934,9 @@ export function AddProjectDestinationScreen(props: {
       setError(resolved.error);
       return;
     }
+    // Cloning into a directory that is already a project would fail on a
+    // non-empty destination, so open that project instead of reporting it.
+    if (openExistingProject(resolved.path)) return;
 
     setIsSubmitting(true);
     const cloneResult = await cloneRepository({
@@ -944,6 +961,7 @@ export function AddProjectDestinationScreen(props: {
     environment,
     isBrowseNavigating,
     isSubmitting,
+    openExistingProject,
     pathInput,
     remoteUrl,
   ]);
