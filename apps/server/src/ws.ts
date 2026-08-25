@@ -2621,7 +2621,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.codexGoalGet,
             providerService
-              .getCodexGoal(input.threadId)
+              .getCodexGoal(input.threadId, { allowRecovery: false })
               .pipe(Effect.mapError(codexGoalOperationError("get", input.threadId))),
             { "rpc.aggregate": "codex-goal" },
           ),

@@ -6286,7 +6286,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(result.steered.objective, "Steered Goal");
       assert.deepEqual(result.cleared, { cleared: true });
       assert.deepEqual(setInputs, [{ threadId, objective: "Steered Goal" }]);
-      assert.deepEqual(getOptions, [undefined, { allowRecovery: false }]);
+      assert.deepEqual(getOptions, [{ allowRecovery: false }, { allowRecovery: false }]);
       assert.deepEqual(
         Array.from(result.streamed).map((event) => event.type),
         ["snapshot", "updated", "cleared"],
