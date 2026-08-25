@@ -62,7 +62,13 @@ export type CompressImageFileResult =
 
 /** Finder and some browsers omit the MIME type when dragging HEIC photos. */
 export function isHeicImageFile(file: Pick<File, "name" | "type">): boolean {
-  return HEIC_IMAGE_MIME_TYPE.test(file.type) || HEIC_IMAGE_EXTENSION.test(file.name);
+  if (HEIC_IMAGE_MIME_TYPE.test(file.type)) {
+    return true;
+  }
+  return (
+    (file.type === "" || file.type.toLowerCase() === "application/octet-stream") &&
+    HEIC_IMAGE_EXTENSION.test(file.name)
+  );
 }
 
 /** Chunked so a large image can't blow the argument limit of `fromCharCode`. */

@@ -310,6 +310,8 @@ describe("HEIC attachment preparation", () => {
     expect(isHeicImageFile({ name: "IMG_1234.HEIC", type: "" })).toBe(true);
     expect(isHeicImageFile({ name: "photo.heif", type: "application/octet-stream" })).toBe(true);
     expect(isHeicImageFile({ name: "photo.png", type: "image/png" })).toBe(false);
+    expect(isHeicImageFile({ name: "photo.heic", type: "image/png" })).toBe(false);
+    expect(isHeicImageFile({ name: "photo.heif", type: "image/jpeg" })).toBe(false);
   });
 
   it("converts a HEIC photo with a missing MIME type into a named JPEG", async () => {
