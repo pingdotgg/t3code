@@ -487,6 +487,93 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("preserves previously enabled providers from sparse settings files", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"providers":{"opencode":{"serverUrl":"http://127.0.0.1:4096"}}}',
+      );
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.isTrue(settings.providers.grok.enabled);
+      assert.isTrue(settings.providers.opencode.enabled);
+      assert.equal(settings.providers.opencode.serverUrl, "http://127.0.0.1:4096");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("preserves existing provider instances without explicit enabled flags", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"providerInstances":{"grok":{"driver":"grok","config":{}},"opencode_work":{"driver":"opencode","config":{"serverUrl":"http://127.0.0.1:4096"}}}}',
+      );
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("opencode_work")]?.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("preserves explicit provider disables in existing settings files", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"providers":{"grok":{"enabled":false},"opencode":{"enabled":false}},"providerInstances":{"grok":{"driver":"grok","enabled":false,"config":{}},"opencode":{"driver":"opencode","config":{"enabled":false}}}}',
+      );
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.isFalse(settings.providers.grok.enabled);
+      assert.isFalse(settings.providers.opencode.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("keeps optional providers disabled after a new installation writes settings", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      const initial = yield* serverSettings.getSettings;
+      assert.isFalse(initial.providers.grok.enabled);
+      assert.isFalse(initial.providers.opencode.enabled);
+
+      const next = yield* serverSettings.updateSettings({
+        addProjectBaseDirectory: "~/Development",
+        providerInstances: {
+          [ProviderInstanceId.make("grok")]: {
+            driver: ProviderDriverKind.make("grok"),
+            config: {},
+          },
+        },
+      });
+
+      assert.isFalse(next.providers.grok.enabled);
+      assert.isFalse(next.providers.opencode.enabled);
+      assert.isFalse(next.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const persisted = JSON.parse(raw);
+      assert.isFalse(persisted.providers.grok.enabled);
+      assert.isFalse(persisted.providers.opencode.enabled);
+      assert.isFalse(persisted.providerInstances.grok.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("folds a legacy in-config enabled flag into the envelope on load", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -633,7 +720,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("writes only non-default server settings to disk", () =>
+  it.effect("writes non-default settings and explicit optional provider defaults to disk", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -670,7 +757,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
           },
+          grok: {
+            enabled: false,
+          },
           opencode: {
+            enabled: false,
             serverUrl: "http://127.0.0.1:4096",
             serverPassword: "secret-password",
           },

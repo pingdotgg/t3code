@@ -83,7 +83,15 @@ const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSetti
       Array.isArray(config) ||
       typeof (config as { readonly enabled?: unknown }).enabled !== "boolean"
     ) {
-      providerInstances[instanceId] = instance;
+      if (
+        instance.enabled === undefined &&
+        (instance.driver === "grok" || instance.driver === "opencode")
+      ) {
+        changed = true;
+        providerInstances[instanceId] = { ...instance, enabled: false };
+      } else {
+        providerInstances[instanceId] = instance;
+      }
       continue;
     }
     const { enabled: configEnabled, ...restConfig } = config as Record<string, unknown> & {
@@ -230,6 +238,48 @@ export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
+const PersistedOptionalProviderSettings = Schema.Struct({
+  providers: Schema.optionalKey(
+    Schema.Struct({
+      grok: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+      opencode: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+    }),
+  ),
+});
+const decodePersistedOptionalProviderSettingsJsonExit = Schema.decodeUnknownExit(
+  fromLenientJson(PersistedOptionalProviderSettings),
+);
+
+function restoreLegacyProviderDefaults(
+  settings: ServerSettings,
+  persisted: typeof PersistedOptionalProviderSettings.Type,
+): ServerSettings {
+  const providerInstances = Object.fromEntries(
+    Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
+      instanceId,
+      instance.enabled === undefined &&
+      (instance.driver === "grok" || instance.driver === "opencode")
+        ? { ...instance, enabled: true }
+        : instance,
+    ]),
+  );
+
+  return {
+    ...settings,
+    providers: {
+      ...settings.providers,
+      grok: {
+        ...settings.providers.grok,
+        enabled: persisted.providers?.grok?.enabled ?? true,
+      },
+      opencode: {
+        ...settings.providers.opencode,
+        enabled: persisted.providers?.opencode?.enabled ?? true,
+      },
+    },
+    providerInstances,
+  };
+}
 
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
   return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
@@ -264,6 +314,16 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
 ]);
+
+// Keep disabled optional providers explicit so new settings files do not look like old ones.
+const PERSISTED_SERVER_SETTINGS_DEFAULTS: ServerSettings = {
+  ...DEFAULT_SERVER_SETTINGS,
+  providers: {
+    ...DEFAULT_SERVER_SETTINGS.providers,
+    grok: { ...DEFAULT_SERVER_SETTINGS.providers.grok, enabled: true },
+    opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: true },
+  },
+};
 
 function stripDefaultServerSettings(current: unknown, defaults: unknown): unknown | undefined {
   if (Array.isArray(current) || Array.isArray(defaults)) {
@@ -344,15 +404,21 @@ const make = Effect.gen(function* () {
 
     const raw = yield* readRawConfig;
     const decoded = decodeServerSettingsJsonExit(raw);
-    if (decoded._tag === "Failure") {
-      yield* Effect.logWarning("failed to parse settings.json, using defaults", {
-        path: settingsPath,
-        issues: Cause.pretty(decoded.cause),
-        cause: decoded.cause,
-      });
+    const persisted = decodePersistedOptionalProviderSettingsJsonExit(raw);
+    if (decoded._tag === "Failure" || persisted._tag === "Failure") {
+      const failure = decoded._tag === "Failure" ? decoded : persisted;
+      if (failure._tag === "Failure") {
+        yield* Effect.logWarning("failed to parse settings.json, using defaults", {
+          path: settingsPath,
+          issues: Cause.pretty(failure.cause),
+          cause: failure.cause,
+        });
+      }
       return DEFAULT_SERVER_SETTINGS;
     }
-    return foldProviderInstanceEnabledFlags(decoded.value);
+    return foldProviderInstanceEnabledFlags(
+      restoreLegacyProviderDefaults(decoded.value, persisted.value),
+    );
   });
 
   const settingsCache = yield* Cache.make<typeof cacheKey, ServerSettings, ServerSettingsError>({
@@ -528,7 +594,7 @@ const make = Effect.gen(function* () {
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
-        stripDefaultServerSettings(settings, DEFAULT_SERVER_SETTINGS) ?? {},
+        stripDefaultServerSettings(settings, PERSISTED_SERVER_SETTINGS_DEFAULTS) ?? {},
       );
 
       return yield* writeFileStringAtomically({
