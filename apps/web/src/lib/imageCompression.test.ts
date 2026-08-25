@@ -305,7 +305,9 @@ describe("compressImageForStash", () => {
 describe("HEIC attachment preparation", () => {
   it("recognizes HEIC and HEIF MIME types and case-insensitive file extensions", () => {
     expect(isHeicImageFile({ name: "photo.bin", type: "image/heic" })).toBe(true);
-    expect(isHeicImageFile({ name: "photo.bin", type: "image/heif-sequence" })).toBe(true);
+    expect(isHeicImageFile({ name: "photo.bin", type: "image/heif" })).toBe(true);
+    expect(isHeicImageFile({ name: "photo.heic", type: "image/heic-sequence" })).toBe(false);
+    expect(isHeicImageFile({ name: "photo.heif", type: "image/heif-sequence" })).toBe(false);
     expect(isHeicImageFile({ name: "IMG_1234.HEIC", type: "" })).toBe(true);
     expect(isHeicImageFile({ name: "photo.heif", type: "application/octet-stream" })).toBe(true);
     expect(isHeicImageFile({ name: "photo.png", type: "image/png" })).toBe(false);

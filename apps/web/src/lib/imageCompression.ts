@@ -35,7 +35,7 @@ const MAX_HEIC_METADATA_BYTES = 1024 * 1024;
 const QUALITY_STEPS = [0.92, 0.85, 0.78, 0.68] as const;
 /** Extra downscale passes applied when even the lowest quality overflows. */
 const FALLBACK_SCALE_STEPS = [0.75, 0.55] as const;
-const HEIC_IMAGE_MIME_TYPE = /^image\/hei(?:c|f)(?:-sequence)?$/i;
+const HEIC_IMAGE_MIME_TYPE = /^image\/hei(?:c|f)$/i;
 const HEIC_IMAGE_EXTENSION = /\.(?:heic|heif)$/i;
 
 export interface CompressedStashImage {
