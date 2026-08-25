@@ -137,6 +137,16 @@ describe("buildProjectGroups", () => {
     expect(resolveProjectGroupingMode(movedProject, groupingSettings)).toBe("separate");
   });
 
+  it("uses explicit inheritance instead of a legacy path override", () => {
+    const project = makeProject("t3code", "/work/t3code");
+    const groupingSettings = settings("repository", {
+      [derivePhysicalProjectKey(project)]: "separate",
+      [deriveProjectGroupingOverrideKey(project)]: "inherit",
+    });
+
+    expect(resolveProjectGroupingMode(project, groupingSettings)).toBe("repository");
+  });
+
   it("dedupes stale registrations at one physical path using the freshest project", () => {
     const stale = makeProject("stale", "/work/t3code", {
       repositoryIdentity: null,

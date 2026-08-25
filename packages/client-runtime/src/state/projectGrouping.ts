@@ -2,6 +2,7 @@ import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
 import type {
   EnvironmentId,
   ScopedProjectRef,
+  SidebarProjectGroupingOverride,
   SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
@@ -11,7 +12,7 @@ import { normalizeProjectPathForComparison } from "./projects.ts";
 
 export interface ProjectGroupingSettings {
   readonly sidebarProjectGroupingMode: SidebarProjectGroupingMode;
-  readonly sidebarProjectGroupingOverrides: Record<string, SidebarProjectGroupingMode>;
+  readonly sidebarProjectGroupingOverrides: Record<string, SidebarProjectGroupingOverride>;
 }
 
 export type ProjectGroupingMode = SidebarProjectGroupingMode;
@@ -93,11 +94,13 @@ export function resolveProjectGroupingOverride(
   project: Pick<EnvironmentProject, "environmentId" | "id" | "workspaceRoot">,
   settings: ProjectGroupingSettings,
 ): SidebarProjectGroupingMode | null {
-  for (const key of deriveProjectGroupingOverrideKeys(project)) {
-    const override = settings.sidebarProjectGroupingOverrides?.[key];
-    if (override !== undefined) return override;
+  const [overrideKey, legacyOverrideKey] = deriveProjectGroupingOverrideKeys(project);
+  const override = settings.sidebarProjectGroupingOverrides[overrideKey];
+  if (override !== undefined) {
+    return override === "inherit" ? null : override;
   }
-  return null;
+  const legacyOverride = settings.sidebarProjectGroupingOverrides[legacyOverrideKey];
+  return legacyOverride === undefined || legacyOverride === "inherit" ? null : legacyOverride;
 }
 
 export function getProjectOrderKey(

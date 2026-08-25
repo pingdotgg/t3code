@@ -304,6 +304,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const settings = usePrimarySettings();
   const updateClientSettings = useUpdateClientSettings();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectGroupingSettingsRef = useRef(projectGroupingSettings);
+  projectGroupingSettingsRef.current = projectGroupingSettings;
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const threads = useThreadShells();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
@@ -476,6 +478,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const [isSavingPath, setIsSavingPath] = useState(false);
   const [isEditingPath, setIsEditingPath] = useState(false);
   const savingPathRef = useRef(false);
+  const choosePathButtonRef = useRef<HTMLButtonElement | null>(null);
   const setCheckoutPath = useCallback(
     async (checkout: SidebarProjectGroupMember, nextWorkspaceRoot: string): Promise<boolean> => {
       const workspaceRoot = nextWorkspaceRoot.trim();
@@ -489,9 +492,6 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       savingPathRef.current = true;
       setIsSavingPath(true);
       try {
-        const existingOverrides = projectGroupingSettings.sidebarProjectGroupingOverrides ?? {};
-        const [overrideKey, legacyOverrideKey] = deriveProjectGroupingOverrideKeys(checkout);
-        const groupingOverride = resolveProjectGroupingOverride(checkout, projectGroupingSettings);
         const result = mapAtomCommandResult(
           await updateProject({
             environmentId: checkout.environmentId,
@@ -500,16 +500,18 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
           () => undefined,
         );
         reportFailure("Failed to update checkout path", result);
-        if (
-          result._tag === "Success" &&
-          Object.prototype.hasOwnProperty.call(existingOverrides, legacyOverrideKey)
-        ) {
+        if (result._tag === "Success") {
+          const currentGroupingSettings = projectGroupingSettingsRef.current;
+          const existingOverrides = currentGroupingSettings.sidebarProjectGroupingOverrides;
+          const [overrideKey, legacyOverrideKey] = deriveProjectGroupingOverrideKeys(checkout);
+          const groupingOverride = resolveProjectGroupingOverride(
+            checkout,
+            currentGroupingSettings,
+          );
           const nextOverrides = { ...existingOverrides };
           delete nextOverrides[overrideKey];
           delete nextOverrides[legacyOverrideKey];
-          if (groupingOverride !== null) {
-            nextOverrides[overrideKey] = groupingOverride;
-          }
+          nextOverrides[overrideKey] = groupingOverride ?? "inherit";
           updateClientSettings({ sidebarProjectGroupingOverrides: nextOverrides });
         }
         return result._tag === "Success";
@@ -518,7 +520,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         setIsSavingPath(false);
       }
     },
-    [projectGroupingSettings, reportFailure, updateClientSettings, updateProject],
+    [reportFailure, updateClientSettings, updateProject],
   );
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
@@ -712,9 +714,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       const nextOverrides = { ...projectGroupingSettings.sidebarProjectGroupingOverrides };
       delete nextOverrides[overrideKey];
       delete nextOverrides[legacyOverrideKey];
-      if (selection !== "inherit") {
-        nextOverrides[overrideKey] = selection;
-      }
+      nextOverrides[overrideKey] = selection;
       updateClientSettings({ sidebarProjectGroupingOverrides: nextOverrides });
     },
     [projectGroupingSettings.sidebarProjectGroupingOverrides, updateClientSettings],
@@ -1008,6 +1008,10 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                     onBlur={(event) => {
                       setIsEditingPath(false);
                       const input = event.currentTarget;
+                      if (event.relatedTarget === choosePathButtonRef.current) {
+                        input.value = selectedCheckout.workspaceRoot;
+                        return;
+                      }
                       void setCheckoutPath(selectedCheckout, input.value).then((saved) => {
                         if (!saved) input.value = selectedCheckout.workspaceRoot;
                       });
@@ -1059,6 +1063,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   <TooltipTrigger
                     render={
                       <Button
+                        ref={choosePathButtonRef}
                         aria-label="Choose checkout path"
                         disabled={isSavingPath}
                         size="icon"
@@ -1087,6 +1092,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             description="How this checkout joins project groups in the sidebar. Changing it can move you to a different project group."
             control={
               <Select
+                disabled={isSavingPath}
                 value={selectedCheckoutGrouping}
                 onValueChange={(value) => {
                   if (

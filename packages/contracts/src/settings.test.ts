@@ -110,6 +110,18 @@ describe("ClientSettings sidebar", () => {
     );
   });
 
+  it("allows a project grouping override to inherit the global mode", () => {
+    const overrides = { "environment:project": "inherit" } as const;
+    expect(
+      decodeClientSettings({ sidebarProjectGroupingOverrides: overrides })
+        .sidebarProjectGroupingOverrides,
+    ).toEqual(overrides);
+    expect(
+      decodeClientSettingsPatch({ sidebarProjectGroupingOverrides: overrides })
+        .sidebarProjectGroupingOverrides,
+    ).toEqual(overrides);
+  });
+
   it("allows auto-settle by inactivity to be disabled", () => {
     expect(
       decodeClientSettings({ sidebarAutoSettleAfterDays: null }).sidebarAutoSettleAfterDays,

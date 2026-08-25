@@ -2114,9 +2114,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     };
     delete nextOverrides[overrideKey];
     delete nextOverrides[legacyOverrideKey];
-    if (projectGroupingSelection !== "inherit") {
-      nextOverrides[overrideKey] = projectGroupingSelection;
-    }
+    nextOverrides[overrideKey] = projectGroupingSelection;
     updateSettings({
       sidebarProjectGroupingOverrides: nextOverrides,
     });
