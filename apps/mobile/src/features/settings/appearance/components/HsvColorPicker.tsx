@@ -95,9 +95,11 @@ export function HsvColorPicker(props: {
       saturation.value = clamp01(x / padWidth.value);
       brightness.value = clamp01(1 - y / padHeight.value);
     };
+    // Axis-independent activation: brightness-only drags are vertical, so the
+    // pad must win over the surrounding ScrollView in both directions.
     const pan = Gesture.Pan()
       .enabled(!props.disabled)
-      .activeOffsetX([-6, 6])
+      .minDistance(6)
       .onUpdate((event) => track(event.x, event.y))
       .onEnd(() => {
         runOnJS(runCommitPad)(saturation.value, brightness.value);
