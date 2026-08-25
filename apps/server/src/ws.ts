@@ -104,6 +104,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as PostHogClient from "./posthog/PostHogClient.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -454,6 +455,7 @@ const makeWsRpcLayer = (
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const postHogClient = yield* PostHogClient.PostHogClient;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -998,6 +1000,9 @@ const makeWsRpcLayer = (
                 interactionMode: bootstrap.createThread.interactionMode,
                 branch: bootstrap.createThread.branch,
                 worktreePath: bootstrap.createThread.worktreePath,
+                ...(bootstrap.createThread.reportId !== undefined
+                  ? { reportId: bootstrap.createThread.reportId }
+                  : {}),
                 createdAt: bootstrap.createThread.createdAt,
               });
               createdThread = true;
@@ -2120,6 +2125,16 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "git",
             },
+          ),
+        [WS_METHODS.posthogReportsList]: (input) =>
+          observeRpcEffect(WS_METHODS.posthogReportsList, postHogClient.listReports(input), {
+            "rpc.aggregate": "posthog",
+          }),
+        [WS_METHODS.posthogReportArtefacts]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.posthogReportArtefacts,
+            postHogClient.listReportArtefacts(input),
+            { "rpc.aggregate": "posthog" },
           ),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(
