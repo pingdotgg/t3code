@@ -639,6 +639,12 @@ export function ThemeLibrary({
         }
         return;
       }
+      // Switch appearance mode before storing the half so `applyTheme` inside
+      // `setThemeHalf` resolves against the new mode, avoiding a two-frame
+      // flash where both the old and new appearance show as selected.
+      if (appearanceMode !== appearance) {
+        setAppearanceMode(appearance);
+      }
       if (!setThemeHalf(appearance, cardId)) {
         notifyThemeSaveFailure();
       }
@@ -648,6 +654,7 @@ export function ThemeLibrary({
       baseCardId,
       notifyThemeSaveFailure,
       persistTheme,
+      setAppearanceMode,
       setTheme,
       setThemeHalf,
       theme,
@@ -681,15 +688,11 @@ export function ThemeLibrary({
     assignHalf(mode, cardId);
   };
 
-  // Rings always show the effective owner of each appearance: an unpicked
-  // half belongs to the default card (a null owner), so a fresh install
-  // shows T3 Code selected instead of nothing.
-  const pickedModesFor = (cardId: string | null): ThemeMode[] => {
-    const rings: ThemeMode[] = [];
-    if (lightOwner === cardId) rings.push("light");
-    if (darkOwner === cardId) rings.push("dark");
-    return rings;
-  };
+  // Only highlight the circle matching the current appearance mode on the
+  // card that owns it. This keeps exactly one circle selected at a time.
+  const activeOwner = appearanceMode === "light" ? lightOwner : darkOwner;
+  const pickedModesFor = (cardId: string | null): ThemeMode[] =>
+    activeOwner === cardId ? [appearanceMode] : [];
 
   const wireframeColors = (appearance: ThemeAppearance) =>
     pickColors(appearance === "light" ? lightOwner : darkOwner, appearance);
