@@ -66,8 +66,8 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         {(onReauthenticate || onDismiss) && (
           <AlertAction>
             {onReauthenticate && (
-              <Button variant="outline" size="sm" onClick={onReauthenticate}>
-                <KeyRoundIcon className="size-3.5" aria-hidden />
+              <Button variant="outline" size="xs" onClick={onReauthenticate}>
+                <KeyRoundIcon aria-hidden />
                 {reauthenticateLabel ?? "Re-authenticate"}
               </Button>
             )}

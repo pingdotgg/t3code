@@ -83,11 +83,11 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
         {canReauthenticate && reauthentication ? (
           <Button
             variant="outline"
-            size="sm"
+            size="xs"
             className="shrink-0"
             onClick={() => onReauthenticate?.(reauthentication)}
           >
-            <KeyRoundIcon className="size-3.5" aria-hidden />
+            <KeyRoundIcon aria-hidden />
             {reauthentication.label ?? "Re-authenticate"}
           </Button>
         ) : null}
