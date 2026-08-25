@@ -6,7 +6,12 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
-import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
+import {
+  MOBILE_THEME_IDS,
+  normalizeUserBubbleColor,
+  type MobileThemeId,
+  type MobileThemeMode,
+} from "../lib/mobileTheme";
 
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -26,6 +31,10 @@ export interface Preferences {
   readonly markdownFontSize?: number;
   readonly codeFontSize?: number | null;
   readonly codeWordBreak?: boolean;
+  /** Sent-message bubble color as a hex string; null/absent follows the theme. */
+  readonly userBubbleColor?: string | null;
+  /** Sent-message text color as a hex string; null/absent derives from the bubble. */
+  readonly userBubbleTextColor?: string | null;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
@@ -93,6 +102,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     markdownFontSize?: number;
     codeFontSize?: number | null;
     codeWordBreak?: boolean;
+    userBubbleColor?: string;
+    userBubbleTextColor?: string;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
     projectGroupingEnabled?: boolean;
@@ -141,6 +152,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.codeFontSize = parsed.codeFontSize;
   }
   if (typeof parsed.codeWordBreak === "boolean") preferences.codeWordBreak = parsed.codeWordBreak;
+  const userBubbleColor = normalizeUserBubbleColor(parsed.userBubbleColor);
+  if (userBubbleColor !== null) preferences.userBubbleColor = userBubbleColor;
+  const userBubbleTextColor = normalizeUserBubbleColor(parsed.userBubbleTextColor);
+  if (userBubbleTextColor !== null) preferences.userBubbleTextColor = userBubbleTextColor;
   if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
     preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
       (account): account is string => typeof account === "string",

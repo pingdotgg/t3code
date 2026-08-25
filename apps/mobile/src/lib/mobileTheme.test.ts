@@ -8,12 +8,14 @@ import {
   createMobileThemePairPatch,
   createMobileThemeSelectionPatch,
   createMobileThemeVariables,
+  createUserBubbleOverrides,
   DEFAULT_MOBILE_THEME_ID,
   getMobileThemePreviewColors,
   getMobileThemeVariables,
   MOBILE_THEME_IDS,
   normalizeMobileThemeId,
   normalizeMobileThemeMode,
+  normalizeUserBubbleColor,
   resolveMobileThemeIds,
   themeColorWithAlpha,
   themeColorToNativeColor,
@@ -227,5 +229,50 @@ describe("mobile themes", () => {
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
+  });
+
+  it("normalizes persisted sent-message colors to six-digit hex or null", () => {
+    expect(normalizeUserBubbleColor("#34C759")).toBe("#34c759");
+    expect(normalizeUserBubbleColor(" #abc ")).toBe("#aabbcc");
+    expect(normalizeUserBubbleColor("34c759")).toBe(null);
+    expect(normalizeUserBubbleColor("#34c7")).toBe(null);
+    expect(normalizeUserBubbleColor("#gggggg")).toBe(null);
+    expect(normalizeUserBubbleColor(null)).toBe(null);
+    expect(normalizeUserBubbleColor(42)).toBe(null);
+  });
+
+  it("returns no sent-message overrides when both colors follow the theme", () => {
+    const base = getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "dark");
+    expect(createUserBubbleOverrides(base, null, null)).toBe(null);
+  });
+
+  it("derives readable text and layered tokens for a custom bubble color", () => {
+    const base = getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "dark");
+
+    const onLightBubble = createUserBubbleOverrides(base, "#ffe066", null)!;
+    expect(onLightBubble["--color-user-bubble"]).toBe("#ffe066");
+    expect(onLightBubble["--color-user-bubble-foreground"]).toBe("#000000");
+    expect(onLightBubble["--color-user-bubble-foreground-muted"]).toBe("rgba(0, 0, 0, 0.78)");
+    expect(onLightBubble["--color-md-user-code-text"]).toBe("#000000");
+    expect(
+      contrastRatio(onLightBubble["--color-user-bubble-skill-foreground"]!, "#ffe066"),
+    ).toBeGreaterThanOrEqual(4.5);
+
+    const onDarkBubble = createUserBubbleOverrides(base, "#1c1c1e", null)!;
+    expect(onDarkBubble["--color-user-bubble-foreground"]).toBe("#ffffff");
+  });
+
+  it("keeps the theme bubble when only the text color is custom", () => {
+    const base = getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "light");
+    const overrides = createUserBubbleOverrides(base, null, "#000000")!;
+    expect(overrides["--color-user-bubble"]).toBe(base["--color-user-bubble"]);
+    expect(overrides["--color-user-bubble-foreground"]).toBe("#000000");
+    expect(overrides["--color-md-user-fence-text"]).toBe("#000000");
+  });
+
+  it("prefers an explicit text color over the derived one", () => {
+    const base = getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "light");
+    const overrides = createUserBubbleOverrides(base, "#ffe066", "#ffffff")!;
+    expect(overrides["--color-user-bubble-foreground"]).toBe("#ffffff");
   });
 });

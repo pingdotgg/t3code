@@ -13,3 +13,10 @@ To change themes:
 
 **System** follows the device appearance automatically. Theme, text, code, and terminal appearance
 preferences are stored on the device.
+
+## Sent message colors
+
+The **Sent messages** section lets you recolor your own message bubbles. Pick a bubble color from
+the theme default, a preset, or a custom hex value, and do the same for the text color. Text set to
+**Auto** stays readable on whatever bubble color you choose. Both colors apply in light and dark
+appearance and are stored on the device.

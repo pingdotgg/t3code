@@ -196,6 +196,61 @@ function readableMessageAccent(accent: string, surface: string): string {
   return `#${readable.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
+const HEX_COLOR_PATTERN = /^#(?:[\da-f]{3}|[\da-f]{6})$/i;
+
+/**
+ * Stored sent-message colors are user-typed; anything that is not a hex color
+ * falls back to null, meaning "follow the theme".
+ */
+export function normalizeUserBubbleColor(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const color = value.trim().toLowerCase();
+  if (!HEX_COLOR_PATTERN.test(color)) return null;
+  return color.length === 4
+    ? `#${color[1]}${color[1]}${color[2]}${color[2]}${color[3]}${color[3]}`
+    : color;
+}
+
+/** Black or white, whichever reads better on the given surface. */
+export function readableForegroundFor(surface: string): string {
+  const surfaceChannels = rgbChannels(surface);
+  if (!surfaceChannels) return "#ffffff";
+  return contrastRatio([0, 0, 0], surfaceChannels) >=
+    contrastRatio([255, 255, 255], surfaceChannels)
+    ? "#000000"
+    : "#ffffff";
+}
+
+/**
+ * Variable overrides for a custom sent-message bubble and/or text color.
+ * Derived tokens (muted text, inline code, skill mentions) follow the chosen
+ * colors so custom bubbles keep the same layering as themed ones. A custom
+ * bubble without a custom text color gets black or white text by contrast.
+ */
+export function createUserBubbleOverrides(
+  base: MobileThemeVariables,
+  bubbleColor: string | null,
+  textColor: string | null,
+): Partial<MobileThemeVariables> | null {
+  if (bubbleColor === null && textColor === null) return null;
+  const bubble = bubbleColor ?? base["--color-user-bubble"];
+  const text =
+    textColor ??
+    (bubbleColor === null ? base["--color-user-bubble-foreground"] : readableForegroundFor(bubble));
+  return {
+    "--color-user-bubble": bubble,
+    "--color-user-bubble-foreground": text,
+    "--color-user-bubble-foreground-muted": withAlpha(text, 0.78),
+    "--color-user-bubble-skill-foreground": readableMessageAccent(
+      base["--color-user-bubble-skill-foreground"],
+      bubble,
+    ),
+    "--color-md-user-code-bg": withAlpha(text, 0.18),
+    "--color-md-user-code-text": text,
+    "--color-md-user-fence-text": text,
+  };
+}
+
 export function themeColorWithAlpha(color: string, alpha: number): string {
   const hex = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
   if (hex) {

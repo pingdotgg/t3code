@@ -17,8 +17,10 @@ import type { Preferences } from "../../../persistence/mobile-preferences";
 import {
   createMobileThemePairPatch,
   createMobileThemeSelectionPatch,
+  createUserBubbleOverrides,
   getMobileThemeVariables,
   normalizeMobileThemeMode,
+  normalizeUserBubbleColor,
   resolveMobileThemeIds,
   type MobileThemeAppearance,
   type MobileThemeId,
@@ -34,6 +36,10 @@ interface AppearancePreferencesContextValue {
   readonly themeIds: MobileThemeIds;
   readonly themeMode: MobileThemeMode;
   readonly themeAppearance: MobileThemeAppearance;
+  /** Custom sent-message bubble color; null follows the theme. */
+  readonly userBubbleColor: string | null;
+  /** Custom sent-message text color; null derives from the bubble. */
+  readonly userBubbleTextColor: string | null;
   readonly isReady: boolean;
   readonly setThemeIdForAppearance: (
     appearance: MobileThemeAppearance,
@@ -47,6 +53,10 @@ interface AppearancePreferencesContextValue {
   /** Pass null to clear the override and follow the base font size. */
   readonly setCodeFontSize: (value: number | null) => void;
   readonly setCodeWordBreak: (value: boolean) => void;
+  /** Pass null to clear the override and follow the theme. */
+  readonly setUserBubbleColor: (value: string | null) => void;
+  /** Pass null to clear the override and derive from the bubble color. */
+  readonly setUserBubbleTextColor: (value: string | null) => void;
 }
 
 const AppearancePreferencesContext = createContext<AppearancePreferencesContextValue | null>(null);
@@ -55,23 +65,33 @@ const AppearancePreferencesContext = createContext<AppearancePreferencesContextV
  * Injects palette and text-scale variables into both adaptive stylesheets.
  * Updating the active sheet last lets the visible app settle in one pass.
  */
-function applyAppearanceVariables(baseFontSize: number, themeIds: MobileThemeIds) {
+function applyAppearanceVariables(
+  baseFontSize: number,
+  themeIds: MobileThemeIds,
+  userBubbleColor: string | null,
+  userBubbleTextColor: string | null,
+) {
   const textVariables = resolveTextScaleVariables(baseFontSize);
   const currentTheme = Uniwind.currentTheme;
   const activeAppearance =
     currentTheme === "light" || currentTheme === "dark" ? currentTheme : null;
 
+  const variablesFor = (theme: MobileThemeAppearance) => {
+    const base = getMobileThemeVariables(themeIds[theme], theme);
+    return {
+      ...base,
+      ...createUserBubbleOverrides(base, userBubbleColor, userBubbleTextColor),
+      ...textVariables,
+    };
+  };
+
   for (const theme of ["light", "dark"] as const) {
-    const variables = { ...getMobileThemeVariables(themeIds[theme], theme), ...textVariables };
     if (theme !== activeAppearance) {
-      Uniwind.updateCSSVariables(theme, variables);
+      Uniwind.updateCSSVariables(theme, variablesFor(theme));
     }
   }
   if (activeAppearance !== null) {
-    Uniwind.updateCSSVariables(activeAppearance, {
-      ...getMobileThemeVariables(themeIds[activeAppearance], activeAppearance),
-      ...textVariables,
-    });
+    Uniwind.updateCSSVariables(activeAppearance, variablesFor(activeAppearance));
   }
 }
 
@@ -93,13 +113,20 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [storedPreferences],
   );
   const themeId = themeIds[themeAppearance];
+  const userBubbleColor = normalizeUserBubbleColor(storedPreferences?.userBubbleColor);
+  const userBubbleTextColor = normalizeUserBubbleColor(storedPreferences?.userBubbleTextColor);
   const isReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
 
   useLayoutEffect(() => {
-    applyAppearanceVariables(preferences.baseFontSize, themeIds);
+    applyAppearanceVariables(
+      preferences.baseFontSize,
+      themeIds,
+      userBubbleColor,
+      userBubbleTextColor,
+    );
     Uniwind.setTheme(themeMode);
     cacheTerminalFontSize(resolveAppearance(preferences).terminalFontSize);
-  }, [preferences, themeIds, themeMode]);
+  }, [preferences, themeIds, themeMode, userBubbleColor, userBubbleTextColor]);
 
   const updatePreferences = useCallback(
     (patch: Partial<Preferences>) => {
@@ -159,6 +186,20 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [updatePreferences],
   );
 
+  const setUserBubbleColor = useCallback(
+    (value: string | null) => {
+      updatePreferences({ userBubbleColor: value });
+    },
+    [updatePreferences],
+  );
+
+  const setUserBubbleTextColor = useCallback(
+    (value: string | null) => {
+      updatePreferences({ userBubbleTextColor: value });
+    },
+    [updatePreferences],
+  );
+
   const value = useMemo(
     (): AppearancePreferencesContextValue => ({
       appearance: resolveAppearance(preferences),
@@ -166,6 +207,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeIds,
       themeMode,
       themeAppearance,
+      userBubbleColor,
+      userBubbleTextColor,
       isReady,
       setThemeIdForAppearance,
       setThemeIdForBothAppearances,
@@ -174,6 +217,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setTerminalFontSize,
       setCodeFontSize,
       setCodeWordBreak,
+      setUserBubbleColor,
+      setUserBubbleTextColor,
     }),
     [
       preferences,
@@ -181,6 +226,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeIds,
       themeMode,
       themeAppearance,
+      userBubbleColor,
+      userBubbleTextColor,
       isReady,
       setThemeIdForAppearance,
       setThemeIdForBothAppearances,
@@ -189,6 +236,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setTerminalFontSize,
       setCodeFontSize,
       setCodeWordBreak,
+      setUserBubbleColor,
+      setUserBubbleTextColor,
     ],
   );
 
