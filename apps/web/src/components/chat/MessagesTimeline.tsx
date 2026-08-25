@@ -1244,25 +1244,30 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
       >
         <Chevron className="size-3.5 shrink-0 text-muted-foreground/65" />
         {steps.length > 1 ? (
-          <span aria-hidden className="flex shrink-0 items-center gap-0.5">
-            {steps.map((step) => (
-              <span
-                key={step.step}
-                className={cn(
-                  "h-[3px] w-2.5 rounded-full",
-                  step.status === "completed"
-                    ? "bg-success"
-                    : step.status === "inProgress"
-                      ? "bg-primary"
-                      : "bg-muted-foreground/25",
-                )}
-              />
-            ))}
+          <span
+            aria-hidden
+            className="h-5 w-max min-w-0 max-w-[50%] shrink overflow-x-auto px-2 [mask-image:linear-gradient(to_right,transparent,black_0.5rem,black_calc(100%-0.5rem),transparent)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            <span className="flex h-full w-max items-center gap-0.5">
+              {steps.map((step) => (
+                <span
+                  key={step.step}
+                  className={cn(
+                    "h-[3px] w-2.5 rounded-full",
+                    step.status === "completed"
+                      ? "bg-success"
+                      : step.status === "inProgress"
+                        ? "bg-primary"
+                        : "bg-muted-foreground/25",
+                  )}
+                />
+              ))}
+            </span>
           </span>
         ) : null}
         <span
           className={cn(
-            "min-w-0 truncate",
+            "min-w-0 flex-1 truncate",
             allDone ? "text-muted-foreground/65" : "font-medium text-foreground/85",
           )}
         >

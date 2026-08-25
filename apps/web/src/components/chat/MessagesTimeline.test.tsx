@@ -346,6 +346,47 @@ describe("MessagesTimeline", () => {
     expect(fadedMarkup).toContain("topbar-scroll-fade");
   });
 
+  it("keeps the task counter outside the scrollable progress pills", () => {
+    const turnId = TurnId.make("turn-with-long-plan");
+    const steps = Array.from({ length: 48 }, (_, index) => ({
+      step: `Task ${index + 1}`,
+      status:
+        index < 3
+          ? ("completed" as const)
+          : index === 3
+            ? ("inProgress" as const)
+            : ("pending" as const),
+    }));
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "turn-plan:turn-with-long-plan",
+            kind: "turn-plan",
+            createdAt: MESSAGE_CREATED_AT,
+            turnPlan: {
+              id: "turn-plan:turn-with-long-plan",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId,
+              plan: {
+                createdAt: MESSAGE_CREATED_AT,
+                turnId,
+                steps,
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("max-w-[50%]");
+    expect(markup).toContain("[mask-image:linear-gradient(to_right");
+    expect(markup).toContain("[scrollbar-width:none]");
+    expect(markup).toContain("min-w-0 flex-1 truncate");
+    expect(markup).toContain(">3/48</span>");
+  });
+
   it("keeps assistant changed-files headers sticky below the thread header", () => {
     const assistantMessageId = MessageId.make("message-assistant-with-files");
     const turnId = TurnId.make("turn-with-files");
