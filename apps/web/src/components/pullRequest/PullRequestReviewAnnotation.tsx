@@ -273,6 +273,7 @@ export function ReviewThreadCard({
                     className="mt-1"
                     value={comment.body}
                     cwd={workspaceRoot}
+                    environmentId={environmentId}
                     label="Edit comment"
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
@@ -284,6 +285,7 @@ export function ReviewThreadCard({
                       className="min-w-0 flex-1 text-sm"
                       text={comment.body}
                       cwd={workspaceRoot}
+                      environmentId={environmentId}
                     />
                     {canEditComment(comment) ? (
                       <Button
