@@ -154,7 +154,7 @@ it.layer(NodeServices.layer)("checkOmpProviderStatus", (it) => {
     Effect.scoped(
       Effect.gen(function* () {
         const failedBinaryPath = yield* makeOmpScript([
-          'if [ "$1" = "--version" ]; then printf "omp/17.4.0\\n"; exit 0; fi',
+          'if [ "$1" = "--version" ]; then printf "omp/18.0.5\\n"; exit 0; fi',
           'printf "catalog failed\\n" >&2',
           "exit 2",
         ]);
@@ -164,7 +164,7 @@ it.layer(NodeServices.layer)("checkOmpProviderStatus", (it) => {
         expect(failed.message).toContain("Failed to list Oh My Pi models");
 
         const invalidCatalogBinaryPath = yield* makeOmpScript([
-          'if [ "$1" = "--version" ]; then printf "omp/17.4.0\\n"; exit 0; fi',
+          'if [ "$1" = "--version" ]; then printf "omp/18.0.5\\n"; exit 0; fi',
           'printf "not json\\n"',
         ]);
         const invalidCatalog = yield* checkOmpProviderStatus(
@@ -173,7 +173,7 @@ it.layer(NodeServices.layer)("checkOmpProviderStatus", (it) => {
         expect(invalidCatalog.message).toContain("invalid model data");
 
         const emptyBinaryPath = yield* makeOmpScript([
-          'if [ "$1" = "--version" ]; then printf "omp/17.4.0\\n"; exit 0; fi',
+          'if [ "$1" = "--version" ]; then printf "omp/18.0.5\\n"; exit 0; fi',
           "printf '{\"models\":[]}\\n'",
         ]);
         const empty = yield* checkOmpProviderStatus(
@@ -195,7 +195,7 @@ it.layer(NodeServices.layer)("checkOmpProviderStatus", (it) => {
           const callsPath = path.join(callsDir, "calls.log");
           const binaryPath = yield* makeOmpScript([
             'printf "%s\\n" "$*" >> "$OMP_CALLS"',
-            'if [ "$1" = "--version" ]; then printf "omp/17.4.0\\n"; exit 0; fi',
+            'if [ "$1" = "--version" ]; then printf "omp/18.0.5\\n"; exit 0; fi',
             'if [ "$1" = "models" ] && [ "$2" = "--json" ] && [ "$3" = "--no-extensions" ] && [ "$OMP_PROFILE" = "work profile" ]; then',
             '  printf \'%s\\n\' \'{"models":[{"provider":"openai","id":"gpt-5.4","selector":"openai/gpt-5.4","name":"GPT-5.4","thinking":["low","high"],"input":["text","image"]}]}\'',
             "  exit 0",

@@ -33,6 +33,11 @@ class OmpAdapter extends Context.Service<OmpAdapter, OmpAdapterShape>()(
   "t3/provider/Layers/OmpAdapter.test/OmpAdapter",
 ) {}
 
+class FaultingNativeLogOmpAdapter extends Context.Service<
+  FaultingNativeLogOmpAdapter,
+  OmpAdapterShape
+>()("t3/provider/Layers/OmpAdapter.test/FaultingNativeLogOmpAdapter") {}
+
 async function makeMockAgentWrapper(extraEnv?: Record<string, string>) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "omp-acp-mock-"));
   const wrapperPath = NodePath.join(dir, "fake-omp.sh");
@@ -70,6 +75,39 @@ const ompAdapterTestLayer = it.layer(
   ),
 );
 
+const faultingNativeLogOmpAdapterTestLayer = it.layer(
+  Layer.effect(
+    FaultingNativeLogOmpAdapter,
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const resolveSettings = serverSettings.getSettings.pipe(
+        Effect.map((snapshot) => snapshot.providers.omp),
+        Effect.orDie,
+      );
+      let writes = 0;
+      return yield* makeOmpAdapter(decodeOmpSettings({}), {
+        resolveSettings,
+        nativeEventLogger: {
+          filePath: "faulting-native.log",
+          write: () => {
+            writes += 1;
+            return writes === 1 ? Effect.die("simulated native log failure") : Effect.void;
+          },
+          close: () => Effect.void,
+        },
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3code-omp-adapter-notification-test-",
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
 describe("OMP elicitation mapping", () => {
   it("maps OMP choice forms and custom answers", () => {
     const request = {
@@ -83,13 +121,14 @@ describe("OMP elicitation mapping", () => {
             type: "string",
             title: "Where should this deploy?",
             oneOf: [
-              { const: "Preview", title: "Preview" },
-              { const: "Production", title: "Production" },
+              { const: "preview", title: "Preview environment" },
+              { const: "production", title: "Production environment" },
             ],
           },
           q0__other: { type: "string", title: "Other" },
           confirmed: { type: "boolean", title: "Continue?" },
         },
+        required: ["confirmed"],
       },
     } as const;
 
@@ -98,6 +137,13 @@ describe("OMP elicitation mapping", () => {
       questions.map((entry) => entry.question.id),
       ["q0", "confirmed"],
     );
+    assert.deepStrictEqual(
+      questions.map((entry) => entry.required),
+      [false, true],
+    );
+    assert.deepStrictEqual(buildOmpElicitationContent(questions, { q0: "Preview environment" }), {
+      q0: "preview",
+    });
     assert.deepStrictEqual(
       buildOmpElicitationContent(questions, { q0: "Staging", confirmed: "Yes" }),
       {
@@ -127,6 +173,42 @@ describe("OMP permission mapping", () => {
     assert.equal(selectOmpPermissionOptionId(request, "acceptForSession"), "omp_allow_always");
     assert.equal(selectOmpPermissionOptionId(request, "decline"), "omp_reject_once");
   });
+});
+
+faultingNativeLogOmpAdapterTestLayer("OmpAdapter notification recovery", (it) => {
+  it.effect("continues consuming notifications after one handler failure", () =>
+    Effect.gen(function* () {
+      const adapter = yield* FaultingNativeLogOmpAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      const threadId = ThreadId.make("omp-notification-recovery-thread");
+      const contentEventFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "content.delta"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "continue after the failed notification handler",
+        attachments: [],
+      });
+
+      const contentEvents = yield* Fiber.join(contentEventFiber);
+      assert.equal(contentEvents.length, 1);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });
 
 ompAdapterTestLayer("OmpAdapterLive", (it) => {
@@ -290,6 +372,87 @@ ompAdapterTestLayer("OmpAdapterLive", (it) => {
 
       assert.equal(turn.threadId, threadId);
       yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("clears active turn state after a failed prompt", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OmpAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_FAIL_PROMPT: "1" }),
+      );
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      const threadId = ThreadId.make("omp-failed-prompt");
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter
+        .sendTurn({ threadId, input: "fail", attachments: [] })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      assert.equal(session?.status, "ready");
+      assert.equal(session?.activeTurnId, undefined);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("fails the active turn when the OMP ACP child exits", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OmpAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EXIT_ON_PROMPT: "1" }),
+      );
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      const threadId = ThreadId.make("omp-unexpected-exit");
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const exitEventFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "session.exited" && event.threadId === threadId),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.timeout("5 seconds"),
+        Effect.forkChild,
+      );
+      const failedTurnFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "turn.completed" &&
+            event.threadId === threadId &&
+            event.payload.state === "failed",
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.timeout("5 seconds"),
+        Effect.forkChild,
+      );
+
+      const result = yield* adapter
+        .sendTurn({ threadId, input: "exit", attachments: [] })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      const exitEvents = Array.from(yield* Fiber.join(exitEventFiber));
+      const failedTurns = Array.from(yield* Fiber.join(failedTurnFiber));
+      assert.equal(exitEvents[0]?.type, "session.exited");
+      if (exitEvents[0]?.type === "session.exited") {
+        assert.equal(exitEvents[0].payload.exitKind, "error");
+      }
+      assert.equal(failedTurns.length, 1);
+      assert.equal(yield* adapter.hasSession(threadId), false);
     }),
   );
 

@@ -5,38 +5,37 @@ Code includes OMP as a built-in provider, but it is off by default.
 
 ## Install OMP
 
-Install OMP on the machine that runs the T3 Code server:
+T3 Code requires OMP 18.0.5 or newer on the machine that runs the T3 Code server. Install the
+published package and verify the binary before enabling the provider:
 
 ```bash
-curl -fsSL https://omp.sh/install | sh
-```
-
-You can also install it with Homebrew:
-
-```bash
-brew install can1357/tap/omp
-```
-
-Run the setup flow and choose a default model:
-
-```bash
+npm install --global @oh-my-pi/pi-coding-agent@18.0.5
+omp --version
 omp setup
 ```
 
+Homebrew users can install `can1357/tap/omp`; upgrade it until `omp --version` reports 18.0.5 or
+newer.
+
 ## Enable OMP in T3 Code
 
-Open **Settings** and enable the Oh My Pi provider. The default binary path is `omp`. Set a
-different binary path when OMP is installed outside your `PATH`. Use **Launch arguments** only
-when your OMP setup needs extra command-line options.
+Open **Settings**, add or enable an **Oh My Pi** provider, then choose a discovered model. The
+default binary path is `omp`. Add separate provider instances when different projects need isolated
+OMP profiles, credentials, or model catalogs.
 
-Run `omp models` to check that OMP can discover models before starting a T3 Code thread.
+**Launch arguments** are appended after `omp acp`. Profiles and config overlays are supported, for
+example `--profile work` or `--config ~/.omp/work.yml`. T3 Code removes approval flags from this
+field because the selected T3 permission mode is authoritative.
 
-T3 Code uses each model's OMP provider ID in the model picker. This identifies models that have
-the same display name, such as models available through both Moonshot and OpenRouter.
+Health checks run `omp models --json --no-extensions`. They preserve profile/config overlays but do
+not load extensions, skills, or rules. Add an extension-only model's complete `provider/id` selector
+under **Custom models**. Model rows identify their upstream provider and expose the thinking options
+reported by OMP.
 
-Periodic health checks do not load OMP extensions. If an extension registers a model, add its full
-OMP selector under **Custom models**. The normal OMP session loads the extension and validates the
-selector when the thread starts.
+OMP sessions support new and resumed threads, streaming assistant text, tool events, token usage,
+images, permission requests, required form input, interruption, and model/thinking changes. T3 Code
+uses an isolated, tool-free OMP session for commit messages, branch names, pull request copy, and
+thread titles.
 
 ## Permission behavior
 
@@ -46,12 +45,13 @@ T3 Code maps its permission modes to OMP approval modes:
 - **Auto-accept edits** uses OMP's `write` mode.
 - **Full access** uses OMP's `yolo` mode.
 
-T3 Code controls this mapping for every OMP session. Approval flags in **Launch arguments** cannot
-override the selected T3 Code permission mode.
+OMP 18.0.5 can show a second approval form for a supervised shell command or destructive edit. T3
+Code presents OMP's advertised choices and required form fields; optional unanswered fields are
+omitted.
 
-OMP 17.4.0 can show a second approval form for a supervised shell command or destructive edit. OMP
-currently applies its ACP client gate and its native approval gate to those calls.
+## Current limitations
 
-OMP does not yet expose the provider-history controls that T3 Code needs for checkpoint rollback or
-the T3 Code Plan mode lifecycle. T3 Code hides Plan mode for OMP and reports checkpoint rollback as
-unsupported. Follow-up messages wait for the active OMP turn to finish, then start a new turn.
+OMP does not expose the provider-history controls T3 Code needs for checkpoint rollback. T3 Code
+also hides its Plan toggle and built-in `/plan` command for OMP; every client and the server normalize
+stale Plan state to the implementation/default OMP mode. Follow-up messages wait for the active OMP
+turn to finish, then start a new turn.

@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { ProviderInstanceId, type ServerConfig } from "@t3tools/contracts";
+import { selectedProviderShowsInteractionModeToggle } from "@t3tools/client-runtime/providerCapabilities";
 
 import {
   buildModelOptions,
   groupByProvider,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
-  selectedProviderShowsInteractionModeToggle,
 } from "./modelOptions";
 
 describe("mobile model options", () => {
@@ -229,8 +229,10 @@ describe("mobile model options", () => {
       model: "gpt-5.6-sol",
     };
 
-    expect(selectedProviderShowsInteractionModeToggle(config, ompSelection)).toBe(false);
-    expect(selectedProviderShowsInteractionModeToggle(config, missingSelection)).toBe(true);
-    expect(selectedProviderShowsInteractionModeToggle(null, ompSelection)).toBe(true);
+    expect(selectedProviderShowsInteractionModeToggle(config.providers, ompSelection)).toBe(false);
+    expect(selectedProviderShowsInteractionModeToggle(config.providers, missingSelection)).toBe(
+      true,
+    );
+    expect(selectedProviderShowsInteractionModeToggle([], ompSelection)).toBe(true);
   });
 });

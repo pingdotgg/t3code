@@ -1,4 +1,5 @@
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
+import { normalizeProviderInteractionMode } from "@t3tools/client-runtime/providerCapabilities";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import {
   CommandId,
@@ -14,6 +15,7 @@ import {
   type ProjectId as ProjectIdType,
   type ProviderInteractionMode as ProviderInteractionModeType,
   type RuntimeMode as RuntimeModeType,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -89,11 +91,17 @@ export interface ThreadSettingsSnapshot {
 export function resolveQueuedThreadSettings(
   message: QueuedThreadMessage,
   thread: ThreadSettingsSnapshot,
+  providers: ReadonlyArray<ServerProvider> = [],
 ): ThreadSettingsSnapshot {
+  const modelSelection = message.modelSelection ?? thread.modelSelection;
   return {
-    modelSelection: message.modelSelection ?? thread.modelSelection,
+    modelSelection,
     runtimeMode: message.runtimeMode ?? thread.runtimeMode,
-    interactionMode: message.interactionMode ?? thread.interactionMode,
+    interactionMode: normalizeProviderInteractionMode(
+      providers,
+      modelSelection,
+      message.interactionMode ?? thread.interactionMode,
+    ),
   };
 }
 

@@ -20,10 +20,12 @@ import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTu
 import { randomHex } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
+import { useServerConfigs } from "../../state/entities";
 import { validateProjectThreadCreation } from "./projectThreadCreationValidation";
 
 export function useCreateProjectThread() {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const serverConfigs = useServerConfigs();
 
   return useCallback(
     async (input: {
@@ -70,6 +72,9 @@ export function useCreateProjectThread() {
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
           interactionMode: input.interactionMode,
+          ...(serverConfigs.get(input.project.environmentId)?.providers
+            ? { providers: serverConfigs.get(input.project.environmentId)!.providers }
+            : {}),
           workspaceMode: input.envMode,
           branch: input.branch,
           worktreePath: input.worktreePath,
@@ -90,6 +95,6 @@ export function useCreateProjectThread() {
         scopeThreadRef(input.project.environmentId, threadId),
       );
     },
-    [startTurn],
+    [serverConfigs, startTurn],
   );
 }

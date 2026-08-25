@@ -20,7 +20,7 @@ import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn"
 import { toUploadChatImageAttachments } from "../lib/composerImages";
 import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
-import { useProjects, useThreadShells } from "./entities";
+import { useProjects, useServerConfigs, useThreadShells } from "./entities";
 import {
   confirmThreadOutboxMessageQueued,
   ensureThreadOutboxLoaded,
@@ -102,6 +102,7 @@ export function useThreadOutboxDrain(): void {
   const shellStatuses = useThreadOutboxShellStatuses();
   const threads = useThreadShells();
   const projects = useProjects();
+  const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const [retryTick, setRetryTick] = useState(0);
   const retryAttemptRef = useRef(new Map<MessageId, number>());
@@ -167,7 +168,11 @@ export function useThreadOutboxDrain(): void {
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
-      const settings = resolveQueuedThreadSettings(queuedMessage, thread);
+      const settings = resolveQueuedThreadSettings(
+        queuedMessage,
+        thread,
+        serverConfigs.get(queuedMessage.environmentId)?.providers ?? [],
+      );
       const { reportFailure, completeDelivery } = makeDeliveryHelpers(queuedMessage);
 
       if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
@@ -237,6 +242,7 @@ export function useThreadOutboxDrain(): void {
       return completeDelivery(deliveryResult);
     },
     [
+      serverConfigs,
       makeDeliveryHelpers,
       setThreadInteractionMode,
       setThreadRuntimeMode,
@@ -270,6 +276,9 @@ export function useThreadOutboxDrain(): void {
           modelSelection,
           runtimeMode: queuedMessage.runtimeMode ?? DEFAULT_RUNTIME_MODE,
           interactionMode: queuedMessage.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
+          ...(serverConfigs.get(queuedMessage.environmentId)?.providers
+            ? { providers: serverConfigs.get(queuedMessage.environmentId)!.providers }
+            : {}),
           workspaceMode: creation.workspaceMode,
           branch: creation.branch,
           worktreePath: creation.worktreePath,
@@ -279,7 +288,7 @@ export function useThreadOutboxDrain(): void {
       });
       return completeDelivery(deliveryResult);
     },
-    [makeDeliveryHelpers, startTurn],
+    [makeDeliveryHelpers, serverConfigs, startTurn],
   );
 
   useEffect(() => {

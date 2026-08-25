@@ -4,8 +4,10 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
 
@@ -108,6 +110,44 @@ describe("thread outbox", () => {
       runtimeMode: selectedMessage.runtimeMode,
       interactionMode: selectedMessage.interactionMode,
     });
+  });
+
+  it("normalizes a persisted Plan mode for an incapable queued provider", () => {
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("omp_work"),
+      model: "default",
+    };
+    const provider = {
+      instanceId: modelSelection.instanceId,
+      driver: ProviderDriverKind.make("omp"),
+      displayName: "Oh My Pi Work",
+      showInteractionModeToggle: false,
+      enabled: true,
+      installed: true,
+      version: "18.0.5",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-08-25T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    } satisfies ServerProvider;
+    const message = {
+      ...queuedMessage({
+        messageId: "message-omp-plan",
+        createdAt: "2026-08-25T00:00:00.000Z",
+      }),
+      modelSelection,
+      interactionMode: "plan",
+    } satisfies QueuedThreadMessage;
+
+    expect(
+      resolveQueuedThreadSettings(
+        message,
+        { modelSelection, runtimeMode: "full-access", interactionMode: "plan" },
+        [provider],
+      ).interactionMode,
+    ).toBe("default");
   });
 
   it("compares model options as part of the queued settings change", () => {

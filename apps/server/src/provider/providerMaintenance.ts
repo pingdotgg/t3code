@@ -67,6 +67,7 @@ export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
   readonly homebrewFormula: string | null;
+  readonly commandPathPrecedence?: "native-first" | "package-manager-first";
   readonly nativeUpdate: {
     readonly executable: string;
     readonly args: ReadonlyArray<string>;
@@ -292,30 +293,26 @@ export function resolvePackageManagedProviderMaintenance(
     ];
 
     const nativeUpdate = definition.nativeUpdate;
-    if (
-      nativeUpdate &&
-      commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))
-    ) {
-      return (
-        makeNativeProviderMaintenanceCapabilities(definition) ??
-        makeNpmGlobalProviderMaintenanceCapabilities(definition)
-      );
-    }
-    if (commandPaths.some(isVitePlusGlobalCommandPath)) {
-      return makeVitePlusGlobalProviderMaintenanceCapabilities(definition);
-    }
-    if (commandPaths.some(isBunGlobalCommandPath)) {
-      return makeBunGlobalProviderMaintenanceCapabilities(definition);
-    }
-    if (commandPaths.some(isPnpmGlobalCommandPath)) {
-      return makePnpmGlobalProviderMaintenanceCapabilities(definition);
-    }
-    if (commandPaths.some(isNpmGlobalCommandPath)) {
-      return makeNpmGlobalProviderMaintenanceCapabilities(definition);
-    }
-    if (commandPaths.some(isHomebrewCommandPath)) {
-      return makeHomebrewProviderMaintenanceCapabilities(definition);
-    }
+    const nativeCapabilities =
+      nativeUpdate && commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))
+        ? makeNativeProviderMaintenanceCapabilities(definition)
+        : null;
+    const packageManagerCapabilities = commandPaths.some(isVitePlusGlobalCommandPath)
+      ? makeVitePlusGlobalProviderMaintenanceCapabilities(definition)
+      : commandPaths.some(isBunGlobalCommandPath)
+        ? makeBunGlobalProviderMaintenanceCapabilities(definition)
+        : commandPaths.some(isPnpmGlobalCommandPath)
+          ? makePnpmGlobalProviderMaintenanceCapabilities(definition)
+          : commandPaths.some(isNpmGlobalCommandPath)
+            ? makeNpmGlobalProviderMaintenanceCapabilities(definition)
+            : commandPaths.some(isHomebrewCommandPath)
+              ? makeHomebrewProviderMaintenanceCapabilities(definition)
+              : null;
+    const preferredCapabilities =
+      definition.commandPathPrecedence === "package-manager-first"
+        ? (packageManagerCapabilities ?? nativeCapabilities)
+        : (nativeCapabilities ?? packageManagerCapabilities);
+    if (preferredCapabilities) return preferredCapabilities;
   }
 
   if (!hasPathSeparator(binaryPath)) {

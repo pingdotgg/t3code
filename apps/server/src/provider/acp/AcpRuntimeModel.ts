@@ -113,11 +113,6 @@ export type AcpParsedSessionEvent =
       readonly _tag: "UsageUpdated";
       readonly payload: EffectAcpSchema.UsageUpdate;
       readonly rawPayload: unknown;
-    }
-  | {
-      readonly _tag: "AvailableCommandsUpdated";
-      readonly payload: EffectAcpSchema.AvailableCommandsUpdate;
-      readonly rawPayload: unknown;
     };
 
 type AcpSessionSetupResponse =
@@ -762,18 +757,6 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
       };
       events.push({
         _tag: "UsageUpdated",
-        payload,
-        rawPayload: params,
-      });
-      break;
-    }
-    case "available_commands_update": {
-      const payload: EffectAcpSchema.AvailableCommandsUpdate = {
-        ...(upd._meta !== undefined ? { _meta: upd._meta } : {}),
-        availableCommands: upd.availableCommands,
-      };
-      events.push({
-        _tag: "AvailableCommandsUpdated",
         payload,
         rawPayload: params,
       });

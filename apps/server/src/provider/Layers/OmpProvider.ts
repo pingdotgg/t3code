@@ -34,10 +34,23 @@ export const OMP_PRESENTATION = {
   showInteractionModeToggle: false,
 } as const;
 
-export const OMP_MINIMUM_VERSION = "17.4.0";
+export const OMP_MINIMUM_VERSION = "18.0.5";
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({ optionDescriptors: [] });
+export const OMP_CHECKING_MESSAGE = "Checking Oh My Pi availability...";
+
+export function isPendingOmpInitialProbe(provider: ServerProvider): boolean {
+  return (
+    provider.driver === "omp" &&
+    provider.enabled &&
+    provider.installed &&
+    provider.version === null &&
+    provider.status === "warning" &&
+    provider.models.length === 0 &&
+    provider.message === OMP_CHECKING_MESSAGE
+  );
+}
 const OMP_PROVIDER_WORD_LABELS: Readonly<Record<string, string>> = {
   ai: "AI",
   api: "API",
@@ -232,7 +245,7 @@ export function buildInitialOmpProviderSnapshot(
             version: null,
             status: "warning",
             auth: { status: "unknown" },
-            message: "Checking Oh My Pi availability...",
+            message: OMP_CHECKING_MESSAGE,
           }
         : {
             installed: false,

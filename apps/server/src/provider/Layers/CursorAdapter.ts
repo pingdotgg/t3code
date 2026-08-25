@@ -791,7 +791,6 @@ export function makeCursorAdapter(
                     return;
                   case "ModeChanged":
                   case "UsageUpdated":
-                  case "AvailableCommandsUpdated":
                     return;
                   case "AssistantItemStarted":
                     yield* offerRuntimeEvent(

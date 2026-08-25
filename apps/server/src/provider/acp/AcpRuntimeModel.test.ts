@@ -373,7 +373,7 @@ describe("AcpRuntimeModel", () => {
     ]);
   });
 
-  it("projects typed ACP usage and available command updates", () => {
+  it("projects typed ACP usage updates", () => {
     const usageResult = parseSessionUpdateEvent({
       sessionId: "session-1",
       update: {
@@ -408,48 +408,6 @@ describe("AcpRuntimeModel", () => {
               amount: 0.42,
               currency: "USD",
             },
-          },
-        },
-      },
-    ]);
-
-    const commandsResult = parseSessionUpdateEvent({
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "available_commands_update",
-        availableCommands: [
-          {
-            name: "review",
-            description: "Review the current changes",
-            input: { hint: "optional focus" },
-          },
-        ],
-      },
-    } satisfies EffectAcpSchema.SessionNotification);
-
-    expect(commandsResult.events).toEqual([
-      {
-        _tag: "AvailableCommandsUpdated",
-        payload: {
-          availableCommands: [
-            {
-              name: "review",
-              description: "Review the current changes",
-              input: { hint: "optional focus" },
-            },
-          ],
-        },
-        rawPayload: {
-          sessionId: "session-1",
-          update: {
-            sessionUpdate: "available_commands_update",
-            availableCommands: [
-              {
-                name: "review",
-                description: "Review the current changes",
-                input: { hint: "optional focus" },
-              },
-            ],
           },
         },
       },

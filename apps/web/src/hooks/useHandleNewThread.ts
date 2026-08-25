@@ -4,6 +4,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
+import { normalizeProviderInteractionMode } from "@t3tools/client-runtime/providerCapabilities";
 import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
@@ -30,6 +31,7 @@ import { primaryServerSettingsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
+import { useEnvironments } from "../state/environments";
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -52,6 +54,7 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
 
 export function useNewThreadHandler() {
   const projects = useProjects();
+  const { environments } = useEnvironments();
   // New-thread defaults are a user preference, and the settings UI only ever
   // edits the primary environment's settings.json. Reading the target
   // environment's own settings here would silently reset remote projects to
@@ -130,11 +133,28 @@ export function useNewThreadHandler() {
         carrySourceShell?.runtimeMode ??
         carrySourceDraft?.runtimeMode ??
         null;
-      const carryInteractionMode =
+      const rawCarryInteractionMode =
         carrySourceComposer?.interactionMode ??
         carrySourceShell?.interactionMode ??
         carrySourceDraft?.interactionMode ??
         null;
+      const carryCapabilitySelection =
+        carryModelSelection ??
+        (composerActiveProvider ? { instanceId: composerActiveProvider } : null);
+      const sourceEnvironmentId =
+        currentRouteTarget?.kind === "server"
+          ? currentRouteTarget.threadRef.environmentId
+          : carrySourceDraft?.environmentId;
+      const sourceProviders =
+        environments.find((environment) => environment.environmentId === sourceEnvironmentId)
+          ?.serverConfig?.providers ?? [];
+      const carryInteractionMode = rawCarryInteractionMode
+        ? normalizeProviderInteractionMode(
+            sourceProviders,
+            carryCapabilitySelection,
+            rawCarryInteractionMode,
+          )
+        : null;
       // Content only moves when the caller opted in and the user is looking
       // at a draft. The content check happens at move time, not here: the
       // paths below await, and text typed during those awaits must still
@@ -345,7 +365,7 @@ export function useNewThreadHandler() {
           threadId: latestActiveDraftThread.threadId,
           createdAt: latestActiveDraftThread.createdAt,
           runtimeMode: latestActiveDraftThread.runtimeMode,
-          interactionMode: latestActiveDraftThread.interactionMode,
+          interactionMode: carryInteractionMode ?? latestActiveDraftThread.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
         return Promise.resolve({
@@ -385,7 +405,7 @@ export function useNewThreadHandler() {
             threadId: racedDraft.threadId,
             createdAt: racedDraft.createdAt,
             runtimeMode: racedDraft.runtimeMode,
-            interactionMode: racedDraft.interactionMode,
+            interactionMode: carryInteractionMode ?? racedDraft.interactionMode,
             ...pickExplicitWorkspaceOptions(options),
           });
           carryComposerContentTo(racedDraft.draftId);
@@ -430,7 +450,14 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, projects, router],
+    [
+      environments,
+      getCurrentRouteTarget,
+      primaryServerSettings,
+      projectGroupingSettings,
+      projects,
+      router,
+    ],
   );
 }
 

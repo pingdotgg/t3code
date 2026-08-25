@@ -46,13 +46,6 @@ export function getProviderDisplayName(
   return snapshot?.displayName?.trim() || formatProviderDriverKindLabel(provider);
 }
 
-export function getProviderInteractionModeToggle(
-  providers: ReadonlyArray<ServerProvider>,
-  provider: ProviderDriverKind,
-): boolean {
-  return getProviderSnapshot(providers, provider)?.showInteractionModeToggle ?? true;
-}
-
 export function isProviderEnabled(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderDriverKind,

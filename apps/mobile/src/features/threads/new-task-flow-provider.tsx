@@ -1,4 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  normalizeProviderInteractionMode,
+  selectedProviderShowsInteractionModeToggle,
+} from "@t3tools/client-runtime/providerCapabilities";
 
 import type {
   EnvironmentId,
@@ -34,7 +38,6 @@ import {
   groupByProvider,
   resolveDefaultableModelSelection,
   resolveSelectableModelSelection,
-  selectedProviderShowsInteractionModeToggle,
 } from "../../lib/modelOptions";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -432,12 +435,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     modelOptions.find((option) => option.isDefault)?.selection ??
     modelOptions[0]?.selection ??
     null;
+  const providerStatuses = selectedEnvironmentServerConfig?.providers ?? [];
   const planModeEnabled =
     planModePreferenceEnabled &&
-    selectedProviderShowsInteractionModeToggle(selectedEnvironmentServerConfig, selectedModel);
-  const interactionMode = planModeEnabled
-    ? (selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
-    : DEFAULT_PROVIDER_INTERACTION_MODE;
+    selectedProviderShowsInteractionModeToggle(providerStatuses, selectedModel);
+  const interactionMode = normalizeProviderInteractionMode(
+    providerStatuses,
+    selectedModel,
+    planModeEnabled
+      ? (selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
+      : DEFAULT_PROVIDER_INTERACTION_MODE,
+  );
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;
@@ -792,10 +800,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const setInteractionMode = useCallback(
     (value: ProviderInteractionMode) => {
       if (selectedProjectDraftKey) {
-        updateComposerDraftSettings(selectedProjectDraftKey, { interactionMode: value });
+        updateComposerDraftSettings(selectedProjectDraftKey, {
+          interactionMode: normalizeProviderInteractionMode(providerStatuses, selectedModel, value),
+        });
       }
     },
-    [selectedProjectDraftKey],
+    [providerStatuses, selectedModel, selectedProjectDraftKey],
   );
 
   const beginEditingPendingTask = useCallback((messageId: string): boolean => {

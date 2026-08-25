@@ -1,9 +1,3 @@
-/**
- * OmpAdapterLive - OMP CLI (`omp acp`) via ACP.
- *
- * @module OmpAdapterLive
- */
-
 import {
   ApprovalRequestId,
   type OmpSettings,
@@ -18,6 +12,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -25,7 +20,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
@@ -63,6 +57,7 @@ import {
   applyOmpRequestedSessionConfiguration,
   buildOmpElicitationContent,
   makeOmpAcpRuntime,
+  getOmpAcpCurrentModel,
   ompElicitationQuestions,
   parseOmpResume,
   selectAutoApprovedOmpPermissionOption,
@@ -84,22 +79,8 @@ export interface OmpAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
-  /**
-   * Selections are honored when `modelSelection.instanceId` matches this value.
-   * Defaults to the legacy built-in instance id (`omp`).
-   */
   readonly instanceId?: ProviderInstanceId;
-  /**
-   * Optional per-session settings resolver. When provided the adapter yields
-   * this effect at the start of every session and uses the result instead of
-   * the `ompSettings` captured at construction.
-   *
-   * Production instances bind settings to the instance scope (the hydration
-   * layer rebuilds the adapter on config change) and leave this undefined.
-   * Test suites that mutate `ServerSettingsService` mid-flight, such as to
-   * swap `binaryPath` to a mock ACP wrapper, pass a resolver that reads
-   * the latest snapshot so the closure isn't stale.
-   */
+  /** Overrides construction settings when a session starts. */
   readonly resolveSettings?: Effect.Effect<OmpSettings>;
 }
 
@@ -116,13 +97,20 @@ interface OmpSessionContext {
   session: ProviderSession;
   readonly scope: Scope.Closeable;
   readonly acp: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly defaultModel: string | undefined;
   notificationFiber: Fiber.Fiber<void, never> | undefined;
+  exitFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
   stopped: boolean;
+}
+
+interface ThreadLockEntry {
+  readonly semaphore: Semaphore.Semaphore;
+  readonly users: number;
 }
 
 function settlePendingApprovalsAsCancelled(
@@ -157,6 +145,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const adapterScope = yield* Scope.Scope;
     const serverConfig = yield* Effect.service(ServerConfig);
     const crypto = yield* Crypto.Crypto;
     const nativeEventLogger =
@@ -171,7 +160,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
 
     const sessions = new Map<ThreadId, OmpSessionContext>();
-    const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
+    const threadLocksRef = yield* SynchronizedRef.make(new Map<string, ThreadLockEntry>());
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -202,26 +191,37 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
 
-    const getThreadSemaphore = (threadId: string) =>
+    const retainThreadLock = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
-        const existing: Option.Option<Semaphore.Semaphore> = Option.fromNullishOr(
-          current.get(threadId),
+        const existing = current.get(threadId);
+        if (existing) {
+          const next = new Map(current);
+          next.set(threadId, { ...existing, users: existing.users + 1 });
+          return Effect.succeed([existing.semaphore, next] as const);
+        }
+        return Semaphore.make(1).pipe(
+          Effect.map((semaphore) => {
+            const next = new Map(current);
+            next.set(threadId, { semaphore, users: 1 });
+            return [semaphore, next] as const;
+          }),
         );
-        return Option.match(existing, {
-          onNone: () =>
-            Semaphore.make(1).pipe(
-              Effect.map((semaphore) => {
-                const next = new Map(current);
-                next.set(threadId, semaphore);
-                return [semaphore, next] as const;
-              }),
-            ),
-          onSome: (semaphore) => Effect.succeed([semaphore, current] as const),
-        });
+      });
+
+    const releaseThreadLock = (threadId: string) =>
+      SynchronizedRef.update(threadLocksRef, (current) => {
+        const existing = current.get(threadId);
+        if (!existing) return current;
+        const next = new Map(current);
+        if (existing.users === 1) next.delete(threadId);
+        else next.set(threadId, { ...existing, users: existing.users - 1 });
+        return next;
       });
 
     const withThreadLock = <A, E, R>(threadId: string, effect: Effect.Effect<A, E, R>) =>
-      Effect.flatMap(getThreadSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
+      Effect.flatMap(retainThreadLock(threadId), (semaphore) =>
+        semaphore.withPermit(effect).pipe(Effect.ensuring(releaseThreadLock(threadId))),
+      );
 
     const logNative = (
       threadId: ThreadId,
@@ -303,6 +303,9 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
         if (ctx.notificationFiber) {
           yield* Fiber.interrupt(ctx.notificationFiber);
         }
+        if (ctx.exitFiber) {
+          yield* Fiber.interrupt(ctx.exitFiber);
+        }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
         sessions.delete(ctx.threadId);
         yield* offerRuntimeEvent({
@@ -312,6 +315,49 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
           threadId: ctx.threadId,
           payload: { exitKind: "graceful" },
         });
+      });
+
+    const handleUnexpectedExit = (ctx: OmpSessionContext, reason: string) =>
+      Effect.gen(function* () {
+        if (ctx.stopped) return;
+        ctx.stopped = true;
+        yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+        yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+        if (ctx.notificationFiber) yield* Fiber.interrupt(ctx.notificationFiber);
+        sessions.delete(ctx.threadId);
+        const activeTurnId = ctx.activeTurnId ?? ctx.session.activeTurnId;
+        const { activeTurnId: _activeTurnId, ...inactiveSession } = ctx.session;
+        ctx.activeTurnId = undefined;
+        ctx.session = {
+          ...inactiveSession,
+          status: "error",
+          updatedAt: yield* nowIso,
+        };
+        if (activeTurnId) {
+          yield* offerRuntimeEvent({
+            type: "turn.completed",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
+            threadId: ctx.threadId,
+            turnId: activeTurnId,
+            payload: { state: "failed", errorMessage: reason },
+          });
+        }
+        yield* offerRuntimeEvent({
+          type: "session.state.changed",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          payload: { state: "error", reason },
+        });
+        yield* offerRuntimeEvent({
+          type: "session.exited",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: ctx.threadId,
+          payload: { reason, recoverable: false, exitKind: "error" },
+        });
+        yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
       });
 
     const startSession: OmpAdapterShape["startSession"] = (input) =>
@@ -357,14 +403,6 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             threadId: input.threadId,
           });
 
-          // Resolve the OMP settings used to spawn the ACP child. Production
-          // leaves `options.resolveSettings` undefined so we use the value
-          // captured at adapter construction. Per-instance isolation is
-          // enforced by the hydration layer rebuilding this adapter whenever
-          // its config changes. Tests set `resolveSettings` to pull the latest
-          // snapshot from `ServerSettingsService` so that mid-suite
-          // `updateSettings({ providers: { omp: { binaryPath } } })` calls
-          // actually take effect when the next session spawns.
           const effectiveOmpSettings = options?.resolveSettings
             ? yield* options.resolveSettings
             : ompSettings;
@@ -450,15 +488,17 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
                     requestId: runtimeRequestId,
                     payload: { answers: resolved },
                   });
-                  if (Object.keys(resolved).length === 0) {
+                  const content = buildOmpElicitationContent(questions, resolved);
+                  const isMissingRequiredAnswer = questions.some(
+                    (question) =>
+                      question.required &&
+                      !Object.hasOwn(content, question.key) &&
+                      !(question.otherKey && Object.hasOwn(content, question.otherKey)),
+                  );
+                  if (isMissingRequiredAnswer) {
                     return { action: { action: "cancel" as const } };
                   }
-                  return {
-                    action: {
-                      action: "accept" as const,
-                      content: buildOmpElicitationContent(questions, resolved),
-                    },
-                  };
+                  return { action: { action: "accept" as const, content } };
                 }),
               ),
             );
@@ -537,9 +577,12 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             ),
           );
 
+          const defaultModel = getOmpAcpCurrentModel(yield* acp.getConfigOptions);
+
           yield* applyOmpRequestedSessionConfiguration({
             runtime: acp,
             modelSelection: ompModelSelection,
+            defaultModel,
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });
@@ -566,7 +609,9 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             session,
             scope: sessionScope,
             acp,
+            defaultModel,
             notificationFiber: undefined,
+            exitFiber: undefined,
             pendingApprovals,
             pendingUserInputs,
             turns: [],
@@ -583,8 +628,6 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
                     yield* Deferred.succeed(event.acknowledge, undefined);
                     return;
                   case "ModeChanged":
-                    return;
-                  case "AvailableCommandsUpdated":
                     return;
                   case "UsageUpdated":
                     yield* offerRuntimeEvent({
@@ -683,23 +726,36 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
                     );
                     return;
                 }
-              }),
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logError("Failed to process an OMP runtime notification.", {
+                    cause: Cause.pretty(cause),
+                  }),
+                ),
+              ),
             ),
-          ).pipe(
-            Effect.catch((cause) =>
-              Effect.logError("Failed to process an OMP runtime notification.", { cause }),
-            ),
-            // Fork into the session scope, not the calling fiber. `forkChild`
-            // makes this a child of `startSession`, and Effect interrupts a
-            // fiber's children when it completes, so the consumer died as soon
-            // as `startSession` returned and every later notification was
-            // dropped. The scope is created, stored on the context and closed
-            // on teardown already; only the fork target was wrong.
-            Effect.forkIn(ctx.scope),
-          );
+          ).pipe(Effect.forkIn(ctx.scope));
 
           ctx.notificationFiber = nf;
           sessions.set(input.threadId, ctx);
+          const exitFiber = yield* acp.awaitExit.pipe(
+            Effect.flatMap((exitCode) =>
+              handleUnexpectedExit(ctx, `OMP ACP process exited with code ${exitCode}.`),
+            ),
+            Effect.catchCause((cause) =>
+              handleUnexpectedExit(
+                ctx,
+                `Failed to observe OMP ACP process exit: ${Cause.pretty(cause)}`,
+              ),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logError("Failed to settle an exited OMP ACP process.", {
+                cause: Cause.pretty(cause),
+              }),
+            ),
+            Effect.forkIn(adapterScope),
+          );
+          ctx.exitFiber = exitFiber;
           sessionScopeTransferred = true;
 
           yield* offerRuntimeEvent({
@@ -733,30 +789,74 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
         input.threadId,
         Effect.gen(function* () {
           const ctx = yield* requireSession(input.threadId);
-          const turnId = TurnId.make(yield* randomUUIDv4);
+          const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
+          if (input.input?.trim()) {
+            promptParts.push({ type: "text", text: input.input.trim() });
+          }
+          for (const attachment of input.attachments ?? []) {
+            const attachmentPath = resolveAttachmentPath({
+              attachmentsDir: serverConfig.attachmentsDir,
+              attachment,
+            });
+            if (!attachmentPath) {
+              return yield* new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "session/prompt",
+                detail: `Invalid attachment id '${attachment.id}'.`,
+              });
+            }
+            const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "session/prompt",
+                    detail: cause.message,
+                    cause,
+                  }),
+              ),
+            );
+            promptParts.push({
+              type: "image",
+              data: Buffer.from(bytes).toString("base64"),
+              mimeType: attachment.mimeType,
+            });
+          }
+          if (promptParts.length === 0) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "sendTurn",
+              issue: "Turn requires non-empty text or attachments.",
+            });
+          }
+
           const turnModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
           const model = turnModelSelection?.model ?? ctx.session.model;
           yield* applyOmpRequestedSessionConfiguration({
             runtime: ctx.acp,
+            ...(input.interactionMode
+              ? {
+                  interactionMode:
+                    input.interactionMode === "plan" ? "default" : input.interactionMode,
+                }
+              : {}),
             modelSelection:
-              model === undefined
-                ? undefined
-                : {
-                    model,
-                    options: turnModelSelection?.options,
-                  },
+              model === undefined ? undefined : { model, options: turnModelSelection?.options },
+            defaultModel: ctx.defaultModel,
             mapError: ({ cause, method }) =>
               mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
           });
+
+          const turnId = TurnId.make(yield* randomUUIDv4);
           ctx.activeTurnId = turnId;
           ctx.lastPlanFingerprint = undefined;
           ctx.session = {
             ...ctx.session,
+            status: "running",
             activeTurnId: turnId,
             updatedAt: yield* nowIso,
           };
-
           yield* offerRuntimeEvent({
             type: "turn.started",
             ...(yield* makeEventStamp()),
@@ -766,68 +866,55 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             payload: { model },
           });
 
-          const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
-          if (input.input?.trim()) {
-            promptParts.push({ type: "text", text: input.input.trim() });
-          }
-          if (input.attachments && input.attachments.length > 0) {
-            for (const attachment of input.attachments) {
-              const attachmentPath = resolveAttachmentPath({
-                attachmentsDir: serverConfig.attachmentsDir,
-                attachment,
-              });
-              if (!attachmentPath) {
-                return yield* new ProviderAdapterRequestError({
-                  provider: PROVIDER,
-                  method: "session/prompt",
-                  detail: `Invalid attachment id '${attachment.id}'.`,
-                });
-              }
-              const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapterRequestError({
-                      provider: PROVIDER,
-                      method: "session/prompt",
-                      detail: cause.message,
-                      cause,
-                    }),
-                ),
-              );
-              promptParts.push({
-                type: "image",
-                data: Buffer.from(bytes).toString("base64"),
-                mimeType: attachment.mimeType,
+          const promptExit = yield* ctx.acp.prompt({ prompt: promptParts }).pipe(
+            Effect.mapError((error) =>
+              mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
+            ),
+            Effect.exit,
+          );
+          if (Exit.isFailure(promptExit)) {
+            const ownsActiveTurn =
+              ctx.activeTurnId === turnId && ctx.session.activeTurnId === turnId && !ctx.stopped;
+            if (ownsActiveTurn) {
+              const { activeTurnId: _activeTurnId, ...inactiveSession } = ctx.session;
+              ctx.activeTurnId = undefined;
+              ctx.session = {
+                ...inactiveSession,
+                status: "ready",
+                updatedAt: yield* nowIso,
+              };
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId,
+                payload: {
+                  state: "failed",
+                  errorMessage: Cause.pretty(promptExit.cause),
+                },
               });
             }
+            return yield* Effect.failCause(promptExit.cause);
           }
 
-          if (promptParts.length === 0) {
-            return yield* new ProviderAdapterValidationError({
+          const result = promptExit.value;
+          if (ctx.stopped || ctx.activeTurnId !== turnId || ctx.session.activeTurnId !== turnId) {
+            return yield* new ProviderAdapterProcessError({
               provider: PROVIDER,
-              operation: "sendTurn",
-              issue: "Turn requires non-empty text or attachments.",
+              threadId: input.threadId,
+              detail: "Oh My Pi ACP exited before the turn settled.",
             });
           }
-
-          const result = yield* ctx.acp
-            .prompt({
-              prompt: promptParts,
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
-              ),
-            );
-
           ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
+          const { activeTurnId: _activeTurnId, ...inactiveSession } = ctx.session;
+          ctx.activeTurnId = undefined;
           ctx.session = {
-            ...ctx.session,
-            activeTurnId: turnId,
+            ...inactiveSession,
+            status: "ready",
             updatedAt: yield* nowIso,
             model,
           };
-
           yield* offerRuntimeEvent({
             type: "turn.completed",
             ...(yield* makeEventStamp()),
@@ -839,7 +926,6 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
               stopReason: result.stopReason ?? null,
             },
           });
-
           return {
             threadId: input.threadId,
             turnId,

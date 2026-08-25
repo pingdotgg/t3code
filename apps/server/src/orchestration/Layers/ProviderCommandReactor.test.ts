@@ -148,6 +148,7 @@ describe("ProviderCommandReactor", () => {
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
+    readonly showInteractionModeToggle?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
@@ -315,6 +316,9 @@ describe("ProviderCommandReactor", () => {
         ...(input?.requiresNewThreadForModelChange === true
           ? { requiresNewThreadForModelChange: true }
           : {}),
+        ...(input?.showInteractionModeToggle === undefined
+          ? {}
+          : { showInteractionModeToggle: input.showInteractionModeToggle }),
       },
     ];
 
@@ -1748,6 +1752,56 @@ describe("ProviderCommandReactor", () => {
       threadId: ThreadId.make("thread-1"),
       interactionMode: "plan",
     });
+  });
+
+  it("corrects unsupported plan mode before sending the provider turn", async () => {
+    const harness = await createHarness({
+      threadModelSelection: {
+        instanceId: ProviderInstanceId.make("omp"),
+        model: "default",
+      },
+      showInteractionModeToggle: false,
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.interaction-mode.set",
+        commandId: CommandId.make("cmd-omp-plan"),
+        threadId: ThreadId.make("thread-1"),
+        interactionMode: "plan",
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-omp-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-omp-plan"),
+          role: "user",
+          text: "build this change",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("omp"),
+          model: "default",
+        },
+        interactionMode: "plan",
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      interactionMode: "default",
+    });
+    const thread = (await harness.readModel()).threads.find(
+      (candidate) => candidate.id === ThreadId.make("thread-1"),
+    );
+    expect(thread?.interactionMode).toBe("default");
   });
 
   it("preserves the active session model when in-session model switching is unsupported", async () => {

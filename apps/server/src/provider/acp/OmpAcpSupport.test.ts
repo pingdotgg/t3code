@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 
 import {
   applyOmpAcpModelSelection,
+  applyOmpRequestedSessionConfiguration,
   buildOmpAcpSpawnInput,
   buildOmpTextGenerationAcpSpawnInput,
   resolveOmpAcpConfigUpdates,
@@ -141,6 +142,41 @@ describe("shouldAutoApproveOmpPermission", () => {
   });
 });
 
+describe("applyOmpRequestedSessionConfiguration", () => {
+  it.effect("does not substring-match plan or implementation aliases", () =>
+    Effect.gen(function* () {
+      const modeCalls: string[] = [];
+      yield* applyOmpRequestedSessionConfiguration({
+        runtime: {
+          getConfigOptions: Effect.succeed([]),
+          getModeState: Effect.succeed({
+            currentModeId: "explain",
+            availableModes: [
+              { id: "explain", name: "Explain", description: "Explain the current code" },
+              {
+                id: "review",
+                name: "Review",
+                description: "Implementation planning details",
+              },
+            ],
+          }),
+          setConfigOption: () => Effect.succeed({ configOptions: [] }),
+          setModel: () => Effect.void,
+          setMode: (modeId) =>
+            Effect.sync(() => {
+              modeCalls.push(modeId);
+              return {};
+            }),
+        },
+        modelSelection: undefined,
+        mapError: (context) => context.cause,
+      });
+
+      expect(modeCalls).toEqual(["explain"]);
+    }),
+  );
+});
+
 describe("applyOmpAcpModelSelection", () => {
   it.effect("keeps the OMP default model and applies thinking selection", () =>
     Effect.gen(function* () {
@@ -175,6 +211,25 @@ describe("applyOmpAcpModelSelection", () => {
       expect(result).toBeUndefined();
       expect(modelCalls).toEqual([]);
       expect(configCalls).toEqual([["thinking", "high"]]);
+    }),
+  );
+
+  it.effect("restores the session's configured model from the default sentinel", () =>
+    Effect.gen(function* () {
+      const modelCalls: string[] = [];
+      yield* applyOmpAcpModelSelection({
+        runtime: {
+          getConfigOptions: Effect.succeed([]),
+          setConfigOption: () => Effect.void,
+          setModel: (model) => Effect.sync(() => void modelCalls.push(model)),
+        },
+        model: "default",
+        defaultModel: "openai-codex/gpt-5.4",
+        selections: [],
+        mapError: (context) => context.step,
+      });
+
+      expect(modelCalls).toEqual(["openai-codex/gpt-5.4"]);
     }),
   );
 });

@@ -552,7 +552,6 @@ export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
 export const OmpSettings = makeProviderSettingsSchema(
   {
-    // Off by default until the OMP binding is enabled by the user.
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),

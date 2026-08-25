@@ -192,6 +192,8 @@ export class AcpSessionRuntime extends Context.Service<
     readonly getEvents: () => Stream.Stream<AcpSessionRuntimeEvent, never>;
     /** Waits until the current event consumer has processed every queued event. */
     readonly drainEvents: Effect.Effect<void>;
+    /** Waits for the scoped ACP child process to exit. */
+    readonly awaitExit: Effect.Effect<number, EffectAcpErrors.AcpError>;
     /** Latest mode state observed from session setup and `session/update` notifications. */
     readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
     /** Latest configuration options observed from session setup and configuration writes. */
@@ -727,6 +729,15 @@ export const make = (
         });
         yield* Deferred.await(acknowledge);
       }),
+      awaitExit: child.exitCode.pipe(
+        Effect.mapError(
+          (cause) =>
+            new EffectAcpErrors.AcpTransportError({
+              detail: "Failed to wait for the ACP child process to exit.",
+              cause,
+            }),
+        ),
+      ),
       getModeState: Ref.get(modeStateRef),
       getConfigOptions: Ref.get(configOptionsRef),
       prompt: (payload) =>

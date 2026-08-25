@@ -106,24 +106,6 @@ export function resolveDefaultableModelSelection(
   return model?.isLegacy === true ? null : usable;
 }
 
-/**
- * The server owns whether a provider supports interaction-mode selection. If
- * the environment is offline or the selected provider is not in its latest
- * snapshot, preserve the existing control until the server can describe it.
- */
-export function selectedProviderShowsInteractionModeToggle(
-  config: T3ServerConfig | null | undefined,
-  selection: ModelSelection | null,
-): boolean {
-  if (!config || !selection) {
-    return true;
-  }
-  return (
-    config.providers.find((provider) => provider.instanceId === selection.instanceId)
-      ?.showInteractionModeToggle ?? true
-  );
-}
-
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,

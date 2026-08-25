@@ -1,3 +1,4 @@
+import { normalizeProviderInteractionMode } from "@t3tools/client-runtime/providerCapabilities";
 import {
   CommandId,
   MessageId,
@@ -6,6 +7,7 @@ import {
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
+  type ServerProvider,
 } from "@t3tools/contracts";
 
 import { toUploadChatImageAttachments, type DraftComposerImageAttachment } from "./composerImages";
@@ -32,6 +34,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly providers?: ReadonlyArray<ServerProvider>;
   readonly workspaceMode: "local" | "worktree";
   readonly branch: string | null;
   readonly worktreePath: string | null;
@@ -48,6 +51,11 @@ export interface ProjectThreadStartTurnSpec {
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
   const title = deriveThreadTitleFromPrompt(spec.text);
   const isWorktree = spec.workspaceMode === "worktree";
+  const interactionMode = normalizeProviderInteractionMode(
+    spec.providers ?? [],
+    spec.modelSelection,
+    spec.interactionMode,
+  );
   return {
     commandId: CommandId.make(spec.commandId),
     threadId: ThreadId.make(spec.threadId),
@@ -60,14 +68,14 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     modelSelection: spec.modelSelection,
     titleSeed: title,
     runtimeMode: spec.runtimeMode,
-    interactionMode: spec.interactionMode,
+    interactionMode,
     bootstrap: {
       createThread: {
         projectId: spec.projectId,
         title,
         modelSelection: spec.modelSelection,
         runtimeMode: spec.runtimeMode,
-        interactionMode: spec.interactionMode,
+        interactionMode,
         branch: spec.branch,
         worktreePath: isWorktree ? null : spec.worktreePath,
         createdAt: spec.createdAt,

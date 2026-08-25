@@ -335,6 +335,56 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("prefers an enabled known provider instance for text generation fallback", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const next = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [ProviderInstanceId.make("a_unknown")]: {
+            driver: ProviderDriverKind.make("fork-provider"),
+            enabled: true,
+            config: {},
+          },
+          [ProviderInstanceId.make("omp_work")]: {
+            driver: ProviderDriverKind.make("omp"),
+            enabled: true,
+            config: {},
+          },
+        },
+        textGenerationModelSelection: {
+          instanceId: ProviderInstanceId.make("missing"),
+          model: "missing",
+        },
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        instanceId: ProviderInstanceId.make("omp_work"),
+        model: "default",
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("keeps legacy text fallback when no eligible named instance exists", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const next = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [ProviderInstanceId.make("a_unknown")]: {
+            driver: ProviderDriverKind.make("fork-provider"),
+            enabled: true,
+            config: {},
+          },
+        },
+        textGenerationModelSelection: {
+          instanceId: ProviderInstanceId.make("missing"),
+          model: "missing",
+        },
+      });
+
+      assert.equal(next.textGenerationModelSelection.instanceId, ProviderInstanceId.make("codex"));
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect(
     "uses explicit provider instance enabled state over legacy provider enabled state",
     () =>
@@ -558,11 +608,12 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        '{"providerInstances":{"cursor_work":{"driver":"cursor","config":{}},"grok":{"driver":"grok","config":{}},"opencode_work":{"driver":"opencode","config":{"serverUrl":"http://127.0.0.1:4096"}},"opencode_unused":{"driver":"opencode","config":{}}}}',
+        '{"providerInstances":{"cursor_work":{"driver":"cursor","config":{}},"grok":{"driver":"grok","config":{}},"opencode_work":{"driver":"opencode","config":{"serverUrl":"http://127.0.0.1:4096"}},"omp_work":{"driver":"omp","config":{}},"opencode_unused":{"driver":"opencode","config":{}}}}',
       );
       yield* recordProviderUsage("cursor", "cursor_work");
       yield* recordProviderUsage("grok", null);
       yield* recordProviderUsage("opencode", "opencode_work");
+      yield* recordProviderUsage("omp", "omp_work");
 
       const settings = yield* serverSettings.getSettings;
 
@@ -570,6 +621,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("cursor_work")]?.enabled);
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("opencode_work")]?.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("omp_work")]?.enabled);
       const unused = settings.providerInstances[ProviderInstanceId.make("opencode_unused")];
       assert.isDefined(unused);
       assert.isFalse(resolveProviderInstanceEnabled(unused));
@@ -583,20 +635,23 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        '{"providers":{"grok":{"enabled":false},"opencode":{"enabled":false},"cursor":{"enabled":false}},"providerInstances":{"grok":{"driver":"grok","enabled":false,"config":{}},"opencode":{"driver":"opencode","config":{"enabled":false}},"cursor":{"driver":"cursor","enabled":false,"config":{}}}}',
+        '{"providers":{"grok":{"enabled":false},"opencode":{"enabled":false},"cursor":{"enabled":false},"omp":{"enabled":false}},"providerInstances":{"grok":{"driver":"grok","enabled":false,"config":{}},"opencode":{"driver":"opencode","config":{"enabled":false}},"cursor":{"driver":"cursor","enabled":false,"config":{}},"omp":{"driver":"omp","config":{"enabled":false}}}}',
       );
       yield* recordProviderUsage("grok");
       yield* recordProviderUsage("opencode");
       yield* recordProviderUsage("cursor");
+      yield* recordProviderUsage("omp");
 
       const settings = yield* serverSettings.getSettings;
 
       assert.isFalse(settings.providers.grok.enabled);
       assert.isFalse(settings.providers.opencode.enabled);
       assert.isFalse(settings.providers.cursor.enabled);
+      assert.isFalse(settings.providers.omp.enabled);
       assert.isFalse(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
       assert.isFalse(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
       assert.isFalse(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("omp")]?.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -612,6 +667,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.isFalse(settings.providers.grok.enabled);
       assert.isFalse(settings.providers.opencode.enabled);
       assert.isFalse(settings.providers.cursor.enabled);
+      assert.isFalse(settings.providers.omp.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -970,6 +1026,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             enabled: false,
             serverUrl: "http://127.0.0.1:4096",
             serverPassword: "secret-password",
+          },
+          omp: {
+            enabled: false,
           },
         },
         backgroundActivity: {

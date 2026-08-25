@@ -2,6 +2,7 @@ import {
   type OmpSettings,
   type ProviderApprovalDecision,
   type ProviderOptionSelection,
+  type ProviderInteractionMode,
   type ProviderUserInputAnswers,
   type RuntimeMode,
   type UserInputQuestion,
@@ -59,13 +60,12 @@ export function parseOmpResume(raw: unknown): { sessionId: string } | undefined 
   return { sessionId: raw.sessionId.trim() };
 }
 
-function normalizeModeSearchText(mode: AcpSessionMode): string {
-  return [mode.id, mode.name, mode.description]
-    .filter((value): value is string => typeof value === "string" && value.length > 0)
-    .join(" ")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
+function modeSearchTokens(mode: AcpSessionMode): ReadonlySet<string> {
+  return new Set(
+    [mode.id, mode.name, mode.description]
+      .filter((value): value is string => typeof value === "string")
+      .flatMap((value) => value.toLowerCase().match(/[a-z0-9]+/g) ?? []),
+  );
 }
 
 function findModeByAliases(
@@ -82,7 +82,7 @@ function findModeByAliases(
     if (exact) return exact;
   }
   return normalizedAliases
-    .map((alias) => modes.find((mode) => normalizeModeSearchText(mode).includes(alias)))
+    .map((alias) => modes.find((mode) => modeSearchTokens(mode).has(alias)))
     .find((mode) => mode !== undefined);
 }
 
@@ -90,27 +90,37 @@ function isPlanMode(mode: AcpSessionMode): boolean {
   return findModeByAliases([mode], ACP_PLAN_MODE_ALIASES) !== undefined;
 }
 
-function requestedOmpModeId(modeState: AcpSessionModeState | undefined): string | undefined {
+function requestedOmpModeId(
+  modeState: AcpSessionModeState | undefined,
+  interactionMode: ProviderInteractionMode | undefined,
+): string | undefined {
   if (!modeState) return undefined;
-  return (
-    findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
-    modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
-    (modeState.availableModes.some(
-      (mode) => mode.id === modeState.currentModeId && !isPlanMode(mode),
-    )
-      ? modeState.currentModeId
-      : undefined)
+  if (interactionMode === "plan") {
+    return findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
+  }
+  const implementationMode = findModeByAliases(
+    modeState.availableModes,
+    ACP_IMPLEMENT_MODE_ALIASES,
   );
+  if (implementationMode) return implementationMode.id;
+  const currentMode = modeState.availableModes.find((mode) => mode.id === modeState.currentModeId);
+  if (currentMode && !isPlanMode(currentMode)) return currentMode.id;
+  return modeState.availableModes.find((mode) => !isPlanMode(mode))?.id;
 }
 
 export function applyOmpRequestedSessionConfiguration<E>(input: {
-  readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  readonly runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "getConfigOptions" | "getModeState" | "setConfigOption" | "setMode" | "setModel"
+  >;
+  readonly interactionMode?: ProviderInteractionMode;
   readonly modelSelection:
     | {
         readonly model: string;
         readonly options?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
       }
     | undefined;
+  readonly defaultModel?: string | undefined;
   readonly mapError: (context: {
     readonly cause: EffectAcpErrors.AcpError;
     readonly method: "session/set_config_option" | "session/set_mode";
@@ -122,11 +132,12 @@ export function applyOmpRequestedSessionConfiguration<E>(input: {
         runtime: input.runtime,
         model: input.modelSelection.model,
         selections: input.modelSelection.options,
+        defaultModel: input.defaultModel,
         mapError: ({ cause }) => input.mapError({ cause, method: "session/set_config_option" }),
       });
     }
 
-    const modeId = requestedOmpModeId(yield* input.runtime.getModeState);
+    const modeId = requestedOmpModeId(yield* input.runtime.getModeState, input.interactionMode);
     if (!modeId) return;
     yield* input.runtime
       .setMode(modeId)
@@ -184,6 +195,7 @@ export function selectOmpPermissionOptionId(
 export interface OmpElicitationQuestion {
   readonly key: string;
   readonly otherKey?: string;
+  readonly required: boolean;
   readonly schema: EffectAcpSchema.ElicitationPropertySchema;
   readonly question: UserInputQuestion;
 }
@@ -208,10 +220,21 @@ function enumChoices(
     : schema.items.enum.map((value) => ({ value, label: value }));
 }
 
+function selectedChoiceValue(
+  schema: EffectAcpSchema.ElicitationPropertySchema,
+  answer: string,
+): string | undefined {
+  const normalized = answer.trim();
+  return enumChoices(schema).find(
+    (choice) => choice.value === normalized || choice.label === normalized,
+  )?.value;
+}
+
 export function ompElicitationQuestions(
   request: Extract<EffectAcpSchema.ElicitationRequest, { readonly mode: "form" }>,
 ): ReadonlyArray<OmpElicitationQuestion> {
   const properties = request.requestedSchema.properties ?? {};
+  const requiredKeys = new Set(request.requestedSchema.required ?? []);
   const entries = Object.entries(properties).filter(([key]) => !key.endsWith("__other"));
   return entries.map(([key, schema], index) => {
     const choices = enumChoices(schema);
@@ -236,6 +259,7 @@ export function ompElicitationQuestions(
     return {
       key,
       ...(properties[`${key}__other`] ? { otherKey: `${key}__other` } : {}),
+      required: requiredKeys.has(key),
       schema,
       question: {
         id: key,
@@ -254,10 +278,11 @@ function normalizeElicitationAnswer(
 ): EffectAcpSchema.ElicitationContentValue | undefined {
   if (schema.type === "array") {
     const values = Array.isArray(answer) ? answer : typeof answer === "string" ? [answer] : [];
-    const allowed = new Set(enumChoices(schema).map((choice) => choice.value));
-    const normalized = values.filter(
-      (value): value is string => typeof value === "string" && allowed.has(value),
-    );
+    const normalized = values.flatMap((value) => {
+      if (typeof value !== "string") return [];
+      const selected = selectedChoiceValue(schema, value);
+      return selected === undefined ? [] : [selected];
+    });
     return normalized.length > 0 ? normalized : undefined;
   }
   const scalar = Array.isArray(answer) ? answer[0] : answer;
@@ -274,7 +299,8 @@ function normalizeElicitationAnswer(
     if (!Number.isFinite(value)) return undefined;
     return schema.type === "integer" && !Number.isInteger(value) ? undefined : value;
   }
-  return typeof scalar === "string" && scalar.trim().length > 0 ? scalar.trim() : undefined;
+  if (typeof scalar !== "string" || scalar.trim().length === 0) return undefined;
+  return selectedChoiceValue(schema, scalar) ?? scalar.trim();
 }
 
 export function buildOmpElicitationContent(
@@ -285,13 +311,12 @@ export function buildOmpElicitationContent(
   for (const question of questions) {
     const rawAnswer = answers[question.key];
     const normalized = normalizeElicitationAnswer(rawAnswer, question.schema);
-    const allowed = new Set(enumChoices(question.schema).map((choice) => choice.value));
     const scalarAnswer = Array.isArray(rawAnswer) ? rawAnswer[0] : rawAnswer;
     if (
       question.otherKey &&
       typeof scalarAnswer === "string" &&
       scalarAnswer.trim().length > 0 &&
-      !allowed.has(scalarAnswer.trim())
+      selectedChoiceValue(question.schema, scalarAnswer) === undefined
     ) {
       content[question.otherKey] = scalarAnswer.trim();
       continue;
@@ -524,6 +549,12 @@ function findConfigOptionByCategory(
     })
   );
 }
+export function getOmpAcpCurrentModel(
+  options: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+): string | undefined {
+  const currentValue = findConfigOptionByCategory(options, "model", ["model"])?.currentValue;
+  return typeof currentValue === "string" && currentValue.trim() ? currentValue.trim() : undefined;
+}
 
 function resolveConfigValue(
   option: EffectAcpSchema.SessionConfigOption | undefined,
@@ -579,11 +610,13 @@ export function applyOmpAcpModelSelection<E>(input: {
   readonly runtime: OmpAcpModelSelectionRuntime;
   readonly model: string | null | undefined;
   readonly selections: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  readonly defaultModel?: string | undefined;
   readonly mapError: (context: OmpAcpModelSelectionErrorContext) => E;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
-    const model = input.model?.trim();
-    if (model && model !== "default") {
+    const requestedModel = input.model?.trim();
+    const model = requestedModel === "default" ? input.defaultModel?.trim() : requestedModel;
+    if (model) {
       yield* input.runtime
         .setModel(model)
         .pipe(Effect.mapError((cause) => input.mapError({ cause, step: "set-model" })));

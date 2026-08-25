@@ -56,6 +56,7 @@ type ProviderIntentEvent = Extract<
     type:
       | "thread.meta-updated"
       | "thread.runtime-mode-set"
+      | "thread.interaction-mode-set"
       | "thread.turn-start-requested"
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
@@ -482,6 +483,28 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
+  const normalizeThreadInteractionMode = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly modelSelection: ModelSelection;
+    readonly interactionMode: "default" | "plan";
+    readonly sourceEventId: EventId;
+    readonly createdAt: string;
+  }) {
+    if (input.interactionMode !== "plan") return input.interactionMode;
+    const providers = yield* providerRegistry.getProviders;
+    const provider = providers.find(
+      (candidate) => candidate.instanceId === input.modelSelection.instanceId,
+    );
+    if (provider?.showInteractionModeToggle !== false) return input.interactionMode;
+    yield* orchestrationEngine.dispatch({
+      type: "thread.interaction-mode.set",
+      commandId: CommandId.make(`server:interaction-mode:${input.sourceEventId}`),
+      threadId: input.threadId,
+      interactionMode: "default",
+      createdAt: input.createdAt,
+    });
+    return "default" as const;
+  });
   const rejectStartedThreadModelChangeIfRequired = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly currentModelSelection: ModelSelection;
@@ -1200,6 +1223,13 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    const effectiveInteractionMode = yield* normalizeThreadInteractionMode({
+      threadId: event.payload.threadId,
+      modelSelection: event.payload.modelSelection ?? thread.modelSelection,
+      interactionMode: event.payload.interactionMode,
+      sourceEventId: event.eventId,
+      createdAt: event.payload.createdAt,
+    });
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageText: message.text,
@@ -1207,7 +1237,7 @@ const make = Effect.gen(function* () {
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
         : {}),
-      interactionMode: event.payload.interactionMode,
+      interactionMode: effectiveInteractionMode,
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),
@@ -1465,6 +1495,18 @@ const make = Effect.gen(function* () {
         );
         return;
       }
+      case "thread.interaction-mode-set": {
+        const thread = yield* resolveThread(event.payload.threadId);
+        if (!thread) return;
+        yield* normalizeThreadInteractionMode({
+          threadId: event.payload.threadId,
+          modelSelection: thread.modelSelection,
+          interactionMode: event.payload.interactionMode,
+          sourceEventId: event.eventId,
+          createdAt: event.occurredAt,
+        });
+        return;
+      }
       case "thread.turn-start-requested":
         yield* processTurnStartRequested(event);
         return;
@@ -1514,6 +1556,7 @@ const make = Effect.gen(function* () {
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
         event.type === "thread.runtime-mode-set" ||
+        event.type === "thread.interaction-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||

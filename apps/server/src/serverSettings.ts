@@ -19,6 +19,8 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   ProviderDriverKind,
+  providerInstanceConfigEnabledFlag,
+  resolveProviderInstanceEnabled,
   ProviderInstanceId,
   ServerSettings,
   ServerSettingsError,
@@ -237,6 +239,7 @@ const PersistedOptionalProviderSettings = Schema.Struct({
       cursor: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
       grok: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
       opencode: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+      omp: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
     }),
   ),
 });
@@ -262,9 +265,11 @@ function restoreUsedProviders(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
       instanceId,
       instance.enabled === undefined &&
+      providerInstanceConfigEnabledFlag(instance.config) === undefined &&
       (instance.driver === "cursor" ||
         instance.driver === "grok" ||
-        instance.driver === "opencode") &&
+        instance.driver === "opencode" ||
+        instance.driver === "omp") &&
       usedProviderInstances.has(instanceId)
         ? { ...instance, enabled: true }
         : instance,
@@ -287,6 +292,10 @@ function restoreUsedProviders(
         ...settings.providers.opencode,
         enabled: persisted.providers?.opencode?.enabled ?? usedProviders.has("opencode"),
       },
+      omp: {
+        ...settings.providers.omp,
+        enabled: persisted.providers?.omp?.enabled ?? usedProviders.has("omp"),
+      },
     },
     providerInstances,
   };
@@ -299,19 +308,36 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const fallbackEntry = Object.entries(settings.providers).find(([, provider]) => provider.enabled);
-  const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
-  if (!fallback) {
-    return settings;
-  }
-
+  const explicitFallback = Object.entries(settings.providerInstances)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .find(([, instance]) => {
+      const driver = instance.driver;
+      const isKnownTextGenerationDriver =
+        Object.hasOwn(DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER, driver) ||
+        Object.hasOwn(DEFAULT_MODEL_BY_PROVIDER, driver);
+      return isKnownTextGenerationDriver && resolveProviderInstanceEnabled(instance);
+    });
+  const legacyFallback = Object.entries(settings.providers).find(
+    ([, provider]) => provider.enabled,
+  );
+  const instanceId = explicitFallback
+    ? ProviderInstanceId.make(explicitFallback[0])
+    : legacyFallback
+      ? ProviderInstanceId.make(legacyFallback[0])
+      : undefined;
+  const driver = explicitFallback
+    ? explicitFallback[1].driver
+    : legacyFallback
+      ? ProviderDriverKind.make(legacyFallback[0])
+      : undefined;
+  if (!instanceId || !driver) return settings;
   return {
     ...settings,
     textGenerationModelSelection: {
-      instanceId: ProviderInstanceId.make(fallback),
+      instanceId,
       model:
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
-        DEFAULT_MODEL_BY_PROVIDER[fallback] ??
+        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[driver] ??
+        DEFAULT_MODEL_BY_PROVIDER[driver] ??
         DEFAULT_TEXT_GENERATION_MODEL,
     } satisfies ModelSelection,
   };
@@ -334,6 +360,7 @@ const PERSISTED_SERVER_SETTINGS_DEFAULTS = {
     cursor: { ...DEFAULT_SERVER_SETTINGS.providers.cursor, enabled: undefined },
     grok: { ...DEFAULT_SERVER_SETTINGS.providers.grok, enabled: undefined },
     opencode: { ...DEFAULT_SERVER_SETTINGS.providers.opencode, enabled: undefined },
+    omp: { ...DEFAULT_SERVER_SETTINGS.providers.omp, enabled: undefined },
   },
 };
 
@@ -443,13 +470,13 @@ const make = Effect.gen(function* () {
         provider_name AS "providerName",
         provider_instance_id AS "providerInstanceId"
       FROM projection_thread_sessions
-      WHERE provider_name IN ('cursor', 'grok', 'opencode')
+      WHERE provider_name IN ('cursor', 'grok', 'opencode', 'omp')
       UNION
       SELECT DISTINCT
         provider_name AS "providerName",
         provider_instance_id AS "providerInstanceId"
       FROM provider_session_runtime
-      WHERE provider_name IN ('cursor', 'grok', 'opencode')
+      WHERE provider_name IN ('cursor', 'grok', 'opencode', 'omp')
     `.pipe(
       Effect.mapError(
         (cause) =>

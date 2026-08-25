@@ -1,4 +1,3 @@
-/** ProviderDriver for the Oh My Pi ACP runtime (`omp acp`). */
 import { OmpSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -51,6 +50,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@oh-my-pi/pi-coding-agent",
   homebrewFormula: "can1357/tap/omp",
+  commandPathPrecedence: "package-manager-first",
   nativeUpdate: {
     executable: "omp",
     args: ["update"],

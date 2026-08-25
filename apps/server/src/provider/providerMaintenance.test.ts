@@ -59,6 +59,19 @@ const scopedPackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
     isCommandPath: isNativeTestCommandPath("/.scoped-package-tool/bin/scoped-package-tool"),
   },
 });
+const packageFirstToolUpdate = makePackageManagedProviderMaintenanceResolver({
+  provider: driver("packageFirstTool"),
+  npmPackageName: "@example/package-first-tool",
+  homebrewFormula: "example/tap/package-first-tool",
+  commandPathPrecedence: "package-manager-first",
+  nativeUpdate: {
+    executable: "package-first-tool",
+    args: ["update"],
+    lockKey: "package-first-tool-native",
+    isCommandPath: (commandPath) =>
+      normalizeCommandPath(commandPath).endsWith("/package-first-tool"),
+  },
+});
 const staticToolUpdate = makeStaticProviderMaintenanceResolver(
   makeProviderMaintenanceCapabilities({
     provider: driver("staticTool"),
@@ -327,6 +340,24 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
 
         args: ["upgrade", "package-tool"],
 
+        lockKey: "homebrew",
+      },
+    });
+  });
+
+  it("prefers a detected package manager when native detection also matches", () => {
+    expect(
+      packageFirstToolUpdate.resolve({
+        binaryPath: "/opt/homebrew/bin/package-first-tool",
+        resolvedCommandPath: "/opt/homebrew/bin/package-first-tool",
+      }),
+    ).toEqual({
+      provider: driver("packageFirstTool"),
+      packageName: "@example/package-first-tool",
+      update: {
+        command: "brew upgrade example/tap/package-first-tool",
+        executable: "brew",
+        args: ["upgrade", "example/tap/package-first-tool"],
         lockKey: "homebrew",
       },
     });

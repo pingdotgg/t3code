@@ -198,4 +198,39 @@ it.layer(OmpTextGenerationTestLayer)("OmpTextGeneration", (it) => {
       );
     }).pipe(Effect.scoped),
   );
+
+  it.effect("fails when an image attachment cannot be read", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-omp-text-"));
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+      );
+      const binaryPath = makeAcpAgentWrapper(tempDir, {});
+      const textGeneration = yield* makeOmpTextGeneration(decodeOmpSettings({ binaryPath }));
+      const attachment = decodeChatAttachment({
+        type: "image",
+        id: "omp-image-223e4567-e89b-12d3-a456-426614174000",
+        name: "missing.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+      });
+
+      const result = yield* textGeneration
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Name this screenshot.",
+          attachments: [attachment],
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("omp"),
+            model: "default",
+          },
+        })
+        .pipe(Effect.result);
+
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure.detail).toContain("Failed to read attachment");
+      }
+    }).pipe(Effect.scoped),
+  );
 });

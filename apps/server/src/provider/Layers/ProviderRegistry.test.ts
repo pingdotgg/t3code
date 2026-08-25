@@ -42,6 +42,7 @@ import {
   mergeProviderSnapshot,
   ProviderRegistryLive,
 } from "./ProviderRegistry.ts";
+import { OMP_CHECKING_MESSAGE } from "./OmpProvider.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
@@ -770,6 +771,56 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         const afterFailure = mergeProviderSnapshot(afterRemoval, failedProvider);
 
         assert.deepStrictEqual(afterFailure.models, [authoritativeProvider.models[0]!]);
+      });
+
+      it("retains OMP models only while the initial probe is pending", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("omp"),
+          driver: ProviderDriverKind.make("omp"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-08-25T00:00:00.000Z",
+          version: "18.0.5",
+          models: [
+            {
+              slug: "openai/gpt-5.4",
+              name: "GPT-5.4",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } satisfies ServerProvider;
+        const pendingProvider = {
+          ...previousProvider,
+          status: "warning",
+          version: null,
+          auth: { status: "unknown" },
+          models: [],
+          checkedAt: "2026-08-25T00:01:00.000Z",
+          message: OMP_CHECKING_MESSAGE,
+        } satisfies ServerProvider;
+        const completedWarning = {
+          ...pendingProvider,
+          message: "Oh My Pi completed without a model catalog.",
+        } satisfies ServerProvider;
+        const completedError = {
+          ...pendingProvider,
+          status: "error",
+          message: "Oh My Pi returned invalid model data.",
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, pendingProvider).models, [
+          ...previousProvider.models,
+        ]);
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, completedWarning).models,
+          [],
+        );
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, completedError).models, []);
       });
 
       it("fills missing capabilities from the previous provider snapshot", () => {
@@ -1742,6 +1793,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "codex",
                 "cursor",
                 "grok",
+                "omp",
                 "opencode",
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);

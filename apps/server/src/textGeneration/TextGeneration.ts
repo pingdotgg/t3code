@@ -8,13 +8,7 @@ import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstance
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 
-export type TextGenerationProvider =
-  | "codex"
-  | "claudeAgent"
-  | "cursor"
-  | "grok"
-  | "opencode"
-  | "omp";
+export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "grok" | "opencode";
 
 export interface CommitMessageGenerationInput {
   cwd: string;

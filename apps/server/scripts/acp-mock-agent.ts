@@ -39,6 +39,7 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
+const exitOnPrompt = process.env.T3_ACP_EXIT_ON_PROMPT === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const permissionOptionIds = {
@@ -462,6 +463,11 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep(`${promptDelayMs} millis`);
       }
 
+      if (exitOnPrompt) {
+        return yield* Effect.sync(() => {
+          process.exit(9);
+        });
+      }
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }

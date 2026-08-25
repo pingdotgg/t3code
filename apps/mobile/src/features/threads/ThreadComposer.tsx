@@ -1,3 +1,4 @@
+import { selectedProviderShowsInteractionModeToggle } from "@t3tools/client-runtime/providerCapabilities";
 import type {
   EnvironmentId,
   MessageId,
@@ -355,6 +356,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ) ?? null
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
+  const supportsInteractionMode = selectedProviderShowsInteractionModeToggle(
+    props.serverConfig?.providers ?? [],
+    currentModelSelection,
+  );
 
   // ── Trigger detection ────────────────────────────────────
   const [composerSelection, setComposerSelection] = useState(() => ({
@@ -402,20 +407,24 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           label: "/model",
           description: "Switch model",
         },
-        {
-          id: "cmd:plan",
-          type: "slash-command" as const,
-          command: "plan",
-          label: "/plan",
-          description: "Switch to plan mode",
-        },
-        {
-          id: "cmd:default",
-          type: "slash-command" as const,
-          command: "default",
-          label: "/default",
-          description: "Switch to default mode",
-        },
+        ...(supportsInteractionMode
+          ? [
+              {
+                id: "cmd:plan",
+                type: "slash-command" as const,
+                command: "plan",
+                label: "/plan",
+                description: "Switch to plan mode",
+              },
+              {
+                id: "cmd:default",
+                type: "slash-command" as const,
+                command: "default",
+                label: "/default",
+                description: "Switch to default mode",
+              },
+            ]
+          : []),
       ];
       const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
 
@@ -542,7 +551,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     }
 
     return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
+  }, [composerTrigger, pathSearch.entries, selectedProviderStatus, supportsInteractionMode]);
 
   // ── Handle command selection ──────────────────────────────
   const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
@@ -583,6 +592,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         item.type === "slash-command" &&
         (item.command === "plan" || item.command === "default")
       ) {
+        if (!supportsInteractionMode) return;
         const result = replaceTextRange(
           draftMessage,
           composerTrigger.rangeStart,
@@ -615,7 +625,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       setComposerSelection({ start: result.cursor, end: result.cursor });
       onChangeDraftMessage(result.text);
     },
-    [composerTrigger, draftMessage, onChangeDraftMessage, onUpdateInteractionMode],
+    [
+      composerTrigger,
+      draftMessage,
+      onChangeDraftMessage,
+      onUpdateInteractionMode,
+      supportsInteractionMode,
+    ],
   );
 
   // ── Model menu ───────────────────────────────────────────
