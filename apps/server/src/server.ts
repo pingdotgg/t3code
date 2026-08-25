@@ -14,6 +14,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
@@ -746,21 +747,26 @@ const makeServerLayer = Layer.unwrap(
             if (typeof address === "string" || !("port" in address)) return;
             const localOrigin = `http://127.0.0.1:${address.port}`;
             const endpointRuntime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
-            const recoverManagedTunnel = recoverManagedCloudTunnel(localOrigin).pipe(
-              Effect.retry({
-                while: shouldRetryCloudLink,
-                schedule: Schedule.exponential("1 second").pipe(
-                  Schedule.modifyDelay(({ duration }) =>
-                    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+            const recoveryLock = yield* Semaphore.make(1);
+            const recoverManagedTunnel = recoveryLock.withPermits(1)(
+              recoverManagedCloudTunnel(localOrigin).pipe(
+                Effect.retry({
+                  while: (error) =>
+                    error._tag !== "EnvironmentHttpBadRequestError" &&
+                    error._tag !== "EnvironmentCloudEndpointUnavailableError",
+                  schedule: Schedule.exponential("1 second").pipe(
+                    Schedule.modifyDelay(({ duration }) =>
+                      Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                    ),
+                    Schedule.upTo({ duration: "10 minutes" }),
                   ),
-                  Schedule.upTo({ duration: "10 minutes" }),
+                }),
+                Effect.tap((recovered) =>
+                  recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
                 ),
-              }),
-              Effect.tap((recovered) =>
-                recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
-              ),
-              Effect.catchCause((cause) =>
-                Effect.logWarning("Failed to recover the T3 Connect managed tunnel", { cause }),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Failed to recover the T3 Connect managed tunnel", { cause }),
+                ),
               ),
             );
             yield* endpointRuntime.recoveryRequests.pipe(

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { PgDialect } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
 import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
@@ -17,6 +18,7 @@ describe("ManagedEndpointAllocations", () => {
           readonly updatedAt: string;
         }
       | undefined;
+    let condition: unknown;
     const fakeDb = {
       update: (table: unknown) => {
         expect(table).toBe(relayManagedEndpointAllocations);
@@ -24,7 +26,12 @@ describe("ManagedEndpointAllocations", () => {
           set: (values: { readonly recoveryEnabledAt: string; readonly updatedAt: string }) => {
             updated = values;
             return {
-              where: () => Effect.void,
+              where: (where: unknown) => {
+                condition = where;
+                return {
+                  returning: () => Effect.succeed([{ environmentId: "environment-1" }]),
+                };
+              },
             };
           },
         };
@@ -33,13 +40,48 @@ describe("ManagedEndpointAllocations", () => {
 
     return Effect.gen(function* () {
       const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
-      yield* allocations.enableRecovery({
-        userId: "user-1",
-        environmentId: "environment-1",
-      });
+      expect(
+        yield* allocations.enableRecovery({
+          userId: "user-1",
+          environmentId: "environment-1",
+          tunnelId: "tunnel-1",
+          environmentPublicKey: "public-key",
+        }),
+      ).toBe(true);
 
       expect(updated?.recoveryEnabledAt).toBe(updated?.updatedAt);
       expect(updated?.recoveryEnabledAt).toBeDefined();
+      const query = new PgDialect().sqlToQuery(condition as never);
+      expect(query.sql).toContain('"relay_managed_endpoint_allocations"."tunnel_id"');
+      expect(query.sql).toContain('"relay_environment_links"."environment_public_key"');
+      expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
+      expect(query.sql).toContain("for update");
+      expect(query.params).toContain("tunnel-1");
+      expect(query.params).toContain("public-key");
+    }).pipe(Effect.provide(layerWithDb(fakeDb)));
+  });
+
+  it.effect("rejects recovery when the tunnel or active link no longer matches", () => {
+    const fakeDb = {
+      update: () => ({
+        set: () => ({
+          where: () => ({
+            returning: () => Effect.succeed([]),
+          }),
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
+      expect(
+        yield* allocations.enableRecovery({
+          userId: "user-1",
+          environmentId: "environment-1",
+          tunnelId: "missing-tunnel",
+          environmentPublicKey: "public-key",
+        }),
+      ).toBe(false);
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
 

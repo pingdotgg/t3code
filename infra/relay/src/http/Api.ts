@@ -463,11 +463,14 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
     // revocation commits so a database failure leaves a fully usable active
     // link. Still run teardown when the link is already revoked, allowing a
     // retry to finish cleanup after an earlier Cloudflare failure.
-    yield* managedEndpointProvider.deprovision({
+    const deprovisioned = yield* managedEndpointProvider.deprovision({
       userId: input.userId,
       environmentId: input.environmentId,
       target: deprovisionTarget,
     });
+    if (!deprovisioned && (yield* links.getForUser(input)) === null) {
+      yield* managedEndpointProvider.deprovision(input);
+    }
     return unlinked;
   },
 );
@@ -500,17 +503,36 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
     environmentId: input.environmentId,
     origin: input.origin,
   });
+  const recoveredTunnelId = recovered.runtime.tunnelId;
   if (
+    recoveredTunnelId === undefined ||
     recovered.endpoint.httpBaseUrl !== link.endpoint.httpBaseUrl ||
     recovered.endpoint.wsBaseUrl !== link.endpoint.wsBaseUrl
   ) {
     return yield* new HttpApiError.Unauthorized({});
   }
 
-  yield* allocations.enableRecovery({
+  const enabled = yield* allocations.enableRecovery({
     userId: input.userId,
     environmentId: input.environmentId,
+    tunnelId: recoveredTunnelId,
+    environmentPublicKey: input.environmentPublicKey,
   });
+  if (!enabled) {
+    const target = yield* managedEndpointProvider.prepareDeprovision(input);
+    if (target !== null && (yield* links.getForUser(input)) === null) {
+      yield* managedEndpointProvider.deprovision({ ...input, target }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to clean up a tunnel after its link was removed", {
+            userId: input.userId,
+            environmentId: input.environmentId,
+            cause,
+          }),
+        ),
+      );
+    }
+    return yield* new HttpApiError.Unauthorized({});
+  }
   return {
     endpoint: recovered.endpoint,
     endpointRuntime: recovered.runtime,
@@ -1081,6 +1103,8 @@ export const serverApi = HttpApiBuilder.group(
           ManagedEndpointProvisioningNotConfigured: () =>
             relayInternalErrorResponse("upstream_unavailable"),
           ManagedEndpointProvisioningFailed: () =>
+            relayInternalErrorResponse("upstream_unavailable"),
+          ManagedEndpointDeprovisioningFailed: () =>
             relayInternalErrorResponse("upstream_unavailable"),
           ManagedTunnelLimitExceeded: () => relayInternalErrorResponse("upstream_unavailable"),
         }),

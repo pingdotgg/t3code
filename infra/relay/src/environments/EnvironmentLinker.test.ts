@@ -135,7 +135,7 @@ function testLayer(input?: {
         }),
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
           prepareDeprovision: () => Effect.succeed(null),
-          deprovision: input?.deprovision ?? (() => Effect.void),
+          deprovision: input?.deprovision ?? (() => Effect.succeed(true)),
           release: () => Effect.succeed(true),
           provision: () =>
             Effect.succeed({
@@ -241,6 +241,7 @@ describe("EnvironmentLinker", () => {
           deprovision: (input) =>
             Effect.sync(() => {
               deprovisionedEnvironmentId = input.environmentId;
+              return true;
             }),
         }),
       ),

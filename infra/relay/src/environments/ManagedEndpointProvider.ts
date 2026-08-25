@@ -3,6 +3,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
@@ -76,6 +77,7 @@ export class ManagedEndpointProvisioningFailed extends Schema.TaggedError<Manage
 
 const ManagedEndpointDeprovisioningStage = Schema.Literals([
   "load-allocation",
+  "load-tunnel",
   "claim-release",
   "claim-deprovision",
   "delete-dns-record",
@@ -150,7 +152,7 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
       readonly target?: ManagedEndpointDeprovisionTarget | null;
-    }) => Effect.Effect<void, ManagedEndpointDeprovisioningFailed>;
+    }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
     /**
      * Deletes the provisioned Cloudflare tunnel while keeping the allocation
      * (hostname + tunnel name reservation) and DNS record. Cloudflare bills per
@@ -167,6 +169,8 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
       readonly expectedTunnelId?: string;
+      readonly expectedInactiveBefore?: string;
+      readonly expectedStatus?: "inactive" | "down";
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
   }
 >()("t3code-relay/environments/ManagedEndpointProvider") {}
@@ -191,6 +195,7 @@ export interface ManagedEndpointTunnelListRequest {
 }
 
 const ManagedEndpointTunnelClientOperation = Schema.Literals([
+  "get",
   "list",
   "create",
   "put-configuration",
@@ -216,6 +221,9 @@ export class ManagedEndpointTunnelClientError extends Schema.TaggedError<Managed
 export class ManagedEndpointTunnelClient extends Context.Service<
   ManagedEndpointTunnelClient,
   {
+    readonly get: (
+      tunnelId: string,
+    ) => Effect.Effect<ManagedEndpointTunnel, ManagedEndpointTunnelClientError>;
     readonly list: (request: ManagedEndpointTunnelListRequest) => Effect.Effect<
       {
         readonly result: ReadonlyArray<ManagedEndpointTunnel>;
@@ -352,17 +360,17 @@ function isLoopbackOrigin(origin: RelayManagedEndpointOrigin): boolean {
   );
 }
 
-function isNotFoundCause(cause: unknown): boolean {
+export function isManagedEndpointNotFound(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null) {
     return false;
   }
-  if ("_tag" in cause && cause._tag === "NotFound") {
+  if ("_tag" in cause && (cause._tag === "NotFound" || cause._tag === "TunnelNotFound")) {
     return true;
   }
   if ("status" in cause && cause.status === 404) {
     return true;
   }
-  return "cause" in cause && isNotFoundCause(cause.cause);
+  return "cause" in cause && isManagedEndpointNotFound(cause.cause);
 }
 
 type ManagedEndpointClientError = ManagedEndpointTunnelClientError | ManagedEndpointDnsClientError;
@@ -374,9 +382,9 @@ const ignoreNotFound = <A>(
     Effect.asVoid,
     Effect.catchTags({
       ManagedEndpointTunnelClientError: (error) =>
-        isNotFoundCause(error.cause) ? Effect.void : Effect.fail(error),
+        isManagedEndpointNotFound(error.cause) ? Effect.void : Effect.fail(error),
       ManagedEndpointDnsClientError: (error) =>
-        isNotFoundCause(error.cause) ? Effect.void : Effect.fail(error),
+        isManagedEndpointNotFound(error.cause) ? Effect.void : Effect.fail(error),
     }),
   );
 
@@ -418,7 +426,7 @@ export const make = Effect.gen(function* () {
           Effect.as(true),
           Effect.catchTags({
             ManagedEndpointDnsClientError: (error) =>
-              isNotFoundCause(error.cause) ? Effect.succeed(false) : Effect.fail(error),
+              isManagedEndpointNotFound(error.cause) ? Effect.succeed(false) : Effect.fail(error),
           }),
         );
       if (checkpointedRecordUpdated) {
@@ -484,7 +492,7 @@ export const make = Effect.gen(function* () {
       const allocation =
         input.target === undefined ? yield* prepareDeprovision(input) : input.target;
       if (allocation === null) {
-        return;
+        return true;
       }
       const claimedAt = yield* allocations
         .claimDeprovision({
@@ -505,7 +513,7 @@ export const make = Effect.gen(function* () {
           ),
         );
       if (claimedAt === null) {
-        return;
+        return false;
       }
       const dnsRecordId = allocation.dnsRecordId;
       if (dnsRecordId !== null) {
@@ -535,7 +543,7 @@ export const make = Effect.gen(function* () {
           ),
         );
       }
-      yield* allocations
+      return yield* allocations
         .removeClaimed({
           userId: input.userId,
           environmentId: input.environmentId,
@@ -583,7 +591,7 @@ export const make = Effect.gen(function* () {
       // must be left alive. A provision that starts after the claim instead
       // fails loudly on the deleted tunnel and the client-side retry
       // provisions a replacement.
-      const claimed = yield* allocations
+      const claimedAt = yield* allocations
         .claimRelease({
           userId: input.userId,
           environmentId: input.environmentId,
@@ -601,8 +609,67 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-      if (!claimed) {
+      if (claimedAt === null) {
         return false;
+      }
+      if (input.expectedInactiveBefore !== undefined && input.expectedStatus !== undefined) {
+        const currentAllocation = yield* allocations.get(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ManagedEndpointDeprovisioningFailed({
+                ...input,
+                stage: "load-allocation",
+                tunnelId,
+                cause,
+              }),
+          ),
+        );
+        if (
+          currentAllocation === null ||
+          currentAllocation.tunnelId !== tunnelId ||
+          currentAllocation.updatedAt !== claimedAt
+        ) {
+          return false;
+        }
+
+        const currentTunnel = yield* tunnels.get(tunnelId).pipe(
+          Effect.map(Option.some),
+          Effect.catchTag("ManagedEndpointTunnelClientError", (cause) =>
+            isManagedEndpointNotFound(cause.cause)
+              ? Effect.succeed(Option.none())
+              : Effect.fail(
+                  new ManagedEndpointDeprovisioningFailed({
+                    ...input,
+                    stage: "load-tunnel",
+                    tunnelId,
+                    cause,
+                  }),
+                ),
+          ),
+        );
+        if (Option.isNone(currentTunnel)) {
+          return true;
+        }
+        const inactiveAt =
+          input.expectedStatus === "down"
+            ? currentTunnel.value.connsInactiveAt
+            : currentTunnel.value.createdAt;
+        if (
+          currentTunnel.value.id !== tunnelId ||
+          currentTunnel.value.status !== input.expectedStatus ||
+          typeof inactiveAt !== "string"
+        ) {
+          return false;
+        }
+        const inactiveTime = DateTime.make(inactiveAt);
+        const cutoff = DateTime.make(input.expectedInactiveBefore);
+        if (
+          Option.isNone(inactiveTime) ||
+          Option.isNone(cutoff) ||
+          inactiveTime.value.epochMilliseconds > cutoff.value.epochMilliseconds
+        ) {
+          return false;
+        }
       }
       yield* ignoreNotFound(tunnels.delete(tunnelId)).pipe(
         Effect.mapError(
@@ -890,6 +957,18 @@ export const layerCloudflareBindings = (
     Layer.provideMerge(
       Layer.mergeAll(
         layerTunnelClient({
+          get: (tunnelId) =>
+            tunnelClient.get(tunnelId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ManagedEndpointTunnelClientError({
+                    operation: "get",
+                    tunnelId,
+                    cause,
+                  }),
+              ),
+              Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+            ),
           list: (request) =>
             tunnelClient.list(request).pipe(
               Effect.mapError(

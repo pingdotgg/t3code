@@ -1,5 +1,6 @@
 import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, exists, inArray, isNull } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/pg-core";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -8,7 +9,7 @@ import * as Schema from "effect/Schema";
 
 import * as RelayDb from "../db.ts";
 import { isManagedEndpointHostname, managedEndpointForHostname } from "../deploymentConfig.ts";
-import { relayManagedEndpointAllocations } from "../persistence/schema.ts";
+import { relayEnvironmentLinks, relayManagedEndpointAllocations } from "../persistence/schema.ts";
 
 export interface ManagedEndpointAllocation {
   readonly userId: string;
@@ -99,6 +100,11 @@ interface ClaimManagedEndpointReleaseInput extends ManagedEndpointAllocationKey 
   readonly updatedAt: string;
 }
 
+interface EnableManagedEndpointRecoveryInput extends ManagedEndpointAllocationKey {
+  readonly tunnelId: string;
+  readonly environmentPublicKey: string;
+}
+
 interface ClaimManagedEndpointDeprovisionInput extends ManagedEndpointAllocationKey {
   readonly updatedAt: string;
 }
@@ -126,8 +132,8 @@ export class ManagedEndpointAllocations extends Context.Service<
       input: ManagedEndpointAllocationKey,
     ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
     readonly enableRecovery: (
-      input: ManagedEndpointAllocationKey,
-    ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
+      input: EnableManagedEndpointRecoveryInput,
+    ) => Effect.Effect<boolean, ManagedEndpointAllocationPersistenceError>;
     readonly listByTunnelNames: (
       tunnelNames: ReadonlyArray<string>,
     ) => Effect.Effect<
@@ -143,7 +149,7 @@ export class ManagedEndpointAllocations extends Context.Service<
      */
     readonly claimRelease: (
       input: ClaimManagedEndpointReleaseInput,
-    ) => Effect.Effect<boolean, ManagedEndpointAllocationPersistenceError>;
+    ) => Effect.Effect<string | null, ManagedEndpointAllocationPersistenceError>;
     /**
      * Claims the complete allocation for teardown only if its generation still
      * matches the snapshot captured by the unlink operation.
@@ -328,16 +334,35 @@ export const make = Effect.gen(function* () {
         );
     }),
     enableRecovery: Effect.fn("relay.managed_endpoint_allocations.enable_recovery")(function* (
-      input: ManagedEndpointAllocationKey,
+      input: EnableManagedEndpointRecoveryInput,
     ) {
       const now = DateTime.formatIso(yield* DateTime.now);
-      yield* db
+      return yield* db
         .update(relayManagedEndpointAllocations)
         .set({ recoveryEnabledAt: now, updatedAt: now })
         .where(
-          and(whereAllocation(input), isNull(relayManagedEndpointAllocations.recoveryEnabledAt)),
+          and(
+            whereAllocation(input),
+            eq(relayManagedEndpointAllocations.tunnelId, input.tunnelId),
+            exists(
+              new QueryBuilder()
+                .select({ userId: relayEnvironmentLinks.userId })
+                .from(relayEnvironmentLinks)
+                .where(
+                  and(
+                    eq(relayEnvironmentLinks.userId, input.userId),
+                    eq(relayEnvironmentLinks.environmentId, input.environmentId),
+                    eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+                    isNull(relayEnvironmentLinks.revokedAt),
+                  ),
+                )
+                .for("update"),
+            ),
+          ),
         )
+        .returning({ environmentId: relayManagedEndpointAllocations.environmentId })
         .pipe(
+          Effect.map((rows) => rows.length > 0),
           Effect.mapError(
             (cause) =>
               new ManagedEndpointAllocationPersistenceError({
@@ -384,10 +409,11 @@ export const make = Effect.gen(function* () {
     claimRelease: Effect.fn("relay.managed_endpoint_allocations.claim_release")(function* (
       input: ClaimManagedEndpointReleaseInput,
     ) {
+      const claimedAt = DateTime.formatIso(yield* DateTime.now);
       const claimed = yield* db
         .update(relayManagedEndpointAllocations)
         .set({
-          updatedAt: DateTime.formatIso(yield* DateTime.now),
+          updatedAt: claimedAt,
         })
         .where(
           and(
@@ -411,7 +437,7 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-      return claimed;
+      return claimed ? claimedAt : null;
     }),
     claimDeprovision: Effect.fn("relay.managed_endpoint_allocations.claim_deprovision")(function* (
       input: ClaimManagedEndpointDeprovisionInput,

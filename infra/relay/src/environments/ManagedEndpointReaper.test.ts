@@ -55,24 +55,58 @@ function harness(input?: {
   readonly allocations?: ReadonlyArray<ManagedEndpointAllocations.ManagedEndpointTunnelAllocation>;
   readonly namespace?: string;
   readonly failTunnelId?: string;
+  readonly missingOnDeleteTunnelId?: string;
+  readonly missingOnGetTunnelId?: string;
+  readonly reserveOnGetTunnelId?: string;
+  readonly refreshedTunnels?: ReadonlyMap<string, ManagedEndpointProvider.ManagedEndpointTunnel>;
   readonly skipTunnelId?: string;
 }) {
   const listRequests: ManagedEndpointProvider.ManagedEndpointTunnelListRequest[] = [];
   const deleted: string[] = [];
-  const releases: Array<{
-    readonly userId: string;
-    readonly environmentId: string;
-    readonly expectedTunnelId?: string;
-  }> = [];
+  const releases: Array<
+    Parameters<ManagedEndpointProvider.ManagedEndpointProvider["Service"]["release"]>[0]
+  > = [];
+  const remaining = [...(input?.tunnels ?? [])];
   const recorded = (input?.allocations ?? []).map((entry) => {
-    const matching = input?.tunnels?.find((candidate) => candidate.id === entry.tunnelId);
+    const matching = remaining.find((candidate) => candidate.id === entry.tunnelId);
     return typeof matching?.name === "string" ? { ...entry, tunnelName: matching.name } : entry;
   });
   const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
+    get: (tunnelId) =>
+      Effect.suspend(() => {
+        if (tunnelId === input?.missingOnGetTunnelId) {
+          return Effect.fail(
+            new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
+              operation: "get",
+              tunnelId,
+              cause: { _tag: "NotFound" },
+            }),
+          );
+        }
+        const found =
+          input?.refreshedTunnels?.get(tunnelId) ??
+          remaining.find((candidate) => candidate.id === tunnelId);
+        if (found === undefined) {
+          return Effect.fail(
+            new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
+              operation: "get",
+              tunnelId,
+              cause: { _tag: "NotFound" },
+            }),
+          );
+        }
+        if (tunnelId === input?.reserveOnGetTunnelId && typeof found.name === "string") {
+          recorded.push({
+            ...allocation({ tunnelId, recoveryEnabled: false }),
+            tunnelName: found.name,
+          });
+        }
+        return Effect.succeed(found);
+      }),
     list: (request) =>
       Effect.sync(() => {
         listRequests.push(request);
-        const matching = (input?.tunnels ?? []).filter((entry) => entry.status === request.status);
+        const matching = remaining.filter((entry) => entry.status === request.status);
         const start = ((request.page ?? 1) - 1) * (request.perPage ?? 100);
         return {
           result: matching.slice(start, start + (request.perPage ?? 100)),
@@ -87,16 +121,23 @@ function harness(input?: {
     putConfiguration: () => Effect.die("unused"),
     getToken: () => Effect.die("unused"),
     delete: (tunnelId) =>
-      tunnelId === input?.failTunnelId
+      tunnelId === input?.failTunnelId || tunnelId === input?.missingOnDeleteTunnelId
         ? Effect.fail(
             new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
               operation: "delete",
               tunnelId,
-              cause: "Cloudflare refused the deletion",
+              cause:
+                tunnelId === input?.missingOnDeleteTunnelId
+                  ? { _tag: "NotFound" }
+                  : "Cloudflare refused the deletion",
             }),
           )
         : Effect.sync(() => {
             deleted.push(tunnelId);
+            const index = remaining.findIndex((candidate) => candidate.id === tunnelId);
+            if (index !== -1) {
+              remaining.splice(index, 1);
+            }
           }),
   });
   const allocationService = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
@@ -125,6 +166,12 @@ function harness(input?: {
         }
         if (request.expectedTunnelId !== undefined) {
           deleted.push(request.expectedTunnelId);
+          const index = remaining.findIndex(
+            (candidate) => candidate.id === request.expectedTunnelId,
+          );
+          if (index !== -1) {
+            remaining.splice(index, 1);
+          }
         }
         return true;
       }),
@@ -309,6 +356,81 @@ describe("ManagedEndpointReaper", () => {
     }).pipe(Effect.provide(state.layer));
   });
 
+  it.effect("keeps an orphan tunnel that reconnects before deletion", () => {
+    const listed = tunnel({
+      id: "reconnected",
+      suffix: "aaaaaaaaaaaaaaaa",
+      status: "down",
+      timestamp: "2026-08-25T11:00:00.000Z",
+    });
+    const state = harness({
+      tunnels: [listed],
+      refreshedTunnels: new Map([
+        [
+          "reconnected",
+          tunnel({
+            id: "reconnected",
+            suffix: "aaaaaaaaaaaaaaaa",
+            status: "healthy",
+          }),
+        ],
+      ]),
+    });
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MILLIS);
+      const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+      expect((yield* reaper.sweep).deleted).toBe(0);
+      expect(state.deleted).toEqual([]);
+    }).pipe(Effect.provide(state.layer));
+  });
+
+  it.effect("treats an already deleted orphan tunnel as successfully removed", () => {
+    const state = harness({
+      tunnels: [
+        tunnel({
+          id: "gone",
+          suffix: "aaaaaaaaaaaaaaaa",
+          status: "down",
+          timestamp: "2026-08-25T11:00:00.000Z",
+        }),
+      ],
+      missingOnDeleteTunnelId: "gone",
+    });
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MILLIS);
+      const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+      expect(yield* reaper.sweep).toEqual({
+        scanned: 1,
+        deleted: 1,
+        skippedLegacy: 0,
+        failed: 0,
+      });
+    }).pipe(Effect.provide(state.layer));
+  });
+
+  it.effect("does not delete an orphan tunnel reserved during the status check", () => {
+    const state = harness({
+      tunnels: [
+        tunnel({
+          id: "reserved",
+          suffix: "aaaaaaaaaaaaaaaa",
+          status: "down",
+          timestamp: "2026-08-25T11:00:00.000Z",
+        }),
+      ],
+      reserveOnGetTunnelId: "reserved",
+    });
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MILLIS);
+      const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+      expect((yield* reaper.sweep).deleted).toBe(0);
+      expect(state.deleted).toEqual([]);
+    }).pipe(Effect.provide(state.layer));
+  });
+
   it.effect("does not count a tunnel that was replaced before its release", () => {
     const state = harness({
       tunnels: [
@@ -394,6 +516,35 @@ describe("ManagedEndpointReaper", () => {
           .filter((request) => request.status === "down")
           .map((request) => request.page),
       ).toEqual([1, 2]);
+    }).pipe(Effect.provide(state.layer));
+  });
+
+  it.effect("collects every page before deletions shift Cloudflare pagination", () => {
+    const entries = Array.from({ length: 120 }, (_, index) =>
+      tunnel({
+        id: `tunnel-${index}`,
+        suffix: index.toString(16).padStart(16, "0"),
+        status: "down",
+        timestamp: "2026-08-25T11:00:00.000Z",
+      }),
+    );
+    const state = harness({
+      tunnels: entries,
+      allocations: entries
+        .slice(50, 100)
+        .map((entry) => allocation({ tunnelId: entry.id!, recoveryEnabled: false })),
+    });
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MILLIS);
+      const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+      expect(yield* reaper.sweep).toEqual({
+        scanned: 120,
+        deleted: 70,
+        skippedLegacy: 50,
+        failed: 0,
+      });
+      expect(state.deleted).toContain("tunnel-119");
     }).pipe(Effect.provide(state.layer));
   });
 

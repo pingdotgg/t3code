@@ -341,7 +341,7 @@ function relayUnlinkTestLayer(input?: {
       ManagedEndpointProvider.ManagedEndpointProvider.of({
         provision: input?.provision ?? (() => Effect.die("unused provision")),
         prepareDeprovision: input?.prepareDeprovision ?? (() => Effect.succeed(null)),
-        deprovision: input?.deprovision ?? (() => Effect.void),
+        deprovision: input?.deprovision ?? (() => Effect.succeed(true)),
         release: () => Effect.die("unused release"),
       }),
     ),
@@ -362,8 +362,12 @@ const linkedEnvironmentRecord = {
 
 describe("relay managed tunnel recovery", () => {
   it.effect("recovers a linked environment and marks its tunnel as recoverable", () => {
-    let recoveryEnabledFor: { readonly userId: string; readonly environmentId: string } | null =
-      null;
+    let recoveryEnabledFor: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly tunnelId: string;
+      readonly environmentPublicKey: string;
+    } | null = null;
     const runtime = {
       providerKind: "cloudflare_tunnel" as const,
       connectorToken: "replacement-token",
@@ -385,6 +389,8 @@ describe("relay managed tunnel recovery", () => {
       expect(recoveryEnabledFor).toEqual({
         userId: "user-1",
         environmentId: "environment-1",
+        tunnelId: "replacement-tunnel",
+        environmentPublicKey: "public-key",
       });
     }).pipe(
       Effect.provide(
@@ -401,6 +407,7 @@ describe("relay managed tunnel recovery", () => {
             enableRecovery: (input) =>
               Effect.sync(() => {
                 recoveryEnabledFor = input;
+                return true;
               }),
           }),
         ),
@@ -502,14 +509,75 @@ describe("relay managed tunnel recovery", () => {
                   wsBaseUrl: "wss://different.example.test/ws",
                   providerKind: "cloudflare_tunnel",
                 },
-                runtime: { providerKind: "cloudflare_tunnel", connectorToken: "token" },
+                runtime: {
+                  providerKind: "cloudflare_tunnel",
+                  connectorToken: "token",
+                  tunnelId: "replacement-tunnel",
+                },
               }),
           }),
           Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
             enableRecovery: () =>
               Effect.sync(() => {
                 recoveryEnabled = true;
+                return true;
               }),
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("removes a recovered tunnel when its link disappears before registration", () => {
+    let lookups = 0;
+    const cleaned: Array<string> = [];
+    const target = {
+      userId: "user-1",
+      environmentId: "environment-1",
+      hostname: "environment-1.example.test",
+      tunnelId: "replacement-tunnel",
+      tunnelName: "environment-1-tunnel",
+      dnsRecordId: "dns-1",
+      readyAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "replacement-generation",
+    } satisfies ManagedEndpointProvider.ManagedEndpointDeprovisionTarget;
+
+    return Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        recoverEnvironmentTunnelRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+          environmentPublicKey: "public-key",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        }),
+      );
+      expect(error).toMatchObject({ _tag: "Unauthorized" });
+      expect(cleaned).toEqual(["replacement-tunnel"]);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          relayUnlinkTestLayer({
+            getForUser: () => Effect.sync(() => (++lookups === 1 ? linkedEnvironmentRecord : null)),
+            provision: () =>
+              Effect.succeed({
+                endpoint: linkedEnvironmentRecord.endpoint,
+                runtime: {
+                  providerKind: "cloudflare_tunnel",
+                  connectorToken: "replacement-token",
+                  tunnelId: "replacement-tunnel",
+                },
+              }),
+            prepareDeprovision: () => Effect.succeed(target),
+            deprovision: ({ target: captured }) =>
+              Effect.sync(() => {
+                if (captured?.tunnelId) {
+                  cleaned.push(captured.tunnelId);
+                }
+                return true;
+              }),
+          }),
+          Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations)({
+            enableRecovery: () => Effect.succeed(false),
           }),
         ),
       ),
@@ -610,6 +678,7 @@ describe("relay environment unlink", () => {
             Effect.sync(() => {
               expect(request.target).toBe(deprovisionTarget);
               calls.push("deprovision");
+              return true;
             }),
         }),
       ),
@@ -658,6 +727,7 @@ describe("relay environment unlink", () => {
           deprovision: () =>
             Effect.sync(() => {
               calls.push("deprovision");
+              return true;
             }),
         }),
       ),
@@ -685,6 +755,45 @@ describe("relay environment unlink", () => {
           deprovision: () =>
             Effect.sync(() => {
               calls.push("deprovision");
+              return true;
+            }),
+        }),
+      ),
+    );
+  });
+
+  it.effect("retries unlink cleanup when a concurrent tunnel release wins the first claim", () => {
+    let lookups = 0;
+    const targets: Array<ManagedEndpointProvider.ManagedEndpointDeprovisionTarget | undefined> = [];
+    const target = {
+      userId: "user-1",
+      environmentId: "environment-1",
+      hostname: "environment-1.example.test",
+      tunnelId: "tunnel-1",
+      tunnelName: "environment-1-tunnel",
+      dnsRecordId: "dns-1",
+      readyAt: "2026-07-28T00:00:00.000Z",
+      updatedAt: "original-generation",
+    } satisfies ManagedEndpointProvider.ManagedEndpointDeprovisionTarget;
+
+    return Effect.gen(function* () {
+      expect(
+        yield* unlinkEnvironmentRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+        }),
+      ).toBe(true);
+      expect(targets).toEqual([target, undefined]);
+    }).pipe(
+      Effect.provide(
+        relayUnlinkTestLayer({
+          getForUser: () => Effect.sync(() => (++lookups === 1 ? linkedEnvironmentRecord : null)),
+          revokeForUser: () => Effect.succeed(true),
+          prepareDeprovision: () => Effect.succeed(target),
+          deprovision: ({ target: captured }) =>
+            Effect.sync(() => {
+              targets.push(captured ?? undefined);
+              return targets.length > 1;
             }),
         }),
       ),

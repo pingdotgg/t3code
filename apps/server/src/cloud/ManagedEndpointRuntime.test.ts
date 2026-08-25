@@ -82,6 +82,36 @@ function makeHandle(input: {
 }
 
 describe("CloudManagedEndpointRuntime", () => {
+  it.effect("serializes updates to persisted cloud link state", () =>
+    Effect.gen(function* () {
+      const firstEntered = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const secondEntered = yield* Deferred.make<void>();
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        ChildProcessSpawner.make(() => Effect.die("unused")),
+      );
+
+      const first = yield* runtime
+        .withLinkStateLock(
+          Deferred.succeed(firstEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirst)),
+          ),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(firstEntered);
+
+      const second = yield* runtime
+        .withLinkStateLock(Deferred.succeed(secondEntered, undefined))
+        .pipe(Effect.forkChild);
+      expect(yield* Deferred.isDone(secondEntered)).toBe(false);
+
+      yield* Deferred.succeed(releaseFirst, undefined);
+      yield* Fiber.join(first);
+      yield* Fiber.join(second);
+      expect(yield* Deferred.isDone(secondEntered)).toBe(true);
+    }),
+  );
+
   it("classifies Cloudflare connection and warning output", () => {
     expect(
       ManagedEndpointRuntime.classifyRelayClientOutput(

@@ -1178,6 +1178,7 @@ const buildAppUnderTest = (options?: {
             applyConfig: () => Effect.succeed({ status: "disabled" }),
             recoveryRequests: Stream.empty,
             requestRecovery: () => Effect.void,
+            withLinkStateLock: (effect) => effect,
             ...options?.layers?.cloudManagedEndpointRuntime,
           }),
         ),
