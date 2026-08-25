@@ -1855,6 +1855,22 @@ function ChatMarkdown({
                   updateThreadLink: updateThreadPullRequestLink,
                   reportFailure: (operation, cause) => {
                     reportMarkdownActionFailure({ operation, target: href }, cause);
+                    if (
+                      operation === "link-pull-request-to-thread" ||
+                      operation === "unlink-pull-request-from-thread"
+                    ) {
+                      toastManager.add(
+                        stackedThreadToast({
+                          type: "error",
+                          title:
+                            operation === "link-pull-request-to-thread"
+                              ? "Unable to link pull request"
+                              : "Unable to unlink pull request",
+                          description:
+                            cause instanceof Error ? cause.message : "The request failed.",
+                        }),
+                      );
+                    }
                   },
                 });
               }}
