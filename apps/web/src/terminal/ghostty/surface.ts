@@ -336,6 +336,47 @@ export function isTerminalCopyShortcut(
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
 }
 
+/**
+ * Canvas terminals have no DOM selection. Native copy and Electron's Edit
+ * menu `role: "copy"` both read the focused textarea, so an empty IME field
+ * writes blankness to the clipboard. Park the Ghostty selection there first.
+ */
+export function primeTerminalCopyInput(
+  input: Pick<HTMLTextAreaElement, "value" | "select">,
+  selection: string,
+): void {
+  input.value = selection;
+  if (selection.length === 0) return;
+  input.select();
+}
+
+export function clearPrimedTerminalCopyInput(
+  input: Pick<HTMLTextAreaElement, "value">,
+  primedSelection: string,
+): void {
+  // Only blank the copy we parked. The same textarea holds the IME candidate;
+  // wiping whatever is there would cancel CJK composition.
+  if (primedSelection.length === 0 || input.value !== primedSelection) return;
+  input.value = "";
+}
+
+/**
+ * Only a copy event that actually received the selection may cancel the
+ * clipboard.writeText fallback. Claiming without clipboardData (Electron's
+ * menu Copy) used to preventDefault an empty write and skip the fallback,
+ * which is how Cmd+C copied blankness.
+ */
+export function applyTerminalCopyEvent(
+  selection: string,
+  clipboardData: { setData: (type: string, data: string) => void } | null | undefined,
+): { preventDefault: boolean; claimWriteFallback: boolean } {
+  if (selection.length === 0 || !clipboardData) {
+    return { preventDefault: false, claimWriteFallback: false };
+  }
+  clipboardData.setData("text/plain", selection);
+  return { preventDefault: true, claimWriteFallback: true };
+}
+
 export function isTerminalPasteShortcut(
   event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
@@ -356,6 +397,14 @@ export function isTerminalCompositionCommitInput(event: Pick<InputEvent, "inputT
   );
 }
 
+/** IME keydowns must not touch the hidden textarea; it holds the candidate. */
+export function isTerminalCompositionKey(
+  event: Pick<KeyboardEvent, "isComposing" | "key" | "keyCode">,
+  composing: boolean,
+): boolean {
+  return event.isComposing || composing || event.key === "Process" || event.keyCode === 229;
+}
+
 export function isTerminalAltGraphText(
   event: Pick<KeyboardEvent, "getModifierState" | "key">,
 ): boolean {
@@ -367,6 +416,31 @@ export function shouldReportTerminalMouse(
   event: Pick<MouseEvent, "ctrlKey" | "metaKey" | "shiftKey">,
 ): boolean {
   return tracking && !event.shiftKey && !event.ctrlKey && !event.metaKey;
+}
+
+type TerminalMouseAction = "press" | "release" | "motion";
+
+export function resolveTerminalMouseData(
+  action: TerminalMouseAction,
+  data: string,
+  previousMotionData: string,
+): { readonly send: boolean; readonly nextMotionData: string } {
+  const nextMotionData = action === "motion" ? data : "";
+  return {
+    send: data.length > 0 && (action !== "motion" || data !== previousMotionData),
+    nextMotionData,
+  };
+}
+
+export function resolveTerminalMouseTrackingState(
+  previousTracking: boolean,
+  tracking: boolean,
+  motionData: string,
+): { readonly tracking: boolean; readonly motionData: string } {
+  return {
+    tracking,
+    motionData: previousTracking === tracking ? motionData : "",
+  };
 }
 
 export function terminalWheelDeltaRows(
@@ -407,13 +481,6 @@ export function isTerminalLinkPointerGesture(
   return isMacPlatform(platform)
     ? event.metaKey && !event.ctrlKey
     : event.ctrlKey && !event.metaKey;
-}
-
-export function shouldShowTerminalLinkHover(
-  mouseTracking: boolean,
-  linkModifierActive: boolean,
-): boolean {
-  return !mouseTracking || linkModifierActive;
 }
 
 export function ghosttyMouseButton(button: number): number | null {
@@ -542,7 +609,10 @@ export class GhosttyTerminalSurface {
   private pasteShortcutToken = 0;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
+  private primedCopySelection = "";
   private wheelRemainder = 0;
+  private lastMouseMotionData = "";
+  private mouseAnyEventTracking = false;
   private dprMedia: MediaQueryList | null = null;
   // Read live on every blink decision, and watched so that dropping the
   // preference restarts a blink cycle that has no timer left to notice it.
@@ -569,6 +639,7 @@ export class GhosttyTerminalSurface {
     this.scrollbarThumb = scrollbarThumb;
     this.context = context;
     this.core = core;
+    this.mouseAnyEventTracking = core.isMouseAnyEventTracking();
     this.metrics = metrics;
     this.options = options;
     this.theme = options.theme;
@@ -660,6 +731,7 @@ export class GhosttyTerminalSurface {
   write(data: string): void {
     if (this.disposed) return;
     this.core.write(data);
+    this.synchronizeMouseTrackingState();
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
     this.cursorOn = true;
@@ -669,7 +741,9 @@ export class GhosttyTerminalSurface {
 
   resetAndWrite(data: string): void {
     if (this.disposed) return;
+    this.lastMouseMotionData = "";
     this.core.resetAndWrite(data);
+    this.synchronizeMouseTrackingState();
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
     this.cursorOn = true;
@@ -866,6 +940,7 @@ export class GhosttyTerminalSurface {
   }
 
   clearSelection(): void {
+    this.clearPrimedCopy();
     this.core.clearSelection();
     this.selectionEnd = null;
     this.selectionAnchorScreen = null;
@@ -941,6 +1016,8 @@ export class GhosttyTerminalSurface {
       // clipboard write against it the same way paste races its read. The
       // Shift variant has no native event (Chrome binds Ctrl+Shift+C to
       // inspect), so synthesize one with execCommand("copy").
+      const selection = this.getSelection();
+      this.primeCopy(selection);
       if (event.shiftKey) {
         event.preventDefault();
         document.execCommand("copy");
@@ -955,12 +1032,10 @@ export class GhosttyTerminalSurface {
         if (typeof clipboard?.writeText === "function") {
           // Defer the write past the default action: the native copy event
           // (dispatched synchronously with the default action) claims the
-          // token first when it fires, and the write covers browsers whose
-          // shortcut produces no copy event. Skipping a write the native
-          // event already handled stops a stale resolution from clobbering a
-          // clipboard the user filled after this copy.
+          // token first when it actually writes, and the write covers browsers
+          // whose shortcut produces no copy event. The primed textarea is what
+          // Electron's edit-menu Copy reads if it runs after this handler.
           const token = ++this.copyShortcutToken;
-          const selection = this.getSelection();
           void Promise.resolve().then(() => {
             if (this.disposed || this.copyShortcutToken !== token) return;
             void clipboard.writeText(selection).then(
@@ -1013,10 +1088,12 @@ export class GhosttyTerminalSurface {
       return;
     }
     // keyCode 229 is Safari's only signal that this keydown opens an IME
-    // composition; encoding it would double the committed text.
-    if (event.isComposing || this.composing || event.key === "Process" || event.keyCode === 229) {
+    // composition; encoding it would double the committed text. Do not blank
+    // the textarea first: onInput leaves the in-progress candidate there.
+    if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
+    this.clearPrimedCopy();
     const data = this.core.encodeKey(event);
     if (data.length === 0) return;
     this.suppressedKeyCodes.delete(event.code);
@@ -1028,7 +1105,7 @@ export class GhosttyTerminalSurface {
   private readonly onKeyUp = (event: KeyboardEvent) => {
     this.updateLinkModifier(event);
     if (this.suppressedKeyCodes.delete(event.code)) return;
-    if (event.isComposing || this.composing || event.key === "Process" || event.keyCode === 229) {
+    if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
     // Ghostty's encoder only emits release codes when the terminal enabled the
@@ -1072,15 +1149,32 @@ export class GhosttyTerminalSurface {
     this.dprMedia.addEventListener("change", this.onDevicePixelRatioChange);
   }
 
+  private primeCopy(selection: string): void {
+    this.primedCopySelection = selection;
+    primeTerminalCopyInput(this.input, selection);
+  }
+
+  private clearPrimedCopy(): void {
+    clearPrimedTerminalCopyInput(this.input, this.primedCopySelection);
+    this.primedCopySelection = "";
+  }
+
   private readonly onCopyEvent = (event: ClipboardEvent) => {
-    if (!this.hasSelection()) return;
-    event.preventDefault();
-    event.clipboardData?.setData("text/plain", this.getSelection());
-    // The native event beat any deferred write; drop the in-flight fallback.
-    this.copyShortcutToken += 1;
-    if (this.clearSelectionAfterCopy) {
-      this.clearSelectionAfterCopy = false;
-      this.clearSelection();
+    const selection = this.hasSelection() ? this.getSelection() : this.input.value;
+    // Menu-role Copy never hits the keydown primer. The native action reads
+    // this.input, so park the current selection first — including when
+    // clipboardData is missing and we must not preventDefault.
+    this.primeCopy(selection);
+    const result = applyTerminalCopyEvent(selection, event.clipboardData);
+    if (result.preventDefault) event.preventDefault();
+    if (result.claimWriteFallback) {
+      // The native event actually wrote the selection; drop the in-flight
+      // writeText so a late resolution cannot clobber a later user copy.
+      this.copyShortcutToken += 1;
+      if (this.clearSelectionAfterCopy) {
+        this.clearSelectionAfterCopy = false;
+        this.clearSelection();
+      }
     }
   };
 
@@ -1098,6 +1192,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onCompositionStart = () => {
+    this.clearPrimedCopy();
     this.clearCompositionInputSuppression();
     this.composing = true;
   };
@@ -1201,9 +1296,10 @@ export class GhosttyTerminalSurface {
     if (this.linkActivationPointerId === event.pointerId) return;
     // Hover motion is only reportable in any-event tracking (DEC 1003); normal and
     // button-event tracking never report motion without a captured pressed button.
+    const anyEventTracking = this.synchronizeMouseTrackingState();
     if (
       this.mouseReportingPointerId === event.pointerId ||
-      shouldReportTerminalMouse(this.core.isMouseAnyEventTracking(), event)
+      shouldReportTerminalMouse(anyEventTracking, event)
     ) {
       event.preventDefault();
       this.hoverPointer = { x: event.clientX, y: event.clientY };
@@ -1215,6 +1311,7 @@ export class GhosttyTerminalSurface {
       this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
       return;
     }
+    this.lastMouseMotionData = "";
     if (!this.selectionAnchorScreen || !this.canvas.hasPointerCapture(event.pointerId)) {
       this.updateHoverCursor(event);
       return;
@@ -1293,6 +1390,7 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onPointerLeave = () => {
+    this.lastMouseMotionData = "";
     this.clearHoveredLink();
   };
 
@@ -1304,10 +1402,7 @@ export class GhosttyTerminalSurface {
 
   private refreshHoveredLink(): void {
     const pointer = this.hoverPointer;
-    const link =
-      pointer && shouldShowTerminalLinkHover(this.core.isMouseTracking(), this.linkModifierActive)
-        ? this.linkAt(pointer.x, pointer.y)
-        : null;
+    const link = pointer && this.linkModifierActive ? this.linkAt(pointer.x, pointer.y) : null;
     this.setHoveredLink(link);
   }
 
@@ -1751,11 +1846,7 @@ export class GhosttyTerminalSurface {
     return terminalLinkAtPositionWithRange(this.snapshot.rowData, cell.y, cell.x);
   }
 
-  private sendMouse(
-    action: "press" | "release" | "motion",
-    button: number | null,
-    event: MouseEvent,
-  ): void {
+  private sendMouse(action: TerminalMouseAction, button: number | null, event: MouseEvent): void {
     const bounds = this.canvas.getBoundingClientRect();
     const data = this.core.encodeMouse({
       action,
@@ -1777,7 +1868,23 @@ export class GhosttyTerminalSurface {
       paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
       anyButtonPressed: event.buttons !== 0,
     });
-    if (data.length > 0) this.options.onData(data);
+    const resolution = resolveTerminalMouseData(action, data, this.lastMouseMotionData);
+    this.lastMouseMotionData = resolution.nextMotionData;
+    if (resolution.send) this.options.onData(data);
+  }
+
+  private synchronizeMouseTrackingState(): boolean {
+    // Output writes can toggle DEC 1003 without moving the pointer. Keep the
+    // previous mode so the next same-cell motion starts a fresh tracking session.
+    const tracking = this.core.isMouseAnyEventTracking();
+    const state = resolveTerminalMouseTrackingState(
+      this.mouseAnyEventTracking,
+      tracking,
+      this.lastMouseMotionData,
+    );
+    this.mouseAnyEventTracking = state.tracking;
+    this.lastMouseMotionData = state.motionData;
+    return tracking;
   }
 
   private buttonFromButtons(buttons: number): number | null {
