@@ -590,6 +590,9 @@ importers:
       effect:
         specifier: 4.0.0-beta.103
         version: 4.0.0-beta.103(patch_hash=af36b7948b6f9c56623074662b51dade5699880c1a7c71245de73e13c3185fb6)
+      heic-to:
+        specifier: ^1.5.2
+        version: 1.5.2
       jose:
         specifier: 'catalog:'
         version: 6.2.2
@@ -927,6 +930,9 @@ importers:
       '@electron/asar':
         specifier: ^3.4.1
         version: 3.4.1
+      '@electron/osx-sign':
+        specifier: 2.7.0
+        version: 2.7.0
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
@@ -2048,6 +2054,11 @@ packages:
   '@electron/osx-sign@1.3.3':
     resolution: {integrity: sha512-KZ8mhXvWv2rIEgMbWZ4y33bDHyUKMXnx4M0sTyPNK/vcB81ImdeY9Ggdqy0SWbMDgmbqyQ+phgejh6V3R2QuSg==}
     engines: {node: '>=12.0.0'}
+    hasBin: true
+
+  '@electron/osx-sign@2.7.0':
+    resolution: {integrity: sha512-9DGhNqKMl6ibkhUoXbN7OHX2gZznfY10L3ZwG0u6r667Kfb6kec4JEfFTXftoqzmOfZ+OzwDbr4p/nKBMHnz0g==}
+    engines: {node: '>=22.12.0'}
     hasBin: true
 
   '@electron/rebuild@4.0.4':
@@ -5148,10 +5159,12 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@yuuang/ffi-rs-android-arm64@1.3.2':
     resolution: {integrity: sha512-eDYLT0kVBkp7e2BwdRDmt6N1rkeDPUHDefk3ZX0/nok+GLsqfy1WBoSL3Yg7HVXN1EyW8OBVc2uK8Zq8HbmaSA==}
@@ -7148,6 +7161,9 @@ packages:
 
   headers-polyfill@4.0.3:
     resolution: {integrity: sha512-IScLbePpkvO846sIwOtOTDjutRMWdXdJmXdMvk6gCBHxFO8d+QKOQedyZSxFTTFYRSmlgSTDtXqqq4pcenBXLQ==}
+
+  heic-to@1.5.2:
+    resolution: {integrity: sha512-8Fns+lZHAWmz5U5IUxDeXKwIf3foBoKNPLxxFY4B0MkLjNuomEIHCoDbDE+x/llFK3NCEO1cu4+n3iUKY+Svmw==}
 
   hermes-compiler@250829098.0.10:
     resolution: {integrity: sha512-TcRlZ0/TlyfJqquRFAWoyElVNnkdYRi/sEp4/Qy8/GYxjg8j2cS9D4MjuaQ+qimkmLN7AmO+44IznRf06mAr0w==}
@@ -11895,6 +11911,15 @@ snapshots:
       isbinaryfile: 4.0.10
       minimist: 1.2.8
       plist: 3.1.1
+    transitivePeerDependencies:
+      - supports-color
+
+  '@electron/osx-sign@2.7.0':
+    dependencies:
+      debug: 4.4.3
+      isbinaryfile: 4.0.10
+      plist: 3.1.1
+      semver: 7.8.5
     transitivePeerDependencies:
       - supports-color
 
@@ -17819,6 +17844,8 @@ snapshots:
       space-separated-tokens: 2.0.2
 
   headers-polyfill@4.0.3: {}
+
+  heic-to@1.5.2: {}
 
   hermes-compiler@250829098.0.10: {}
 
