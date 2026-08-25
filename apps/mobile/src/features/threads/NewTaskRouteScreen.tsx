@@ -7,9 +7,18 @@ import {
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { useEffect, useRef } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  Pressable,
+  ScrollView,
+  TextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFontFamily } from "../../lib/useFontFamily";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { cn } from "../../lib/cn";
 
@@ -20,6 +29,11 @@ import { useProjects } from "../../state/entities";
 import type { WorkspaceState } from "../../state/workspaceModel";
 import { useWorkspaceState } from "../../state/workspace";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import {
+  createNativeMailSearchToolbarItem,
+  NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
+  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
+} from "../layout/native-mail-search-toolbar";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { getProjectScopeSelectionTarget } from "./new-task-project-selection";
@@ -93,6 +107,27 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const insets = useSafeAreaInsets();
   const chevronColor = useThemeColor("--color-chevron");
   const accentColor = useThemeColor("--color-icon-muted");
+  const placeholderColor = useThemeColor("--color-placeholder");
+  const foregroundColor = useThemeColor("--color-foreground");
+  const fontFamily = useFontFamily("regular");
+  const usesNativeMailSearchToolbar = Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
+  const [projectQuery, setProjectQuery] = useState("");
+  const showsProjectSearch = projectScopes.length > 0;
+  const filteredProjectScopes = useMemo(() => {
+    const query = projectQuery.trim().toLocaleLowerCase();
+    if (query.length === 0) {
+      return projectScopes;
+    }
+    return projectScopes.filter(
+      (scope) =>
+        scope.title.toLocaleLowerCase().includes(query) ||
+        scope.projects.some(
+          (project) =>
+            project.title.toLocaleLowerCase().includes(query) ||
+            project.workspaceRoot.toLocaleLowerCase().includes(query),
+        ),
+    );
+  }, [projectQuery, projectScopes]);
   const { getShare, releaseShareReservation } = useIncomingShare();
   const routeShareId = Array.isArray(route.params?.incomingShareId)
     ? route.params.incomingShareId[0]
@@ -200,6 +235,20 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                 : []
             }
           />
+          {showsProjectSearch ? (
+            <View className="px-5 pb-2 pt-3">
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                className="h-11 rounded-xl bg-card px-4 text-base text-foreground"
+                onChangeText={setProjectQuery}
+                placeholder="Find a project"
+                placeholderTextColor={placeholderColor}
+                style={{ color: foregroundColor, fontFamily }}
+                value={projectQuery}
+              />
+            </View>
+          ) : null}
         </>
       ) : (
         <>
@@ -207,8 +256,40 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
             options={{
               title: screenTitle,
               unstable_headerSubtitle: incomingShareSubtitle ?? undefined,
+              unstable_headerToolbarItems:
+                showsProjectSearch && usesNativeMailSearchToolbar
+                  ? () => [
+                      createNativeMailSearchToolbarItem({
+                        onSearchTextChange: setProjectQuery,
+                        placeholder: "Find a project",
+                        searchTextChangeId: "new-task-project-search-text",
+                        showsSearchDismissButton: true,
+                      }),
+                    ]
+                  : undefined,
+              headerSearchBarOptions:
+                showsProjectSearch && !usesNativeMailSearchToolbar
+                  ? {
+                      allowToolbarIntegration: true,
+                      autoCapitalize: "none",
+                      hideNavigationBar: false,
+                      obscureBackground: false,
+                      placeholder: "Find a project",
+                      onChangeText: (event) => {
+                        setProjectQuery(event.nativeEvent.text);
+                      },
+                      onCancelButtonPress: () => {
+                        setProjectQuery("");
+                      },
+                    }
+                  : undefined,
             }}
           />
+          {showsProjectSearch && !usesNativeMailSearchToolbar ? (
+            <NativeHeaderToolbar placement="bottom">
+              <NativeHeaderToolbar.SearchBarSlot />
+            </NativeHeaderToolbar>
+          ) : null}
           <NativeHeaderToolbar placement="right">
             {layout.usesSplitView ? (
               <NativeHeaderToolbar.Button
@@ -231,11 +312,16 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
 
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         className="flex-1"
         contentContainerStyle={{
           gap: 12,
-          paddingBottom: Math.max(insets.bottom, 18) + 18,
+          paddingBottom:
+            Math.max(insets.bottom, 18) +
+            18 +
+            (usesNativeMailSearchToolbar ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET : 0),
           paddingHorizontal: 20,
           paddingTop: 8,
         }}
@@ -269,9 +355,18 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               </Pressable>
             )}
           </View>
+        ) : filteredProjectScopes.length === 0 ? (
+          <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card px-6 py-8">
+            <Text className="text-center text-lg font-t3-bold text-foreground">
+              No matching projects
+            </Text>
+            <Text className="text-center text-sm leading-normal text-foreground-muted">
+              No projects match your search.
+            </Text>
+          </View>
         ) : (
           <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
-            {projectScopes.map((scope, scopeIndex) => {
+            {filteredProjectScopes.map((scope, scopeIndex) => {
               const hasMultipleProjects = scope.projects.length > 1;
               const selectionTarget = getProjectScopeSelectionTarget(scope, selectedEnvironmentId);
               return (
