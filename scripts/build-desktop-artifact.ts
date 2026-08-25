@@ -2189,6 +2189,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",
+      // Smart App Control validates unpacked native addons independently from
+      // the signed desktop executable. Extend release signing to every native
+      // Windows library that Electron or the server sidecar loads at runtime.
+      signExts: [".node", ".dll"],
       // Resource editing applies the product metadata and icon independently
       // of code signing. Disabling it for local unsigned builds leaves the
       // packaged executable with Electron's stock icon.
