@@ -18,7 +18,7 @@ import {
   setTitleForThreadUrl,
   useThreadRecentHistory,
 } from "~/browserHistoryStore";
-import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
+import { type ComposerAttachment, useComposerDraftStore } from "~/composerDraftStore";
 import { previewAnnotationScreenshotFile } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import {
@@ -68,7 +68,7 @@ interface Props {
   visible: boolean;
   onSendAnnotation?: (
     annotation: PreviewAnnotationPayload,
-    image: ComposerImageAttachment | null,
+    image: ComposerAttachment | null,
   ) => void;
 }
 
@@ -103,7 +103,7 @@ export function PreviewView({
     selectThreadPreviewMiniPlayer(state.byThreadKey, threadRef),
   );
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
-  const addImage = useComposerDraftStore((store) => store.addImage);
+  const addAttachment = useComposerDraftStore((store) => store.addAttachment);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const environmentHostname = environmentHttpBaseUrl
     ? new URL(environmentHttpBaseUrl).hostname
@@ -577,10 +577,10 @@ export function PreviewView({
                 sizeBytes: screenshotFile.size,
                 previewUrl: annotation.screenshot.dataUrl,
                 file: screenshotFile,
-              } satisfies ComposerImageAttachment)
+              } satisfies ComposerAttachment)
             : null;
         if (image) {
-          addImage(threadRef, image);
+          addAttachment(threadRef, image);
         }
         if (submission === "send") {
           onSendAnnotation?.(annotation, image);
@@ -608,7 +608,7 @@ export function PreviewView({
         }
       }
     })();
-  }, [addImage, addPreviewAnnotation, onSendAnnotation, runtimeTabId, threadRef]);
+  }, [addAttachment, addPreviewAnnotation, onSendAnnotation, runtimeTabId, threadRef]);
 
   // If the active tab changes mid-pick (close, thread switch, hot restart),
   // tell main to tear down the in-flight session AND reset our local toggle

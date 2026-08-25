@@ -51,6 +51,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
+  FileTextIcon,
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
@@ -1017,7 +1018,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 key={image.id}
                 className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
               >
-                {image.previewUrl ? (
+                {image.type === "document" ? (
+                  <div className="flex min-h-[72px] items-center gap-2 px-3 py-3 text-left text-[11px] text-secondary-label">
+                    <FileTextIcon className="size-4 shrink-0" />
+                    <span className="break-all">{image.name}</span>
+                  </div>
+                ) : image.previewUrl ? (
                   <button
                     type="button"
                     className="h-full w-full cursor-zoom-in"

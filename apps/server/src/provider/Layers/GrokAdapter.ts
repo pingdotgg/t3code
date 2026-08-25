@@ -32,6 +32,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
+import { documentAttachmentUnsupportedDetail } from "../../attachmentMime.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -961,6 +962,16 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 input.attachments ?? [],
                 (attachment) =>
                   Effect.gen(function* () {
+                    if (attachment.type === "document") {
+                      return yield* new ProviderAdapterRequestError({
+                        provider: PROVIDER,
+                        method: "session/prompt",
+                        detail: documentAttachmentUnsupportedDetail({
+                          providerLabel: "Grok",
+                          fileName: attachment.name,
+                        }),
+                      });
+                    }
                     const attachmentPath = resolveAttachmentPath({
                       attachmentsDir: serverConfig.attachmentsDir,
                       attachment,

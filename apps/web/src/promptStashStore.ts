@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { create } from "zustand";
 
-import { PersistedComposerImageAttachment } from "./composerDraftStore";
+import { PersistedComposerAttachment } from "./composerDraftStore";
 import { createMemoryStorage, type StateStorage } from "./lib/storage";
 
 export const PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v2";
@@ -36,7 +36,7 @@ const StashEntrySchema = Schema.Struct({
   id: Schema.String,
   createdAt: Schema.String,
   prompt: Schema.String,
-  attachments: Schema.Array(PersistedComposerImageAttachment),
+  attachments: Schema.Array(PersistedComposerAttachment),
   /** Names of images that exceeded the attachment budget and were not saved. */
   droppedImageNames: Schema.Array(Schema.String),
   /**
@@ -99,12 +99,12 @@ function clearOrphanedPendingImages(
  * admitted in order so the earliest-added images win.
  */
 export function partitionStashAttachments(
-  attachments: ReadonlyArray<PersistedComposerImageAttachment>,
+  attachments: ReadonlyArray<PersistedComposerAttachment>,
 ): {
-  kept: PersistedComposerImageAttachment[];
+  kept: PersistedComposerAttachment[];
   droppedNames: string[];
 } {
-  const kept: PersistedComposerImageAttachment[] = [];
+  const kept: PersistedComposerAttachment[] = [];
   const droppedNames: string[] = [];
   let usedChars = 0;
   for (const attachment of attachments) {
@@ -216,7 +216,7 @@ interface PromptStashStoreState {
   finalizeEntryImages: (
     entryId: string,
     images: {
-      attachments: ReadonlyArray<PersistedComposerImageAttachment>;
+      attachments: ReadonlyArray<PersistedComposerAttachment>;
       droppedImageNames: ReadonlyArray<string>;
       unreadableImageNames: ReadonlyArray<string>;
     },

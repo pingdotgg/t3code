@@ -2,7 +2,7 @@
 
 import type { PreviewAnnotationPayload, ScopedThreadRef } from "@t3tools/contracts";
 
-import type { ComposerImageAttachment } from "~/composerDraftStore";
+import type { ComposerAttachment } from "~/composerDraftStore";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
@@ -16,7 +16,7 @@ interface Props {
   visible: boolean;
   onSendAnnotation?: (
     annotation: PreviewAnnotationPayload,
-    image: ComposerImageAttachment | null,
+    image: ComposerAttachment | null,
   ) => void;
 }
 

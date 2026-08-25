@@ -9,11 +9,14 @@ export interface ExpandedImagePreview {
 }
 
 export function buildExpandedImagePreview(
-  images: ReadonlyArray<{ id: string; name: string; previewUrl?: string }>,
+  images: ReadonlyArray<{ id: string; name: string; previewUrl?: string; type?: string }>,
   selectedImageId: string,
 ): ExpandedImagePreview | null {
+  // Documents share the attachment list but have nothing to show in a lightbox.
   const previewableImages = images.flatMap((image) =>
-    image.previewUrl ? [{ id: image.id, src: image.previewUrl, name: image.name }] : [],
+    image.previewUrl && image.type !== "document"
+      ? [{ id: image.id, src: image.previewUrl, name: image.name }]
+      : [],
   );
   if (previewableImages.length === 0) {
     return null;

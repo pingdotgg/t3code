@@ -52,6 +52,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { documentAttachmentUnsupportedDetail } from "../../attachmentMime.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -1787,6 +1788,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     input: ProviderSendTurnInput,
     attachment: NonNullable<ProviderSendTurnInput["attachments"]>[number],
   ) {
+    if (attachment.type === "document") {
+      return yield* new ProviderAdapterRequestError({
+        provider: PROVIDER,
+        method: "turn/start",
+        detail: documentAttachmentUnsupportedDetail({
+          providerLabel: "Codex",
+          fileName: attachment.name,
+        }),
+      });
+    }
     const attachmentPath = resolveAttachmentPath({
       attachmentsDir: serverConfig.attachmentsDir,
       attachment,

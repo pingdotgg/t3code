@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
   pickElement: vi.fn(),
   previewAnnotationScreenshotFile: vi.fn(),
   addPreviewAnnotation: vi.fn(),
-  addImage: vi.fn(),
+  addAttachment: vi.fn(),
   toggleAnnotation: null as (() => void) | null,
   pictureInPicture: false,
   showEmptyState: false,
@@ -79,11 +79,11 @@ vi.mock("~/browser/browserDefaults", () => ({
 
 vi.mock("~/composerDraftStore", () => ({
   useComposerDraftStore: (
-    select: (store: { addPreviewAnnotation: () => void; addImage: () => void }) => unknown,
+    select: (store: { addPreviewAnnotation: () => void; addAttachment: () => void }) => unknown,
   ) =>
     select({
       addPreviewAnnotation: mocks.addPreviewAnnotation,
-      addImage: mocks.addImage,
+      addAttachment: mocks.addAttachment,
     }),
 }));
 
@@ -338,7 +338,7 @@ describe("PreviewView navigation", () => {
     mocks.pickElement.mockReset();
     mocks.previewAnnotationScreenshotFile.mockReset();
     mocks.addPreviewAnnotation.mockClear();
-    mocks.addImage.mockClear();
+    mocks.addAttachment.mockClear();
     mocks.toggleAnnotation = null;
     mocks.pictureInPicture = false;
     mocks.showEmptyState = false;
@@ -575,6 +575,6 @@ describe("PreviewView navigation", () => {
     mocks.toggleAnnotation?.();
 
     await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null));
-    expect(mocks.addImage).not.toHaveBeenCalled();
+    expect(mocks.addAttachment).not.toHaveBeenCalled();
   });
 });

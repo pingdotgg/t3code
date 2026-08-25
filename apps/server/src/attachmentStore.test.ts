@@ -5,7 +5,9 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
+import { inferAttachmentExtension } from "./attachmentMime.ts";
 import {
+  attachmentRelativePath,
   createAttachmentId,
   createPendingAttachmentId,
   parseAttachmentUuid,
@@ -16,6 +18,48 @@ import {
 } from "./attachmentStore.ts";
 
 describe("attachmentStore", () => {
+  it("stores document attachments under a .pdf filename", () => {
+    const relativePath = attachmentRelativePath({
+      type: "document",
+      id: "thread-12345678-1234-1234-1234-123456789abc",
+      name: "spec.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 4,
+    });
+    expect(relativePath).toBe("thread-12345678-1234-1234-1234-123456789abc.pdf");
+  });
+
+  it("still stores image attachments under their image extension", () => {
+    const relativePath = attachmentRelativePath({
+      type: "image",
+      id: "thread-12345678-1234-1234-1234-123456789abc",
+      name: "diagram.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+    });
+    expect(relativePath).toBe("thread-12345678-1234-1234-1234-123456789abc.png");
+  });
+
+  it("routes upload extensions by mime type, since the token has no kind", () => {
+    expect(inferAttachmentExtension({ mimeType: "application/pdf", fileName: "a.pdf" })).toBe(
+      ".pdf",
+    );
+    expect(inferAttachmentExtension({ mimeType: "image/png", fileName: "a.png" })).toBe(".png");
+  });
+
+  it("finds a stored pdf by attachment id", () => {
+    const attachmentsDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "attachment-pdf-"));
+    try {
+      const attachmentId = "thread-12345678-1234-1234-1234-123456789abc";
+      NodeFS.writeFileSync(NodePath.join(attachmentsDir, `${attachmentId}.pdf`), "pdf");
+      expect(resolveAttachmentPathById({ attachmentsDir, attachmentId })).toBe(
+        NodePath.join(attachmentsDir, `${attachmentId}.pdf`),
+      );
+    } finally {
+      NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
+    }
+  });
+
   it("sanitizes thread ids when creating attachment ids", () => {
     const attachmentId = createAttachmentId("thread.folder/unsafe space");
     expect(attachmentId).toBeTruthy();

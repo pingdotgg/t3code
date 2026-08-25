@@ -170,6 +170,21 @@ const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPE_SET = new Set<string>(
 export function isProviderSendTurnSupportedImageMimeType(mimeType: string): boolean {
   return PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPE_SET.has(mimeType.toLowerCase());
 }
+
+export const PROVIDER_SEND_TURN_MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+export const PROVIDER_SEND_TURN_SUPPORTED_DOCUMENT_MIME_TYPES = ["application/pdf"] as const;
+const PROVIDER_SEND_TURN_SUPPORTED_DOCUMENT_MIME_TYPE_SET = new Set<string>(
+  PROVIDER_SEND_TURN_SUPPORTED_DOCUMENT_MIME_TYPES,
+);
+
+/**
+ * Whether a dropped or picked document mime type can be sent on a provider
+ * turn. Unlike images, documents are not universally supported: adapters that
+ * cannot forward them reject the turn with an explicit reason.
+ */
+export function isProviderSendTurnSupportedDocumentMimeType(mimeType: string): boolean {
+  return PROVIDER_SEND_TURN_SUPPORTED_DOCUMENT_MIME_TYPE_SET.has(mimeType.toLowerCase());
+}
 const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
 const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 // Correlation id is command id by design in this model.
@@ -202,9 +217,42 @@ const UploadChatImageAttachment = Schema.Struct({
 });
 export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
 
-export const ChatAttachment = Schema.Union([ChatImageAttachment]);
+export const ChatDocumentAttachment = Schema.Struct({
+  type: Schema.Literal("document"),
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(100),
+    Schema.isPattern(/^application\/pdf$/i),
+  ),
+  sizeBytes: NonNegativeInt.check(
+    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_DOCUMENT_BYTES),
+  ),
+});
+export type ChatDocumentAttachment = typeof ChatDocumentAttachment.Type;
+
+const UploadChatDocumentAttachment = Schema.Struct({
+  type: Schema.Literal("document"),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(100),
+    Schema.isPattern(/^application\/pdf$/i),
+  ),
+  sizeBytes: NonNegativeInt.check(
+    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_DOCUMENT_BYTES),
+  ),
+  dataUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
+  ),
+});
+export type UploadChatDocumentAttachment = typeof UploadChatDocumentAttachment.Type;
+
+export const ChatAttachment = Schema.Union([ChatImageAttachment, ChatDocumentAttachment]);
 export type ChatAttachment = typeof ChatAttachment.Type;
-const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
+const UploadChatAttachment = Schema.Union([
+  UploadChatImageAttachment,
+  UploadChatDocumentAttachment,
+]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
 
 export const ProjectScriptIcon = Schema.Literals([

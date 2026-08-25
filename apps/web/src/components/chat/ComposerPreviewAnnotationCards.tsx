@@ -2,7 +2,7 @@ import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { Frame, MousePointerClick, Paintbrush, PenLine, RotateCcw, X } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { ComposerImageAttachment } from "~/composerDraftStore";
+import type { ComposerAttachment } from "~/composerDraftStore";
 import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
 import {
   formatAttachmentUploadProgress,
@@ -14,11 +14,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface ComposerPreviewAnnotationCardsProps {
   annotations: ReadonlyArray<PreviewAnnotationPayload>;
-  images: ReadonlyArray<ComposerImageAttachment>;
+  images: ReadonlyArray<ComposerAttachment>;
   onRemove: (annotationId: string) => void;
   onExpandImage: (imageId: string) => void;
   uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
-  onRetryUpload?: (image: ComposerImageAttachment) => void;
+  onRetryUpload?: (image: ComposerAttachment) => void;
   className?: string;
 }
 

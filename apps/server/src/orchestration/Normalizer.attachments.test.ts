@@ -312,7 +312,7 @@ describe("normalizeDispatchCommand attachments", () => {
           })),
         },
       }).pipe(Effect.flip);
-      expect(mismatchedType.message).toContain("image type");
+      expect(mismatchedType.message).toContain("file type");
     }).pipe(Effect.provide(testLayer)),
   );
 });

@@ -29,7 +29,7 @@ import {
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
-import { inferImageExtension } from "../imageMime.ts";
+import { inferAttachmentExtension } from "../attachmentMime.ts";
 
 export const ATTACHMENT_UPLOAD_ROUTE_PREFIX = "/api/attachments/upload";
 
@@ -152,7 +152,7 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
   }
 
   const config = yield* ServerConfig.ServerConfig;
-  const extension = inferImageExtension({ mimeType: claims.mimeType, fileName: claims.name });
+  const extension = inferAttachmentExtension({ mimeType: claims.mimeType, fileName: claims.name });
   const relativePath = `${claims.attachmentId}${extension}`;
   const finalPath = resolveAttachmentRelativePath({
     attachmentsDir: config.attachmentsDir,

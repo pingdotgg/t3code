@@ -40,6 +40,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
+import { documentAttachmentUnsupportedDetail } from "../../attachmentMime.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -972,6 +973,16 @@ export function makeCursorAdapter(
           }
           if (input.attachments && input.attachments.length > 0) {
             for (const attachment of input.attachments) {
+              if (attachment.type === "document") {
+                return yield* new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "session/prompt",
+                  detail: documentAttachmentUnsupportedDetail({
+                    providerLabel: "Cursor",
+                    fileName: attachment.name,
+                  }),
+                });
+              }
               const attachmentPath = resolveAttachmentPath({
                 attachmentsDir: serverConfig.attachmentsDir,
                 attachment,

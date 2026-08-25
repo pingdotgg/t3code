@@ -65,7 +65,7 @@ import {
   markPromotedDraftThreadByRef,
   markPromotedDraftThreads,
   markPromotedDraftThreadsByRef,
-  type ComposerImageAttachment,
+  type ComposerAttachment,
   useComposerDraftStore,
   DraftId,
 } from "./composerDraftStore";
@@ -84,7 +84,7 @@ function makeImage(input: {
   mimeType?: string;
   sizeBytes?: number;
   lastModified?: number;
-}): ComposerImageAttachment {
+}): ComposerAttachment {
   const name = input.name ?? "image.png";
   const mimeType = input.mimeType ?? "image/png";
   const sizeBytes = input.sizeBytes ?? 4;
@@ -171,7 +171,7 @@ function draftByKey(key: string) {
   return useComposerDraftStore.getState().draftsByThreadKey[key] ?? undefined;
 }
 
-describe("composerDraftStore addImages", () => {
+describe("composerDraftStore addAttachments", () => {
   const threadId = ThreadId.make("thread-dedupe");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
   let originalRevokeObjectUrl: typeof URL.revokeObjectURL;
@@ -206,10 +206,10 @@ describe("composerDraftStore addImages", () => {
       lastModified: 12345,
     });
 
-    useComposerDraftStore.getState().addImages(threadRef, [first, duplicate]);
+    useComposerDraftStore.getState().addAttachments(threadRef, [first, duplicate]);
 
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
-    expect(draft?.images.map((image) => image.id)).toEqual(["img-1"]);
+    expect(draft?.attachments.map((image) => image.id)).toEqual(["img-1"]);
     expect(revokeSpy).toHaveBeenCalledWith("blob:duplicate");
   });
 
@@ -231,11 +231,11 @@ describe("composerDraftStore addImages", () => {
       lastModified: 999,
     });
 
-    useComposerDraftStore.getState().addImage(threadRef, first);
-    useComposerDraftStore.getState().addImage(threadRef, duplicateLater);
+    useComposerDraftStore.getState().addAttachment(threadRef, first);
+    useComposerDraftStore.getState().addAttachment(threadRef, duplicateLater);
 
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
-    expect(draft?.images.map((image) => image.id)).toEqual(["img-a"]);
+    expect(draft?.attachments.map((image) => image.id)).toEqual(["img-a"]);
     expect(revokeSpy).toHaveBeenCalledWith("blob:b");
   });
 
@@ -249,10 +249,10 @@ describe("composerDraftStore addImages", () => {
       previewUrl: "blob:shared",
     });
 
-    useComposerDraftStore.getState().addImages(threadRef, [first, duplicateSameUrl]);
+    useComposerDraftStore.getState().addAttachments(threadRef, [first, duplicateSameUrl]);
 
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
-    expect(draft?.images.map((image) => image.id)).toEqual(["img-shared"]);
+    expect(draft?.attachments.map((image) => image.id)).toEqual(["img-shared"]);
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:shared");
   });
 });
@@ -279,7 +279,7 @@ describe("composerDraftStore clearComposerContent", () => {
       id: "img-optimistic",
       previewUrl: "blob:optimistic",
     });
-    useComposerDraftStore.getState().addImage(threadRef, first);
+    useComposerDraftStore.getState().addAttachment(threadRef, first);
 
     useComposerDraftStore.getState().clearComposerContent(threadRef);
 
@@ -289,7 +289,7 @@ describe("composerDraftStore clearComposerContent", () => {
   });
 });
 
-describe("composerDraftStore moveComposerPromptAndImages", () => {
+describe("composerDraftStore moveComposerPromptAndAttachments", () => {
   const sourceDraftId = DraftId.make("draft-move-source");
   const destinationDraftId = DraftId.make("draft-move-destination");
   let originalRevokeObjectUrl: typeof URL.revokeObjectURL;
@@ -309,14 +309,14 @@ describe("composerDraftStore moveComposerPromptAndImages", () => {
   it("moves prompt and images to the destination without revoking preview URLs", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(sourceDraftId, "fix the login redirect");
-    store.addImages(sourceDraftId, [makeImage({ id: "img-move", previewUrl: "blob:move" })]);
+    store.addAttachments(sourceDraftId, [makeImage({ id: "img-move", previewUrl: "blob:move" })]);
 
-    store.moveComposerPromptAndImages(sourceDraftId, destinationDraftId);
+    store.moveComposerPromptAndAttachments(sourceDraftId, destinationDraftId);
 
     expect(draftByKey(sourceDraftId)).toBeUndefined();
     const destination = draftByKey(destinationDraftId);
     expect(destination?.prompt).toBe("fix the login redirect");
-    expect(destination?.images.map((image) => image.id)).toEqual(["img-move"]);
+    expect(destination?.attachments.map((image) => image.id)).toEqual(["img-move"]);
     expect(revokeSpy).not.toHaveBeenCalled();
   });
 
@@ -327,7 +327,7 @@ describe("composerDraftStore moveComposerPromptAndImages", () => {
     store.addTerminalContext(sourceThreadRef, makeTerminalContext({ id: "ctx-stay" }));
     store.setPrompt(sourceThreadRef, `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} explain this error`);
 
-    store.moveComposerPromptAndImages(sourceThreadRef, destinationDraftId);
+    store.moveComposerPromptAndAttachments(sourceThreadRef, destinationDraftId);
 
     const source = draftFor(sourceThreadId, TEST_ENVIRONMENT_ID);
     expect(source?.terminalContexts.map((context) => context.id)).toEqual(["ctx-stay"]);
@@ -339,7 +339,7 @@ describe("composerDraftStore moveComposerPromptAndImages", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(sourceDraftId, "keep me");
 
-    store.moveComposerPromptAndImages(sourceDraftId, sourceDraftId);
+    store.moveComposerPromptAndAttachments(sourceDraftId, sourceDraftId);
 
     expect(draftByKey(sourceDraftId)?.prompt).toBe("keep me");
   });
@@ -369,7 +369,7 @@ describe("composerDraftStore syncPersistedAttachments", () => {
       id: "img-persisted",
       previewUrl: "blob:persisted",
     });
-    useComposerDraftStore.getState().addImage(threadRef, image);
+    useComposerDraftStore.getState().addAttachment(threadRef, image);
     setLocalStorageItem(
       COMPOSER_DRAFT_STORAGE_KEY,
       {
@@ -397,7 +397,7 @@ describe("composerDraftStore syncPersistedAttachments", () => {
     await Promise.resolve();
 
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.persistedAttachments).toEqual([]);
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.nonPersistedImageIds).toEqual([image.id]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.nonPersistedAttachmentIds).toEqual([image.id]);
   });
 });
 
@@ -768,7 +768,10 @@ describe("composerDraftStore project draft thread mapping", () => {
       });
       store.setPrompt(localDraftId, "local draft");
       store.setPrompt(remoteDraftId, "remote draft");
-      store.addImage(localDraftId, makeImage({ id: "img-local", previewUrl: "blob:local-draft" }));
+      store.addAttachment(
+        localDraftId,
+        makeImage({ id: "img-local", previewUrl: "blob:local-draft" }),
+      );
       store.setPrompt(localThreadRef, "local thread draft");
       store.setPrompt(remoteThreadRef, "remote thread draft");
 
@@ -894,7 +897,10 @@ describe("composerDraftStore project draft thread mapping", () => {
 
     try {
       store.setProjectDraftThreadId(projectRef, draftId, { threadId });
-      store.addImage(draftId, makeImage({ id: "img-project-clear", previewUrl: "blob:clear" }));
+      store.addAttachment(
+        draftId,
+        makeImage({ id: "img-project-clear", previewUrl: "blob:clear" }),
+      );
 
       store.clearProjectDraftThreadId(projectRef);
 
@@ -914,7 +920,7 @@ describe("composerDraftStore project draft thread mapping", () => {
 
     try {
       store.setProjectDraftThreadId(projectRef, draftId, { threadId });
-      store.addImage(
+      store.addAttachment(
         draftId,
         makeImage({ id: "img-project-clear-by-id", previewUrl: "blob:clear-by-id" }),
       );

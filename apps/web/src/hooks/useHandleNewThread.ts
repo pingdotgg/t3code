@@ -93,7 +93,7 @@ export function useNewThreadHandler() {
         getDraftSession,
         getDraftThread,
         applyStickyState,
-        moveComposerPromptAndImages,
+        moveComposerPromptAndAttachments,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
         setModelSelection,
@@ -153,7 +153,7 @@ export function useNewThreadHandler() {
           !composerDraftHasUserContent(getComposerDraft(destinationDraftId)) &&
           composerDraftHasUserContent(getComposerDraft(carryContentSourceDraftId))
         ) {
-          moveComposerPromptAndImages(carryContentSourceDraftId, destinationDraftId);
+          moveComposerPromptAndAttachments(carryContentSourceDraftId, destinationDraftId);
         }
       };
       const project = projects.find(

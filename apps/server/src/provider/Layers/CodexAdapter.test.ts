@@ -336,6 +336,39 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     }),
   );
 
+  it.effect("rejects document attachments with a reason naming the file", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("sess-document");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "summarize",
+          attachments: [
+            {
+              type: "document",
+              id: "sess-document-12345678-1234-1234-1234-123456789abc",
+              name: "spec.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 4,
+            },
+          ],
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(result.failure._tag, "ProviderAdapterRequestError");
+      NodeAssert.ok(result.failure.detail.includes("spec.pdf"));
+      NodeAssert.ok(result.failure.detail.includes("Codex"));
+    }),
+  );
+
   it.effect("uploads feedback for the active Codex thread", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

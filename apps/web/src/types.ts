@@ -1,4 +1,5 @@
 import type {
+  ChatDocumentAttachment as ContractChatDocumentAttachment,
   ChatImageAttachment as ContractChatImageAttachment,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointSummary,
@@ -35,7 +36,11 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
   readonly previewUrl?: string;
 }
 
-export type ChatAttachment = ChatImageAttachment;
+export interface ChatDocumentAttachment extends ContractChatDocumentAttachment {
+  readonly previewUrl?: string;
+}
+
+export type ChatAttachment = ChatImageAttachment | ChatDocumentAttachment;
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;

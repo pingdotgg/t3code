@@ -1240,6 +1240,7 @@ const SUPPORTED_CLAUDE_IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/webp",
 ]);
+const SUPPORTED_CLAUDE_DOCUMENT_MIME_TYPES = new Set(["application/pdf"]);
 const CLAUDE_SETTING_SOURCES = [
   "user",
   "project",
@@ -1290,6 +1291,22 @@ function buildClaudeImageContentBlock(input: {
   };
 }
 
+// Claude accepts PDFs as first-class document blocks, so the file is handed
+// over intact rather than described to the model in text.
+function buildClaudeDocumentContentBlock(input: {
+  readonly mimeType: string;
+  readonly bytes: Uint8Array;
+}): Record<string, unknown> {
+  return {
+    type: "document",
+    source: {
+      type: "base64",
+      media_type: input.mimeType,
+      data: Buffer.from(input.bytes).toString("base64"),
+    },
+  };
+}
+
 const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   input: ProviderSendTurnInput,
   dependencies: {
@@ -1306,15 +1323,15 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   }
 
   for (const attachment of input.attachments ?? []) {
-    if (attachment.type !== "image") {
-      continue;
-    }
-
-    if (!SUPPORTED_CLAUDE_IMAGE_MIME_TYPES.has(attachment.mimeType)) {
+    const supportedMimeTypes =
+      attachment.type === "image"
+        ? SUPPORTED_CLAUDE_IMAGE_MIME_TYPES
+        : SUPPORTED_CLAUDE_DOCUMENT_MIME_TYPES;
+    if (!supportedMimeTypes.has(attachment.mimeType.toLowerCase())) {
       return yield* new ProviderAdapterRequestError({
         provider: PROVIDER,
         method: "turn/start",
-        detail: `Unsupported Claude image attachment type '${attachment.mimeType}'.`,
+        detail: `Unsupported Claude ${attachment.type} attachment type '${attachment.mimeType}'.`,
       });
     }
 
@@ -1343,10 +1360,9 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
     );
 
     sdkContent.push(
-      buildClaudeImageContentBlock({
-        mimeType: attachment.mimeType,
-        bytes,
-      }),
+      attachment.type === "image"
+        ? buildClaudeImageContentBlock({ mimeType: attachment.mimeType, bytes })
+        : buildClaudeDocumentContentBlock({ mimeType: attachment.mimeType, bytes }),
     );
   }
 

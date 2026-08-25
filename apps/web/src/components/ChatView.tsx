@@ -230,7 +230,7 @@ import {
   beginBackgroundDraftSubmissionByRef,
   clearBackgroundDraftSubmissionByRef,
   composerDraftHasUserContent,
-  type ComposerImageAttachment,
+  type ComposerAttachment,
   type DraftThreadEnvMode,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
@@ -1384,7 +1384,7 @@ function ChatViewContent(props: ChatViewProps) {
     composerDraftHasUserContent(store.getComposerDraft(composerDraftTarget)),
   );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
-  const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
+  const addComposerDraftAttachments = useComposerDraftStore((store) => store.addAttachments);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.setTerminalContexts,
   );
@@ -1410,7 +1410,7 @@ function ChatViewContent(props: ChatViewProps) {
     (store) => store.setLogicalProjectDraftThreadId,
   );
   const promptRef = useRef("");
-  const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
+  const composerAttachmentsRef = useRef<ComposerAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
@@ -5332,7 +5332,7 @@ function ChatViewContent(props: ChatViewProps) {
     submissionIntent: ComposerSubmissionIntent = "foreground",
     directAnnotation?: {
       annotation: PreviewAnnotationPayload;
-      image: ComposerImageAttachment | null;
+      image: ComposerAttachment | null;
     },
   ) => {
     e?.preventDefault();
@@ -5392,7 +5392,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
-    const composerImages =
+    const composerAttachments =
       directAnnotation?.image &&
       !sendContextImages.some((image) => image.id === directAnnotation.image?.id)
         ? [...sendContextImages, directAnnotation.image]
@@ -5420,7 +5420,7 @@ function ChatViewContent(props: ChatViewProps) {
       hasSendableContent,
     } = deriveComposerSendState({
       prompt: promptForSend,
-      imageCount: composerImages.length,
+      imageCount: composerAttachments.length,
       terminalContexts: composerTerminalContexts,
       elementContextCount:
         composerElementContexts.length +
@@ -5429,7 +5429,7 @@ function ChatViewContent(props: ChatViewProps) {
     });
     const feedbackCommand =
       ctxSelectedProvider === "codex" &&
-      composerImages.length === 0 &&
+      composerAttachments.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
@@ -5550,7 +5550,7 @@ function ChatViewContent(props: ChatViewProps) {
     // otherwise they send as plain text like any other message.
     const standaloneSlashCommand =
       settings.planModeEnabled &&
-      composerImages.length === 0 &&
+      composerAttachments.length === 0 &&
       sendableComposerTerminalContexts.length === 0 &&
       composerElementContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
@@ -5606,7 +5606,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
 
-    const composerImagesSnapshot = [...composerImages];
+    const composerImagesSnapshot = [...composerAttachments];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
@@ -5938,7 +5938,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (failure !== null) {
       if (
         promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
+        composerAttachmentsRef.current.length === 0 &&
         composerTerminalContextsRef.current.length === 0 &&
         composerElementContextsRef.current.length === 0 &&
         (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.previewAnnotations
@@ -5956,11 +5956,11 @@ function ChatViewContent(props: ChatViewProps) {
         });
         promptRef.current = promptForSend;
         const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
-        composerImagesRef.current = retryComposerImages;
+        composerAttachmentsRef.current = retryComposerImages;
         composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
         composerElementContextsRef.current = composerElementContextsSnapshot;
         setComposerDraftPrompt(composerDraftTarget, promptForSend);
-        addComposerDraftImages(composerDraftTarget, retryComposerImages);
+        addComposerDraftAttachments(composerDraftTarget, retryComposerImages);
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
@@ -7081,7 +7081,7 @@ function ChatViewContent(props: ChatViewProps) {
                             terminalOpen={Boolean(terminalUiState.terminalOpen)}
                             gitCwd={gitCwd}
                             promptRef={promptRef}
-                            composerImagesRef={composerImagesRef}
+                            composerAttachmentsRef={composerAttachmentsRef}
                             composerTerminalContextsRef={composerTerminalContextsRef}
                             composerElementContextsRef={composerElementContextsRef}
                             onSend={onSend}

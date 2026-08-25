@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { ComposerImageAttachment } from "../composerDraftStore";
+import type { ComposerAttachment } from "../composerDraftStore";
 
 const mocks = vi.hoisted(() => ({
   createUploadUrl: Symbol("create-upload-url"),
@@ -97,7 +97,7 @@ class TestXmlHttpRequest {
 const firstEnvironment = EnvironmentId.make("environment-1");
 const secondEnvironment = EnvironmentId.make("environment-2");
 
-function makeImage(id: string): ComposerImageAttachment {
+function makeImage(id: string): ComposerAttachment {
   const file = new File([new Uint8Array([1, 2, 3])], `${id}.png`, { type: "image/png" });
   return {
     type: "image",

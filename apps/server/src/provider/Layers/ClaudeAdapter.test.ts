@@ -847,6 +847,71 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("embeds document attachments as Claude document blocks", () => {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-documents-"));
+    const harness = makeHarness({
+      cwd: "/tmp/project-claude-documents",
+      baseDir,
+    });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() =>
+          NodeFS.rmSync(baseDir, {
+            recursive: true,
+            force: true,
+          }),
+        ),
+      );
+
+      const adapter = yield* ClaudeAdapter;
+      const { attachmentsDir } = yield* ServerConfig;
+
+      const attachment = {
+        type: "document" as const,
+        id: "thread-claude-attachment-12345678-1234-1234-1234-123456789abc",
+        name: "spec.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 4,
+      };
+      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+      assert.isTrue(attachmentPath.endsWith(".pdf"));
+      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "Summarize this.",
+        attachments: [attachment],
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      const promptMessage = yield* Effect.promise(() => readFirstPromptMessage(createInput));
+      assert.deepEqual(promptMessage?.message.content, [
+        {
+          type: "text",
+          text: "Summarize this.",
+        },
+        {
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: "AQIDBA==",
+          },
+        },
+      ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("maps Claude stream/runtime messages to canonical provider runtime events", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

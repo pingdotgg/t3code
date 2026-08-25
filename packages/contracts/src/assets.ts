@@ -2,7 +2,9 @@ import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
+  PROVIDER_SEND_TURN_MAX_DOCUMENT_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  PROVIDER_SEND_TURN_SUPPORTED_DOCUMENT_MIME_TYPES,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
   ProjectFaviconPath,
 } from "./orchestration.ts";
@@ -44,10 +46,15 @@ export const ATTACHMENT_UPLOAD_URL_TTL_MS = 10 * 60_000;
 
 export const AttachmentCreateUploadUrlInput = Schema.Struct({
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
-  mimeType: Schema.Literals(PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES),
+  mimeType: Schema.Literals([
+    ...PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
+    ...PROVIDER_SEND_TURN_SUPPORTED_DOCUMENT_MIME_TYPES,
+  ]),
   sizeBytes: NonNegativeInt.check(
     Schema.isGreaterThanOrEqualTo(1),
-    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES),
+    Schema.isLessThanOrEqualTo(
+      Math.max(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES, PROVIDER_SEND_TURN_MAX_DOCUMENT_BYTES),
+    ),
   ),
 });
 export type AttachmentCreateUploadUrlInput = typeof AttachmentCreateUploadUrlInput.Type;

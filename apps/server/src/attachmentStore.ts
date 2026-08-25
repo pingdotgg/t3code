@@ -9,9 +9,10 @@ import {
   normalizeAttachmentRelativePath,
   resolveAttachmentRelativePath,
 } from "./attachmentPaths.ts";
-import { inferImageExtension, SAFE_IMAGE_FILE_EXTENSIONS } from "./imageMime.ts";
+import { inferDocumentExtension, SAFE_ATTACHMENT_FILE_EXTENSIONS } from "./attachmentMime.ts";
+import { inferImageExtension } from "./imageMime.ts";
 
-const ATTACHMENT_FILENAME_EXTENSIONS = [...SAFE_IMAGE_FILE_EXTENSIONS, ".bin"];
+const ATTACHMENT_FILENAME_EXTENSIONS = [...SAFE_ATTACHMENT_FILE_EXTENSIONS, ".bin"];
 const ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS = 80;
 const ATTACHMENT_ID_THREAD_SEGMENT_PATTERN = "[a-z0-9_]+(?:-[a-z0-9_]+)*";
 const ATTACHMENT_ID_UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -75,6 +76,13 @@ export function attachmentRelativePath(attachment: ChatAttachment): string {
   switch (attachment.type) {
     case "image": {
       const extension = inferImageExtension({
+        mimeType: attachment.mimeType,
+        fileName: attachment.name,
+      });
+      return `${attachment.id}${extension}`;
+    }
+    case "document": {
+      const extension = inferDocumentExtension({
         mimeType: attachment.mimeType,
         fileName: attachment.name,
       });
