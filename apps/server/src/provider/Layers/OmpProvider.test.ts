@@ -80,6 +80,35 @@ describe("OMP model catalog", () => {
     ]);
   });
 
+  it("ignores malformed selectors when resolving the configured default", () => {
+    const models = buildOmpModelsFromJson(
+      {
+        models: [
+          {
+            provider: "moonshot",
+            selector: "moonshot/kimi-k2.6",
+            name: "Kimi K2.6",
+            thinking: ["low", "high"],
+          },
+          {
+            provider: "moonshot",
+            selector: "moonshot/kimi-k2.6:high",
+          },
+        ],
+      },
+      { defaultModelRole: "moonshot/kimi-k2.6:high" },
+    );
+
+    expect(models).toHaveLength(1);
+    expect(models[0]).toMatchObject({
+      slug: "moonshot/kimi-k2.6",
+      isDefault: true,
+      capabilities: {
+        optionDescriptors: [{ id: "thinking", currentValue: "high" }],
+      },
+    });
+  });
+
   it("rejects malformed JSON and only preserves configured model catalog arguments", () => {
     expect(parseOmpModelsJson("not json")).toBeUndefined();
     expect(parseOmpModelsJson('{"unexpected":[]}')).toEqual([]);

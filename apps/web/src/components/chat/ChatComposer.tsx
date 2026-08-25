@@ -2087,7 +2087,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     event: KeyboardEvent,
   ) => {
     if (key === "Tab" && event.shiftKey) {
-      if (!planModeUiEnabled) return false;
+      if (!planModeUiEnabled || !composerProviderControls.showInteractionModeToggle) return false;
       toggleInteractionMode();
       return true;
     }

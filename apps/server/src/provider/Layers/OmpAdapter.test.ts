@@ -152,6 +152,31 @@ describe("OMP elicitation mapping", () => {
       },
     );
   });
+
+  it("omits blank numeric answers instead of fabricating zero", () => {
+    const questions = ompElicitationQuestions({
+      mode: "form",
+      sessionId: "session-1",
+      message: "Set numeric values",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          attempts: { type: "integer", title: "Attempts" },
+          ratio: { type: "number", title: "Ratio" },
+        },
+        required: ["attempts"],
+      },
+    });
+
+    assert.deepStrictEqual(
+      buildOmpElicitationContent(questions, { attempts: null as never, ratio: " " }),
+      {},
+    );
+    assert.deepStrictEqual(buildOmpElicitationContent(questions, { attempts: "2", ratio: "0.5" }), {
+      attempts: 2,
+      ratio: 0.5,
+    });
+  });
 });
 
 describe("OMP permission mapping", () => {

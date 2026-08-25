@@ -380,8 +380,12 @@ export const make = (
 
     yield* acp.handleSessionUpdate((notification) =>
       Effect.gen(function* () {
+        const configOptions = extractConfigOptionsFromSessionUpdate(notification);
         const gate = yield* Ref.get(sessionLoadGateRef);
         if (Option.isSome(gate) && gate.value.active) {
+          if (configOptions) {
+            yield* Ref.set(configOptionsRef, configOptions);
+          }
           const lastActivityAtMillis = yield* Clock.currentTimeMillis;
           yield* Ref.set(
             sessionLoadGateRef,
@@ -393,6 +397,14 @@ export const make = (
           return;
         }
         if (sessionUpdateIsReplay(notification)) {
+          const startState = yield* Ref.get(startStateRef);
+          if (
+            configOptions &&
+            (startState._tag !== "Started" ||
+              notification.sessionId === startState.result.sessionId)
+          ) {
+            yield* Ref.set(configOptionsRef, configOptions);
+          }
           return;
         }
         const startState = yield* Ref.get(startStateRef);
@@ -404,7 +416,6 @@ export const make = (
         ) {
           return;
         }
-        const configOptions = extractConfigOptionsFromSessionUpdate(notification);
         if (configOptions) {
           yield* Ref.set(configOptionsRef, configOptions);
         }
@@ -660,7 +671,9 @@ export const make = (
       }
 
       yield* Ref.set(modeStateRef, parseSessionModeState(sessionSetupResult));
-      yield* Ref.set(configOptionsRef, sessionConfigOptionsFromSetup(sessionSetupResult));
+      if (sessionSetupResult.configOptions != null) {
+        yield* Ref.set(configOptionsRef, sessionSetupResult.configOptions);
+      }
 
       const nextState = {
         sessionId,

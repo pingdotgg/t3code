@@ -295,6 +295,9 @@ function normalizeElicitationAnswer(
     return undefined;
   }
   if (schema.type === "number" || schema.type === "integer") {
+    if (scalar == null || (typeof scalar === "string" && scalar.trim().length === 0)) {
+      return undefined;
+    }
     const value = typeof scalar === "number" ? scalar : Number(scalar);
     if (!Number.isFinite(value)) return undefined;
     return schema.type === "integer" && !Number.isInteger(value) ? undefined : value;

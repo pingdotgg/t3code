@@ -340,6 +340,14 @@ const program = Effect.gen(function* () {
         content: { type: "text", text: "replayed assistant text" },
       },
     });
+    writeJsonRpcNotification("session/update", {
+      _meta: { isReplay: true },
+      sessionId: requestedSessionId,
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: configOptions(),
+      },
+    });
   };
 
   yield* agent.handleLoadSession((request) =>

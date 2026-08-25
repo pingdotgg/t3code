@@ -326,6 +326,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     expect(
       packageToolUpdate.resolve({
         binaryPath: "/opt/homebrew/bin/package-tool",
+        realCommandPath: "/opt/homebrew/Cellar/package-tool/1.0.0/bin/package-tool",
         env: {
           PATH: "",
         },
@@ -350,6 +351,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       packageFirstToolUpdate.resolve({
         binaryPath: "/opt/homebrew/bin/package-first-tool",
         resolvedCommandPath: "/opt/homebrew/bin/package-first-tool",
+        realCommandPath: "/opt/homebrew/Cellar/package-first-tool/1.0.0/bin/package-first-tool",
       }),
     ).toEqual({
       provider: driver("packageFirstTool"),
@@ -359,6 +361,24 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         executable: "brew",
         args: ["upgrade", "example/tap/package-first-tool"],
         lockKey: "homebrew",
+      },
+    });
+  });
+
+  it("keeps native updates for standalone binaries in generic Homebrew bin directories", () => {
+    expect(
+      packageFirstToolUpdate.resolve({
+        binaryPath: "/opt/homebrew/bin/package-first-tool",
+        resolvedCommandPath: "/opt/homebrew/bin/package-first-tool",
+      }),
+    ).toEqual({
+      provider: driver("packageFirstTool"),
+      packageName: "@example/package-first-tool",
+      update: {
+        command: "package-first-tool update",
+        executable: "package-first-tool",
+        args: ["update"],
+        lockKey: "package-first-tool-native",
       },
     });
   });
@@ -441,6 +461,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     expect(
       nativePackageToolUpdate.resolve({
         binaryPath: "/opt/homebrew/bin/native-package-tool",
+        realCommandPath: "/opt/homebrew/Cellar/native-package-tool/1.0.0/bin/native-package-tool",
         env: {
           PATH: "",
         },
@@ -464,6 +485,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     expect(
       scopedPackageToolUpdate.resolve({
         binaryPath: "/opt/homebrew/bin/scoped-package-tool",
+        realCommandPath: "/opt/homebrew/Cellar/scoped-package-tool/1.0.0/bin/scoped-package-tool",
         env: {
           PATH: "",
         },

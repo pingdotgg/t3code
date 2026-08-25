@@ -140,10 +140,14 @@ export function buildOmpModelsFromJson(
   const catalog = asRecord(value);
   if (!catalog || !Array.isArray(catalog.models)) return [];
 
-  const catalogSelectors = catalog.models.flatMap((entry) => {
-    const selector = trimmedString(asRecord(entry)?.selector);
-    return selector ? [selector] : [];
+  const catalogModels = catalog.models.flatMap((entry) => {
+    const model = asRecord(entry);
+    const selector = trimmedString(model?.selector);
+    const name = trimmedString(model?.name);
+    const provider = trimmedString(model?.provider);
+    return selector && name && provider ? [{ model, selector, name, provider }] : [];
   });
+  const catalogSelectors = catalogModels.map((model) => model.selector);
   const defaultSelector = catalogSelectors
     .toSorted((left, right) => right.length - left.length)
     .find(
@@ -157,12 +161,8 @@ export function buildOmpModelsFromJson(
       : undefined;
 
   const seen = new Set<string>();
-  return catalog.models.flatMap((entry) => {
-    const model = asRecord(entry);
-    const selector = trimmedString(model?.selector);
-    const name = trimmedString(model?.name);
-    const provider = trimmedString(model?.provider);
-    if (!selector || !name || !provider || seen.has(selector)) return [];
+  return catalogModels.flatMap(({ model, selector, name, provider }) => {
+    if (seen.has(selector)) return [];
     seen.add(selector);
 
     return [

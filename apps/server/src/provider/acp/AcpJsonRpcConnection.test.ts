@@ -575,6 +575,8 @@ describe("AcpSessionRuntime", () => {
       expect(started.sessionSetupResult._meta).toMatchObject({
         t3SessionLoadReady: "replay_idle",
       });
+      const configOptions = yield* runtime.getConfigOptions;
+      expect(configOptions.find((option) => option.id === "model")?.currentValue).toBe("default");
 
       const unexpectedReplayEvent = yield* Stream.runHead(runtime.getEvents()).pipe(
         Effect.timeoutOption("100 millis"),

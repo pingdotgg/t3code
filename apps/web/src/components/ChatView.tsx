@@ -2308,9 +2308,9 @@ function ChatViewContent(props: ChatViewProps) {
   const preferredInteractionMode = settings.planModeEnabled
     ? (composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE)
     : DEFAULT_INTERACTION_MODE;
-  const interactionModeSelection =
-    activeThread?.modelSelection ??
-    (composerActiveProvider ? { instanceId: composerActiveProvider } : null);
+  const interactionModeSelection = composerActiveProvider
+    ? { instanceId: composerActiveProvider }
+    : activeThread?.modelSelection;
   const interactionMode = normalizeProviderInteractionMode(
     providerStatuses,
     interactionModeSelection,
