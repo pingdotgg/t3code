@@ -158,10 +158,13 @@ describe("model slug normalization", () => {
 });
 
 describe("applyClaudePromptEffortPrefix", () => {
-  it("keeps compact commands intact when ultrathink is selected", () => {
+  it("keeps slash commands intact when ultrathink is selected", () => {
     expect(applyClaudePromptEffortPrefix("/compact", "ultrathink")).toBe("/compact");
     expect(applyClaudePromptEffortPrefix(" /compact keep recent errors ", "ultrathink")).toBe(
       "/compact keep recent errors",
+    );
+    expect(applyClaudePromptEffortPrefix(" /review src/model.ts ", "ultrathink")).toBe(
+      "/review src/model.ts",
     );
   });
 
