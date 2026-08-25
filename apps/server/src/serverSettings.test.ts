@@ -528,7 +528,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.isFalse(settings.providers.grok.enabled);
       assert.isTrue(settings.providers.opencode.enabled);
-      assert.isTrue(settings.providers.cursor.enabled);
+      assert.isFalse(settings.providers.cursor.enabled);
       assert.equal(settings.providers.opencode.serverUrl, "http://127.0.0.1:4096");
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -540,13 +540,16 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        '{"providerInstances":{"grok":{"driver":"grok","config":{}},"opencode_work":{"driver":"opencode","config":{"serverUrl":"http://127.0.0.1:4096"}},"opencode_unused":{"driver":"opencode","config":{}}}}',
+        '{"providerInstances":{"cursor_work":{"driver":"cursor","config":{}},"grok":{"driver":"grok","config":{}},"opencode_work":{"driver":"opencode","config":{"serverUrl":"http://127.0.0.1:4096"}},"opencode_unused":{"driver":"opencode","config":{}}}}',
       );
+      yield* recordProviderUsage("cursor", "cursor_work");
       yield* recordProviderUsage("grok", null);
       yield* recordProviderUsage("opencode", "opencode_work");
 
       const settings = yield* serverSettings.getSettings;
 
+      assert.isTrue(settings.providers.cursor.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("cursor_work")]?.enabled);
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("opencode_work")]?.enabled);
       const unused = settings.providerInstances[ProviderInstanceId.make("opencode_unused")];
@@ -590,7 +593,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.isFalse(settings.providers.grok.enabled);
       assert.isFalse(settings.providers.opencode.enabled);
-      assert.isTrue(settings.providers.cursor.enabled);
+      assert.isFalse(settings.providers.cursor.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -603,7 +606,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.isTrue(settings.providers.grok.enabled);
       assert.isFalse(settings.providers.opencode.enabled);
-      assert.isTrue(settings.providers.cursor.enabled);
+      assert.isFalse(settings.providers.cursor.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -634,7 +637,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.isFalse(settings.providers.grok.enabled);
       assert.isTrue(settings.providers.opencode.enabled);
-      assert.isTrue(settings.providers.cursor.enabled);
+      assert.isFalse(settings.providers.cursor.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -667,7 +670,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const initial = yield* serverSettings.getSettings;
       assert.isFalse(initial.providers.grok.enabled);
       assert.isFalse(initial.providers.opencode.enabled);
-      assert.isTrue(initial.providers.cursor.enabled);
+      assert.isFalse(initial.providers.cursor.enabled);
 
       const next = yield* serverSettings.updateSettings({
         addProjectBaseDirectory: "~/Development",
@@ -681,7 +684,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.isFalse(next.providers.grok.enabled);
       assert.isFalse(next.providers.opencode.enabled);
-      assert.isTrue(next.providers.cursor.enabled);
+      assert.isFalse(next.providers.cursor.enabled);
       const grok = next.providerInstances[ProviderInstanceId.make("grok")];
       assert.isDefined(grok);
       assert.isFalse(resolveProviderInstanceEnabled(grok));
@@ -689,6 +692,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       const persisted = JSON.parse(raw);
+      assert.isFalse(persisted.providers.cursor.enabled);
       assert.isFalse(persisted.providers.grok.enabled);
       assert.isFalse(persisted.providers.opencode.enabled);
       assert.isUndefined(persisted.providerInstances.grok.enabled);
@@ -877,6 +881,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         providers: {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
+          },
+          cursor: {
+            enabled: false,
           },
           grok: {
             enabled: false,
