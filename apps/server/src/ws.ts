@@ -2136,6 +2136,10 @@ const makeWsRpcLayer = (
             postHogClient.listReportArtefacts(input),
             { "rpc.aggregate": "posthog" },
           ),
+        [WS_METHODS.posthogSetReportState]: (input) =>
+          observeRpcEffect(WS_METHODS.posthogSetReportState, postHogClient.setReportState(input), {
+            "rpc.aggregate": "posthog",
+          }),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitPreparePullRequestThread,

@@ -16,6 +16,8 @@ import {
   type PostHogReportsListResult,
   PostHogRequestError,
   type PostHogRpcError,
+  type PostHogSetReportStateInput,
+  type PostHogSetReportStateResult,
   PostHogUnauthorizedError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -43,6 +45,7 @@ const PaginatedArtefacts = Schema.Struct({
 });
 const decodePaginatedReports = Schema.decodeUnknownEffect(PaginatedReports);
 const decodePaginatedArtefacts = Schema.decodeUnknownEffect(PaginatedArtefacts);
+const decodeReport = Schema.decodeUnknownEffect(PostHogReport);
 
 export class PostHogClient extends Context.Service<
   PostHogClient,
@@ -53,6 +56,9 @@ export class PostHogClient extends Context.Service<
     readonly listReportArtefacts: (
       input: PostHogReportArtefactsInput,
     ) => Effect.Effect<PostHogReportArtefactsResult, PostHogRpcError>;
+    readonly setReportState: (
+      input: PostHogSetReportStateInput,
+    ) => Effect.Effect<PostHogSetReportStateResult, PostHogRpcError>;
   }
 >()("t3/posthog/PostHogClient") {}
 
@@ -136,6 +142,45 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const postJson = Effect.fn("PostHogClient.postJson")(function* (
+    connection: PostHogConnection,
+    path: string,
+    body: unknown,
+  ) {
+    const request = HttpClientRequest.post(
+      `${connection.host}/api/projects/${encodeURIComponent(connection.projectId)}${path}`,
+    ).pipe(
+      HttpClientRequest.setHeaders({
+        accept: "application/json",
+        authorization: `Bearer ${connection.apiKey}`,
+      }),
+      HttpClientRequest.bodyJsonUnsafe(body),
+    );
+    const response = yield* httpClient
+      .execute(request)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PostHogRequestError({ message: `PostHog request failed: ${cause.message}`, cause }),
+        ),
+      );
+    if (response.status === 401 || response.status === 403) {
+      return yield* new PostHogUnauthorizedError({ status: response.status });
+    }
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new PostHogRequestError({
+        message: `PostHog answered ${response.status} for ${path}.`,
+        status: response.status,
+      });
+    }
+    return yield* response.json.pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({ message: "PostHog returned an unreadable body.", cause }),
+      ),
+    );
+  });
+
   const listReports: PostHogClient["Service"]["listReports"] = Effect.fn(
     "PostHogClient.listReports",
   )(function* (input) {
@@ -177,7 +222,25 @@ export const make = Effect.gen(function* () {
     return { artefacts: page.results };
   });
 
-  return { listReports, listReportArtefacts } satisfies PostHogClient["Service"];
+  const setReportState: PostHogClient["Service"]["setReportState"] = Effect.fn(
+    "PostHogClient.setReportState",
+  )(function* (input) {
+    const connection = yield* resolveConnection;
+    const body = yield* postJson(
+      connection,
+      `/signals/reports/${encodeURIComponent(input.reportId)}/state/`,
+      { state: input.state },
+    );
+    const report = yield* decodeReport(body).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({ message: "PostHog returned an unexpected report.", cause }),
+      ),
+    );
+    return { report };
+  });
+
+  return { listReports, listReportArtefacts, setReportState } satisfies PostHogClient["Service"];
 });
 
 export const layer = Layer.effect(PostHogClient, make);

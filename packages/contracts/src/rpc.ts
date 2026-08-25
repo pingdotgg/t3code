@@ -59,6 +59,8 @@ import {
   PostHogReportsListInput,
   PostHogReportsListResult,
   PostHogRpcError,
+  PostHogSetReportStateInput,
+  PostHogSetReportStateResult,
 } from "./posthog.ts";
 import {
   ReviewDiffFileContentsInput,
@@ -253,6 +255,7 @@ export const WS_METHODS = {
   gitResolvePullRequest: "git.resolvePullRequest",
   posthogReportsList: "posthog.reportsList",
   posthogReportArtefacts: "posthog.reportArtefacts",
+  posthogSetReportState: "posthog.setReportState",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
 
   // Review methods
@@ -755,6 +758,12 @@ export const WsPostHogReportArtefactsRpc = Rpc.make(WS_METHODS.posthogReportArte
   error: Schema.Union([PostHogRpcError, EnvironmentAuthorizationError]),
 });
 
+export const WsPostHogSetReportStateRpc = Rpc.make(WS_METHODS.posthogSetReportState, {
+  payload: PostHogSetReportStateInput,
+  success: PostHogSetReportStateResult,
+  error: Schema.Union([PostHogRpcError, EnvironmentAuthorizationError]),
+});
+
 export const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullRequestThread, {
   payload: GitPreparePullRequestThreadInput,
   success: GitPreparePullRequestThreadResult,
@@ -1108,6 +1117,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitPreparePullRequestThreadRpc,
   WsPostHogReportsListRpc,
   WsPostHogReportArtefactsRpc,
+  WsPostHogSetReportStateRpc,
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,

@@ -141,6 +141,24 @@ export const PostHogReportArtefactsResult = Schema.Struct({
 });
 export type PostHogReportArtefactsResult = typeof PostHogReportArtefactsResult.Type;
 
+/**
+ * The states PostHog's `SignalReportStateRequestSerializer` accepts.
+ * "suppressed" archives a report, "potential" returns it to the inbox.
+ */
+export const PostHogReportTargetState = Schema.Literals(["suppressed", "potential", "resolved"]);
+export type PostHogReportTargetState = typeof PostHogReportTargetState.Type;
+
+export const PostHogSetReportStateInput = Schema.Struct({
+  reportId: PostHogReportId,
+  state: PostHogReportTargetState,
+});
+export type PostHogSetReportStateInput = typeof PostHogSetReportStateInput.Type;
+
+export const PostHogSetReportStateResult = Schema.Struct({
+  report: PostHogReport,
+});
+export type PostHogSetReportStateResult = typeof PostHogSetReportStateResult.Type;
+
 // ── Errors ─────────────────────────────────────────────────────────────────
 
 /** Host, project id, or API key is missing. The UI links to settings. */
