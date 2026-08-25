@@ -114,6 +114,8 @@ export function ReportHeader({
     markSeen(report.id, report.updated_at);
   }, [markSeen, report]);
 
+  useBackToInboxShortcut();
+
   const [expanded, setExpanded] = useState(!threadHasMessages);
   // The thread starts empty and fills as the conversation runs; the header
   // folds itself away once there is something to read below it.
@@ -444,4 +446,23 @@ function useReportThreadWorktreePath(threadId: ThreadId): string | null {
     () => threads.find((candidate) => candidate.id === threadId)?.worktreePath ?? null,
     [threadId, threads],
   );
+}
+
+/**
+ * `u` goes back to the inbox, the way it does in a mail client. Only while
+ * nothing is focused: once the reader is in the composer, `u` is a letter.
+ */
+function useBackToInboxShortcut(): void {
+  const navigate = useNavigate();
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "u" || event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
+      if (event.target !== document.body) return;
+      event.preventDefault();
+      void navigate({ to: "/inbox" });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigate]);
 }
