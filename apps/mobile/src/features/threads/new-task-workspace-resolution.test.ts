@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
-import { canCommitStartWorkspace, resolveStartWorkspace } from "./new-task-workspace-resolution";
+import { resolveStartWorkspace } from "./new-task-workspace-resolution";
 
 function makeBranch(name: string, overrides: Partial<VcsRef> = {}): VcsRef {
   return {
@@ -93,29 +93,5 @@ describe("resolveStartWorkspace", () => {
       branches([makeBranch("origin/feature", { isRemote: true, remoteName: "origin" })]),
     );
     expect(resolved.mode).toBe("local");
-  });
-});
-
-describe("canCommitStartWorkspace", () => {
-  it("holds a worktree with no branch while the default mode is unsettled", () => {
-    // The interim mode could still flip to a t3.json `local` default, so
-    // committing the provisional worktree now must be blocked.
-    expect(canCommitStartWorkspace({ mode: "worktree", branch: null }, false)).toBe(false);
-  });
-
-  it("allows a worktree with no branch once the default mode has settled", () => {
-    // Settled: the worktree-with-no-branch case resolves to a startable
-    // workspace rather than dead-ending, so send stays enabled.
-    expect(canCommitStartWorkspace({ mode: "worktree", branch: null }, true)).toBe(true);
-  });
-
-  it("allows a worktree with a chosen branch even while unsettled", () => {
-    // An explicit branch is not provisional, so there is nothing to wait for.
-    expect(canCommitStartWorkspace({ mode: "worktree", branch: "feature" }, false)).toBe(true);
-  });
-
-  it("allows a local thread even while unsettled", () => {
-    // Local needs no branch and cannot lose to a late worktree default here.
-    expect(canCommitStartWorkspace({ mode: "local", branch: null }, false)).toBe(true);
   });
 });

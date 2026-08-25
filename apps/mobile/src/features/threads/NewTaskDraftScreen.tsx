@@ -58,7 +58,6 @@ import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/re
 import { enqueueThreadOutboxMessage, removeThreadOutboxMessage } from "../../state/thread-outbox";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { useNewTaskFlow } from "./new-task-flow-provider";
-import { canCommitStartWorkspace } from "./new-task-workspace-resolution";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 import { useCreateProjectThread } from "./use-project-actions";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
@@ -652,19 +651,6 @@ export function NewTaskDraftScreen(props: {
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
       ) ?? flow.selectedModel;
-    const requestedWorkspace = {
-      mode: draft.workspaceSelection?.mode ?? flow.workspaceMode,
-      branch: draft.workspaceSelection?.branch ?? flow.selectedBranchName,
-      worktreePath: draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath,
-    };
-    // Hold the send while a worktree default is still settling with no branch
-    // chosen (see canCommitStartWorkspace): committing the provisional mode now
-    // could start a worktree thread that a late t3.json `local` default would
-    // have overridden a moment later. The button mirrors this (see canStart), so
-    // this only guards non-button entry points.
-    if (!canCommitStartWorkspace(requestedWorkspace, flow.defaultWorkspaceModeSettled)) {
-      return;
-    }
     // Resolve a startable workspace so the send is never blocked on a missing
     // branch: a worktree with no branch picks the repo default (or falls back
     // to a current-checkout thread when no branch is known).
@@ -672,7 +658,11 @@ export function NewTaskDraftScreen(props: {
       mode: workspaceMode,
       branch: selectedBranchName,
       worktreePath: selectedWorktreePath,
-    } = flow.resolveStartWorkspace(requestedWorkspace);
+    } = flow.resolveStartWorkspace({
+      mode: draft.workspaceSelection?.mode ?? flow.workspaceMode,
+      branch: draft.workspaceSelection?.branch ?? flow.selectedBranchName,
+      worktreePath: draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath,
+    });
     const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
     const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
     const interactionMode = flow.planModeEnabled
@@ -815,22 +805,14 @@ export function NewTaskDraftScreen(props: {
   // thread with no branch selected is resolved to a startable workspace at
   // send time (see flow.resolveStartWorkspace), rather than dead-ending the
   // button. It stays disabled only when there is nothing to send yet, no model
-  // is available, or something is still settling: an in-flight share import /
-  // submit, or a worktree default whose mode has not settled yet (the t3.json
-  // read is still pending) with no branch chosen — committing that provisional
-  // worktree mode could lose to a late t3.json `local` default. This is a
-  // brief, load-time hold, not the permanent dead-end the PR removed.
+  // is available, or an in-flight share import / submit is still settling.
   const canStart =
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&
     isIncomingShareReady &&
     !isImportingShare &&
-    !flow.submitting &&
-    canCommitStartWorkspace(
-      { mode: flow.workspaceMode, branch: flow.selectedBranchName },
-      flow.defaultWorkspaceModeSettled,
-    );
+    !flow.submitting;
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}

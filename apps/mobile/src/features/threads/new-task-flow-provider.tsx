@@ -129,13 +129,6 @@ type NewTaskFlowContextValue = {
   readonly selectedProjectKey: string | null;
   readonly selectedModelKey: string | null;
   readonly workspaceMode: WorkspaceMode;
-  /**
-   * False while the default workspace mode is still provisional (the t3.json
-   * read has not settled and no higher-priority source decided). Send must not
-   * commit a mode during this window: a late t3.json default could still flip
-   * it. See `isDefaultThreadEnvModeSettled`.
-   */
-  readonly defaultWorkspaceModeSettled: boolean;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
   readonly startFromOrigin: boolean;
@@ -1037,7 +1030,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProjectKey,
       selectedModelKey,
       workspaceMode,
-      defaultWorkspaceModeSettled,
       selectedBranchName,
       selectedWorktreePath,
       startFromOrigin,
@@ -1143,7 +1135,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       startFromOrigin,
       submitting,
       workspaceMode,
-      defaultWorkspaceModeSettled,
       appendAttachments,
       clearAttachments,
       removeAttachment,
