@@ -2,7 +2,10 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({
   BrowserWindow: { getAllWindows: () => [], getFocusedWindow: () => null },
@@ -17,6 +20,10 @@ import {
 } from "./DesktopSystemTheme.ts";
 
 const temporaryDirectories: string[] = [];
+
+function readSystemTheme(input: { platform: NodeJS.Platform; homeDirectory: string }) {
+  return readDesktopSystemTheme(input).pipe(Effect.provide(NodeServices.layer));
+}
 
 function makeThemeHome(colors: string): string {
   const homeDirectory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-system-theme-"));
@@ -65,27 +72,33 @@ describe("desktop system theme", () => {
     });
   });
 
-  it("reads a valid Linux palette from the desktop user's local state", () => {
-    const homeDirectory = makeThemeHome(DARK_COLORS);
-    expect(readDesktopSystemTheme({ platform: "linux", homeDirectory })).toMatchObject({
-      appearance: "dark",
-      colors: { background: "#070707", foreground: "#f9debe" },
-    });
-  });
+  it.effect("reads a valid Linux palette from the desktop user's local state", () =>
+    Effect.gen(function* () {
+      const homeDirectory = makeThemeHome(DARK_COLORS);
+      expect(yield* readSystemTheme({ platform: "linux", homeDirectory })).toMatchObject({
+        appearance: "dark",
+        colors: { background: "#070707", foreground: "#f9debe" },
+      });
+    }),
+  );
 
-  it("is unavailable on non-Linux platforms even when the files exist", () => {
-    const homeDirectory = makeThemeHome(DARK_COLORS);
-    expect(readDesktopSystemTheme({ platform: "darwin", homeDirectory })).toBeNull();
-    expect(readDesktopSystemTheme({ platform: "win32", homeDirectory })).toBeNull();
-  });
+  it.effect("is unavailable on non-Linux platforms even when the files exist", () =>
+    Effect.gen(function* () {
+      const homeDirectory = makeThemeHome(DARK_COLORS);
+      expect(yield* readSystemTheme({ platform: "darwin", homeDirectory })).toBeNull();
+      expect(yield* readSystemTheme({ platform: "win32", homeDirectory })).toBeNull();
+    }),
+  );
 
-  it("rejects partial or malformed palettes", () => {
-    expect(
-      readDesktopSystemTheme({
-        platform: "linux",
-        homeDirectory: makeThemeHome('mode = "dark"\nbackground = "#070707"\n'),
-      }),
-    ).toBeNull();
-    expect(parseFlatColorsToml('background = "#000000"\nbackground = "#ffffff"\n')).toBeNull();
-  });
+  it.effect("rejects partial or malformed palettes", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* readSystemTheme({
+          platform: "linux",
+          homeDirectory: makeThemeHome('mode = "dark"\nbackground = "#070707"\n'),
+        }),
+      ).toBeNull();
+      expect(parseFlatColorsToml('background = "#000000"\nbackground = "#ffffff"\n')).toBeNull();
+    }),
+  );
 });

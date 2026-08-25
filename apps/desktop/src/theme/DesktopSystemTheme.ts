@@ -1,21 +1,21 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- fs.watch callbacks run outside the Effect runtime and need a cancellable debounce timer.
 import type { DesktopSystemTheme, DesktopSystemThemePalette } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-import * as NodeTimers from "node:timers";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 
 const FLAT_TOML_LINE = /^([A-Za-z][A-Za-z0-9_]*)\s*=\s*"([^"\\\r\n]*)"\s*(?:#.*)?$/;
 const HEX_COLOR = /^#[0-9a-f]{6}$/;
-const WATCH_DEBOUNCE_MS = 100;
-const TRANSIENT_REREAD_MS = 50;
+const WATCH_DEBOUNCE = Duration.millis(100);
+const TRANSIENT_REREAD = Duration.millis(50);
 const TRANSIENT_REREAD_COUNT = 2;
 
 export interface DesktopSystemThemePaths {
@@ -25,12 +25,12 @@ export interface DesktopSystemThemePaths {
 }
 
 export function desktopSystemThemePaths(homeDirectory: string): DesktopSystemThemePaths {
-  const currentDirectory = NodePath.join(homeDirectory, ".local", "state", "omarchy", "current");
-  const themeDirectory = NodePath.join(currentDirectory, "theme");
+  const currentDirectory = `${homeDirectory.replace(/\/+$/u, "")}/.local/state/omarchy/current`;
+  const themeDirectory = `${currentDirectory}/theme`;
   return {
     currentDirectory,
-    colorsFile: NodePath.join(themeDirectory, "colors.toml"),
-    lightModeMarker: NodePath.join(themeDirectory, "light.mode"),
+    colorsFile: `${themeDirectory}/colors.toml`,
+    lightModeMarker: `${themeDirectory}/light.mode`,
   };
 }
 
@@ -89,29 +89,29 @@ function relativeLuminance(hex: string): number {
   return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
 }
 
-export function readDesktopSystemTheme(input: {
+export const readDesktopSystemTheme = Effect.fn("desktop.systemTheme.read")(function* (input: {
   readonly platform: NodeJS.Platform;
   readonly homeDirectory: string;
-}): DesktopSystemTheme | null {
+}) {
   if (input.platform !== "linux") return null;
+  const fileSystem = yield* FileSystem.FileSystem;
   const paths = desktopSystemThemePaths(input.homeDirectory);
-  try {
-    const values = parseFlatColorsToml(NodeFS.readFileSync(paths.colorsFile, "utf8"));
+  return yield* Effect.gen(function* () {
+    const values = parseFlatColorsToml(yield* fileSystem.readFileString(paths.colorsFile));
     if (values === null) return null;
     const colors = normalizeSystemThemePalette(values);
     if (colors === null) return null;
     const declaredMode = (values.mode ?? values.theme_type)?.trim().toLowerCase();
-    const appearance =
+    const appearance: DesktopSystemTheme["appearance"] =
       declaredMode === "light" || declaredMode === "dark"
         ? declaredMode
-        : NodeFS.existsSync(paths.lightModeMarker) || relativeLuminance(colors.background) >= 0.179
+        : (yield* fileSystem.exists(paths.lightModeMarker)) ||
+            relativeLuminance(colors.background) >= 0.179
           ? "light"
           : "dark";
     return { appearance, colors };
-  } catch {
-    return null;
-  }
-}
+  }).pipe(Effect.orElseSucceed(() => null));
+});
 
 function themesEqual(left: DesktopSystemTheme | null, right: DesktopSystemTheme | null): boolean {
   return left === right || JSON.stringify(left) === JSON.stringify(right);
@@ -124,48 +124,36 @@ export class DesktopSystemThemeService extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const fileSystem = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
-  const runFork = Effect.runForkWith(yield* Effect.context());
   const input = { platform, homeDirectory: NodeOS.homedir() } as const;
   const paths = desktopSystemThemePaths(input.homeDirectory);
-  let current = readDesktopSystemTheme(input);
-  let timer: NodeJS.Timeout | null = null;
+  const current = yield* Ref.make(yield* readDesktopSystemTheme(input));
 
-  const refresh = (attempt: number) => {
-    timer = null;
-    const next = readDesktopSystemTheme(input);
-    if (next === null && current !== null && attempt < TRANSIENT_REREAD_COUNT) {
-      timer = NodeTimers.setTimeout(() => refresh(attempt + 1), TRANSIENT_REREAD_MS);
-      return;
+  const refresh = Effect.gen(function* () {
+    let next = yield* readDesktopSystemTheme(input);
+    const previous = yield* Ref.get(current);
+    if (next === null && previous !== null) {
+      for (let attempt = 0; attempt < TRANSIENT_REREAD_COUNT && next === null; attempt++) {
+        yield* Effect.sleep(TRANSIENT_REREAD);
+        next = yield* readDesktopSystemTheme(input);
+      }
     }
-    if (themesEqual(current, next)) return;
-    current = next;
-    runFork(electronWindow.sendAll(IpcChannels.SYSTEM_THEME_CHANGED_CHANNEL, next));
-  };
+    if (themesEqual(previous, next)) return;
+    yield* Ref.set(current, next);
+    yield* electronWindow.sendAll(IpcChannels.SYSTEM_THEME_CHANGED_CHANNEL, next);
+  });
 
-  const scheduleRefresh = () => {
-    if (timer !== null) NodeTimers.clearTimeout(timer);
-    timer = NodeTimers.setTimeout(() => refresh(0), WATCH_DEBOUNCE_MS);
-  };
-
-  if (input.platform === "linux" && NodeFS.existsSync(paths.currentDirectory)) {
-    yield* Effect.acquireRelease(
-      Effect.sync(() => {
-        try {
-          return NodeFS.watch(paths.currentDirectory, { recursive: true }, scheduleRefresh);
-        } catch {
-          return null;
-        }
-      }),
-      (activeWatcher) =>
-        Effect.sync(() => {
-          if (timer !== null) NodeTimers.clearTimeout(timer);
-          activeWatcher?.close();
-        }),
+  if (input.platform === "linux" && (yield* fileSystem.exists(paths.currentDirectory))) {
+    yield* fileSystem.watch(paths.currentDirectory).pipe(
+      Stream.debounce(WATCH_DEBOUNCE),
+      Stream.runForEach(() => refresh),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkScoped,
     );
   }
 
-  return DesktopSystemThemeService.of({ current: Effect.sync(() => current) });
+  return DesktopSystemThemeService.of({ current: Ref.get(current) });
 });
 
 export const layer = Layer.effect(DesktopSystemThemeService, make);
