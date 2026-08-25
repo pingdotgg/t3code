@@ -12,7 +12,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
-import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
@@ -84,6 +83,7 @@ import {
   buildThreadListV2ListItems,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
+  type ThreadListV2ChangeRequestState,
   type ThreadListV2ListItem,
 } from "./threadListV2";
 
@@ -377,15 +377,16 @@ function ThreadNavigationSidebarPane(
   // PR states stream in per-row. The next partition applies the configured
   // merge rule and the always-on close rule.
   const [changeRequestByKey, setChangeRequestByKey] = useState<
-    ReadonlyMap<string, ChangeRequestSettleSource>
+    ReadonlyMap<string, ThreadListV2ChangeRequestState>
   >(() => new Map());
   const handleChangeRequestState = useCallback(
-    (threadKey: string, changeRequest: ChangeRequestSettleSource | null) => {
+    (threadKey: string, changeRequest: ThreadListV2ChangeRequestState | null) => {
       setChangeRequestByKey((current) => {
         const existing = current.get(threadKey) ?? null;
         if (
           (existing?.state ?? null) === (changeRequest?.state ?? null) &&
-          (existing?.updatedAt ?? null) === (changeRequest?.updatedAt ?? null)
+          (existing?.updatedAt ?? null) === (changeRequest?.updatedAt ?? null) &&
+          (existing?.linkedPullRequestKey ?? null) === (changeRequest?.linkedPullRequestKey ?? null)
         ) {
           return current;
         }
