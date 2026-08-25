@@ -53,7 +53,6 @@ function ConnectedReportsPage({
 }: {
   readonly environmentId: NonNullable<ReturnType<typeof usePrimaryEnvironmentId>>;
 }) {
-  const navigate = useNavigate();
   const reportsQuery = usePostHogQuery(reportsListAtom(environmentId));
   const selectedReportId = useSearch({ from: "/_chat/reports", select: (s) => s.reportId });
   const reports = reportsQuery.data?.reports ?? [];
