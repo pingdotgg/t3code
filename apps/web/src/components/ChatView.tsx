@@ -6577,7 +6577,7 @@ function ChatViewContent(props: ChatViewProps) {
         context={
           isThreadOwnPullRequest(
             {
-              projectId: activeProject?.id ?? null,
+              projectId: linkedThreadPullRequest?.projectId ?? activeProject?.id ?? null,
               repository: threadRepository,
               number: activeThreadPr?.number ?? null,
             },
