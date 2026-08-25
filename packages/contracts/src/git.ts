@@ -164,12 +164,6 @@ export const VcsRemoveWorktreeInput = Schema.Struct({
 });
 export type VcsRemoveWorktreeInput = typeof VcsRemoveWorktreeInput.Type;
 
-export const VcsAddInfoExcludeInput = Schema.Struct({
-  cwd: TrimmedNonEmptyStringSchema,
-  pattern: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(256)),
-});
-export type VcsAddInfoExcludeInput = typeof VcsAddInfoExcludeInput.Type;
-
 export const VcsCreateRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,

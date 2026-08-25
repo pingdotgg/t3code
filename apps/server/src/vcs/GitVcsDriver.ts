@@ -27,7 +27,6 @@ import {
   type VcsListRefsResult,
   type VcsPullResult,
   type VcsRemoveWorktreeInput,
-  type VcsAddInfoExcludeInput,
   type VcsStatusInput,
   type VcsStatusResult,
 } from "@t3tools/contracts";
@@ -315,10 +314,6 @@ export class GitVcsDriver extends Context.Service<
     readonly pruneWorktrees: (input: {
       readonly cwd: string;
     }) => Effect.Effect<void, GitCommandError>;
-    /** Appends a pattern to the checkout's `info/exclude`, which stays out of the tracked `.gitignore`. */
-    readonly addInfoExclude: (
-      input: VcsAddInfoExcludeInput,
-    ) => Effect.Effect<void, GitCommandError>;
     readonly renameBranch: (
       input: GitRenameBranchInput,
     ) => Effect.Effect<GitRenameBranchResult, GitCommandError>;

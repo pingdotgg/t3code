@@ -1501,39 +1501,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("appends to a linked worktree's own info/exclude once", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        const pathService = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "excluded");
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* driver.createWorktree({
-          cwd,
-          path: worktreePath,
-          refName: initialBranch,
-          newRefName: "feature/excluded",
-        });
-
-        yield* driver.addInfoExclude({ cwd: worktreePath, pattern: ".posthog/" });
-        yield* driver.addInfoExclude({ cwd: worktreePath, pattern: ".posthog/" });
-
-        const excludePath = yield* git(worktreePath, [
-          "rev-parse",
-          "--path-format=absolute",
-          "--git-path",
-          "info/exclude",
-        ]);
-        assert.notEqual(excludePath, pathService.join(cwd, ".git", "info", "exclude"));
-        const contents = yield* fileSystem.readFileString(excludePath);
-        assert.equal(contents.split("\n").filter((line) => line === ".posthog/").length, 1);
-        assert.equal(yield* fileSystem.exists(pathService.join(cwd, ".gitignore")), false);
-        yield* writeTextFile(worktreePath, ".posthog/report.md", "# report\n");
-        assert.equal(yield* git(worktreePath, ["status", "--porcelain"]), "");
-      }),
-    );
-
     it.effect("removes the same worktree path twice without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

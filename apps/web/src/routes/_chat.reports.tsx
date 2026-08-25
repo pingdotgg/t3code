@@ -1,13 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { ReportsPage } from "../components/reports/ReportsPage";
-
-export interface ReportsSearch {
-  readonly reportId?: string;
-}
-
+// Reports are read in the inbox now. Old links and bookmarks land there.
 export const Route = createFileRoute("/_chat/reports")({
-  validateSearch: (raw: Record<string, unknown>): ReportsSearch =>
-    typeof raw.reportId === "string" && raw.reportId ? { reportId: raw.reportId } : {},
-  component: ReportsPage,
+  beforeLoad: () => {
+    throw redirect({ to: "/inbox", replace: true });
+  },
 });
