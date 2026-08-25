@@ -260,6 +260,10 @@ const runWslShell = (
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
+// Holds the sha256 of the runtime's server entry, written when the install
+// promotes a verified tree. Presence alone only says an install once finished
+// here; the digest is what lets a later launch prove the entry still is what
+// that install wrote.
 const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
 // Written into the archive root by stageWslRuntimeArchive (see
 // scripts/build-desktop-artifact.ts, which owns the matching constant).
@@ -300,11 +304,26 @@ export const buildWslRuntimeInstallScript = (
     "  done",
     "  return 1",
     "}",
+    // Hashing the server entry is the only check that can tell a working cache
+    // from one whose bin.mjs was truncated or half-written: the file is still
+    // there, the native probe still passes, and launch then picks a server that
+    // exits before it can become ready, on every restart. Hashing the ~7MB
+    // entry measures in single-digit milliseconds inside the distro, once per
+    // launch, against a cold reinstall of a few hundred megabytes.
+    "runtime_server_entry_digest() {",
+    `  sha256sum "$1/apps/server/dist/bin.mjs" 2>/dev/null | cut -d ' ' -f 1`,
+    "}",
     "runtime_is_ready() {",
     '  [ -f "$ready_marker" ] &&',
     '    [ -f "$runtime_root/apps/server/dist/bin.mjs" ] &&',
     '    [ -f "$runtime_root/node_modules/node-pty/package.json" ] &&',
-    '    node_pty_payload_present "$runtime_root"',
+    '    node_pty_payload_present "$runtime_root" &&',
+    // An empty or unreadable marker is a miss, not a pass: that is what a
+    // runtime installed before the marker carried a digest looks like, and one
+    // reinstall is the cheapest way to make it verifiable from then on.
+    `    recorded_entry_digest=$(tr -d '[:space:]' < "$ready_marker" 2>/dev/null) &&`,
+    '    [ -n "$recorded_entry_digest" ] &&',
+    '    [ "$recorded_entry_digest" = "$(runtime_server_entry_digest "$runtime_root")" ]',
     "}",
     "if runtime_is_ready; then",
     `  printf 'runtimeRoot:%s\\n' "$runtime_root"`,
@@ -386,7 +405,16 @@ export const buildWslRuntimeInstallScript = (
     "  printf 'WSL runtime archive is missing its Linux node-pty binary\\n' >&2",
     "  exit 1",
     "fi",
-    `: > "$runtime_tmp/${WSL_RUNTIME_READY_MARKER}"`,
+    // The archive's bytes were verified against archiveSha256 above and the
+    // extracted tree against its content-id manifest, so the digest recorded
+    // here describes content this install proved. Every later warm reuse checks
+    // the entry against it.
+    'installed_entry_digest=$(runtime_server_entry_digest "$runtime_tmp")',
+    'if [ -z "$installed_entry_digest" ]; then',
+    "  printf 'Could not hash the WSL runtime server entry\\n' >&2",
+    "  exit 1",
+    "fi",
+    `printf '%s\\n' "$installed_entry_digest" > "$runtime_tmp/${WSL_RUNTIME_READY_MARKER}"`,
     'if mv -T "$runtime_tmp" "$runtime_root" 2>/dev/null; then',
     "  :",
     "elif runtime_is_ready; then",

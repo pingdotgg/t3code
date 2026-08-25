@@ -1,5 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - the executed suite runs the generated install script through a real POSIX shell.
 import { describe, it } from "@effect/vitest";
-import { expect } from "vite-plus/test";
+import { afterAll, expect } from "vite-plus/test";
+import * as NodeChildProcess from "node:child_process";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -28,6 +30,56 @@ import {
 } from "./DesktopWslEnvironment.ts";
 
 const encoder = new TextEncoder();
+
+// The install script only fails the way this file cares about when a real shell
+// runs it, so find one that has the tools it needs: bash directly on Linux, and
+// the WSL distro on a Windows dev box, where Git Bash ships no flock. Anywhere
+// else the executed suite skips and the generated-text assertions stand alone.
+const REQUIRED_SHELL_TOOLS = ["flock", "sha256sum", "tar", "mktemp"] as const;
+
+const posixShellRunner = (() => {
+  // Candidates rather than a platform switch: wsl.exe simply fails to spawn
+  // where it does not exist, which is the same answer as a shell missing flock.
+  const candidates = [
+    { file: "bash", args: [] as ReadonlyArray<string> },
+    { file: "wsl.exe", args: ["-e", "bash"] as ReadonlyArray<string> },
+  ];
+  const probe = REQUIRED_SHELL_TOOLS.map((tool) => `command -v ${tool} >/dev/null || exit 1`).join(
+    "\n",
+  );
+  return (
+    candidates.find((candidate) => {
+      const result = NodeChildProcess.spawnSync(candidate.file, [...candidate.args, "-c", probe], {
+        encoding: "utf8",
+      });
+      return result.status === 0;
+    }) ?? null
+  );
+})();
+
+const runShell = (script: string) => {
+  if (posixShellRunner === null) throw new Error("no POSIX shell runner available");
+  // The install script arrives on stdin in production too, which is what lets
+  // its own /proc scan not match itself.
+  const result = NodeChildProcess.spawnSync(
+    posixShellRunner.file,
+    [...posixShellRunner.args, "-s"],
+    { input: script, encoding: "utf8" },
+  );
+  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+};
+
+const sh = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+const readField = (stdout: string, field: string) => {
+  const line = stdout.split("\n").find((candidate) => candidate.startsWith(`${field}:`));
+  if (line === undefined) throw new Error(`missing ${field} in fixture output: ${stdout}`);
+  return line.slice(field.length + 1).trim();
+};
+
+const EXEC_CONTENT_ID = "d".repeat(64);
+const EXEC_RUNTIME_ID = `sha256-${EXEC_CONTENT_ID}`;
+const SERVER_ENTRY_SOURCE = 'console.log("t3code wsl runtime test server");';
 
 const makeDistroListSpawner = (result: { readonly stdout?: string; readonly exitCode?: number }) =>
   ChildProcessSpawner.make(() =>
@@ -255,7 +307,7 @@ describe("WSL runtime cache", () => {
     // a cache directory every later launch would reuse.
     const extracted = script.indexOf("tar -xzf");
     const contentIdChecked = script.indexOf("extracted_content_id=$(cat");
-    const markerWritten = script.indexOf(': > "$runtime_tmp/.t3code-wsl-runtime-ready"');
+    const markerWritten = script.indexOf('> "$runtime_tmp/.t3code-wsl-runtime-ready"');
     const promoted = script.indexOf('mv -T "$runtime_tmp" "$runtime_root"');
     expect(contentIdChecked).toBeGreaterThan(extracted);
     expect(markerWritten).toBeGreaterThan(contentIdChecked);
@@ -289,6 +341,44 @@ describe("WSL runtime cache", () => {
     expect(readinessDefined).toBeLessThan(readyShortCircuit);
   });
 
+  // A truncated or half-written bin.mjs passes every presence check the cache
+  // had: the file exists, node-pty still loads, and launch then picks a server
+  // that exits before it becomes ready — forever, because nothing ever
+  // reinstalls. The digest the install records is what turns that into a miss.
+  it("re-hashes the server entry against the digest the install recorded", () => {
+    const script = buildWslRuntimeInstallScript(
+      "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
+      "1.2.3-x64",
+      "b".repeat(64),
+      "c".repeat(64),
+    );
+
+    expect(script).toContain(
+      `  sha256sum "$1/apps/server/dist/bin.mjs" 2>/dev/null | cut -d ' ' -f 1`,
+    );
+    expect(script).toContain(
+      '    [ "$recorded_entry_digest" = "$(runtime_server_entry_digest "$runtime_root")" ]',
+    );
+    // A runtime installed before the marker carried a digest reads as empty,
+    // which has to be a miss rather than a pass.
+    expect(script).toContain('    [ -n "$recorded_entry_digest" ] &&');
+    expect(script).toContain(
+      `printf '%s\\n' "$installed_entry_digest" > "$runtime_tmp/.t3code-wsl-runtime-ready"`,
+    );
+
+    // The digest is recorded from the tree whose bytes the archive digest and
+    // the content-id manifest both vouched for, and only then promoted.
+    const contentIdChecked = script.indexOf("extracted_content_id=$(cat");
+    const digestRecorded = script.indexOf(
+      'installed_entry_digest=$(runtime_server_entry_digest "$runtime_tmp")',
+    );
+    const markerWritten = script.indexOf('> "$runtime_tmp/.t3code-wsl-runtime-ready"');
+    const promoted = script.indexOf('mv -T "$runtime_tmp" "$runtime_root"');
+    expect(digestRecorded).toBeGreaterThan(contentIdChecked);
+    expect(markerWritten).toBeGreaterThan(digestRecorded);
+    expect(promoted).toBeGreaterThan(markerWritten);
+  });
+
   it("refuses to mark an archive without a native payload as ready", () => {
     const script = buildWslRuntimeInstallScript(
       "/mnt/c/Program Files/T3 Code/wsl-runtime.tar.gz",
@@ -302,7 +392,7 @@ describe("WSL runtime cache", () => {
     // The extracted tree is rejected before the ready marker is written, so a
     // defective archive falls back to the mounted tree instead of caching.
     const payloadValidated = script.indexOf('node_pty_payload_present "$runtime_tmp"');
-    const markerWritten = script.indexOf(': > "$runtime_tmp/.t3code-wsl-runtime-ready"');
+    const markerWritten = script.indexOf('> "$runtime_tmp/.t3code-wsl-runtime-ready"');
     const promoted = script.indexOf('mv -T "$runtime_tmp" "$runtime_root"');
     expect(payloadValidated).toBeGreaterThan(-1);
     expect(markerWritten).toBeGreaterThan(payloadValidated);
@@ -370,6 +460,107 @@ describe("WSL runtime cache", () => {
     // Deleting the tree here would pull it out from under any backend still
     // running from it; the next install moves an unready root aside instead.
     expect(script).not.toContain("rm -rf");
+  });
+});
+
+// Reading the generated script proves what it says, not what it does. A cache
+// whose bin.mjs was truncated satisfied every assertion above and still got
+// reused, so these run the real script against a real archive in a throwaway
+// HOME and check the outcome.
+describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed)", () => {
+  const fixtures: Array<string> = [];
+
+  afterAll(() => {
+    for (const work of fixtures) runShell(`set -eu\nrm -rf ${sh(work)}`);
+    fixtures.length = 0;
+  });
+
+  const createFixture = () => {
+    const result = runShell(
+      [
+        "set -eu",
+        "work=$(mktemp -d)",
+        'stage="$work/stage"',
+        'mkdir -p "$stage/apps/server/dist" "$stage/node_modules/node-pty/prebuilds/linux-x64" "$work/home"',
+        `printf '%s' ${sh(SERVER_ENTRY_SOURCE)} > "$stage/apps/server/dist/bin.mjs"`,
+        `printf '%s' '{"name":"node-pty","version":"0.0.0-test"}' > "$stage/node_modules/node-pty/package.json"`,
+        `printf '%s' 'pty-native-payload' > "$stage/node_modules/node-pty/prebuilds/linux-x64/pty.node"`,
+        `printf '%s' '{"arch":"x64"}' > "$stage/node_modules/node-pty/prebuilds/linux-x64/t3code-wsl-node-pty.json"`,
+        `printf '%s\\n' ${sh(EXEC_CONTENT_ID)} > "$stage/.t3code-wsl-runtime-content-id"`,
+        `tar -czf "$work/wsl-runtime.tar.gz" -C "$stage" .t3code-wsl-runtime-content-id apps/server/dist node_modules`,
+        `printf 'work:%s\\n' "$work"`,
+        `printf 'archiveSha:%s\\n' "$(sha256sum "$work/wsl-runtime.tar.gz" | cut -d ' ' -f 1)"`,
+      ].join("\n"),
+    );
+    expect(result.status, result.stderr).toBe(0);
+
+    const work = readField(result.stdout, "work");
+    fixtures.push(work);
+    return {
+      work,
+      archivePath: `${work}/wsl-runtime.tar.gz`,
+      serverEntry: `${work}/home/.t3/runtime/${EXEC_RUNTIME_ID}/apps/server/dist/bin.mjs`,
+      // The script reads $HOME, and WSL does not inherit the parent process's
+      // environment, so the home override rides in the script itself.
+      install: () =>
+        runShell(
+          [
+            `HOME=${sh(`${work}/home`)}`,
+            "export HOME",
+            buildWslRuntimeInstallScript(
+              `${work}/wsl-runtime.tar.gz`,
+              EXEC_RUNTIME_ID,
+              readField(result.stdout, "archiveSha"),
+              EXEC_CONTENT_ID,
+            ),
+          ].join("\n"),
+        ),
+    };
+  };
+
+  it("reuses a warm cache without touching the archive", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    // Deleting the archive is how the test tells reuse apart from a silent
+    // reinstall: only the warm path can succeed without it.
+    expect(runShell(`set -eu\nrm ${sh(fixture.archivePath)}`).status).toBe(0);
+
+    const warm = fixture.install();
+
+    expect(warm.status, warm.stderr).toBe(0);
+    expect(parseWslRuntimeRoot(warm.stdout)).toBe(
+      `${fixture.work}/home/.t3/runtime/${EXEC_RUNTIME_ID}`,
+    );
+  });
+
+  it("reinstalls a cache whose server entry was truncated", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    expect(runShell(`set -eu\n: > ${sh(fixture.serverEntry)}`).status).toBe(0);
+
+    const repaired = fixture.install();
+
+    expect(repaired.status, repaired.stderr).toBe(0);
+    expect(parseWslRuntimeRoot(repaired.stdout)).toBe(
+      `${fixture.work}/home/.t3/runtime/${EXEC_RUNTIME_ID}`,
+    );
+    const restored = runShell(`set -eu\ncat ${sh(fixture.serverEntry)}`);
+    expect(restored.stdout).toBe(SERVER_ENTRY_SOURCE);
+  });
+
+  it("falls back instead of launching a corrupted cache it cannot reinstall", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    expect(runShell(`set -eu\n: > ${sh(fixture.serverEntry)}`).status).toBe(0);
+    expect(runShell(`set -eu\nrm ${sh(fixture.archivePath)}`).status).toBe(0);
+
+    const broken = fixture.install();
+
+    // Non-zero with no runtimeRoot is what sends the backend to the mounted
+    // server tree. Exiting 0 here is the bug: launch would pick the zero-byte
+    // server, fail to become ready, and do it again on every restart.
+    expect(broken.status).not.toBe(0);
+    expect(parseWslRuntimeRoot(broken.stdout)).toBeNull();
   });
 });
 
