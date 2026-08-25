@@ -53,7 +53,7 @@ describe("ComposerBannerStack", () => {
     expect(markup).not.toContain("data-composer-banner-stack-expanded-items");
     expect(markup).toContain("chat-composer-drawer-surface");
     expect(markup).toContain("chat-composer-drawer-attached");
-    expect(markup).toContain("before:mask-none");
+    expect(markup).not.toContain("before:mask-none");
     expect(markup).toContain("text-xs");
     expect(markup).toContain('data-composer-banner-drawer="true"');
     expect(markup).toContain('data-variant="warning"');
