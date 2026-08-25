@@ -8,6 +8,7 @@ import {
   formatCodexGoalStatus,
   formatCodexGoalUsage,
   parseCodexGoalCommand,
+  toCodexGoalSetInput,
 } from "./threadCommands.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -46,6 +47,15 @@ describe("parseCodexGoalCommand", () => {
     for (const [command, expected] of cases) {
       expect(parseCodexGoalCommand(command)).toEqual(expected);
     }
+  });
+});
+
+describe("toCodexGoalSetInput", () => {
+  it("adds the thread id without inventing omitted native fields", () => {
+    expect(toCodexGoalSetInput(threadId, { action: "set", objective: "Ship it" })).toEqual({
+      threadId,
+      objective: "Ship it",
+    });
   });
 });
 

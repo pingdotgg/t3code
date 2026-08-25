@@ -322,6 +322,7 @@ import {
   formatCodexGoalError,
   formatCodexGoalStatus,
   parseCodexGoalCommand,
+  toCodexGoalSetInput,
 } from "@t3tools/client-runtime/state/threads";
 import {
   requestOlderThreadTurns,
@@ -7127,15 +7128,7 @@ export default function ChatView(props: ChatViewProps) {
             ? await clearCodexGoal(target)
             : await setCodexGoal({
                 environmentId,
-                input: {
-                  threadId: activeThreadId,
-                  ...(codexGoalCommand.objective === undefined
-                    ? {}
-                    : { objective: codexGoalCommand.objective }),
-                  ...(codexGoalCommand.status === undefined
-                    ? {}
-                    : { status: codexGoalCommand.status }),
-                },
+                input: toCodexGoalSetInput(activeThreadId, codexGoalCommand),
               });
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result) && stillOnSubmittedThread()) {
