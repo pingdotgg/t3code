@@ -239,6 +239,34 @@ describe("index.html boot script", () => {
     expect(boot.backgroundColor).toBe(desktopSystemTheme.colors.background);
   });
 
+  it("realigns the system half before painting after an offline appearance change", () => {
+    const desktopSystemTheme = {
+      appearance: "dark" as const,
+      colors: {
+        background: "#282a36",
+        foreground: "#f8f8f2",
+        accent: "#bd93f9",
+      },
+    };
+    const boot = runBootScript({
+      storage: {
+        [THEME_STORAGE_KEY]: "system",
+        [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
+        "t3code:theme-halves:v1": JSON.stringify({
+          light: DESKTOP_SYSTEM_THEME_ID,
+          dark: GROVE_THEME.id,
+        }),
+      },
+      prefersDark: true,
+      desktopSystemTheme,
+    });
+
+    expect(boot.themeId).toBe(DESKTOP_SYSTEM_THEME_ID);
+    expect(boot.isDark).toBe(true);
+    expect(boot.backgroundColor).toBe(desktopSystemTheme.colors.background);
+    expect(boot.bootVariables["--boot-foreground"]).toBe(desktopSystemTheme.colors.foreground);
+  });
+
   const parityCases: ReadonlyArray<{
     name: string;
     storage: Record<string, string>;

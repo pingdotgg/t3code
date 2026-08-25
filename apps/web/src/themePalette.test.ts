@@ -170,6 +170,52 @@ describe("theme files", () => {
       setDesktopSystemTheme(null);
     }
   });
+
+  it("derives the complete system foreground family from the host text color", () => {
+    const tinted = createDesktopSystemThemeColors({
+      ...DESKTOP_SYSTEM_THEME,
+      colors: {
+        ...DESKTOP_SYSTEM_THEME.colors,
+        background: "#282828",
+        foreground: "#f9debe",
+        accent: "#3b2f45",
+        magenta: "#4b2a3f",
+      },
+    });
+
+    expect(asHex(tinted.text)).toBe("#f9debe");
+    expect(asHex(tinted.toolbarForeground)).toBe("#f9debe");
+    expect(asHex(tinted.toolbarControlForeground)).toBe("#f9debe");
+    expect(asHex(tinted.codeForeground)).toBe("#f9debe");
+    expect(asHex(tinted.messageForeground)).toBe("#f9debe");
+    expect(asHex(tinted.sidebarForeground)).toBe("#f9debe");
+    expect(asHex(tinted.terminalForeground)).toBe("#f9debe");
+    expect(asHex(tinted.accentForeground)).toBe("#f9debe");
+    expect(asHex(tinted.messageActionForeground)).toBe("#f9debe");
+    expect(contrastRatio(tinted.accentForeground, tinted.accent)).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrastRatio(tinted.messageActionForeground, tinted.messageAction),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(tinted.textMuted, tinted.canvas)).toBeLessThan(
+      contrastRatio(tinted.text, tinted.canvas),
+    );
+
+    const dim = createDesktopSystemThemeColors({
+      ...DESKTOP_SYSTEM_THEME,
+      colors: {
+        ...DESKTOP_SYSTEM_THEME.colors,
+        background: "#2d2940",
+        foreground: "#6096fd",
+      },
+    });
+    const primaryContrast = contrastRatio(dim.text, dim.canvas);
+    expect(primaryContrast).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(dim.textMuted, dim.canvas)).toBeLessThanOrEqual(primaryContrast);
+    expect(contrastRatio(dim.codeForeground, dim.codeBackground)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(dim.messageForeground, dim.messageSurface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(dim.sidebarForeground, dim.sidebar)).toBeGreaterThanOrEqual(4.5);
+  });
+
   it("keeps every built-in palette value in canonical OKLCH form", () => {
     for (const theme of BUILT_IN_THEMES) {
       for (const colors of [theme.colors, ...Object.values(theme.variants ?? {})]) {

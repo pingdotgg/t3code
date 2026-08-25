@@ -291,13 +291,53 @@
           // light vs dark even when the base theme cannot render that mode.
           // Mirrors the runtime's halves-aware resolveThemeAppearance.
           const wantedMode = appearanceMode === "system" ? systemMode : appearanceMode;
+          const themeSupportsMode = (candidateId, mode) => {
+            const resolvedId = LEGACY_THEME_IDS[candidateId] ?? candidateId;
+            const candidateBuiltIn = BUILT_IN_THEME_MODES[resolvedId] ?? null;
+            const candidateSystemTheme =
+              resolvedId === DESKTOP_SYSTEM_THEME_ID ? bridgeSystemTheme : null;
+            const candidateCustom =
+              candidateBuiltIn || candidateSystemTheme ? null : findCustomTheme(resolvedId);
+            const modes =
+              candidateBuiltIn ??
+              (candidateSystemTheme ? [candidateSystemTheme.appearance] : null) ??
+              (candidateCustom
+                ? ["light", "dark"].filter(
+                    (candidateMode) =>
+                      candidateMode === candidateCustom.appearance ||
+                      candidateCustom.variants?.[candidateMode],
+                  )
+                : null);
+            return modes?.includes(mode) === true;
+          };
           let halfThemeId = null;
           let halfCustomTheme = null;
           try {
-            const halvesRaw = JSON.parse(
+            const storedHalves = JSON.parse(
               window.localStorage.getItem(THEME_HALVES_STORAGE_KEY) ?? "null",
             );
-            const candidate = isRecord(halvesRaw) ? halvesRaw[wantedMode] : null;
+            let halves = isRecord(storedHalves) ? { ...storedHalves } : null;
+            if (halves && bridgeSystemTheme) {
+              const previousSystemMode =
+                halves.light === DESKTOP_SYSTEM_THEME_ID
+                  ? "light"
+                  : halves.dark === DESKTOP_SYSTEM_THEME_ID
+                    ? "dark"
+                    : null;
+              if (previousSystemMode && previousSystemMode !== bridgeSystemTheme.appearance) {
+                const displacedTheme = halves[bridgeSystemTheme.appearance];
+                if (halves.light === DESKTOP_SYSTEM_THEME_ID) delete halves.light;
+                if (halves.dark === DESKTOP_SYSTEM_THEME_ID) delete halves.dark;
+                if (
+                  typeof displacedTheme === "string" &&
+                  themeSupportsMode(displacedTheme, previousSystemMode)
+                ) {
+                  halves[previousSystemMode] = displacedTheme;
+                }
+                halves[bridgeSystemTheme.appearance] = DESKTOP_SYSTEM_THEME_ID;
+              }
+            }
+            const candidate = halves?.[wantedMode] ?? null;
             if (typeof candidate === "string") {
               const halfId = LEGACY_THEME_IDS[candidate] ?? candidate;
               const halfBuiltIn = BUILT_IN_THEME_MODES[halfId] ?? null;

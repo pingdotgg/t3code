@@ -12,10 +12,10 @@ import {
   isKnownThemePreference,
   getThemePreferenceMode,
   parseThemeHalves,
+  readDesktopSystemTheme,
   resolveDesktopTheme,
   resolveThemeAppearance,
   resolveThemeHalf,
-  refreshDesktopSystemTheme,
   setDesktopSystemTheme,
   THEME_APPEARANCE_MODE_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
@@ -85,14 +85,18 @@ function readStoredThemeHalfIds(): ThemeHalves | null {
   }
 }
 
-function alignDesktopSystemThemeHalf(theme: DesktopSystemTheme | null): boolean {
-  if (theme === null || typeof window === "undefined") return false;
+type DesktopSystemThemeHalfAlignment = "unchanged" | "changed" | "failed";
+
+function alignDesktopSystemThemeHalf(
+  theme: DesktopSystemTheme | null,
+): DesktopSystemThemeHalfAlignment {
+  if (theme === null || typeof window === "undefined") return "unchanged";
   const current = readStoredThemeHalfIds();
   if (
     current === null ||
     (current.light !== DESKTOP_SYSTEM_THEME_ID && current.dark !== DESKTOP_SYSTEM_THEME_ID)
   ) {
-    return false;
+    return "unchanged";
   }
   const previousAppearance: ThemeAppearance =
     current.light === DESKTOP_SYSTEM_THEME_ID ? "light" : "dark";
@@ -108,10 +112,10 @@ function alignDesktopSystemThemeHalf(theme: DesktopSystemTheme | null): boolean 
     next[previousAppearance] = displacedTheme;
   }
   next[theme.appearance] = DESKTOP_SYSTEM_THEME_ID;
-  if (themeHalvesSignature(current) === themeHalvesSignature(next)) return false;
+  if (themeHalvesSignature(current) === themeHalvesSignature(next)) return "unchanged";
   try {
     window.localStorage.setItem(THEME_HALVES_STORAGE_KEY, JSON.stringify(next));
-    return true;
+    return "changed";
   } catch (cause) {
     const error = new ThemeStorageError({
       operation: "write",
@@ -123,8 +127,14 @@ function alignDesktopSystemThemeHalf(theme: DesktopSystemTheme | null): boolean 
       storageKey: error.storageKey,
       ...safeErrorLogAttributes(error),
     });
-    return false;
+    return "failed";
   }
+}
+
+function commitDesktopSystemTheme(theme: DesktopSystemTheme | null): boolean {
+  const halfAlignment = alignDesktopSystemThemeHalf(theme);
+  if (halfAlignment === "failed") return false;
+  return setDesktopSystemTheme(theme) || halfAlignment === "changed";
 }
 const THEME_COLOR_META_NAME = "theme-color";
 const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data-dynamic-theme-color="true"]`;
@@ -445,7 +455,7 @@ export function syncDesktopTheme(
 
 // Apply immediately on module load to prevent flash
 if (typeof document !== "undefined" && typeof window !== "undefined") {
-  alignDesktopSystemThemeHalf(getDesktopSystemTheme());
+  commitDesktopSystemTheme(getDesktopSystemTheme());
   applyTheme(getStored());
 }
 
@@ -516,9 +526,7 @@ function handleStorageChange(e: StorageEvent) {
 }
 
 function handleDesktopSystemThemeChange(theme: DesktopSystemTheme | null) {
-  const themeChanged = setDesktopSystemTheme(theme);
-  const halfChanged = alignDesktopSystemThemeHalf(theme);
-  if (!themeChanged && !halfChanged) return;
+  if (!commitDesktopSystemTheme(theme)) return;
   lastAppliedTheme = null;
   applyTheme(getStored(), true);
   emitChange();
@@ -537,9 +545,7 @@ function subscribe(listener: () => void): () => void {
     const removeSystemThemeListener = window.desktopBridge?.onSystemThemeChange?.(
       handleDesktopSystemThemeChange,
     );
-    const desktopSystemThemeChanged = refreshDesktopSystemTheme();
-    const desktopSystemThemeHalfChanged = alignDesktopSystemThemeHalf(getDesktopSystemTheme());
-    if (desktopSystemThemeChanged || desktopSystemThemeHalfChanged) {
+    if (commitDesktopSystemTheme(readDesktopSystemTheme())) {
       lastAppliedTheme = null;
       applyTheme(getStored(), true);
       snapshotStale = true;
@@ -662,7 +668,7 @@ export function useTheme() {
     (appearance: ThemeAppearance, themeId: string | null): boolean => {
       if (typeof window === "undefined") return false;
       try {
-        const current = readStoredThemeHalves() ?? {};
+        const current = readStoredThemeHalfIds() ?? {};
         const next: { light?: string; dark?: string } = { ...current };
         if (themeId === null) delete next[appearance];
         else next[appearance] = themeId;

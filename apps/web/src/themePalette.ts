@@ -91,7 +91,7 @@ const themePreviewListeners = new Set<() => void>();
 let themePreviewSidebarArtwork: boolean | null = null;
 let desktopSystemTheme: DesktopSystemTheme | null = readDesktopSystemTheme();
 
-function readDesktopSystemTheme(): DesktopSystemTheme | null {
+export function readDesktopSystemTheme(): DesktopSystemTheme | null {
   if (typeof window === "undefined") return null;
   try {
     return window.desktopBridge?.getSystemTheme?.() ?? null;
@@ -102,10 +102,6 @@ function readDesktopSystemTheme(): DesktopSystemTheme | null {
 
 export function getDesktopSystemTheme(): DesktopSystemTheme | null {
   return desktopSystemTheme;
-}
-
-export function refreshDesktopSystemTheme(): boolean {
-  return setDesktopSystemTheme(readDesktopSystemTheme());
 }
 
 export function setDesktopSystemTheme(next: DesktopSystemTheme | null): boolean {
@@ -1032,6 +1028,25 @@ function readableThemeText(
   return readable;
 }
 
+function contrastSafeThemeText(
+  background: ThemeRgbColor,
+  foreground: ThemeRgbColor,
+  minimumRatio: number,
+): ThemeRgbColor {
+  if (themeContrastRatio(foreground, background) >= minimumRatio) return foreground;
+  const adjusted = themeOklchToRgb(
+    solveOklchLightness(
+      themeRgbToOklch(foreground),
+      background,
+      minimumRatio,
+      themeRelativeLuminance(background) < 0.179 ? "lighter" : "darker",
+    ),
+  );
+  return themeContrastRatio(adjusted, background) >= minimumRatio
+    ? adjusted
+    : readableThemeForeground(background);
+}
+
 // Match the perceived strength of the stock palettes rather than choosing an
 // arbitrary foreground mix. These are the measured contrast ratios of zinc-500
 // on the standard light canvas and #818181 on the standard dark canvas.
@@ -1114,6 +1129,9 @@ export function createManagedThemeColors(
     /** Use the seeds exactly as given instead of nudging them into the
      * readability envelope. Derived foregrounds still adapt for contrast. */
     exactSeeds?: boolean;
+    /** Preserve a supplied text tone while keeping every derived foreground
+     * readable against its own surface. */
+    foreground?: string;
   },
 ): ThemeColors {
   const defaults = getDefaultThemeColors(appearance);
@@ -1126,7 +1144,12 @@ export function createManagedThemeColors(
   const accent = options?.exactSeeds
     ? parseThemeRgbColor(accentValue, { r: 168, g: 67, b: 112 })
     : managedThemeAccent(accentValue, appearance, canvas);
-  const text = readableThemeForeground(canvas);
+  const defaultText = readableThemeForeground(canvas);
+  const text =
+    options?.foreground === undefined
+      ? defaultText
+      : contrastSafeThemeText(canvas, parseThemeRgbColor(options.foreground, defaultText), 4.6);
+  const foregroundOn = (background: ThemeRgbColor) => contrastSafeThemeText(background, text, 4.6);
   const textMuted = standardMutedThemeText(canvas, text);
   // The top bar is part of the main panel, not a separate chrome layer: it
   // shares the canvas, and its controls sit on the panel's own surfaces.
@@ -1136,8 +1159,8 @@ export function createManagedThemeColors(
   const surfaceOverlay = mixThemeRgbColors(canvas, text, appearance === "dark" ? 0.18 : 0.06);
   const secondary = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.2 : 0.08);
   const muted = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.13 : 0.06);
-  const mutedForeground = readableThemeText(muted, text, 1, 4.6);
-  const placeholder = readableThemeText(surfaceRaised, text, 1, 4.6);
+  const mutedForeground = readableThemeText(muted, foregroundOn(muted), 1, 4.6);
+  const placeholder = readableThemeText(surfaceRaised, foregroundOn(surfaceRaised), 1, 4.6);
   const accentSurface = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.3 : 0.14);
   const messageSurface = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.36 : 0.18);
   const toolbarControl = mixThemeRgbColors(chrome, accent, appearance === "dark" ? 0.2 : 0.08);
@@ -1206,24 +1229,26 @@ export function createManagedThemeColors(
     accent: themeRgbToThemeColor(accent),
     accentForeground: themeRgbToThemeColor(accentForeground),
     secondary: themeRgbToThemeColor(secondary),
-    secondaryForeground: themeRgbToThemeColor(readableThemeForeground(secondary)),
+    secondaryForeground: themeRgbToThemeColor(foregroundOn(secondary)),
     muted: themeRgbToThemeColor(muted),
     mutedForeground: themeRgbToThemeColor(mutedForeground),
     placeholder: themeRgbToThemeColor(placeholder),
     secondaryLabel: themeRgbToThemeColor(textMuted),
     iconMuted: themeRgbToThemeColor(textMuted),
     accentSurface: themeRgbToThemeColor(accentSurface),
-    accentSurfaceForeground: themeRgbToThemeColor(readableThemeForeground(accentSurface)),
+    accentSurfaceForeground: themeRgbToThemeColor(foregroundOn(accentSurface)),
     messageSurface: themeRgbToThemeColor(messageSurface),
-    messageForeground: themeRgbToThemeColor(readableThemeForeground(messageSurface)),
+    messageForeground: themeRgbToThemeColor(foregroundOn(messageSurface)),
     messageAction: themeRgbToThemeColor(accent),
     messageActionForeground: themeRgbToThemeColor(accentForeground),
     messageActionHover: themeRgbToThemeColor(messageActionHover),
     codeBackground: themeRgbToThemeColor(codeBackground),
-    codeForeground: themeRgbToThemeColor(readableThemeForeground(codeBackground)),
+    codeForeground: themeRgbToThemeColor(foregroundOn(codeBackground)),
     sidebar: themeRgbToThemeColor(sidebar),
-    sidebarForeground: themeRgbToThemeColor(readableThemeForeground(sidebar)),
-    sidebarMutedForeground: themeRgbToThemeColor(standardMutedThemeText(sidebar, text)),
+    sidebarForeground: themeRgbToThemeColor(foregroundOn(sidebar)),
+    sidebarMutedForeground: themeRgbToThemeColor(
+      standardMutedThemeText(sidebar, foregroundOn(sidebar)),
+    ),
     sidebarControlSurface: themeRgbToThemeColor(
       mixThemeRgbColors(sidebar, text, appearance === "dark" ? 0.16 : 0.08),
     ),
@@ -1234,7 +1259,7 @@ export function createManagedThemeColors(
       mixThemeRgbColors(sidebar, text, appearance === "dark" ? 0.35 : 0.12),
     ),
     terminalBackground: themeRgbToThemeColor(terminalBackground),
-    terminalForeground: themeRgbToThemeColor(readableThemeForeground(terminalBackground)),
+    terminalForeground: themeRgbToThemeColor(foregroundOn(terminalBackground)),
     terminalCursor: themeRgbToThemeColor(accent),
     terminalSelection: themeRgbToThemeColor(
       mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.35 : 0.18),
@@ -1452,6 +1477,7 @@ export function createDesktopSystemThemeColors(systemTheme: DesktopSystemTheme):
   const { appearance, colors: semantic } = systemTheme;
   let colors = createManagedThemeColors(appearance, semantic.background, semantic.accent, {
     exactSeeds: true,
+    foreground: semantic.foreground,
   });
   colors = updateThemeColorFamily(appearance, colors, "error", semantic.red);
   colors = updateThemeColorFamily(appearance, colors, "warning", semantic.yellow);
@@ -1478,15 +1504,17 @@ export function createDesktopSystemThemeColors(systemTheme: DesktopSystemTheme):
       themeRelativeLuminance(canvas) < 0.179 ? "lighter" : "darker",
     ),
   );
+  const foreground = parseThemeRgbColor(colors.text, readableThemeForeground(canvas));
+  const foregroundOn = (surface: string) =>
+    themeRgbToThemeColor(
+      contrastSafeThemeText(parseThemeRgbColor(surface, canvas), foreground, 4.6),
+    );
 
   return {
     ...colors,
-    text: semantic.foreground,
-    toolbarForeground: semantic.foreground,
-    toolbarControlForeground: semantic.foreground,
-    codeForeground: semantic.foreground,
-    terminalForeground: semantic.foreground,
+    accentForeground: foregroundOn(colors.accent),
     focus,
+    messageActionForeground: foregroundOn(colors.messageAction),
     update: greenFamily.update,
     updateForeground: greenFamily.updateForeground,
     updateSurface: greenFamily.updateSurface,

@@ -295,4 +295,133 @@ describe("theme failure handling", () => {
     expect(useTheme().themeHalves).toEqual({ light: "desktop:system" });
     expect(removeSystemThemeListener).toBeDefined();
   });
+
+  it("preserves a temporarily unavailable system half when editing the other half", async () => {
+    const storage = createStorage();
+    storage.setItem(
+      "t3code:theme-halves:v1",
+      JSON.stringify({ light: "grove", dark: "desktop:system" }),
+    );
+    vi.doMock("react", () => ({
+      useCallback: <A>(callback: A) => callback,
+      useEffect: () => undefined,
+      useSyncExternalStore: (
+        subscribe: (listener: () => void) => () => void,
+        getSnapshot: () => unknown,
+      ) => {
+        subscribe(() => undefined);
+        return getSnapshot();
+      },
+    }));
+    vi.stubGlobal("window", {
+      addEventListener: () => undefined,
+      desktopBridge: {
+        getSystemTheme: () => null,
+        onSystemThemeChange: () => () => undefined,
+        setTheme: vi.fn().mockResolvedValue(undefined),
+      },
+      localStorage: storage,
+      matchMedia: () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+      removeEventListener: () => undefined,
+    });
+
+    const { useTheme } = await import("./useTheme");
+    expect(useTheme().setThemeHalf("light", "ocean")).toBe(true);
+    expect(JSON.parse(storage.getItem("t3code:theme-halves:v1") ?? "null")).toEqual({
+      light: "ocean",
+      dark: "desktop:system",
+    });
+  });
+
+  it("keeps the previous system palette when appearance alignment cannot be persisted", async () => {
+    const initial = {
+      appearance: "light" as const,
+      colors: {
+        background: "#f8f8f8",
+        foreground: "#202020",
+        accent: "#3366ff",
+        selection: "#d0d0d0",
+        red: "#ff0000",
+        green: "#00aa00",
+        yellow: "#aa8800",
+        blue: "#0000ff",
+        magenta: "#aa00aa",
+        cyan: "#00aaaa",
+      },
+    };
+    const updated = {
+      ...initial,
+      appearance: "dark" as const,
+      colors: { ...initial.colors, background: "#202020", foreground: "#f8f8f8" },
+    };
+    const storage = createStorage();
+    storage.setItem(
+      "t3code:theme-halves:v1",
+      JSON.stringify({ light: "desktop:system", dark: "grove" }),
+    );
+    const write = storage.setItem.bind(storage);
+    let rejectHalfWrites = false;
+    storage.setItem = (key, value) => {
+      if (rejectHalfWrites && key === "t3code:theme-halves:v1") {
+        throw new Error("theme storage unavailable");
+      }
+      write(key, value);
+    };
+    let systemThemeListener: ((theme: typeof initial | typeof updated | null) => void) | undefined;
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.doMock("react", () => ({
+      useCallback: <A>(callback: A) => callback,
+      useEffect: () => undefined,
+      useSyncExternalStore: (
+        subscribe: (listener: () => void) => () => void,
+        getSnapshot: () => unknown,
+      ) => {
+        subscribe(() => undefined);
+        return getSnapshot();
+      },
+    }));
+    vi.stubGlobal("window", {
+      addEventListener: () => undefined,
+      desktopBridge: {
+        getSystemTheme: () => initial,
+        onSystemThemeChange: (
+          listener: (theme: typeof initial | typeof updated | null) => void,
+        ) => {
+          systemThemeListener = listener;
+          return () => undefined;
+        },
+        setTheme: vi.fn().mockResolvedValue(undefined),
+      },
+      localStorage: storage,
+      matchMedia: () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+      removeEventListener: () => undefined,
+    });
+
+    const { useTheme } = await import("./useTheme");
+    expect(useTheme().desktopSystemTheme).toEqual(initial);
+
+    rejectHalfWrites = true;
+    systemThemeListener?.(updated);
+
+    expect(useTheme().desktopSystemTheme).toEqual(initial);
+    expect(JSON.parse(storage.getItem("t3code:theme-halves:v1") ?? "null")).toEqual({
+      light: "desktop:system",
+      dark: "grove",
+    });
+    expect(errorLog).toHaveBeenCalledWith(
+      "Failed to write theme preference for t3code:theme-halves:v1.",
+      expect.objectContaining({
+        operation: "write",
+        storageKey: "t3code:theme-halves:v1",
+      }),
+    );
+  });
 });
