@@ -148,7 +148,6 @@ export function toCodexGoalSetInput(
   const { action: _action, ...input } = command;
   return { threadId, ...input };
 }
-
 export function applyCodexGoalStreamEvent(event: CodexGoalStreamEvent): CodexGoal | null {
   if (event.type === "snapshot" || event.type === "updated") return event.goal;
   return null;
