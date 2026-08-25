@@ -39,6 +39,7 @@ export type CloudManagedEndpointRuntimeStatus =
   | {
       readonly status: "failed";
       readonly providerKind: RelayManagedEndpointRuntimeConfig["providerKind"];
+      readonly failure: "unsupported-platform" | "not-installed" | "spawn-failed";
       readonly reason: string;
       readonly tunnelId?: string;
       readonly tunnelName?: string;
@@ -99,14 +100,10 @@ export function isRetryableManagedEndpointRuntimeStatus(status: unknown): boolea
   if (typeof status !== "object" || status === null || !("status" in status)) {
     return false;
   }
-  if (status.status !== "failed") {
+  if (status.status !== "failed" || !("failure" in status)) {
     return false;
   }
-  return !(
-    "reason" in status &&
-    typeof status.reason === "string" &&
-    status.reason.startsWith("Relay client is unsupported on ")
-  );
+  return status.failure === "not-installed" || status.failure === "spawn-failed";
 }
 
 function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
@@ -283,6 +280,7 @@ export const make = Effect.gen(function* () {
       return {
         status: "failed",
         providerKind: "cloudflare_tunnel",
+        failure: executable.status === "unsupported" ? "unsupported-platform" : "not-installed",
         reason:
           executable.status === "unsupported"
             ? `Relay client is unsupported on ${executable.platform}-${executable.arch}.`
@@ -325,6 +323,7 @@ export const make = Effect.gen(function* () {
             Effect.as({
               status: "failed",
               providerKind: "cloudflare_tunnel",
+              failure: "spawn-failed",
               reason: String(cause),
               ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
               ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),
@@ -360,6 +359,7 @@ export const make = Effect.gen(function* () {
     return {
       status: "failed",
       providerKind: "cloudflare_tunnel",
+      failure: "spawn-failed",
       reason: "Relay client did not start.",
       ...(config.tunnelId ? { tunnelId: config.tunnelId } : {}),
       ...(config.tunnelName ? { tunnelName: config.tunnelName } : {}),

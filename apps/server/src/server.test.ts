@@ -3726,6 +3726,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.succeed({
                 status: "failed",
                 providerKind: "cloudflare_tunnel",
+                failure: "not-installed",
                 reason: "cloudflared missing",
                 tunnelId: "tunnel-1",
               }),

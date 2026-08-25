@@ -94,6 +94,13 @@ interface RecordManagedEndpointTunnelInput extends ManagedEndpointAllocationKey 
 
 interface RecordManagedEndpointDnsInput extends ManagedEndpointAllocationKey {
   readonly dnsRecordId: string;
+  readonly tunnelId: string;
+  readonly generation: number;
+}
+
+interface MarkManagedEndpointReadyInput extends ManagedEndpointAllocationKey {
+  readonly tunnelId: string;
+  readonly generation: number;
 }
 
 interface ClaimManagedEndpointReleaseInput extends ManagedEndpointAllocationKey {
@@ -125,13 +132,13 @@ export class ManagedEndpointAllocations extends Context.Service<
     ) => Effect.Effect<ManagedEndpointAllocation, ManagedEndpointAllocationPersistenceError>;
     readonly recordTunnel: (
       input: RecordManagedEndpointTunnelInput,
-    ) => Effect.Effect<boolean, ManagedEndpointAllocationPersistenceError>;
+    ) => Effect.Effect<number | null, ManagedEndpointAllocationPersistenceError>;
     readonly recordDns: (
       input: RecordManagedEndpointDnsInput,
-    ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
+    ) => Effect.Effect<number | null, ManagedEndpointAllocationPersistenceError>;
     readonly markReady: (
-      input: ManagedEndpointAllocationKey,
-    ) => Effect.Effect<void, ManagedEndpointAllocationPersistenceError>;
+      input: MarkManagedEndpointReadyInput,
+    ) => Effect.Effect<boolean, ManagedEndpointAllocationPersistenceError>;
     readonly enableRecovery: (
       input: EnableManagedEndpointRecoveryInput,
     ) => Effect.Effect<boolean, ManagedEndpointAllocationPersistenceError>;
@@ -288,9 +295,9 @@ export const make = Effect.gen(function* () {
             eq(relayManagedEndpointAllocations.generation, input.generation),
           ),
         )
-        .returning({ environmentId: relayManagedEndpointAllocations.environmentId })
+        .returning({ generation: relayManagedEndpointAllocations.generation })
         .pipe(
-          Effect.map((rows) => rows.length > 0),
+          Effect.map((rows) => rows[0]?.generation ?? null),
           Effect.mapError(
             (cause) =>
               new ManagedEndpointAllocationPersistenceError({
@@ -305,15 +312,23 @@ export const make = Effect.gen(function* () {
     recordDns: Effect.fn("relay.managed_endpoint_allocations.record_dns")(function* (
       input: RecordManagedEndpointDnsInput,
     ) {
-      yield* db
+      return yield* db
         .update(relayManagedEndpointAllocations)
         .set({
           dnsRecordId: input.dnsRecordId,
           updatedAt: DateTime.formatIso(yield* DateTime.now),
           generation: sql`${relayManagedEndpointAllocations.generation} + 1`,
         })
-        .where(whereAllocation(input))
+        .where(
+          and(
+            whereAllocation(input),
+            eq(relayManagedEndpointAllocations.tunnelId, input.tunnelId),
+            eq(relayManagedEndpointAllocations.generation, input.generation),
+          ),
+        )
+        .returning({ generation: relayManagedEndpointAllocations.generation })
         .pipe(
+          Effect.map((rows) => rows[0]?.generation ?? null),
           Effect.mapError(
             (cause) =>
               new ManagedEndpointAllocationPersistenceError({
@@ -326,18 +341,26 @@ export const make = Effect.gen(function* () {
         );
     }),
     markReady: Effect.fn("relay.managed_endpoint_allocations.mark_ready")(function* (
-      input: ManagedEndpointAllocationKey,
+      input: MarkManagedEndpointReadyInput,
     ) {
       const now = DateTime.formatIso(yield* DateTime.now);
-      yield* db
+      return yield* db
         .update(relayManagedEndpointAllocations)
         .set({
           readyAt: now,
           updatedAt: now,
           generation: sql`${relayManagedEndpointAllocations.generation} + 1`,
         })
-        .where(whereAllocation(input))
+        .where(
+          and(
+            whereAllocation(input),
+            eq(relayManagedEndpointAllocations.tunnelId, input.tunnelId),
+            eq(relayManagedEndpointAllocations.generation, input.generation),
+          ),
+        )
+        .returning({ environmentId: relayManagedEndpointAllocations.environmentId })
         .pipe(
+          Effect.map((rows) => rows.length > 0),
           Effect.mapError(
             (cause) =>
               new ManagedEndpointAllocationPersistenceError({

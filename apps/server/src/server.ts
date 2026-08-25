@@ -710,10 +710,6 @@ const makeServerLayer = Layer.unwrap(
       : Layer.empty;
     const cloudDesiredLinkReconcileLayer = Layer.effectDiscard(
       Effect.gen(function* () {
-        if (!hasCloudPublicConfig) {
-          yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
-          return;
-        }
         const releaseManagedTunnel = releaseManagedTunnelOnShutdown().pipe(
           Effect.timeout("10 seconds"),
           Effect.tap((released) =>
@@ -767,8 +763,12 @@ const makeServerLayer = Layer.unwrap(
                 Effect.tap((recovered) =>
                   recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
                 ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to recover the T3 Connect managed tunnel", { cause }),
+                Effect.catchCause((cause) =>
+                  Cause.hasInterrupts(cause)
+                    ? Effect.interrupt
+                    : Effect.logWarning("Failed to recover the T3 Connect managed tunnel", {
+                        cause,
+                      }),
                 ),
               ),
             );
@@ -782,7 +782,7 @@ const makeServerLayer = Layer.unwrap(
             // covers anything this sleep used to hedge against. Every
             // millisecond here is dead time on the path to remote
             // reachability after a restart.
-            if (yield* CloudCliState.readCliDesiredCloudLink) {
+            if (hasCloudPublicConfig && (yield* CloudCliState.readCliDesiredCloudLink)) {
               yield* reconcileDesiredCloudLink(localOrigin).pipe(
                 Effect.retry({
                   while: (error) =>
