@@ -44,6 +44,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../ui/menu";
+import { PriorityChip } from "./PriorityChip";
 import { readReportArtefacts } from "./reportArtefacts";
 import { deriveReportVerdict, splitReportSummary, type ReportVerdictTone } from "./reportVerdict";
 import { usePostHogQuery } from "./reportsQuery";
@@ -197,7 +198,7 @@ function ReportHeaderBody({
             Inbox
           </Link>
           <span aria-hidden>·</span>
-          {report.priority ? <Chip>{report.priority}</Chip> : null}
+          {report.priority ? <PriorityChip priority={report.priority} /> : null}
           {artefacts.priority?.dollar_value != null ? (
             <Chip>{formatDollarValue(artefacts.priority.dollar_value)}</Chip>
           ) : null}

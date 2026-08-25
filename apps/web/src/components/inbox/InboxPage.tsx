@@ -9,6 +9,7 @@ import { ArchiveRestoreIcon, ArchiveXIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EmptyState } from "../../brand/EmptyState";
+import { statusColorVar } from "../../brand/statusColors";
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { selectReportSeenMap, useReportSeenStore } from "../../reportSeenStore";
@@ -16,9 +17,9 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { postHogEnvironment, reportsListAtom } from "../../state/posthog";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { PriorityChip } from "../reports/PriorityChip";
 import { usePostHogQuery, type PostHogQueryError } from "../reports/reportsQuery";
 import { useReportOpener } from "../reports/useOpenReport";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
@@ -109,7 +110,8 @@ function ReportRow({
     >
       <span
         aria-hidden
-        className={cn("size-1.5 shrink-0 rounded-full", unread ? "bg-sky-500" : "bg-transparent")}
+        className="size-1.5 shrink-0 rounded-full"
+        style={unread ? { backgroundColor: statusColorVar("needsYou") } : undefined}
       />
       <button
         type="button"
@@ -123,11 +125,7 @@ function ReportRow({
           <span className="min-w-0 flex-1 truncate text-muted-foreground">{summary}</span>
         ) : null}
       </button>
-      {report.priority ? (
-        <Badge size="sm" variant="secondary" className="shrink-0 rounded-full px-1.5">
-          {report.priority}
-        </Badge>
-      ) : null}
+      {report.priority ? <PriorityChip priority={report.priority} className="shrink-0" /> : null}
       <span className="w-24 shrink-0 text-right text-xs text-muted-foreground">
         {reportStateLabel(report.status)}
       </span>

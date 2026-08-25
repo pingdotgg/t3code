@@ -48,3 +48,10 @@ const PRIORITY_COLORS: Readonly<Record<Priority, StatusColor>> = {
 export function priorityColor(priority: Priority): StatusColor {
   return PRIORITY_COLORS[priority];
 }
+
+/** Reports carry priority as free text, so anything unrecognized stays muted. */
+export function priorityColorVar(priority: string): string {
+  const known =
+    priority in PRIORITY_COLORS ? priorityColor(priority as Priority) : NEUTRAL_PRIORITY;
+  return brandColorVar(known);
+}
