@@ -124,6 +124,18 @@ export const ProviderUploadFeedbackResult = Schema.Struct({
 });
 export type ProviderUploadFeedbackResult = typeof ProviderUploadFeedbackResult.Type;
 
+export class ProviderPersistedThreadDiscoveryError extends Schema.TaggedErrorClass<ProviderPersistedThreadDiscoveryError>()(
+  "ProviderPersistedThreadDiscoveryError",
+  {
+    workspaceRoot: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Failed to discover persisted provider threads for ${this.workspaceRoot}.`;
+  }
+}
+
 export class ProviderUploadFeedbackError extends Schema.TaggedErrorClass<ProviderUploadFeedbackError>()(
   "ProviderUploadFeedbackError",
   {

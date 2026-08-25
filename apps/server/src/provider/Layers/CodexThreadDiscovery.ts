@@ -15,6 +15,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
@@ -51,6 +52,16 @@ export function selectCodexThreadsForRead(
       (typeof thread.source === "object" && "subAgent" in thread.source) ||
       thread.threadSource === "memory_consolidation" ||
       discoveryInput?.excludeProviderThreadIds.has(thread.id) === true
+    ) {
+      return false;
+    }
+    if (
+      discoveryInput?.workspaceRoots !== undefined &&
+      !Array.from(discoveryInput.workspaceRoots).some(
+        (workspaceRoot) =>
+          normalizeProjectPathForComparison(workspaceRoot) ===
+          normalizeProjectPathForComparison(thread.cwd),
+      )
     ) {
       return false;
     }

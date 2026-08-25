@@ -85,11 +85,13 @@ import {
   OrchestrationGetWorkflowScriptError,
 } from "./orchestration.ts";
 import {
+  ProviderPersistedThreadDiscoveryError,
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
 } from "./provider.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   PullRequestActionInput,
   PullRequestActivity,
@@ -241,6 +243,7 @@ export const WS_METHODS = {
   attachmentsDelete: "attachments.delete",
 
   // Provider methods
+  providerDiscoverPersistedThreads: "provider.discoverPersistedThreads",
   providerUploadFeedback: "provider.uploadFeedback",
   providerAuthStart: "provider.auth.start",
   providerAuthComplete: "provider.auth.complete",
@@ -824,6 +827,15 @@ export const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFee
   error: Schema.Union([ProviderUploadFeedbackError, EnvironmentAuthorizationError]),
 });
 
+export const WsProviderDiscoverPersistedThreadsRpc = Rpc.make(
+  WS_METHODS.providerDiscoverPersistedThreads,
+  {
+    payload: Schema.Struct({ workspaceRoot: TrimmedNonEmptyString }),
+    success: Schema.Struct({ importedCount: NonNegativeInt }),
+    error: Schema.Union([ProviderPersistedThreadDiscoveryError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
   success: VcsStatusStreamEvent,
@@ -1218,6 +1230,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssetsCreateUrlRpc,
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
+  WsProviderDiscoverPersistedThreadsRpc,
   WsProviderUploadFeedbackRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,

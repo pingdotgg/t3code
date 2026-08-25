@@ -139,7 +139,7 @@ it.effect("does not recover a reconciliation interruption", () =>
   }),
 );
 
-it.effect("imports an unmatched Codex thread into the unassigned project", () =>
+it.effect("skips an unmatched Codex thread", () =>
   Effect.gen(function* () {
     const commands: OrchestrationCommand[] = [];
     const bindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> = [];
@@ -174,49 +174,14 @@ it.effect("imports an unmatched Codex thread into the unassigned project", () =>
       directory,
       snapshots,
       engine,
-      unassignedWorkspaceRoot: "/t3/provider-imports/codex-work",
     });
 
-    expect(commands.map((command) => command.type)).toEqual([
-      "project.create",
-      "thread.create",
-      "thread.message.import",
-      "thread.message.import",
-    ]);
-    expect(commands[1]).toMatchObject({
-      type: "thread.create",
-      title: "External work",
-      worktreePath: "/work/external",
-    });
-    expect(commands[2]).toMatchObject({
-      type: "thread.message.import",
-      role: "user",
-      turnId: "turn-1",
-    });
-    expect(commands[3]).toMatchObject({
-      type: "thread.message.import",
-      role: "assistant",
-      turnId: "turn-1",
-    });
-    const importedMessageIds = commands
-      .filter((command) => command.type === "thread.message.import")
-      .map((command) => command.messageId);
-    expect(importedMessageIds.toSorted()).toEqual(importedMessageIds);
-    expect(bindings).toHaveLength(1);
-    expect(bindings[0]).toMatchObject({
-      providerInstanceId: "codex-work",
-      runtimeMode: "full-access",
-      status: "stopped",
-      resumeCursor: { threadId: "0198cb4a-thread" },
-      runtimePayload: {
-        imported: true,
-        providerDiscoveryCursor: "2026-08-21T03:24:43.000Z:idle",
-      },
-    });
+    expect(commands).toEqual([]);
+    expect(bindings).toEqual([]);
   }),
 );
 
-it.effect("reuses the group project when discovery ownership changes", () =>
+it.effect("imports into the matched project after discovery ownership changes", () =>
   Effect.gen(function* () {
     const commands: OrchestrationCommand[] = [];
     const handoffInstance = {
@@ -234,16 +199,7 @@ it.effect("reuses the group project when discovery ownership changes", () =>
       } as unknown as ProviderSessionDirectory["Service"],
       snapshots: {
         getThreadShellById: () => Effect.succeed(Option.none()),
-        getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
-        getProjectShellById: () =>
-          Effect.succeed(
-            Option.some({
-              defaultModelSelection: {
-                instanceId: ProviderInstanceId.make("codex-work"),
-                model: "gpt-5.6-sol",
-              },
-            }),
-          ),
+        getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.some({ id: "project-1" })),
       } as unknown as ProjectionSnapshotQuery["Service"],
       engine: {
         dispatch: (command: OrchestrationCommand) =>
@@ -252,23 +208,21 @@ it.effect("reuses the group project when discovery ownership changes", () =>
             return { sequence: commands.length };
           }),
       } as unknown as OrchestrationEngineService["Service"],
-      unassignedWorkspaceRoot: "/t3/provider-imports/shared-home",
     });
 
     expect(commands.map((command) => command.type)).toEqual([
-      "project.meta.update",
       "thread.create",
       "thread.message.import",
       "thread.message.import",
     ]);
     expect(commands[0]).toMatchObject({
-      type: "project.meta.update",
-      defaultModelSelection: { instanceId: "codex-next", model: "gpt-5.6-sol" },
+      type: "thread.create",
+      projectId: "project-1",
     });
   }),
 );
 
-it.effect("migrates an existing imported thread when discovery ownership changes", () =>
+it.effect("rehomes an existing imported thread into its matching project", () =>
   Effect.gen(function* () {
     const commands: OrchestrationCommand[] = [];
     const bindings: Array<Parameters<ProviderSessionDirectory["Service"]["upsert"]>[0]> = [];
@@ -293,22 +247,14 @@ it.effect("migrates an existing imported thread when discovery ownership changes
           Effect.succeed(
             Option.some({
               id: importedThreadId,
+              projectId: "old-unassigned",
               modelSelection: {
                 instanceId: ProviderInstanceId.make("codex-work"),
                 model: "gpt-5.6-sol",
               },
             }),
           ),
-        getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
-        getProjectShellById: () =>
-          Effect.succeed(
-            Option.some({
-              defaultModelSelection: {
-                instanceId: ProviderInstanceId.make("codex-work"),
-                model: "gpt-5.6-sol",
-              },
-            }),
-          ),
+        getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.some({ id: "project-1" })),
         getThreadDetailById: () =>
           Effect.succeed(
             Option.some({
@@ -326,13 +272,14 @@ it.effect("migrates an existing imported thread when discovery ownership changes
             return { sequence: commands.length };
           }),
       } as unknown as OrchestrationEngineService["Service"],
-      unassignedWorkspaceRoot: "/t3/provider-imports/shared-home",
     });
 
-    expect(commands.map((command) => command.type)).toEqual([
-      "project.meta.update",
-      "thread.meta.update",
-    ]);
+    expect(commands.map((command) => command.type)).toEqual(["thread.meta.update"]);
+    expect(commands[0]).toMatchObject({
+      type: "thread.meta.update",
+      projectId: "project-1",
+      worktreePath: null,
+    });
     expect(bindings[0]).toMatchObject({
       providerInstanceId: "codex-next",
       runtimePayload: {
@@ -366,7 +313,6 @@ it.effect("imports a new thread directly into its matching project", () =>
         getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.some({ id: "project-1" })),
       } as unknown as ProjectionSnapshotQuery["Service"],
       engine,
-      unassignedWorkspaceRoot: "/unused",
     });
 
     expect(commands.map((command) => command.type)).toEqual([
@@ -407,7 +353,6 @@ it.effect("does not advance the discovery watermark after a partial message impo
               ? Effect.die("message import failed")
               : Effect.succeed({ sequence: 1 }),
         } as unknown as OrchestrationEngineService["Service"],
-        unassignedWorkspaceRoot: "/unused",
       }),
     );
 
@@ -443,7 +388,6 @@ it.effect("does not duplicate an identity owned by a compatible instance", () =>
       engine: {
         dispatch: () => Effect.sync(() => void (touched = true)) as never,
       } as unknown as OrchestrationEngineService["Service"],
-      unassignedWorkspaceRoot: "/unused",
     });
 
     expect(touched).toBe(false);
@@ -492,7 +436,6 @@ it.effect("does not re-import turns that T3 already projected under different me
             return { sequence: commands.length };
           }),
       } as unknown as OrchestrationEngineService["Service"],
-      unassignedWorkspaceRoot: "/unused",
     });
 
     expect(commands).toEqual([]);
@@ -543,7 +486,6 @@ it.effect("appends only messages missing after a deterministic imported id", () 
             return { sequence: commands.length };
           }),
       } as unknown as OrchestrationEngineService["Service"],
-      unassignedWorkspaceRoot: "/unused",
     });
 
     expect(commands).toHaveLength(1);

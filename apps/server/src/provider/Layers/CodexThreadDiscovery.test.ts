@@ -184,6 +184,22 @@ it("selects only user-visible threads whose discovery cursor changed", () => {
   expect(selected.map((thread) => thread.id)).toEqual(["status-changed", "new"]);
 });
 
+it("filters persisted threads to explicitly opened workspace roots", () => {
+  const selected = selectCodexThreadsForRead(
+    [
+      makeListedThread("project", { cwd: "/work/project" }),
+      makeListedThread("other", { cwd: "/work/other" }),
+    ],
+    {
+      excludeProviderThreadIds: new Set(),
+      cursorByProviderThreadId: new Map(),
+      workspaceRoots: new Set(["/work/project/"]),
+    },
+  );
+
+  expect(selected.map((thread) => thread.id)).toEqual(["project"]);
+});
+
 it.effect("keeps readable threads when a sibling disappears between list and read", () =>
   Effect.gen(function* () {
     const threads = [makeListedThread("deleted"), makeListedThread("healthy")];

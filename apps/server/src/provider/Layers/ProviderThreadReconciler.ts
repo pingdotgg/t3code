@@ -5,7 +5,6 @@ import {
   CommandId,
   DEFAULT_MODEL_BY_PROVIDER,
   MessageId,
-  ProjectId,
   ProviderDriverKind,
   ThreadId,
   TurnId,
@@ -15,12 +14,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-import { ServerConfig } from "../../config.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { forkParked } from "../../serverActivation.ts";
@@ -96,12 +93,6 @@ function importedThreadId(instance: ProviderInstance, providerThreadId: string):
   return importedThreadIdFor(instance.continuationIdentity.continuationKey, providerThreadId);
 }
 
-function unassignedProjectId(instance: ProviderInstance): ProjectId {
-  return ProjectId.make(
-    `provider-imports:${continuationIdentityDigest(instance.continuationIdentity.continuationKey)}`,
-  );
-}
-
 function importCommandId(...parts: ReadonlyArray<string>): CommandId {
   return CommandId.make(`provider-import:${parts.join(":")}`);
 }
@@ -142,13 +133,12 @@ export function groupPersistedThreadDiscoveryCandidates(
 }
 
 export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedProviderThreads")(
-  function* () {
+  function* (input: { readonly workspaceRoots: ReadonlySet<string> }) {
+    if (input.workspaceRoots.size === 0) return 0;
     const registry = yield* ProviderInstanceRegistry;
     const directory = yield* ProviderSessionDirectory;
     const snapshots = yield* ProjectionSnapshotQuery;
     const engine = yield* OrchestrationEngineService;
-    const serverConfig = yield* ServerConfig;
-    const path = yield* Path.Path;
     const instances = yield* registry.listInstances;
     const bindings = yield* directory.listBindings();
     const discoveryCandidateGroups = groupPersistedThreadDiscoveryCandidates(instances);
@@ -252,6 +242,7 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
                 cursorByProviderThreadId: ownerChanged
                   ? new Map()
                   : (cursorByThreadIdByContinuation.get(continuationKey) ?? new Map()),
+                workspaceRoots: input.workspaceRoots,
               });
               return { instance, model, discovered } as const;
             }).pipe(
@@ -285,11 +276,6 @@ export const reconcilePersistedProviderThreads = Effect.fn("reconcilePersistedPr
                 directory,
                 snapshots,
                 engine,
-                unassignedWorkspaceRoot: path.join(
-                  serverConfig.stateDir,
-                  "provider-imports",
-                  continuationIdentityDigest(instance.continuationIdentity.continuationKey),
-                ),
               }).pipe(
                 Effect.catchCause((cause) =>
                   recoverReconciliationCause(
@@ -337,7 +323,6 @@ export const reconcilePersistedThread = Effect.fn("reconcilePersistedProviderThr
     readonly directory: ProviderSessionDirectory["Service"];
     readonly snapshots: ProjectionSnapshotQuery["Service"];
     readonly engine: OrchestrationEngineService["Service"];
-    readonly unassignedWorkspaceRoot: string;
   }) {
     const continuationKey = input.instance.continuationIdentity.continuationKey;
     const continuationIdentity = continuationIdentityDigest(continuationKey);
@@ -353,43 +338,12 @@ export const reconcilePersistedThread = Effect.fn("reconcilePersistedProviderThr
     const matchingProject = yield* input.snapshots.getActiveProjectByWorkspaceRoot(
       input.thread.cwd,
     );
-    const projectId = Option.isSome(matchingProject)
-      ? matchingProject.value.id
-      : unassignedProjectId(input.instance);
-
-    if (Option.isNone(matchingProject)) {
-      const existingUnassignedProject = yield* input.snapshots.getProjectShellById(projectId);
-      if (Option.isNone(existingUnassignedProject)) {
-        if (Option.isNone(existingThread)) {
-          yield* input.engine.dispatch({
-            type: "project.create",
-            commandId: importCommandId(continuationIdentity, "unassigned-project"),
-            projectId,
-            title: "Unassigned Codex threads",
-            workspaceRoot: input.unassignedWorkspaceRoot,
-            defaultModelSelection: { instanceId: input.instance.instanceId, model: input.model },
-            createdAt: input.thread.createdAt,
-          });
-        }
-      } else if (
-        existingUnassignedProject.value.defaultModelSelection?.instanceId !==
-          input.instance.instanceId ||
-        existingUnassignedProject.value.defaultModelSelection.model !== input.model
-      ) {
-        yield* input.engine.dispatch({
-          type: "project.meta.update",
-          commandId: importCommandId(
-            continuationIdentity,
-            "unassigned-project",
-            "owner",
-            input.instance.instanceId,
-            input.model,
-          ),
-          projectId,
-          defaultModelSelection: { instanceId: input.instance.instanceId, model: input.model },
-        });
-      }
-    }
+    if (Option.isNone(matchingProject)) return;
+    const projectId = matchingProject.value.id;
+    const projectChanged =
+      Option.isSome(existingThread) &&
+      existingThread.value.projectId !== undefined &&
+      existingThread.value.projectId !== projectId;
 
     if (Option.isNone(existingThread)) {
       yield* input.engine.dispatch({
@@ -402,10 +356,11 @@ export const reconcilePersistedThread = Effect.fn("reconcilePersistedProviderThr
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,
-        worktreePath: Option.isSome(matchingProject) ? null : input.thread.cwd,
+        worktreePath: null,
         createdAt: input.thread.createdAt,
       });
     } else if (
+      projectChanged ||
       existingThread.value.modelSelection.instanceId !== input.instance.instanceId ||
       existingThread.value.modelSelection.model !== input.model
     ) {
@@ -419,6 +374,7 @@ export const reconcilePersistedThread = Effect.fn("reconcilePersistedProviderThr
           input.model,
         ),
         threadId: expectedThreadId,
+        ...(projectChanged ? { projectId, worktreePath: null } : {}),
         modelSelection: { instanceId: input.instance.instanceId, model: input.model },
       });
     }
@@ -525,7 +481,7 @@ export const ProviderThreadReconcilerLive = Layer.effectDiscard(
     const changes = yield* registry.subscribeChanges;
     const reconcileSemaphore = yield* Semaphore.make(1);
     const reconcile = reconcileSemaphore.withPermits(1)(
-      reconcilePersistedProviderThreads().pipe(
+      reconcilePersistedProviderThreads({ workspaceRoots: new Set() }).pipe(
         Effect.catchCause((cause) =>
           recoverReconciliationCause(
             cause,

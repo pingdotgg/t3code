@@ -47,6 +47,7 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProviderPersistedThreadDiscoveryError,
   ProviderUploadFeedbackError,
   ProviderSetupError,
   RelayClientInstallFailedError,
@@ -99,6 +100,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
+import * as ProviderThreadReconciler from "./provider/Layers/ProviderThreadReconciler.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -1721,6 +1723,23 @@ const makeWsRpcLayer = (
                 (cause) =>
                   new ProviderUploadFeedbackError({
                     threadId: input.threadId,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.providerDiscoverPersistedThreads]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerDiscoverPersistedThreads,
+            ProviderThreadReconciler.reconcilePersistedProviderThreads({
+              workspaceRoots: new Set([input.workspaceRoot]),
+            }).pipe(
+              Effect.map((importedCount) => ({ importedCount })),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderPersistedThreadDiscoveryError({
+                    workspaceRoot: input.workspaceRoot,
                     cause,
                   }),
               ),
