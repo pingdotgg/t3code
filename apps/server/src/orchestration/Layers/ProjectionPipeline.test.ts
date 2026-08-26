@@ -174,6 +174,78 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         assert.equal(row.lastAppliedSequence, 3);
       }
 
+      yield* sql`CREATE TABLE thread_shell_updates (count INTEGER NOT NULL)`;
+      yield* sql`INSERT INTO thread_shell_updates (count) VALUES (0)`;
+      yield* sql`
+        CREATE TRIGGER count_thread_shell_updates
+        AFTER UPDATE ON projection_threads
+        WHEN NEW.thread_id = 'thread-1'
+        BEGIN
+          UPDATE thread_shell_updates SET count = count + 1;
+        END;
+      `;
+
+      yield* eventStore.append({
+        type: "thread.message-sent",
+        eventId: EventId.make("evt-assistant-update"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:00.100Z",
+        commandId: CommandId.make("cmd-assistant-update"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-assistant-update"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("message-2"),
+          role: "assistant",
+          text: "more work",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-01-01T00:00:00.100Z",
+          updatedAt: "2026-01-01T00:00:00.100Z",
+        },
+      });
+      yield* projectionPipeline.bootstrap;
+
+      let threadShellUpdates = yield* sql<{ readonly count: number }>`
+        SELECT count FROM thread_shell_updates
+      `;
+      assert.deepEqual(threadShellUpdates, [{ count: 1 }]);
+
+      yield* sql`UPDATE thread_shell_updates SET count = 0`;
+      yield* eventStore.append({
+        type: "thread.activity-appended",
+        eventId: EventId.make("evt-routine-activity"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        occurredAt: "2026-01-01T00:00:00.200Z",
+        commandId: CommandId.make("cmd-routine-activity"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-routine-activity"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("activity-routine"),
+            tone: "tool",
+            kind: "tool.updated",
+            summary: "Tool made progress",
+            payload: {},
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00.200Z",
+          },
+        },
+      });
+      yield* projectionPipeline.bootstrap;
+
+      threadShellUpdates = yield* sql<{ readonly count: number }>`
+        SELECT count FROM thread_shell_updates
+      `;
+      assert.deepEqual(threadShellUpdates, [{ count: 1 }]);
+      yield* sql`DROP TRIGGER count_thread_shell_updates`;
+      yield* sql`DROP TABLE thread_shell_updates`;
+
       // Settled lifecycle through the DB pipeline: thread.settled writes the
       // override + timestamp, thread.unsettled(user) flips to the active pin.
       yield* eventStore.append({
@@ -197,15 +269,17 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       const settledRows = yield* sql<{
         readonly settledOverride: string | null;
         readonly settledAt: string | null;
+        readonly unsettledAt: string | null;
       }>`
         SELECT
           settled_override AS "settledOverride",
-          settled_at AS "settledAt"
+          settled_at AS "settledAt",
+          unsettled_at AS "unsettledAt"
         FROM projection_threads
         WHERE thread_id = 'thread-1'
       `;
       assert.deepEqual(settledRows, [
-        { settledOverride: "settled", settledAt: "2026-01-01T00:00:01.000Z" },
+        { settledOverride: "settled", settledAt: "2026-01-01T00:00:01.000Z", unsettledAt: null },
       ]);
 
       yield* eventStore.append({
@@ -229,14 +303,24 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       const unsettledRows = yield* sql<{
         readonly settledOverride: string | null;
         readonly settledAt: string | null;
+        readonly unsettledAt: string | null;
       }>`
         SELECT
           settled_override AS "settledOverride",
-          settled_at AS "settledAt"
+          settled_at AS "settledAt",
+          unsettled_at AS "unsettledAt"
         FROM projection_threads
         WHERE thread_id = 'thread-1'
       `;
-      assert.deepEqual(unsettledRows, [{ settledOverride: "active", settledAt: null }]);
+      // The un-settle stamps the active-list re-entry time so clients can
+      // surface the thread at the top of the list.
+      assert.deepEqual(unsettledRows, [
+        {
+          settledOverride: "active",
+          settledAt: null,
+          unsettledAt: "2026-01-01T00:00:02.000Z",
+        },
+      ]);
     }),
   );
 });

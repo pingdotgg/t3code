@@ -47,6 +47,9 @@ The goal is not to minimize CSS or class counts at any cost. The goal is to put 
   - light-only declarations use `@variant light`;
   - raw `.dark` should remain only in the `dark` and `light` custom-variant definitions.
 - Preserve custom themes and runtime token bridges. Removing a variable or selector is safe only when all runtime, inspector, generated, and theme-palette consumers are accounted for.
+- Contrast and accessibility settings that target app chrome must derive from semantic color tokens. Do not apply `filter` to `html`, `body`, or the app root: it also changes user media, previews, terminals, glass backdrop ownership, and view-transition snapshots.
+- Preserve alpha and surface ownership when deriving contrast tokens. Soften translucent borders and inputs toward transparent rather than an opaque canvas, use a modest semantic-foreground mix for stronger borders, and adjust card, popover, accent, secondary, and message foregrounds against their own surfaces when the base foreground changes.
+- Runtime-adjusted roles must be ordinary custom properties shared by the Tailwind bridge, global CSS, imperative style strings, and bridge snapshots sent to other renderers. Audit literal `var(--foreground)`, `var(--border)`, and related role reads so headings, markdown chrome, menus, previews, and utilities do not split into adjusted and unadjusted colors.
 - Inspect emitted production CSS after unusual variants, arbitrary selectors, nested pseudo-elements, or attribute matching. Source syntax that looks valid is insufficient.
 - Flag malformed or empty emitted selectors such as empty `:is()` or `:not(:is())`, selector branches that can never match their own class attribute, and transformations that silently drop the intended rule.
 - Prefer source-level logic over clever selectors when behavior depends on consumer-provided class strings. Preserve `MenuPopup`'s current defaulting contract: a string `className` containing a `w-*`, `min-w-*`, or `max-w-*` utility after variant prefixes are stripped suppresses `min-w-32`; a string without one and a functional/non-string `className` keep the default. Arbitrary width values count as width utilities, and the consumer class must be merged last so it retains control. Do not replace this with a raw class-attribute substring selector.
@@ -66,6 +69,13 @@ The goal is not to minimize CSS or class counts at any cost. The goal is to put 
 - For meaningful visual changes, prefer available real-app evidence using the actual component and state. A mock recreation does not validate the real component. Light and dark evidence is useful when theme-sensitive styles change, but missing or inaccessible evidence alone is not a finding; report only a concrete regression supported by the diff, code, or available artifacts.
 - Do not treat a screenshot as proof of keyboard, overflow, scrollbar, responsive, or runtime-theme behavior. Pair visual evidence with source, computed-style, emitted-CSS, or interaction checks as appropriate.
 - Be alert to shared primitive color indirection. When a primitive routes icon color through a CSS variable, ensure migrated contextual icons retain their intended tone, including pressed and disabled states.
+
+## Environment routing in shared renderers
+
+- A shared renderer that performs an environment-scoped action — a server RPC such as opening or revealing a file, an environment-gated capability check, or an OS-derived label — must resolve its target environment from explicit scope: the bound thread's `environmentId`, or an `environmentId` prop threaded from the owning surface. Never let it silently fall back to the globally active environment. Multi-environment surfaces (pull request panels, review annotations, cross-environment listings) can render content from environment B while environment A is active; a silent fallback sends B's paths to A's server and presents A's platform wording.
+- When a call site cannot supply an explicit environment scope, suppress the environment-scoped actions at that call site rather than guessing. A hidden menu item is correct; an item that targets the wrong server is a concrete finding.
+- Capability gating, action dispatch, and user-facing labels must all read from the same environment's server config that the action will execute against. Flag a renderer whose label derives from one environment while its RPC targets another.
+- Flag new call sites of shared markdown, chip, or menu renderers that trigger environment actions without passing explicit scope, and flag new environment-action props whose default reintroduces an active-environment fallback.
 
 ## Change discipline
 
