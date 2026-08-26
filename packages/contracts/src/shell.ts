@@ -341,6 +341,48 @@ export const ShellContextMenuState = Schema.Struct({
 });
 export type ShellContextMenuState = typeof ShellContextMenuState.Type;
 
+export const ShellGitMenuItem = Schema.Struct({
+  id: Schema.Literals(["commit", "push", "pr"]),
+  label: Schema.String,
+  disabledReason: Schema.NullOr(Schema.String),
+});
+
+/**
+ * Published under the `git` key while a thread route is open: the git
+ * control's model. Progress and results arrive as notifications; the commit
+ * and default-branch dialogs are the shell's to render from this state.
+ */
+export const ShellGitState = Schema.Struct({
+  available: Schema.Boolean,
+  isRepo: Schema.Boolean,
+  busy: Schema.Boolean,
+  initPending: Schema.Boolean,
+  quickAction: Schema.Struct({
+    label: Schema.String,
+    disabledReason: Schema.NullOr(Schema.String),
+    kind: Schema.Literals(["run_action", "run_pull", "open_pr", "open_publish", "show_hint"]),
+  }),
+  menu: Schema.Array(ShellGitMenuItem),
+  canPublish: Schema.Boolean,
+  hints: Schema.Array(Schema.String),
+  branch: Schema.NullOr(Schema.String),
+  isDefaultRef: Schema.Boolean,
+  /** Working-tree files for the commit dialog. */
+  files: Schema.Array(
+    Schema.Struct({ path: Schema.String, insertions: Schema.Number, deletions: Schema.Number }),
+  ),
+  /** Set while the page waits for the default-branch confirmation. */
+  pendingDefaultBranch: Schema.NullOr(
+    Schema.Struct({
+      title: Schema.String,
+      description: Schema.String,
+      continueLabel: Schema.String,
+      featureBranchLabel: Schema.String,
+    }),
+  ),
+});
+export type ShellGitState = typeof ShellGitState.Type;
+
 /** Actions the shell's chrome dispatches; `type` is the action name on the wire. */
 export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("thread.open"), key: Schema.String }),
@@ -452,6 +494,25 @@ export const ShellAction = Schema.Union([
     y: Schema.Number,
   }),
   Schema.Struct({ type: Schema.Literal("workspace.rename"), title: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("git.quick") }),
+  Schema.Struct({
+    type: Schema.Literal("git.menu"),
+    id: Schema.Literals(["commit", "push", "pr"]),
+  }),
+  Schema.Struct({ type: Schema.Literal("git.init") }),
+  Schema.Struct({ type: Schema.Literal("git.publish") }),
+  Schema.Struct({ type: Schema.Literal("git.refresh") }),
+  Schema.Struct({
+    type: Schema.Literal("git.commit"),
+    message: Schema.String,
+    /** Null commits everything; otherwise the chosen subset. */
+    filePaths: Schema.NullOr(Schema.Array(Schema.String)),
+    featureBranch: Schema.Boolean,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("git.defaultBranch"),
+    choice: Schema.Literals(["abort", "continue", "featureBranch"]),
+  }),
   /** Open a sidebar thread's action menu at window coordinates. */
   Schema.Struct({
     type: Schema.Literal("thread.menu"),
