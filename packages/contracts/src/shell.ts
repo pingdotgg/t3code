@@ -168,6 +168,56 @@ export const ShellRightPanelState = Schema.Struct({
 });
 export type ShellRightPanelState = typeof ShellRightPanelState.Type;
 
+export const ShellWorkspaceEnvMode = Schema.Literals(["local", "worktree"]);
+export type ShellWorkspaceEnvMode = typeof ShellWorkspaceEnvMode.Type;
+
+/**
+ * Published under the `workspace` key while a thread route is open: the
+ * breadcrumb, checkout/branch context, editors and project scripts. Git
+ * write actions (commit/push/PR) stay with the page's own control.
+ */
+export const ShellWorkspaceState = Schema.Struct({
+  threadKey: Schema.String,
+  projectTitle: Schema.NullOr(Schema.String),
+  projectRoot: Schema.NullOr(Schema.String),
+  threadTitle: Schema.String,
+  isDraft: Schema.Boolean,
+  envMode: ShellWorkspaceEnvMode,
+  envModeLabel: Schema.String,
+  envModeChangeable: Schema.Boolean,
+  startFromOrigin: Schema.Boolean,
+  branch: Schema.NullOr(Schema.String),
+  worktreePath: Schema.NullOr(Schema.String),
+  git: Schema.NullOr(
+    Schema.Struct({
+      isRepo: Schema.Boolean,
+      hasWorkingTreeChanges: Schema.Boolean,
+      aheadCount: Schema.Number,
+      behindCount: Schema.Number,
+      hasUpstream: Schema.Boolean,
+      pullRequest: Schema.NullOr(
+        Schema.Struct({
+          number: Schema.Number,
+          title: Schema.String,
+          url: Schema.String,
+          state: Schema.String,
+        }),
+      ),
+    }),
+  ),
+  canOpenPullRequest: Schema.Boolean,
+  editors: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
+  preferredEditorId: Schema.NullOr(Schema.String),
+  scripts: Schema.Array(
+    Schema.Struct({ id: Schema.String, name: Schema.String, command: Schema.String }),
+  ),
+  preferredScriptId: Schema.NullOr(Schema.String),
+  environments: Schema.Array(Schema.Struct({ environmentId: Schema.String, label: Schema.String })),
+  activeEnvironmentId: Schema.String,
+  environmentChangeable: Schema.Boolean,
+});
+export type ShellWorkspaceState = typeof ShellWorkspaceState.Type;
+
 /** Actions the shell's chrome dispatches; `type` is the action name on the wire. */
 export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("thread.open"), key: Schema.String }),
@@ -211,6 +261,19 @@ export const ShellAction = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("rightPanel.add"),
     kind: Schema.Literals(["diff", "files", "terminal", "pullRequest", "agents"]),
+  }),
+  Schema.Struct({ type: Schema.Literal("workspace.newThread") }),
+  Schema.Struct({
+    type: Schema.Literal("workspace.openInEditor"),
+    editorId: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({ type: Schema.Literal("workspace.runScript"), scriptId: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("workspace.envMode.set"), mode: ShellWorkspaceEnvMode }),
+  Schema.Struct({ type: Schema.Literal("workspace.startFromOrigin.set"), enabled: Schema.Boolean }),
+  Schema.Struct({ type: Schema.Literal("workspace.openPullRequest") }),
+  Schema.Struct({
+    type: Schema.Literal("workspace.environment.set"),
+    environmentId: Schema.String,
   }),
 ]);
 export type ShellAction = typeof ShellAction.Type;
