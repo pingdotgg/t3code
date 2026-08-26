@@ -7947,7 +7947,12 @@ function ChatViewContent(props: ChatViewProps) {
           data-chat-header
           electron={isElectron}
           reserveNativeControls={reserveTitleBarControlInset && !inlineRightPanelOwnsTitleBar}
-          className="relative bg-background"
+          className={cn(
+            "relative bg-background",
+            // Native chrome owns the strip; keep the header mounted (git runs
+            // there) but give it no height.
+            shellHostsChrome && "h-0! min-h-0! overflow-hidden",
+          )}
         >
           {isElectron && rightPanelControlsAtRoot ? (
             <span

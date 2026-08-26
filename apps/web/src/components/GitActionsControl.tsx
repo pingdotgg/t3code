@@ -41,6 +41,7 @@ import {
   requestVcsStatusRefresh,
   useGitActions,
 } from "../hooks/useGitActions";
+import { ShellGitBridge } from "../shell/ShellGitBridge";
 import { AnimatedHeight } from "./AnimatedHeight";
 import { StartTruncatedPath } from "./StartTruncatedPath";
 import { Button } from "~/components/ui/button";
@@ -71,6 +72,8 @@ import { readLocalApi } from "~/localApi";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 
 interface GitActionsControlProps {
+  /** Hosted by the Qt shell: publish the model, keep only the publish dialog here. */
+  shellHosted?: boolean;
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
@@ -808,6 +811,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 }
 
 export default function GitActionsControl({
+  shellHosted = false,
   gitCwd,
   activeThreadRef,
   draftId,
@@ -819,6 +823,13 @@ export default function GitActionsControl({
   const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const openPublishDialog = useCallback(() => setIsPublishDialogOpen(true), []);
+  const git = useGitActions({
+    gitCwd,
+    activeThreadRef,
+    draftId,
+    onOpenPullRequest,
+    onOpenPublish: openPublishDialog,
+  });
   const {
     activeEnvironmentId,
     threadToastData,
@@ -844,13 +855,7 @@ export default function GitActionsControl({
     runGitActionWithToast,
     runQuickAction,
     resolveMenuItemAction,
-  } = useGitActions({
-    gitCwd,
-    activeThreadRef,
-    draftId,
-    onOpenPullRequest,
-    onOpenPublish: openPublishDialog,
-  });
+  } = git;
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
@@ -927,6 +932,19 @@ export default function GitActionsControl({
   const canPublishRepository = isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
 
   if (!gitCwd) return null;
+  if (shellHosted) {
+    return (
+      <>
+        <ShellGitBridge git={git} gitCwd={gitCwd} onOpenPublish={openPublishDialog} />
+        <PublishRepositoryDialog
+          open={isPublishDialogOpen}
+          onOpenChange={setIsPublishDialogOpen}
+          environmentId={activeEnvironmentId}
+          gitCwd={gitCwd}
+        />
+      </>
+    );
+  }
 
   return (
     <>
