@@ -274,7 +274,7 @@ describe("ReferralProgram", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
-  it.effect("rolls back the claim when its immediate point award cannot be persisted", () => {
+  it.effect("keeps a claim recoverable when its immediate point award cannot be persisted", () => {
     const state = makeState();
     state.pointInsertFailure = new Error("point insert failed");
     return Effect.gen(function* () {
@@ -282,20 +282,34 @@ describe("ReferralProgram", () => {
       const referrer = yield* referrals.getSummary({ userId: "referrer" });
       state.beforeClaimUpdate = () => state.environmentUsers.add("referred");
 
-      const error = yield* Effect.flip(
-        referrals.claim({
+      expect(
+        (yield* referrals.claim({
           userId: "referred",
           referralCode: referrer.referralCode,
-        }),
-      );
+        })).result,
+      ).toBe("claimed");
+      expect(state.accounts.get("referred")?.referrerUserId).toBe("referrer");
+      expect(state.pointEntries).toHaveLength(0);
 
+      const error = yield* Effect.flip(referrals.qualify({ userId: "referred" }));
       expect(error).toMatchObject({
         _tag: "ReferralProgramPersistenceError",
         operation: "qualify-referral",
         cause: state.pointInsertFailure,
       });
-      expect(state.accounts.get("referred")?.referrerUserId).toBeNull();
-      expect(state.pointEntries).toHaveLength(0);
+
+      delete state.pointInsertFailure;
+      expect(
+        (yield* referrals.claim({
+          userId: "referred",
+          referralCode: referrer.referralCode,
+        })).result,
+      ).toBe("already_claimed");
+      expect(yield* referrals.getSummary({ userId: "referrer" })).toMatchObject({
+        points: 67,
+        qualifiedReferrals: 1,
+        pendingReferrals: 0,
+      });
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 });

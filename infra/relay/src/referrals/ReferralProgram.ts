@@ -330,56 +330,49 @@ export const make = Effect.gen(function* () {
       } else if (referrerUserId === input.userId) {
         result = "self_referral";
       } else {
-        result = yield* transactions
-          .withTransaction(
-            Effect.gen(function* () {
-              const now = DateTime.formatIso(yield* DateTime.now);
-              const claimed = yield* db
-                .update(relayReferralAccounts)
-                .set({ referrerUserId, referredAt: now, updatedAt: now })
-                .where(
-                  and(
-                    eq(relayReferralAccounts.userId, input.userId),
-                    isNull(relayReferralAccounts.referrerUserId),
-                    sql`not exists (
-                      select 1 from ${relayEnvironmentLinks}
-                      where ${relayEnvironmentLinks.userId} = ${input.userId}
-                    )`,
-                  ),
-                )
-                .returning({ userId: relayReferralAccounts.userId });
-
-              if (claimed.length > 0) {
-                yield* qualifyInCurrentTransaction({ userId: input.userId });
-                return "claimed" as const;
-              }
-
-              const current = yield* loadAccount(input.userId);
-              return current?.referrerUserId
-                ? ("already_claimed" as const)
-                : (yield* hasEnvironmentLink(input.userId, "claim-referral"))
-                  ? ("ineligible" as const)
-                  : ("already_claimed" as const);
-            }),
+        const now = DateTime.formatIso(yield* DateTime.now);
+        const claimed = yield* db
+          .update(relayReferralAccounts)
+          .set({ referrerUserId, referredAt: now, updatedAt: now })
+          .where(
+            and(
+              eq(relayReferralAccounts.userId, input.userId),
+              isNull(relayReferralAccounts.referrerUserId),
+              sql`not exists (
+                select 1 from ${relayEnvironmentLinks}
+                where ${relayEnvironmentLinks.userId} = ${input.userId}
+              )`,
+            ),
           )
+          .returning({ userId: relayReferralAccounts.userId })
           .pipe(
-            Effect.mapError((cause) =>
-              isReferralProgramPersistenceError(cause)
-                ? cause
-                : new ReferralProgramPersistenceError({
-                    operation: "claim-referral",
-                    userId: input.userId,
-                    cause,
-                  }),
+            Effect.mapError(
+              (cause) =>
+                new ReferralProgramPersistenceError({
+                  operation: "claim-referral",
+                  userId: input.userId,
+                  cause,
+                }),
             ),
           );
+
+        if (claimed.length > 0) {
+          result = "claimed";
+        } else {
+          const current = yield* loadAccount(input.userId);
+          result = current?.referrerUserId
+            ? "already_claimed"
+            : (yield* hasEnvironmentLink(input.userId, "claim-referral"))
+              ? "ineligible"
+              : "already_claimed";
+        }
       }
     }
 
-    if (result === "already_claimed") {
+    if (result === "claimed" || result === "already_claimed") {
       yield* qualify({ userId: input.userId }).pipe(
         Effect.tapError((error) =>
-          Effect.logWarning("referral qualification after repeated claim failed", {
+          Effect.logWarning("referral qualification after claim failed", {
             errorTag: error._tag,
             operation: error.operation,
           }),
