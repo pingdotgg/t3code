@@ -379,6 +379,7 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
   if (timestampMs === null) return [];
 
   const sessionId = typeof params["sessionId"] === "string" ? params["sessionId"] : "";
+  const promptId = typeof update["prompt_id"] === "string" ? update["prompt_id"] : "";
   const meta =
     typeof params["_meta"] === "object" && params["_meta"] !== null
       ? (params["_meta"] as Record<string, unknown>)
@@ -410,7 +411,6 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
 
   const records: UsageRecord[] = [];
   for (const { model, usage, totals } of rows) {
-    const usageSignature = JSON.stringify(usage);
     records.push({
       provider: "grok",
       timestampMs,
@@ -420,9 +420,11 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
       recordCount: Math.max(1, int(usage["modelCalls"])),
       reportedCostUsd: grokCostUsd(usage, aggregateUsage, rows.length === 1),
       dedupeKey:
-        sessionId.length > 0 || eventId !== null
-          ? `${sessionId}:${eventId ?? timestampMs}:${model}:${usageSignature}`
-          : null,
+        promptId.length > 0
+          ? `${promptId}:${timestampMs}:${model}`
+          : sessionId.length > 0 || eventId !== null
+            ? `${sessionId}:${eventId ?? timestampMs}:${model}`
+            : null,
     });
   }
 

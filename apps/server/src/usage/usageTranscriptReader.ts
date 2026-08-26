@@ -45,6 +45,7 @@ export async function listTranscriptFiles(
   provider?: UsageProviderKind,
 ): Promise<readonly TranscriptFile[]> {
   const found: TranscriptFile[] = [];
+  const grokSubagentSessionIds = new Set<string>();
 
   const walk = async (dir: string): Promise<void> => {
     let entries;
@@ -56,6 +57,17 @@ export async function listTranscriptFiles(
     for (const entry of entries) {
       const child = NodePath.join(dir, entry.name);
       if (entry.isDirectory()) {
+        if (provider === "grok" && entry.name === "subagents") {
+          try {
+            const subagents = await NodeFSP.readdir(child, { withFileTypes: true });
+            for (const subagent of subagents) {
+              if (subagent.isDirectory()) grokSubagentSessionIds.add(subagent.name);
+            }
+          } catch {
+            // The directory may disappear while a session is being cleaned up.
+          }
+          continue;
+        }
         await walk(child);
         continue;
       }
@@ -73,7 +85,14 @@ export async function listTranscriptFiles(
   };
 
   await walk(root);
-  return found;
+  if (provider !== "grok" || grokSubagentSessionIds.size === 0) return found;
+
+  // Grok writes a subagent's ledger beside the parent session as well as
+  // linking it from `<parent>/subagents/<child>`. The parent's completed-turn
+  // usage already includes the child, so scanning both ledgers double-counts.
+  return found.filter(
+    (file) => !grokSubagentSessionIds.has(NodePath.basename(NodePath.dirname(file.path))),
+  );
 }
 
 /**

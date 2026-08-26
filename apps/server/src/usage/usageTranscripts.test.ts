@@ -255,6 +255,7 @@ describe("parseGrokLine", () => {
           agentTimestampMs: 1_784_068_256_563,
         },
         update: {
+          prompt_id: "t3-xai-prompt-1",
           usage: {
             costIsPartial: overrides.costIsPartial,
             costUsdTicks: overrides.costUsdTicks,
@@ -275,7 +276,7 @@ describe("parseGrokLine", () => {
     });
   }
 
-  it("extracts inclusive input, exact cost ticks, and event identity", () => {
+  it("extracts inclusive input, exact cost ticks, and prompt identity", () => {
     const [record] = parseGrokLine(grokLine());
 
     expect(record?.provider).toBe("grok");
@@ -291,7 +292,30 @@ describe("parseGrokLine", () => {
     });
     expect(record?.recordCount).toBe(2);
     expect(record?.reportedCostUsd).toBeCloseTo(0.011172, 9);
-    expect(record?.dedupeKey).toContain("019f62c1-26b5-7c51-85a5-526cbc9c4449-46");
+    expect(record?.dedupeKey).toBe("t3-xai-prompt-1:1784068256563:grok-4.5");
+  });
+
+  it("deduplicates fork copies without collapsing reused synthetic prompt ids", () => {
+    const original = JSON.parse(grokLine()) as {
+      timestamp: number;
+      params: {
+        sessionId: string;
+        _meta: { eventId: string; agentTimestampMs: number };
+        update: { usage: Record<string, unknown> };
+      };
+    };
+    const fork = structuredClone(original);
+    fork.params.sessionId = "forked-session";
+    fork.params._meta.eventId = "forked-session-46";
+    fork.params.update.usage["costIsPartial"] = false;
+
+    const [originalRecord] = parseGrokLine(JSON.stringify(original));
+    const [forkRecord] = parseGrokLine(JSON.stringify(fork));
+    expect(forkRecord?.dedupeKey).toBe(originalRecord?.dedupeKey);
+
+    fork.params._meta.agentTimestampMs += 1;
+    const [unrelatedRecord] = parseGrokLine(JSON.stringify(fork));
+    expect(unrelatedRecord?.dedupeKey).not.toBe(originalRecord?.dedupeKey);
   });
 
   it("expands a multi-model prompt into independently priced rows", () => {
@@ -343,10 +367,15 @@ describe("parseGrokLine", () => {
 
   it("does not deduplicate identity-less updates by their payload", () => {
     const parsed = JSON.parse(grokLine()) as {
-      params: { sessionId?: string; _meta?: { eventId?: string } };
+      params: {
+        sessionId?: string;
+        _meta?: { eventId?: string };
+        update: { prompt_id?: string };
+      };
     };
     delete parsed.params.sessionId;
     delete parsed.params._meta;
+    delete parsed.params.update.prompt_id;
 
     const [record] = parseGrokLine(JSON.stringify(parsed));
 

@@ -20,7 +20,7 @@ import type { UsageRecord } from "./usageTranscripts.ts";
 
 // v3: aggregate records gained `recordCount`, changing the serialized row
 // shape. Older entries must be rescanned instead of decoded without it.
-export const USAGE_SCAN_CACHE_VERSION = 3 as const;
+export const USAGE_SCAN_CACHE_VERSION = 4 as const;
 
 export interface CachedFile {
   readonly size: number;
