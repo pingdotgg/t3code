@@ -1,5 +1,5 @@
 /**
- * Integrations settings - preferences for surfaces T3 Code embeds rather than
+ * Integrations settings - preferences for surfaces the app embeds rather than
  * owns. Browser is the first section: the defaults a preview tab opens at,
  * applied to both hand-opened tabs and agent `preview_open` calls that don't
  * state their own size.
@@ -20,14 +20,16 @@ import {
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
+import { SelfDrivingCrest } from "@posthog/brand/crests";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { InfoIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { isElectron } from "../../env";
 
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
 import {
   Select,
@@ -453,6 +455,94 @@ function DesktopOnlyBrowserDefaults({ children }: { readonly children: ReactNode
   );
 }
 
+function PostHogSettingsSection() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const posthog = settings.posthog;
+  const [host, setHost] = useState(posthog.host);
+  const [projectId, setProjectId] = useState(posthog.projectId);
+  const [apiKey, setApiKey] = useState("");
+
+  const commitHost = () => {
+    const next = host.trim();
+    if (next !== posthog.host) updateSettings({ posthog: { host: next } });
+  };
+  const commitProjectId = () => {
+    const next = projectId.trim();
+    if (next !== posthog.projectId) updateSettings({ posthog: { projectId: next } });
+  };
+  const saveApiKey = () => {
+    const next = apiKey.trim();
+    if (next.length === 0) return;
+    updateSettings({ posthog: { apiKey: next } });
+    setApiKey("");
+  };
+  const status =
+    posthog.apiKeyConfigured && posthog.projectId.length > 0 ? "Connected" : "Not configured";
+
+  return (
+    <SettingsSection id="posthog" title="PostHog" icon={<SelfDrivingCrest.Mini size={20} />}>
+      <SettingsRow
+        title="Host"
+        description="The PostHog instance the reports inbox reads from."
+        control={
+          <Input
+            value={host}
+            onChange={(event) => setHost(event.target.value)}
+            onBlur={commitHost}
+            placeholder="https://us.posthog.com"
+            className="w-full sm:w-64"
+            aria-label="PostHog host"
+          />
+        }
+      />
+      <SettingsRow
+        title="Project id"
+        description="The numeric project id from the PostHog URL."
+        control={
+          <Input
+            value={projectId}
+            onChange={(event) => setProjectId(event.target.value)}
+            onBlur={commitProjectId}
+            placeholder="12345"
+            className="w-full sm:w-40"
+            aria-label="PostHog project id"
+          />
+        }
+      />
+      <SettingsRow
+        title="Personal API key"
+        description="Stored in the server's secret store, never in settings.json. Needs read access to tasks."
+        status={status}
+        control={
+          <div className="flex w-full items-center gap-2 sm:w-auto">
+            <Input
+              type="password"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              placeholder={posthog.apiKeyConfigured ? "Replace key" : "phx_..."}
+              className="w-full sm:w-56"
+              aria-label="PostHog personal API key"
+            />
+            <Button size="sm" disabled={apiKey.trim().length === 0} onClick={saveApiKey}>
+              Save
+            </Button>
+            {posthog.apiKeyConfigured ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => updateSettings({ posthog: { apiKeyConfigured: false } })}
+              >
+                Remove
+              </Button>
+            ) : null}
+          </div>
+        }
+      />
+    </SettingsSection>
+  );
+}
+
 export function IntegrationsSettingsPanel() {
   // Client-local preview defaults are editable only where the preview exists.
   const previewDefaultsDisabled = !isElectron;
@@ -477,6 +567,7 @@ export function IntegrationsSettingsPanel() {
           previewDefaults
         )}
       </SettingsSection>
+      <PostHogSettingsSection />
     </SettingsPageContainer>
   );
 }

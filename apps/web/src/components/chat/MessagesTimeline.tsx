@@ -91,6 +91,8 @@ import {
   TIMELINE_MINIMAP_MIN_ITEMS,
   type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
+import { extractTrailingReportContext } from "~/lib/reportContext";
+import { ReportContextInlineChip } from "./ReportContextInlineChip";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -991,7 +993,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
-  let visibleText = displayedUserMessage.visibleText;
+  // The report a conversation is about rides on its first message. It reads as
+  // a chip; rendering it would put a page of markdown the person did not write
+  // above the sentence they did.
+  const reportContextState = extractTrailingReportContext(displayedUserMessage.visibleText);
+  let visibleText = reportContextState.promptText;
   while (true) {
     const extracted = extractTrailingPreviewAnnotation(visibleText);
     if (!extracted.annotation) break;
@@ -1050,6 +1056,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             image={previewImages[index] ?? null}
           />
         ))}
+        {reportContextState.context ? (
+          <div className="mb-2 flex flex-wrap justify-end gap-1.5">
+            <ReportContextInlineChip
+              title={reportContextState.context.title}
+              markdown={reportContextState.context.markdown}
+            />
+          </div>
+        ) : null}
         {elementContexts.length > 0 ? (
           <div className="mb-2 flex flex-wrap gap-1.5">
             {elementContexts.map((context) => (

@@ -126,6 +126,8 @@ const normalizeServerSettings = (
     ),
   );
 
+export const POSTHOG_API_KEY_SECRET_NAME = "posthog-personal-api-key";
+
 function providerEnvironmentSecretName(input: {
   readonly instanceId: string;
   readonly name: string;
@@ -636,6 +638,39 @@ const make = Effect.gen(function* () {
       };
     });
 
+  // The PostHog personal API key is moved out of the settings object before
+  // it is written: a non-empty `apiKey` lands in the secret store, and
+  // `apiKeyConfigured: false` on a previously configured key removes it.
+  const persistPostHogSecret = (
+    current: ServerSettings,
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      const posthog = next.posthog;
+      if (posthog.apiKey.length > 0) {
+        yield* secretStore
+          .set(POSTHOG_API_KEY_SECRET_NAME, textEncoder.encode(posthog.apiKey))
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({ settingsPath, operation: "write-secret", cause }),
+            ),
+          );
+        return { ...next, posthog: { ...posthog, apiKey: "", apiKeyConfigured: true } };
+      }
+      if (current.posthog.apiKeyConfigured && !posthog.apiKeyConfigured) {
+        yield* secretStore
+          .remove(POSTHOG_API_KEY_SECRET_NAME)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({ settingsPath, operation: "remove-secret", cause }),
+            ),
+          );
+      }
+      return next;
+    });
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -742,7 +777,7 @@ const make = Effect.gen(function* () {
           const nextPersisted = yield* persistProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
-          );
+          ).pipe(Effect.flatMap((next) => persistPostHogSecret(current, next)));
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);

@@ -14,7 +14,7 @@ describe("theme preview", () => {
   });
 
   it("mixes the standard canvas bases in OKLab", () => {
-    expect(mixThemePreviewBase(STANDARD_THEME_PREVIEW_COLORS.light!, "light")).toBe("#fdfdfd");
-    expect(mixThemePreviewBase(STANDARD_THEME_PREVIEW_COLORS.dark!, "dark")).toBe("#0a0a0a");
+    expect(mixThemePreviewBase(STANDARD_THEME_PREVIEW_COLORS.light!, "light")).toBe("#f1f2ed");
+    expect(mixThemePreviewBase(STANDARD_THEME_PREVIEW_COLORS.dark!, "dark")).toBe("#191a21");
   });
 });

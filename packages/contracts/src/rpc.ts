@@ -53,6 +53,17 @@ import {
   VcsStatusStreamEvent,
 } from "./git.ts";
 import {
+  PostHogReportArtefactsInput,
+  PostHogReportArtefactsResult,
+  PostHogReportSignalsInput,
+  PostHogReportSignalsResult,
+  PostHogReportsListInput,
+  PostHogReportsListResult,
+  PostHogRpcError,
+  PostHogSetReportStateInput,
+  PostHogSetReportStateResult,
+} from "./posthog.ts";
+import {
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
   ReviewDiffPreviewError,
@@ -242,6 +253,10 @@ export const WS_METHODS = {
   // Git workflow methods
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
+  posthogReportsList: "posthog.reportsList",
+  posthogReportArtefacts: "posthog.reportArtefacts",
+  posthogReportSignals: "posthog.reportSignals",
+  posthogSetReportState: "posthog.setReportState",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
 
   // Review methods
@@ -732,6 +747,30 @@ export const WsGitResolvePullRequestRpc = Rpc.make(WS_METHODS.gitResolvePullRequ
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
+export const WsPostHogReportsListRpc = Rpc.make(WS_METHODS.posthogReportsList, {
+  payload: PostHogReportsListInput,
+  success: PostHogReportsListResult,
+  error: Schema.Union([PostHogRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsPostHogReportArtefactsRpc = Rpc.make(WS_METHODS.posthogReportArtefacts, {
+  payload: PostHogReportArtefactsInput,
+  success: PostHogReportArtefactsResult,
+  error: Schema.Union([PostHogRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsPostHogReportSignalsRpc = Rpc.make(WS_METHODS.posthogReportSignals, {
+  payload: PostHogReportSignalsInput,
+  success: PostHogReportSignalsResult,
+  error: Schema.Union([PostHogRpcError, EnvironmentAuthorizationError]),
+});
+
+export const WsPostHogSetReportStateRpc = Rpc.make(WS_METHODS.posthogSetReportState, {
+  payload: PostHogSetReportStateInput,
+  success: PostHogSetReportStateResult,
+  error: Schema.Union([PostHogRpcError, EnvironmentAuthorizationError]),
+});
+
 export const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullRequestThread, {
   payload: GitPreparePullRequestThreadInput,
   success: GitPreparePullRequestThreadResult,
@@ -1078,6 +1117,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
+  WsPostHogReportsListRpc,
+  WsPostHogReportArtefactsRpc,
+  WsPostHogReportSignalsRpc,
+  WsPostHogSetReportStateRpc,
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,

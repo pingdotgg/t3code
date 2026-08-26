@@ -135,6 +135,12 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { ReportHeader } from "./reports/ReportHeader";
+import { useReportIntentStore } from "./reports/reportIntent";
+import { appendReportContextToPrompt } from "../lib/reportContext";
+import { ReportContextInlineChip } from "./chat/ReportContextInlineChip";
+import { useReportThreadContext } from "./reports/useReportThreadContext";
+
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import {
@@ -1825,6 +1831,16 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId],
   );
   const activeProject = useProject(activeProjectRef);
+
+  // Threads about a PostHog report carry the report as context and name their
+  // worktree branch after it.
+  const activeThreadReportId = activeServerThread?.reportId ?? null;
+  const reportThreadContext = useReportThreadContext({
+    environmentId: activeServerThread?.environmentId ?? null,
+    reportId: activeThreadReportId,
+    projectCwd: activeProject?.workspaceRoot ?? null,
+  });
+
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -5334,6 +5350,9 @@ function ChatViewContent(props: ChatViewProps) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    // Set by callers that supply the message themselves, such as the report
+    // starters, instead of reading what the user typed.
+    promptOverride?: string,
   ) => {
     e?.preventDefault();
     const notifyDirectAnnotationAttached = () => {
@@ -5412,7 +5431,7 @@ function ChatViewContent(props: ChatViewProps) {
             },
           ]
         : sendContextPreviewAnnotations;
-    const promptForSend = promptRef.current;
+    const promptForSend = promptOverride ?? promptRef.current;
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -5623,12 +5642,23 @@ function ChatViewContent(props: ChatViewProps) {
       messageTextWithPreviewAnnotations,
       composerReviewCommentsSnapshot,
     );
+    // The report is context for the whole conversation, so it rides along with
+    // the first message — appended as a tagged block, the way terminal and
+    // element selections travel, so the timeline can lift it back out and show
+    // a chip instead of a page of markdown above what the person wrote.
+    const messageTextWithReport =
+      isFirstMessage && reportThreadContext.reportPrompt
+        ? appendReportContextToPrompt(messageTextForSend, {
+            title: reportThreadContext.reportTitle ?? "Report",
+            markdown: reportThreadContext.reportPrompt,
+          })
+        : messageTextForSend;
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      text: messageTextWithReport || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
       return;
@@ -5840,7 +5870,9 @@ function ChatViewContent(props: ChatViewProps) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(randomHex),
+                      branch:
+                        reportThreadContext.worktreeBranchName ??
+                        buildTemporaryWorktreeBranchName(randomHex),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,
@@ -6001,6 +6033,28 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch();
     }
   };
+
+  // A decision made on the report screen arrives as the conversation's first
+  // message. Taken once: the store clears the intent as it hands it over, so
+  // a remount cannot re-send the same instruction.
+  const takeReportIntent = useReportIntentStore((state) => state.takeIntent);
+  const sendReportIntentRef = useRef(onSend);
+  sendReportIntentRef.current = onSend;
+  useEffect(() => {
+    if (!activeThreadReportId || !activeServerThread) return;
+    if (timelineEntries.length > 0 || isWorking) return;
+    if (reportThreadContext.reportPrompt === null) return;
+    const intent = takeReportIntent(activeServerThread.id);
+    if (intent === null || intent.trim().length === 0) return;
+    void sendReportIntentRef.current(undefined, "foreground", undefined, intent);
+  }, [
+    activeServerThread,
+    activeThreadReportId,
+    isWorking,
+    reportThreadContext.reportPrompt,
+    takeReportIntent,
+    timelineEntries.length,
+  ]);
 
   const onInterrupt = async () => {
     if (!activeThread) return;
@@ -6746,7 +6800,7 @@ function ChatViewContent(props: ChatViewProps) {
     ) : activeRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
       <PullRequestsUnavailableState
         title="Pull requests unavailable"
-        error="Update this environment's T3 Code server to browse pull requests."
+        error="Update this environment's PostHog Inbox server to browse pull requests."
       />
     ) : activeRightPanelSurface?.kind === "pull-request" ? (
       // No onClose: the surface tab's own X owns closing here, and a second X in the header
@@ -6909,6 +6963,14 @@ function ChatViewContent(props: ChatViewProps) {
             </div>
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col">
+              {activeThreadReportId && activeServerThread ? (
+                <ReportHeader
+                  environmentId={activeServerThread.environmentId}
+                  reportId={activeThreadReportId}
+                  threadId={activeServerThread.id}
+                  onOpenTerminal={() => setTerminalOpen(true)}
+                />
+              ) : null}
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 agentPanelModel={agentPanelModel}
@@ -7002,6 +7064,19 @@ function ChatViewContent(props: ChatViewProps) {
                   ) : (
                     <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   )}
+                  {/* What the first message will carry, shown before it does.
+                      Constrained to the composer's own measure — a full-width
+                      row here would sit left of the centred composer. */}
+                  {activeThreadReportId &&
+                  timelineEntries.length === 0 &&
+                  reportThreadContext.reportPrompt ? (
+                    <div className="mx-auto mb-1.5 flex w-full max-w-3xl flex-wrap gap-1.5 px-1">
+                      <ReportContextInlineChip
+                        title={reportThreadContext.reportTitle ?? "Report"}
+                        markdown={reportThreadContext.reportPrompt}
+                      />
+                    </div>
+                  ) : null}
                   {threadSyncPhase && !activeEnvironmentUnavailable ? (
                     <ThreadSyncStatusPill phase={threadSyncPhase} />
                   ) : null}
