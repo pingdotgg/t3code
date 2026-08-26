@@ -68,7 +68,7 @@ export type RightPanelSurface =
     }
   | { id: "agents"; kind: "agents" };
 
-const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
+export const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
