@@ -289,3 +289,24 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("chat-markdown-file-link");
   });
 });
+
+describe("ChatMarkdown image sizing", () => {
+  it("keeps Cursor review buttons at their requested display widths", () => {
+    const markup = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/repo"
+        text={`<div><a href="https://cursor.com/open"><picture><source media="(prefers-color-scheme: dark)" srcset="https://cursor.com/assets/images/fix-in-cursor-dark.png"><source media="(prefers-color-scheme: light)" srcset="https://cursor.com/assets/images/fix-in-cursor-light.png"><img alt="Fix in Cursor" width="115" height="28" src="https://cursor.com/assets/images/fix-in-cursor-dark.png"></picture></a>&nbsp;<a href="https://cursor.com/agents"><picture><source media="(prefers-color-scheme: dark)" srcset="https://cursor.com/assets/images/fix-in-web-dark.png"><source media="(prefers-color-scheme: light)" srcset="https://cursor.com/assets/images/fix-in-web-light.png"><img alt="Fix in Web" width="99" height="28" src="https://cursor.com/assets/images/fix-in-web-dark.png"></picture></a></div>`}
+      />,
+    );
+
+    expect(markup).toMatch(
+      /<img(?=[^>]*alt="Fix in Cursor")(?=[^>]*width="115")(?=[^>]*height="28")[^>]*>/u,
+    );
+    expect(markup).toMatch(
+      /<img(?=[^>]*alt="Fix in Web")(?=[^>]*width="99")(?=[^>]*height="28")[^>]*>/u,
+    );
+    expect(markup).not.toContain("w-auto");
+    expect(markup).toContain('media="(prefers-color-scheme: dark)"');
+    expect(markup).toContain('media="(prefers-color-scheme: light)"');
+  });
+});

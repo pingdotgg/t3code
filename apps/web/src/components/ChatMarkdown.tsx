@@ -1045,8 +1045,10 @@ const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: 
   );
 });
 
+// `w-auto` would override an HTML width attribute, which review bots use to size high-density
+// button images below their intrinsic raster width.
 const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME =
-  "h-auto w-auto max-h-[30rem] max-w-[min(100%,30rem)] object-contain";
+  "h-auto max-h-[30rem] max-w-[min(100%,30rem)] object-contain";
 
 // block! outranks the unlayered `.chat-markdown img { display: inline-block }`
 // rule, keeping workspace images on the same block layout as their placeholder.
