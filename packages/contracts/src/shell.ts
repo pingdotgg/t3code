@@ -229,6 +229,8 @@ export const ShellWorkspaceState = Schema.Struct({
   environments: Schema.Array(Schema.Struct({ environmentId: Schema.String, label: Schema.String })),
   activeEnvironmentId: Schema.String,
   environmentChangeable: Schema.Boolean,
+  /** Bumped when the page asks the shell to start renaming the thread. */
+  renameRequestId: Schema.Number,
   /** Ref list for `branchQuery` (first pages), for a native branch picker. */
   branchQuery: Schema.String,
   branches: Schema.Array(
@@ -299,6 +301,35 @@ export const ShellNotificationsState = Schema.Struct({
   items: Schema.Array(ShellNotification),
 });
 export type ShellNotificationsState = typeof ShellNotificationsState.Type;
+
+const ShellContextMenuLeaf = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  destructive: Schema.optional(Schema.Boolean),
+  disabled: Schema.optional(Schema.Boolean),
+  header: Schema.optional(Schema.Boolean),
+  separatorBefore: Schema.optional(Schema.Boolean),
+});
+export const ShellContextMenuItem = Schema.Struct({
+  ...ShellContextMenuLeaf.fields,
+  children: Schema.optional(Schema.Array(ShellContextMenuLeaf)),
+});
+export type ShellContextMenuItem = typeof ShellContextMenuItem.Type;
+
+/**
+ * Published under the `contextMenu` key while the page waits for a choice:
+ * every `localApi.contextMenu.show` becomes a native menu. `surfaceId` names
+ * the web surface whose coordinates `x`/`y` are in (`"shell"` = window
+ * coordinates, for menus opened from native chrome). Null when closed.
+ */
+export const ShellContextMenuState = Schema.Struct({
+  requestId: Schema.Number,
+  surfaceId: Schema.String,
+  x: Schema.Number,
+  y: Schema.Number,
+  items: Schema.Array(ShellContextMenuItem),
+});
+export type ShellContextMenuState = typeof ShellContextMenuState.Type;
 
 /** Actions the shell's chrome dispatches; `type` is the action name on the wire. */
 export const ShellAction = Schema.Union([
@@ -381,12 +412,33 @@ export const ShellAction = Schema.Union([
     actionId: Schema.String,
   }),
   Schema.Struct({ type: Schema.Literal("notification.dismiss"), id: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal("contextMenu.select"),
+    requestId: Schema.Number,
+    id: Schema.NullOr(Schema.String),
+  }),
+  /** Open the thread's action menu at window coordinates. */
+  Schema.Struct({
+    type: Schema.Literal("workspace.titleMenu"),
+    x: Schema.Number,
+    y: Schema.Number,
+  }),
+  Schema.Struct({ type: Schema.Literal("workspace.rename"), title: Schema.String }),
+  /** Open a sidebar thread's action menu at window coordinates. */
+  Schema.Struct({
+    type: Schema.Literal("thread.menu"),
+    key: Schema.String,
+    x: Schema.Number,
+    y: Schema.Number,
+  }),
 ]);
 export type ShellAction = typeof ShellAction.Type;
 
 /** `window.t3Shell`, injected by the shell before any page script runs. */
 export interface T3Shell {
   readonly protocolVersion: number;
+  /** Which web surface this document is in (`"primary"`, `"rightPanel"`, …). */
+  readonly surfaceId: string;
   readonly ready: Promise<unknown>;
   publish(key: string, value: unknown): Promise<void>;
   /** Resolves to an unsubscribe function once the channel is connected. */
