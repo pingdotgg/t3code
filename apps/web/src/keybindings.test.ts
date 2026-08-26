@@ -129,6 +129,10 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
+    shortcut: modShortcut("t", { altKey: true, shiftKey: true }),
+    command: "themeEditor.toggle",
+  },
+  {
     shortcut: modShortcut("m", { shiftKey: true }),
     command: "modelPicker.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -138,6 +142,11 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
+  {
+    shortcut: modShortcut("s", { shiftKey: true }),
+    command: "thread.settle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
   { shortcut: modShortcut("2"), command: "thread.jump.2" },
   { shortcut: modShortcut("3"), command: "thread.jump.3" },
@@ -176,6 +185,27 @@ describe("isTerminalToggleShortcut", () => {
   it("matches Ctrl+J on non-macOS while terminalFocus is true", () => {
     assert.isTrue(
       isTerminalToggleShortcut(event({ ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Win32",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+});
+
+describe("settle thread shortcut", () => {
+  it("resolves outside the terminal", () => {
+    assert.equal(
+      resolveShortcutCommand(event({ key: "s", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.settle",
+    );
+  });
+
+  it("does not intercept the terminal", () => {
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "s", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
         platform: "Win32",
         context: { terminalFocus: true },
       }),
@@ -447,6 +477,21 @@ describe("thread navigation helpers", () => {
       }),
     );
   });
+
+  it("never shows jump hints while the terminal is focused, even with an unrestricted binding", () => {
+    assert.isFalse(
+      shouldShowThreadJumpHints(event({ metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+    assert.isTrue(
+      shouldShowThreadJumpHints(event({ metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+    );
+  });
 });
 
 describe("model picker navigation helpers", () => {
@@ -566,6 +611,25 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
+  it("matches themeEditor.toggle on macOS and Windows", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "t", metaKey: true, altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel" },
+      ),
+      "themeEditor.toggle",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "t", ctrlKey: true, altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "Win32" },
+      ),
+      "themeEditor.toggle",
+    );
+  });
+
   it("matches diff.toggle shortcut outside terminal focus", () => {
     assert.isTrue(
       isDiffToggleShortcut(event({ key: "d", metaKey: true }), DEFAULT_BINDINGS, {
@@ -656,6 +720,22 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("resolves a custom right panel maximize binding", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("m", { shiftKey: true }),
+        command: "rightPanel.toggleMaximized",
+      },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "m", metaKey: true, shiftKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+      "rightPanel.toggleMaximized",
+    );
+  });
+
   it("matches bracket shortcuts using the physical key code", () => {
     assert.strictEqual(
       resolveShortcutCommand(
@@ -687,6 +767,35 @@ describe("resolveShortcutCommand", () => {
         { platform: "MacIntel" },
       ),
       "rightPanel.toggle",
+    );
+  });
+
+  it("matches non-Latin layout letters using the physical key code", () => {
+    const keybindings = compile([{ shortcut: modShortcut("d"), command: "diff.toggle" }]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "в", code: "KeyD", metaKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+      "diff.toggle",
+    );
+  });
+
+  it("ignores the physical key code when the layout types a different Latin letter", () => {
+    const keybindings = compile([{ shortcut: modShortcut("d"), command: "diff.toggle" }]);
+
+    // On a remapped layout the physical D key types "a"; only the physical
+    // key whose layout output is "d" may trigger the shortcut.
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "a", code: "KeyD", metaKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "d", code: "KeyL", metaKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+      "diff.toggle",
     );
   });
 });

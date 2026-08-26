@@ -2,19 +2,22 @@ import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
 import type { ReactNode } from "react";
 import {
   Platform,
-  useColorScheme,
   View,
   type ColorValue,
+  type StyleProp,
   type ViewProps,
   type ViewStyle,
 } from "react-native";
 import { useThemeColor } from "../lib/useThemeColor";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
-export interface GlassSurfaceProps extends Omit<ViewProps, "className"> {
+interface GlassSurfaceProps extends Omit<ViewProps, "className"> {
   readonly children: ReactNode;
   readonly glassEffectStyle?: "clear" | "regular" | "none";
   readonly tintColor?: ColorValue;
   readonly chrome?: "default" | "none";
+  /** Styling used only when native Liquid Glass is unavailable. */
+  readonly fallbackStyle?: StyleProp<ViewStyle>;
 }
 
 export function GlassSurface({
@@ -22,10 +25,12 @@ export function GlassSurface({
   glassEffectStyle = "regular",
   chrome = "default",
   tintColor,
+  fallbackStyle,
   style,
   ...props
 }: GlassSurfaceProps) {
-  const isDarkMode = useColorScheme() === "dark";
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
   const borderColor = useThemeColor("--color-border");
   const glassSurface = useThemeColor("--color-glass-surface");
   const glassTint = useThemeColor("--color-glass-tint");
@@ -67,7 +72,7 @@ export function GlassSurface({
   }
 
   return (
-    <View {...props} style={[surfaceStyle, style]}>
+    <View {...props} style={[surfaceStyle, fallbackStyle, style]}>
       {children}
     </View>
   );

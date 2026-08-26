@@ -36,6 +36,24 @@ const activityOrder = O.combineAll<OrchestrationThreadActivity>([
 ]);
 
 /**
+ * Matches the validity rule in `deriveLatestContextWindowSnapshot` (and the
+ * server's snapshot-side `dropStaleContextWindowActivities`): rows without a
+ * finite, non-negative `usedTokens` are skipped during the consumer's backward
+ * walk, so they must not replace an earlier resolvable row here.
+ */
+function isResolvableContextWindowActivity(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "context-window.updated") {
+    return false;
+  }
+  const payload =
+    activity.payload && typeof activity.payload === "object"
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  const usedTokens = payload?.usedTokens;
+  return typeof usedTokens === "number" && Number.isFinite(usedTokens) && usedTokens >= 0;
+}
+
+/**
  * Apply a single orchestration event to an `OrchestrationThread`, returning
  * the updated thread, a deletion signal, or an "unchanged" marker when the
  * event doesn't affect this thread.
@@ -74,6 +92,7 @@ export function applyThreadDetailEvent(
           archivedAt: null,
           settledOverride: null,
           settledAt: null,
+          unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
           deletedAt: null,
@@ -112,6 +131,7 @@ export function applyThreadDetailEvent(
           ...thread,
           settledOverride: "settled",
           settledAt: event.payload.settledAt,
+          unsettledAt: null,
           updatedAt: event.payload.updatedAt,
         },
       };
@@ -123,6 +143,12 @@ export function applyThreadDetailEvent(
           ...thread,
           settledOverride: event.payload.reason === "user" ? "active" : null,
           settledAt: null,
+          // A thread already pinned active keeps its re-entry stamp: the
+          // activity reset that clears the pin must not reorder the list.
+          unsettledAt:
+            thread.settledOverride === "active"
+              ? (thread.unsettledAt ?? null)
+              : event.payload.updatedAt,
           updatedAt: event.payload.updatedAt,
         },
       };
@@ -149,6 +175,40 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.pinned":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          pinnedAt: event.payload.pinnedAt,
+          ...(event.payload.pinOrderKey !== undefined
+            ? { pinOrderKey: event.payload.pinOrderKey }
+            : {}),
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.unpinned":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          pinnedAt: null,
+          pinOrderKey: null,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.pin-reordered":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          pinOrderKey: event.payload.orderKey,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
     // ── Thread metadata ─────────────────────────────────────────────
     case "thread.meta-updated":
       return {
@@ -165,6 +225,9 @@ export function applyThreadDetailEvent(
           ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
           ...(event.payload.worktreePath !== undefined
             ? { worktreePath: event.payload.worktreePath }
+            : {}),
+          ...(event.payload.linkedPullRequest !== undefined
+            ? { linkedPullRequest: event.payload.linkedPullRequest }
             : {}),
           updatedAt: event.payload.updatedAt,
         },
@@ -509,10 +572,28 @@ export function applyThreadDetailEvent(
 
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
+      const activity = event.payload.activity;
+      // A resolvable context-window update supersedes earlier resolvable ones
+      // for the same turn: consumers only read the latest value (walking the
+      // array backwards), and providers stream these updates continuously, so
+      // retaining the history grows the thread by thousands of rows over a
+      // long session. Mirrors the server-side snapshot rule in
+      // dropStaleContextWindowActivities; retention stays per turn so a
+      // thread.reverted that discards turns can still resolve a value from
+      // the turns that survive.
+      const supersedesContextWindow = isResolvableContextWindowActivity(activity);
       const activities = pipe(
         thread.activities,
-        Arr.filter((activity) => activity.id !== event.payload.activity.id),
-        Arr.append(event.payload.activity),
+        Arr.filter(
+          (entry) =>
+            entry.id !== activity.id &&
+            !(
+              supersedesContextWindow &&
+              entry.turnId === activity.turnId &&
+              isResolvableContextWindowActivity(entry)
+            ),
+        ),
+        Arr.append(activity),
         Arr.sort(activityOrder),
       );
 

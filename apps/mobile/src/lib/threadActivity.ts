@@ -1,4 +1,9 @@
-import { ApprovalRequestId, isToolLifecycleItemType } from "@t3tools/contracts";
+import {
+  ApprovalRequestId,
+  isToolLifecycleItemType,
+  ProviderApprovalOption,
+  ProviderRequestKind,
+} from "@t3tools/contracts";
 import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
@@ -11,13 +16,19 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
+import * as Schema from "effect/Schema";
 
 export interface PendingApproval {
   readonly requestId: ApprovalRequestId;
-  readonly requestKind: "command" | "file-read" | "file-change";
+  readonly requestKind: ProviderRequestKind;
   readonly createdAt: string;
   readonly detail?: string;
+  readonly appName?: string;
+  readonly options?: ReadonlyArray<ProviderApprovalOption>;
 }
+
+const isProviderRequestKind = Schema.is(ProviderRequestKind);
+const isProviderApprovalOption = Schema.is(ProviderApprovalOption);
 
 export interface PendingUserInput {
   readonly requestId: ApprovalRequestId;
@@ -26,7 +37,7 @@ export interface PendingUserInput {
 }
 
 export interface PendingUserInputDraftAnswer {
-  readonly selectedOptionLabel?: string;
+  readonly selectedOptionLabels?: ReadonlyArray<string>;
   readonly customAnswer?: string;
 }
 
@@ -80,6 +91,8 @@ interface WorkLogEntry {
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
+  /** Grouping key for subagent lifecycle rows (one row per agent). */
+  taskId?: string;
 }
 
 type RawThreadFeedEntry =
@@ -145,6 +158,8 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     case "file_change_approval":
     case "apply_patch_approval":
       return "file-change";
+    case "mcp_elicitation_approval":
+      return "mcp-elicitation";
     default:
       return null;
   }
@@ -225,14 +240,89 @@ function normalizeDraftAnswer(value: string | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeSelectedOptionLabels(
+  value: ReadonlyArray<string> | undefined,
+): ReadonlyArray<string> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(value.map((entry) => entry.trim()).filter((entry) => entry.length > 0)),
+  );
+}
+
 function resolvePendingUserInputAnswer(
+  question: UserInputQuestion,
   draft: PendingUserInputDraftAnswer | undefined,
-): string | null {
+): string | ReadonlyArray<string> | null {
   const customAnswer = normalizeDraftAnswer(draft?.customAnswer);
   if (customAnswer) {
     return customAnswer;
   }
-  return normalizeDraftAnswer(draft?.selectedOptionLabel);
+
+  const selectedOptionLabels = normalizeSelectedOptionLabels(draft?.selectedOptionLabels);
+  if (question.multiSelect) {
+    return selectedOptionLabels.length > 0 ? selectedOptionLabels : null;
+  }
+  return selectedOptionLabels[0] ?? null;
+}
+
+/** Codex children settle via task.updated (idle/failed/interrupted), never
+ * task.completed — these rows are mobile's only terminal signal for them. */
+const MOBILE_TERMINAL_UPDATE_STATUSES: ReadonlySet<string> = new Set([
+  "idle",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+
+function isTerminalBypassUpdate(activity: OrchestrationThreadActivity): boolean {
+  if (activity.kind !== "task.updated") {
+    return false;
+  }
+  const payload =
+    activity.payload && typeof activity.payload === "object"
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  return (
+    payload?.timelineBypass === true &&
+    typeof payload.status === "string" &&
+    MOBILE_TERMINAL_UPDATE_STATUSES.has(payload.status)
+  );
+}
+
+/**
+ * Quiet-timeline guarantee (mirrors web's session-logic): agent-internal
+ * activity lives in the Agents sheet, not the work log. Terminal rows are
+ * kept — with no Agents surface on mobile they are the terminal signal
+ * (a surface that hides rows must keep its own terminal signal). That means
+ * task.completed (Claude) AND terminal bypassed task.updated (Codex, whose
+ * children never emit task.completed — review finding).
+ */
+function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean {
+  const payload =
+    activity.payload && typeof activity.payload === "object"
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  if (!payload) {
+    return false;
+  }
+  const isTerminalTaskRow = activity.kind === "task.completed" || isTerminalBypassUpdate(activity);
+  if (payload.timelineBypass === true && !isTerminalTaskRow) {
+    return true;
+  }
+  // agentId marks ownership, not "hide me": a NESTED AGENT's terminal row is
+  // the only signal mobile gets (no Agents sheet), so it stays. Only an
+  // agent's own background work (stamped "background") is internal — same
+  // rule as web (review finding: hiding on agentId alone dropped nested
+  // completions with no replacement UI).
+  const ownedByAgent = typeof payload.agentId === "string" && payload.agentId.trim().length > 0;
+  if (!ownedByAgent) {
+    return false;
+  }
+  return !(isTerminalTaskRow && payload.agentKind === "agent");
 }
 
 function deriveWorkLogEntries(
@@ -243,9 +333,13 @@ function deriveWorkLogEntries(
   for (const activity of ordered) {
     if (activity.kind === "tool.started") continue;
     if (activity.kind === "task.started") continue;
+    // Terminal bypassed updates pass: Codex children's only terminal signal.
+    if (activity.kind === "task.updated" && !isTerminalBypassUpdate(activity)) continue;
+    if (activity.kind === "tool.progress") continue;
     if (activity.kind === "context-window.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
+    if (isAgentInternalActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));
   }
   return collapseDerivedWorkLogEntries(entries);
@@ -271,7 +365,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
-  const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
+  // task.updated included: terminal bypassed updates (Codex children's only
+  // terminal signal) must carry task identity so they collapse per child
+  // instead of stacking anonymous "Task idle" rows.
+  const isTaskActivity =
+    activity.kind === "task.progress" ||
+    activity.kind === "task.completed" ||
+    activity.kind === "task.updated";
   const taskSummary =
     isTaskActivity && typeof payload?.summary === "string" && payload.summary.length > 0
       ? payload.summary
@@ -284,10 +384,15 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
+  const taskId =
+    isTaskActivity && typeof payload?.taskId === "string" && payload.taskId.length > 0
+      ? payload.taskId
+      : undefined;
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
     turnId: activity.turnId,
+    ...(taskId ? { taskId } : {}),
     label: taskLabel || activity.summary,
     tone:
       activity.kind === "task.progress"
@@ -352,7 +457,25 @@ function collapseDerivedWorkLogEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
   const collapsed: DerivedWorkLogEntry[] = [];
+  // Subagent rows collapse by identity, not adjacency (quiet-timeline
+  // guarantee; mirrors web's session-logic).
+  const taskRowIndex = new Map<string, number>();
   for (const entry of entries) {
+    const isTaskRow =
+      entry.taskId !== undefined &&
+      (entry.activityKind === "task.progress" ||
+        entry.activityKind === "task.completed" ||
+        entry.activityKind === "task.updated");
+    if (isTaskRow && entry.taskId !== undefined) {
+      const existingIndex = taskRowIndex.get(entry.taskId);
+      if (existingIndex !== undefined) {
+        collapsed[existingIndex] = mergeDerivedWorkLogEntries(collapsed[existingIndex]!, entry);
+        continue;
+      }
+      taskRowIndex.set(entry.taskId, collapsed.length);
+      collapsed.push(entry);
+      continue;
+    }
     const previous = collapsed.at(-1);
     if (previous && shouldCollapseToolLifecycleEntries(previous, entry)) {
       collapsed[collapsed.length - 1] = mergeDerivedWorkLogEntries(previous, entry);
@@ -462,6 +585,8 @@ function toolDetailTextLooksLikeFailure(text: string): boolean {
     normalized.includes("command not found") ||
     (normalized.includes("cannot find path") && normalized.includes("because it does not exist")) ||
     (normalized.includes("is not recognized") && normalized.includes("the term '")) ||
+    normalized.includes("is not recognized as the name of a cmdlet") ||
+    normalized.includes("a parameter cannot be found that matches parameter name") ||
     /<exited with exit code\s+[1-9]\d*\s*>/i.test(text) ||
     /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
     /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text)
@@ -1032,9 +1157,13 @@ function deriveThreadFeedTurnFolds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestTurn: ThreadFeedLatestTurn | null,
 ): ReadonlyMap<string, ThreadFeedTurnFold> {
+  const firstAssistantMessageIdByTurn = new Map<TurnId, string>();
   const terminalAssistantMessageIdByTurn = new Map<TurnId, string>();
   for (const entry of feed) {
     if (entry.type === "message" && entry.message.role === "assistant" && entry.message.turnId) {
+      if (!firstAssistantMessageIdByTurn.has(entry.message.turnId)) {
+        firstAssistantMessageIdByTurn.set(entry.message.turnId, entry.id);
+      }
       terminalAssistantMessageIdByTurn.set(entry.message.turnId, entry.id);
     }
   }
@@ -1082,17 +1211,24 @@ function deriveThreadFeedTurnFolds(
       continue;
     }
 
+    const firstAssistantMessageId = firstAssistantMessageIdByTurn.get(turnId);
     const terminalAssistantMessageId = terminalAssistantMessageIdByTurn.get(turnId);
     const hiddenEntryIds = new Set(
-      entries.filter((entry) => entry.id !== terminalAssistantMessageId).map((entry) => entry.id),
+      entries
+        .filter(
+          (entry) =>
+            entry.id !== firstAssistantMessageId && entry.id !== terminalAssistantMessageId,
+        )
+        .map((entry) => entry.id),
     );
     if (hiddenEntryIds.size === 0) {
       continue;
     }
 
     const firstEntry = entries[0];
+    const firstHiddenEntry = entries.find((entry) => hiddenEntryIds.has(entry.id));
     const lastEntry = entries.at(-1);
-    if (!firstEntry || !lastEntry) {
+    if (!firstEntry || !firstHiddenEntry || !lastEntry) {
       continue;
     }
     const terminalEntry = terminalAssistantMessageId
@@ -1121,9 +1257,9 @@ function deriveThreadFeedTurnFolds(
         ? `Worked for ${duration}`
         : "Worked";
 
-    foldsByAnchorId.set(firstEntry.id, {
+    foldsByAnchorId.set(firstHiddenEntry.id, {
       turnId,
-      createdAt: firstEntry.createdAt,
+      createdAt: firstHiddenEntry.createdAt,
       hiddenEntryIds,
       label,
     });
@@ -1252,13 +1388,14 @@ export function derivePendingApprovals(
         ? (activity.payload as Record<string, unknown>)
         : null;
     const requestId = parseApprovalRequestId(payload?.requestId);
-    const requestKind =
-      payload?.requestKind === "command" ||
-      payload?.requestKind === "file-read" ||
-      payload?.requestKind === "file-change"
-        ? payload.requestKind
-        : requestKindFromRequestType(payload?.requestType);
+    const requestKind = isProviderRequestKind(payload?.requestKind)
+      ? payload.requestKind
+      : requestKindFromRequestType(payload?.requestType);
     const detail = typeof payload?.detail === "string" ? payload.detail : undefined;
+    const appName = typeof payload?.appName === "string" ? payload.appName : undefined;
+    const options = Array.isArray(payload?.options)
+      ? payload.options.filter(isProviderApprovalOption)
+      : undefined;
 
     if (activity.kind === "approval.requested" && requestId && requestKind) {
       openByRequestId.set(requestId, {
@@ -1266,6 +1403,8 @@ export function derivePendingApprovals(
         requestKind,
         createdAt: activity.createdAt,
         ...(detail ? { detail } : {}),
+        ...(appName ? { appName } : {}),
+        ...(options && options.length > 0 ? { options } : {}),
       });
       continue;
     }
@@ -1334,22 +1473,62 @@ export function setPendingUserInputCustomAnswer(
   draft: PendingUserInputDraftAnswer | undefined,
   customAnswer: string,
 ): PendingUserInputDraftAnswer {
-  const selectedOptionLabel =
-    customAnswer.trim().length > 0 ? undefined : draft?.selectedOptionLabel;
+  const selectedOptionLabels =
+    customAnswer.trim().length > 0
+      ? undefined
+      : normalizeSelectedOptionLabels(draft?.selectedOptionLabels);
   return {
     customAnswer,
-    ...(selectedOptionLabel ? { selectedOptionLabel } : {}),
+    ...(selectedOptionLabels && selectedOptionLabels.length > 0 ? { selectedOptionLabels } : {}),
+  };
+}
+
+export function isPendingUserInputOptionSelected(
+  draft: PendingUserInputDraftAnswer | undefined,
+  optionLabel: string,
+): boolean {
+  if (normalizeDraftAnswer(draft?.customAnswer)) {
+    return false;
+  }
+
+  return normalizeSelectedOptionLabels(draft?.selectedOptionLabels).includes(optionLabel.trim());
+}
+
+export function togglePendingUserInputOptionSelection(
+  question: UserInputQuestion,
+  draft: PendingUserInputDraftAnswer | undefined,
+  optionLabel: string,
+): PendingUserInputDraftAnswer {
+  const normalizedOptionLabel = optionLabel.trim();
+
+  if (question.multiSelect) {
+    const selectedOptionLabels = normalizeSelectedOptionLabels(draft?.selectedOptionLabels);
+    const nextSelectedOptionLabels = selectedOptionLabels.includes(normalizedOptionLabel)
+      ? selectedOptionLabels.filter((label) => label !== normalizedOptionLabel)
+      : [...selectedOptionLabels, normalizedOptionLabel];
+
+    return {
+      customAnswer: "",
+      ...(nextSelectedOptionLabels.length > 0
+        ? { selectedOptionLabels: nextSelectedOptionLabels }
+        : {}),
+    };
+  }
+
+  return {
+    customAnswer: "",
+    selectedOptionLabels: [normalizedOptionLabel],
   };
 }
 
 export function buildPendingUserInputAnswers(
   questions: ReadonlyArray<UserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
-): Record<string, string> | null {
-  const answers: Record<string, string> = {};
+): Record<string, string | ReadonlyArray<string>> | null {
+  const answers: Record<string, string | ReadonlyArray<string>> = {};
 
   for (const question of questions) {
-    const answer = resolvePendingUserInputAnswer(draftAnswers[question.id]);
+    const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
     if (!answer) {
       return null;
     }
@@ -1363,15 +1542,19 @@ export function buildThreadFeed(
   thread: OrchestrationThread,
   options?: {
     readonly loadedMessages?: ReadonlyArray<OrchestrationThread["messages"][number]>;
+    readonly localMessages?: ReadonlyArray<OrchestrationThread["messages"][number]>;
   },
 ): ThreadFeedEntry[] {
   const loadedMessages = options?.loadedMessages ?? thread.messages;
+  const messages = options?.localMessages
+    ? [...loadedMessages, ...options.localMessages]
+    : loadedMessages;
   const oldestLoadedMessageCreatedAt =
     options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
   const workLogEntries = deriveWorkLogEntries(thread.activities);
   const entries = Arr.sortWith(
     [
-      ...loadedMessages.map<RawThreadFeedEntry>((message) => ({
+      ...messages.map<RawThreadFeedEntry>((message) => ({
         type: "message",
         id: message.id,
         createdAt: message.createdAt,

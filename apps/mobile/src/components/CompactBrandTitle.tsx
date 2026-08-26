@@ -17,10 +17,23 @@ const IOS_NATIVE_LEADING_TITLE_OFFSET = -6;
 const IPAD_NATIVE_LEADING_TITLE_OFFSET = 7;
 
 /**
+ * Horizontal correction applied to content rendered in the brand title slot,
+ * shared with the connection-status swap so both align identically.
+ */
+export function brandTitleOffset(nativeLeadingItem: boolean): number {
+  if (Platform.OS !== "ios") return 0;
+  if (nativeLeadingItem) {
+    return Platform.isPad ? IPAD_NATIVE_LEADING_TITLE_OFFSET : IOS_NATIVE_LEADING_TITLE_OFFSET;
+  }
+  return Platform.isPad ? IPAD_HOME_TITLE_OFFSET : 0;
+}
+
+/**
  * Compact brand lockup sized for native navigation bars.
  */
 export function CompactBrandTitle(
   props: {
+    readonly allowFontScaling?: boolean;
     readonly nativeLeadingItem?: boolean;
   } = {},
 ) {
@@ -28,16 +41,7 @@ export function CompactBrandTitle(
   const mutedColor = useThemeColor("--color-foreground-muted");
   const subtleColor = useThemeColor("--color-subtle");
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
-  const titleOffset =
-    Platform.OS !== "ios"
-      ? 0
-      : props.nativeLeadingItem
-        ? Platform.isPad
-          ? IPAD_NATIVE_LEADING_TITLE_OFFSET
-          : IOS_NATIVE_LEADING_TITLE_OFFSET
-        : Platform.isPad
-          ? IPAD_HOME_TITLE_OFFSET
-          : 0;
+  const titleOffset = brandTitleOffset(props.nativeLeadingItem === true);
 
   return (
     <View
@@ -54,6 +58,7 @@ export function CompactBrandTitle(
     >
       <T3Wordmark color={iconColor} height={15} />
       <Text
+        allowFontScaling={props.allowFontScaling}
         style={{
           color: mutedColor,
           fontFamily: "DMSans-Medium",
@@ -72,6 +77,7 @@ export function CompactBrandTitle(
         }}
       >
         <Text
+          allowFontScaling={props.allowFontScaling}
           style={{
             color: mutedColor,
             fontFamily: "DMSans-Bold",
@@ -88,7 +94,7 @@ export function CompactBrandTitle(
 }
 
 export function renderCompactBrandTitle() {
-  return <CompactBrandTitle />;
+  return <CompactBrandTitle allowFontScaling={Platform.OS === "ios"} />;
 }
 
 export function renderCompactBrandHeaderItems(): NativeStackHeaderItem[] {

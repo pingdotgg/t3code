@@ -19,6 +19,7 @@ import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -39,6 +40,7 @@ import {
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
 import { forkParked, ServerActivation } from "../../serverActivation.ts";
+import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -91,44 +93,63 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-const DEFAULT_THREAD_TITLE = "New thread";
 const MAX_REGENERATION_ATTACHMENTS = 4;
 const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
+const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
 const THREAD_TITLE_CONTEXT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
+const FIRST_USER_CONTEXT_TRUNCATION_MARKER = "\n[First user message truncated]";
 
-function formatThreadTitleContext(
-  messages: ReadonlyArray<{
-    readonly role: "user" | "assistant" | "system";
-    readonly text: string;
-    readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
-  }>,
+type ThreadTitleMessage = {
+  readonly role: "user" | "assistant" | "system";
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
+};
+
+function formatThreadTitleSection(message: ThreadTitleMessage): string | undefined {
+  if (message.role === "system") {
+    return undefined;
+  }
+  const text = message.text.trim();
+  const attachmentSummary = (message.attachments ?? [])
+    .map((attachment) => attachment.name)
+    .join(", ");
+  const contents = [
+    ...(text.length > 0 ? [text] : []),
+    ...(attachmentSummary.length > 0 ? [`[Attachments: ${attachmentSummary}]`] : []),
+  ].join("\n");
+  return contents.length > 0 ? `${message.role.toUpperCase()}:\n${contents}` : undefined;
+}
+
+function limitFirstUserSection(section: string): string {
+  if (section.length <= MAX_FIRST_USER_TITLE_CONTEXT_CHARS) {
+    return section;
+  }
+  return `${section.slice(
+    0,
+    MAX_FIRST_USER_TITLE_CONTEXT_CHARS - FIRST_USER_CONTEXT_TRUNCATION_MARKER.length,
+  )}${FIRST_USER_CONTEXT_TRUNCATION_MARKER}`;
+}
+
+function collectRecentThreadTitleContext(
+  messages: ReadonlyArray<ThreadTitleMessage>,
+  maxChars: number,
 ): {
-  readonly message: string;
+  readonly context: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly truncated: boolean;
 } {
   let context = "";
   let truncated = false;
   const retainedAttachments: Array<ChatAttachment> = [];
 
   for (const message of messages.toReversed()) {
-    if (message.role === "system") {
-      continue;
-    }
-    const text = message.text.trim();
-    const attachmentSummary = (message.attachments ?? [])
-      .map((attachment) => attachment.name)
-      .join(", ");
-    const contents = [
-      ...(text.length > 0 ? [text] : []),
-      ...(attachmentSummary.length > 0 ? [`[Attachments: ${attachmentSummary}]`] : []),
-    ].join("\n");
-    if (contents.length === 0) {
+    const section = formatThreadTitleSection(message);
+    if (section === undefined) {
       continue;
     }
 
-    const section = `${message.role.toUpperCase()}:\n${contents}`;
     const separator = context.length > 0 ? "\n\n" : "";
-    const available = MAX_THREAD_TITLE_CONTEXT_CHARS - context.length - separator.length;
+    const available = maxChars - context.length - separator.length;
     if (section.length > available) {
       if (available > 0) {
         context = `${section.slice(-available)}${separator}${context}`;
@@ -141,9 +162,54 @@ function formatThreadTitleContext(
     retainedAttachments.unshift(...(message.attachments ?? []));
   }
 
+  return { context, attachments: retainedAttachments, truncated };
+}
+
+function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>): {
+  readonly message: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+} {
+  const recent = collectRecentThreadTitleContext(messages, MAX_THREAD_TITLE_CONTEXT_CHARS);
+  if (!recent.truncated) {
+    return {
+      message: recent.context,
+      attachments: recent.attachments.slice(-MAX_REGENERATION_ATTACHMENTS),
+    };
+  }
+
+  const firstUserMessage = messages.find(
+    (message) => message.role === "user" && formatThreadTitleSection(message),
+  );
+  const firstUserSection = firstUserMessage
+    ? formatThreadTitleSection(firstUserMessage)
+    : undefined;
+  if (!firstUserMessage || !firstUserSection) {
+    return {
+      message: `${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${recent.context}`,
+      attachments: recent.attachments.slice(-MAX_REGENERATION_ATTACHMENTS),
+    };
+  }
+
+  const pinnedSection = limitFirstUserSection(firstUserSection);
+  const recentContextBudget =
+    MAX_THREAD_TITLE_CONTEXT_CHARS -
+    pinnedSection.length -
+    "\n\n".length -
+    THREAD_TITLE_CONTEXT_TRUNCATION_MARKER.length;
+  const retainedRecent = collectRecentThreadTitleContext(messages, recentContextBudget);
+  const pinnedAttachment = firstUserMessage.attachments?.[0];
+  const recentAttachments = retainedRecent.attachments.filter(
+    (attachment) => attachment.id !== pinnedAttachment?.id,
+  );
+
   return {
-    message: truncated ? `${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${context}` : context,
-    attachments: retainedAttachments.slice(-MAX_REGENERATION_ATTACHMENTS),
+    message: `${pinnedSection}\n\n${THREAD_TITLE_CONTEXT_TRUNCATION_MARKER}${retainedRecent.context}`,
+    attachments: [
+      ...(pinnedAttachment ? [pinnedAttachment] : []),
+      ...recentAttachments.slice(
+        -(MAX_REGENERATION_ATTACHMENTS - (pinnedAttachment === undefined ? 0 : 1)),
+      ),
+    ],
   };
 }
 
@@ -160,18 +226,6 @@ export function providerErrorLabelFromInstanceHint(input: {
   return providerErrorLabel(
     input.instanceId ?? input.modelSelectionInstanceId ?? input.sessionProvider,
   );
-}
-
-function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolean {
-  const trimmedCurrentTitle = currentTitle.trim();
-  if (trimmedCurrentTitle === DEFAULT_THREAD_TITLE) {
-    return true;
-  }
-
-  const trimmedTitleSeed = titleSeed?.trim();
-  return trimmedTitleSeed !== undefined && trimmedTitleSeed.length > 0
-    ? trimmedCurrentTitle === trimmedTitleSeed
-    : false;
 }
 
 function findProviderAdapterRequestError(
@@ -252,6 +306,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
+  const fileSystem = yield* FileSystem.FileSystem;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
@@ -373,6 +428,52 @@ const make = Effect.gen(function* () {
     return yield* projectionSnapshotQuery
       .getProjectShellById(projectId)
       .pipe(Effect.map(Option.getOrUndefined));
+  });
+
+  /**
+   * Recreates a thread's worktree from its branch when the directory has
+   * disappeared. Provider sessions resume into the persisted cwd, so a missing
+   * worktree makes every later turn fail as a bogus "session not found".
+   * Best-effort: on failure the turn proceeds and reports the real error.
+   */
+  const ensureThreadWorktree = Effect.fnUntraced(function* (thread: {
+    readonly id: ThreadId;
+    readonly projectId: ProjectId;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+  }) {
+    const { worktreePath, branch } = thread;
+    if (!worktreePath || !branch) {
+      return;
+    }
+    const exists = yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true));
+    if (exists) {
+      return;
+    }
+    const project = yield* resolveProject(thread.projectId);
+    if (!project) {
+      return;
+    }
+    const cwd = project.workspaceRoot;
+    yield* Effect.logWarning("provider command reactor recreating missing worktree", {
+      threadId: thread.id,
+      worktreePath,
+      branch,
+    });
+    // A directory deleted without `git worktree remove` leaves an admin entry
+    // that makes `git worktree add` refuse the path; prune clears it.
+    yield* gitWorkflow.pruneWorktrees({ cwd }).pipe(
+      Effect.andThen(gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath })),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("provider command reactor failed to recreate worktree", {
+              threadId: thread.id,
+              worktreePath,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    );
   });
 
   const resolveThread = Effect.fnUntraced(function* (threadId: ThreadId) {
@@ -561,6 +662,7 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(thread.title ? { title: thread.title } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
@@ -1029,6 +1131,8 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    yield* ensureThreadWorktree(thread);
+
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
     if (isFirstUserMessageTurn) {
@@ -1126,8 +1230,8 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const hasSession = thread.session && thread.session.status !== "stopped";
-    if (!hasSession) {
+    const session = thread.session;
+    if (!session || session.status === "stopped") {
       return yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.interrupt.failed",
@@ -1138,8 +1242,80 @@ const make = Effect.gen(function* () {
       });
     }
 
+    const recoverInterruptFailure = (cause: Cause.Cause<unknown>) => {
+      if (Cause.hasInterruptsOnly(cause)) {
+        return Effect.interrupt;
+      }
+
+      const detail = formatFailureDetail(cause);
+      return Effect.gen(function* () {
+        const latestThread = yield* resolveThread(event.payload.threadId);
+        const latestSession = latestThread?.session;
+        if (
+          !latestSession ||
+          latestSession.status === "stopped" ||
+          latestSession.status === "ready" ||
+          (event.payload.turnId !== undefined &&
+            latestSession.activeTurnId !== null &&
+            latestSession.activeTurnId !== event.payload.turnId)
+        ) {
+          return;
+        }
+
+        yield* providerService.stopSession({ threadId: event.payload.threadId }).pipe(
+          Effect.catchCause((stopCause) => {
+            if (Cause.hasInterruptsOnly(stopCause)) {
+              return Effect.interrupt;
+            }
+            return Effect.logWarning(
+              "provider command reactor failed to stop session after interrupt failure",
+              {
+                threadId: event.payload.threadId,
+                cause: Cause.pretty(stopCause),
+                originalCause: Cause.pretty(cause),
+              },
+            );
+          }),
+        );
+        const stoppedThread = yield* resolveThread(event.payload.threadId);
+        const stoppedSession = stoppedThread?.session;
+        if (
+          !stoppedSession ||
+          stoppedSession.status === "stopped" ||
+          stoppedSession.status === "ready" ||
+          (event.payload.turnId !== undefined &&
+            stoppedSession.activeTurnId !== null &&
+            stoppedSession.activeTurnId !== event.payload.turnId)
+        ) {
+          return;
+        }
+
+        yield* setThreadSession({
+          threadId: event.payload.threadId,
+          session: {
+            ...stoppedSession,
+            status: "stopped",
+            activeTurnId: null,
+            lastError: detail,
+            updatedAt: event.payload.createdAt,
+          },
+          createdAt: event.payload.createdAt,
+        });
+        yield* appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.turn.interrupt.failed",
+          summary: "Provider turn interrupt failed",
+          detail,
+          turnId: event.payload.turnId ?? null,
+          createdAt: event.payload.createdAt,
+        });
+      });
+    };
+
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    yield* providerService
+      .interruptTurn({ threadId: event.payload.threadId })
+      .pipe(Effect.catchCause(recoverInterruptFailure));
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (

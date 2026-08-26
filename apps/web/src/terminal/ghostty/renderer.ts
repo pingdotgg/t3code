@@ -12,6 +12,11 @@ export interface GhosttyCellMetrics {
   readonly baseline: number;
 }
 
+export interface GhosttyCellRange {
+  readonly start: { readonly x: number; readonly y: number };
+  readonly end: { readonly x: number; readonly y: number };
+}
+
 const DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
 
 function cssColor(color: GhosttyColor): string {
@@ -98,6 +103,7 @@ export function renderGhosttySnapshot(options: {
   readonly previousCursorY?: number | null;
   readonly focused?: boolean;
   readonly selectionBackground?: string;
+  readonly hoveredLinkRange?: GhosttyCellRange | null;
   /** Vertical origin of row 0; defaults to the horizontal padding. */
   readonly originY?: number;
 }): void {
@@ -114,6 +120,7 @@ export function renderGhosttySnapshot(options: {
   } = options;
   const focused = options.focused ?? true;
   const selectionBackground = options.selectionBackground ?? DEFAULT_SELECTION_BACKGROUND;
+  const hoveredLinkRange = options.hoveredLinkRange ?? null;
   const originY = options.originY ?? padding;
   const rowsToDraw = forceFull
     ? Array.from({ length: snapshot.rows }, (_, index) => index)
@@ -216,10 +223,20 @@ export function renderGhosttySnapshot(options: {
 
     for (let column = 0; column < row.cells.length; column += 1) {
       const cell = row.cells[column];
-      if (!cell || (!cell.underline && !cell.strikethrough && !cell.overline)) continue;
+      const hoveredLink =
+        hoveredLinkRange !== null &&
+        rowIndex >= hoveredLinkRange.start.y &&
+        rowIndex <= hoveredLinkRange.end.y &&
+        (rowIndex > hoveredLinkRange.start.y || column >= hoveredLinkRange.start.x) &&
+        (rowIndex < hoveredLinkRange.end.y || column <= hoveredLinkRange.end.x);
+      if (!cell || (!cell.underline && !cell.strikethrough && !cell.overline && !hoveredLink)) {
+        continue;
+      }
       context.fillStyle = cssColor(cell.foreground);
       const left = padding + column * metrics.width;
-      if (cell.underline) context.fillRect(left, top + metrics.height - 2, metrics.width, 1);
+      if (cell.underline || hoveredLink) {
+        context.fillRect(left, top + metrics.height - 2, metrics.width, 1);
+      }
       if (cell.strikethrough) {
         context.fillRect(left, top + Math.floor(metrics.height * 0.55), metrics.width, 1);
       }

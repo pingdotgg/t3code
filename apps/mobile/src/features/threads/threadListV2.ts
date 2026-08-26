@@ -6,10 +6,17 @@ import {
   resolveSnoozePresets,
   snoozeWakeLabel,
 } from "@t3tools/client-runtime/state/thread-settled";
-import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import type {
+  ChangeRequestSettleSource,
+  SnoozePreset,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  activeThreadAnchorTimestampMs,
+  sortPinnedThreadsByOrderKey,
+} from "@t3tools/client-runtime/state/thread-sort";
+import type { EnvironmentId, ProjectId, ThreadLinkedPullRequest } from "@t3tools/contracts";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
@@ -25,6 +32,35 @@ export { snoozeWakeLabel };
  */
 export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
+
+export interface ThreadListV2ChangeRequestState extends ChangeRequestSettleSource {
+  readonly linkedPullRequestKey?: string | null;
+}
+
+function linkedPullRequestKey(
+  linkedPullRequest: ThreadLinkedPullRequest | null | undefined,
+): string | null {
+  if (linkedPullRequest == null) return null;
+  return JSON.stringify([
+    linkedPullRequest.projectId,
+    linkedPullRequest.repository.toLowerCase(),
+    linkedPullRequest.number,
+  ]);
+}
+
+/** Keep the previous linked PR state while its detail query reloads. */
+export function resolveThreadListV2ChangeRequestState(input: {
+  readonly linkedPullRequest: ThreadLinkedPullRequest | null | undefined;
+  readonly state: ChangeRequestSettleSource["state"] | null;
+  readonly updatedAt: string | null;
+}): ThreadListV2ChangeRequestState | null | undefined {
+  if (input.state === null) return input.linkedPullRequest == null ? null : undefined;
+  return {
+    state: input.state,
+    updatedAt: input.updatedAt,
+    linkedPullRequestKey: linkedPullRequestKey(input.linkedPullRequest),
+  };
+}
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
@@ -102,23 +138,23 @@ export const THREAD_LIST_V2_SETTLED_INITIAL_COUNT = 10;
 export const THREAD_LIST_V2_SETTLED_PAGE_COUNT = 25;
 
 /**
- * Thread List v2 is on by default on every app variant; the Settings → Beta
- * toggle is an opt-out. Preferences persist as sparse patches, so `undefined`
- * genuinely means "never chosen".
+ * The flat Thread List v2 is the default on every app variant; the Settings →
+ * Legacy toggle opts a device back into the grouped legacy list. Preferences
+ * persist as sparse patches, so `undefined` genuinely means "never chosen".
  *
  * `preferencesLoaded` guards the startup window: preferences load
  * asynchronously, and rendering one list before the stored choice arrives would
  * remount the whole thing a tick later. While loading, hold the default — that
- * is where every device without an explicit opt-out lands anyway.
+ * is where every device without an explicit legacy opt-in lands anyway.
  */
 export function resolveThreadListV2Enabled(input: {
-  readonly preference: boolean | undefined;
+  readonly legacyPreference: boolean | undefined;
   readonly preferencesLoaded: boolean;
 }): boolean {
   if (!input.preferencesLoaded) {
     return true;
   }
-  return input.preference ?? true;
+  return input.legacyPreference !== true;
 }
 
 export function resolveThreadListV2Status(
@@ -158,19 +194,25 @@ function firstValidTimestampMs(...candidates: ReadonlyArray<string | null | unde
 }
 
 /**
- * v2 sort: static creation order, newest thread on top. Activity NEVER
- * reorders the list — a row holds its position from open until settled, so
- * the screen only moves at lifecycle transitions. Mirrors web's
- * sortThreadsForSidebarV2.
+ * v2 sort: static order, newest anchor on top. Activity NEVER reorders the
+ * list — a row holds its position between lifecycle transitions. The anchor
+ * is creation time until an un-settle re-anchors it (see
+ * activeThreadAnchorTimestampMs), so an un-settled thread surfaces at the
+ * top instead of sinking back to its creation-order slot. Mirrors web's
+ * sortThreadsForSidebar.
  */
-export function sortThreadsForListV2<T extends { readonly id: string; readonly createdAt: string }>(
-  threads: readonly T[],
-): T[] {
+export function sortThreadsForListV2<
+  T extends {
+    readonly id: string;
+    readonly createdAt: string;
+    readonly unsettledAt?: string | null | undefined;
+  },
+>(threads: readonly T[]): T[] {
   // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023
   // change-by-copy array methods.
   return [...threads].sort(
     (left, right) =>
-      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
+      activeThreadAnchorTimestampMs(right) - activeThreadAnchorTimestampMs(left) ||
       left.id.localeCompare(right.id),
   );
 }
@@ -180,6 +222,8 @@ export interface ThreadListV2Item {
   readonly variant: "card" | "slim";
   /** Snoozed-shelf row: shows the wake countdown and offers Wake. */
   readonly snoozed: boolean;
+  /** Pinned-block row: renders the pin glyph and offers Unpin. */
+  readonly pinned: boolean;
   readonly isLast: boolean;
 }
 
@@ -303,9 +347,8 @@ export function buildThreadListV2ListItems(input: {
 
 /**
  * Partitions visible threads into the active card block (creation order) and
- * the settled recency tail, matching the web v2 list. `autoSettleAfterDays`
- * mirrors the web default of 3 — mobile has no client-settings sync yet, so
- * the default is fixed here rather than user-configurable.
+ * the settled recency tail, matching the web v2 list. Mobile stores these
+ * auto-settle preferences per device.
  */
 export function buildThreadListV2Items(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -316,8 +359,8 @@ export function buildThreadListV2Items(input: {
   }> | null;
   readonly searchQuery: string;
   readonly matchedThreadKeys?: ReadonlySet<string>;
-  /** Per-row PR state reported up by visible rows ("env:threadId" keys). */
-  readonly changeRequestStateByKey?: ReadonlyMap<string, "open" | "closed" | "merged">;
+  /** Per-row PR reported up by visible rows ("env:threadId" keys). */
+  readonly changeRequestByKey?: ReadonlyMap<string, ThreadListV2ChangeRequestState>;
   /** Environments whose server supports thread.settle/unsettle. Threads on
       other environments never classify as settled — the user could neither
       un-settle nor pin them. Absent = no gating (tests). */
@@ -326,6 +369,7 @@ export function buildThreadListV2Items(input: {
       contract as settlementEnvironmentIds. */
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly autoSettleAfterDays?: number;
+  readonly autoSettleOnMerge?: boolean;
   /** Max settled rows to render; the rest are counted, not built. */
   readonly settledLimit?: number;
   /** Injectable for tests; defaults to now. */
@@ -346,11 +390,13 @@ export function buildThreadListV2Items(input: {
   const now = input.now ?? new Date().toISOString();
   const snoozeNow = input.snoozeNow ?? now;
   const autoSettleAfterDays = input.autoSettleAfterDays ?? 3;
+  const autoSettleOnMerge = input.autoSettleOnMerge ?? true;
   const query = input.searchQuery.trim().toLocaleLowerCase();
   const projectKeys = input.projectRefs
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
     : null;
 
+  const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
@@ -376,11 +422,15 @@ export function buildThreadListV2Items(input: {
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
-    const changeRequestState =
-      input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
-    // Visibility parity with web: a snoozed thread leaves the list until it
-    // wakes (or raises its hand — effectiveSnoozed refuses blocked/failed
-    // work). Snooze outranks settled classification, same as web.
+    const cachedChangeRequest =
+      input.changeRequestByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
+    const changeRequest =
+      cachedChangeRequest !== null &&
+      (cachedChangeRequest.linkedPullRequestKey ?? null) ===
+        linkedPullRequestKey(thread.linkedPullRequest)
+        ? cachedChangeRequest
+        : null;
+    // Snooze outranks settlement and pinning until the thread wakes.
     if (supportsSnooze && effectiveSnoozed(thread, { now: snoozeNow })) {
       snoozed.push(thread);
       if (
@@ -394,9 +444,16 @@ export function buildThreadListV2Items(input: {
     }
     if (
       supportsSettlement &&
-      effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+      effectiveSettled(thread, {
+        now,
+        autoSettleAfterDays,
+        autoSettleOnMerge,
+        changeRequest,
+      })
     ) {
       settled.push(thread);
+    } else if (thread.pinnedAt != null) {
+      pinned.push(thread);
     } else {
       active.push(thread);
     }
@@ -434,11 +491,21 @@ export function buildThreadListV2Items(input: {
         );
 
   const items: ThreadListV2Item[] = [];
+  for (const thread of sortPinnedThreadsByOrderKey(pinned)) {
+    items.push({
+      thread,
+      variant: "card",
+      snoozed: false,
+      pinned: true,
+      isLast: false,
+    });
+  }
   for (const thread of orderedActive) {
     items.push({
       thread,
       variant: "card",
       snoozed: false,
+      pinned: false,
       isLast: false,
     });
   }
@@ -448,6 +515,7 @@ export function buildThreadListV2Items(input: {
       thread,
       variant: "slim",
       snoozed: true,
+      pinned: false,
       isLast: false,
     });
   }
@@ -457,6 +525,7 @@ export function buildThreadListV2Items(input: {
       thread,
       variant: "slim",
       snoozed: false,
+      pinned: false,
       isLast: false,
     });
   }

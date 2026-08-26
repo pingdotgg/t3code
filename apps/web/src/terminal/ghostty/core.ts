@@ -1,5 +1,6 @@
 import {
   type GhosttyKeyboardLayoutMap,
+  ghosttyConsumedMods,
   ghosttyKeyForCode,
   ghosttyUnshiftedCodepoint,
   loadGhosttyKeyboardLayoutMap,
@@ -165,6 +166,27 @@ function sameColor(left: GhosttyColor, right: GhosttyColor): boolean {
   return left.r === right.r && left.g === right.g && left.b === right.b;
 }
 
+/**
+ * A terminal program can print one base character followed by a huge run of
+ * combining marks, packing hundreds of thousands of codepoints into a single
+ * cell that still fits the scrollback buffer. Engines cap spread-call
+ * arguments far below that, so convert in bounded chunks instead of spreading
+ * every codepoint into String.fromCodePoint at once.
+ */
+export function ghosttyCellText(codepointView: DataView, graphemeLength: number): string {
+  const CHUNK_SIZE = 4_096;
+  let text = "";
+  for (let start = 0; start < graphemeLength; start += CHUNK_SIZE) {
+    const count = Math.min(CHUNK_SIZE, graphemeLength - start);
+    const codes = new Array<number>(count);
+    for (let index = 0; index < count; index += 1) {
+      codes[index] = codepointView.getUint32((start + index) * 4, true);
+    }
+    text += String.fromCodePoint(...codes);
+  }
+  return text;
+}
+
 export class GhosttyTerminalCore {
   private readonly runtime: GhosttyRuntime;
   private terminalSlot = 0;
@@ -233,6 +255,7 @@ export class GhosttyTerminalCore {
     this.runtime.free(options, optionsSize);
     this.assertSuccess("ghostty_terminal_new", terminalResult);
     this.terminal = this.runtime.readPointer(this.terminalSlot);
+    this.applyDefaultCursorBlink();
     this.ptyWriter = onPtyData;
     this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, onPtyData);
 
@@ -302,6 +325,9 @@ export class GhosttyTerminalCore {
   resetAndWrite(data: string): void {
     this.ensureActive();
     this.runtime.call("ghostty_terminal_reset", this.terminal);
+    // RIS returns the cursor to Ghostty's built-in steady default, so the
+    // embedder default has to be applied again before the replay runs.
+    this.applyDefaultCursorBlink();
     this.rows = [];
     if (data.length === 0) return;
     const writer = this.ptyWriter;
@@ -331,6 +357,20 @@ export class GhosttyTerminalCore {
         Math.max(1, Math.round(cellHeight)),
       ),
     );
+  }
+
+  /**
+   * Ghostty's built-in default cursor is steady, while the xterm.js renderer
+   * this replaced ran with `cursorBlink: true`. Option 23 is the embedder's
+   * default blink, which is the state a session starts in and returns to on
+   * DECSCUSR reset (CSI 0 q), so programs that ask for a specific cursor
+   * through DECSCUSR or DEC mode 12 still win.
+   */
+  private applyDefaultCursorBlink(): void {
+    const blink = this.runtime.alloc(1);
+    this.runtime.bytes(blink, 1)[0] = 1;
+    this.runtime.call("ghostty_terminal_set", this.terminal, 23, blink);
+    this.runtime.free(blink, 1);
   }
 
   setTheme(theme: GhosttyTheme): void {
@@ -446,7 +486,11 @@ export class GhosttyTerminalCore {
       (event.getModifierState("CapsLock") ? 1 << 4 : 0) |
       (event.getModifierState("NumLock") ? 1 << 5 : 0);
     this.runtime.call("ghostty_key_event_set_mods", this.keyEvent, mods);
-    this.runtime.call("ghostty_key_event_set_consumed_mods", this.keyEvent, 0);
+    this.runtime.call(
+      "ghostty_key_event_set_consumed_mods",
+      this.keyEvent,
+      ghosttyConsumedMods(event),
+    );
     this.runtime.call("ghostty_key_event_set_composing", this.keyEvent, event.isComposing ? 1 : 0);
     this.runtime.call(
       "ghostty_key_event_set_unshifted_codepoint",
@@ -937,11 +981,7 @@ export class GhosttyTerminalCore {
           // Read through a DataView: the byte-array allocator guarantees no
           // 4-byte alignment, which a Uint32Array view would require.
           const codepointView = this.runtime.view(codepoints, bufferSize);
-          const codes: number[] = [];
-          for (let index = 0; index < graphemeLength; index += 1) {
-            codes.push(codepointView.getUint32(index * 4, true));
-          }
-          text = String.fromCodePoint(...codes);
+          text = ghosttyCellText(codepointView, graphemeLength);
         }
         this.runtime.free(codepoints, bufferSize);
       }

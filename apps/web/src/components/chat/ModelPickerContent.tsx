@@ -33,6 +33,7 @@ import {
 } from "../../keybindings";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
+import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import {
   isProviderInstancePickerReady,
@@ -541,6 +542,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return mapping.size > 0 ? mapping : EMPTY_MODEL_JUMP_LABELS;
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
+  const modelListExtraData = useMemo(
+    () => ({ favoritesSet, modelJumpLabelByKey }),
+    [favoritesSet, modelJumpLabelByKey],
+  );
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -594,7 +599,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   return (
     <TooltipProvider delay={0}>
       <div
-        className="dropdown-glass model-picker-surface relative flex h-screen max-h-86.5 w-screen max-w-90 flex-row overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
+        className="relative flex h-screen max-h-86.5 w-screen max-w-90 flex-row overflow-hidden"
         data-model-picker-content="true"
       >
         {/* Sidebar */}
@@ -710,7 +715,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 <LegendList<string>
                   ref={modelListRef}
                   data={filteredItemKeys}
-                  extraData={favoritesSet}
+                  extraData={modelListExtraData}
                   keyExtractor={(modelKey) => modelKey}
                   renderItem={({ item: modelKey, index }) => {
                     if (legacySection?.key === modelKey) {
@@ -777,9 +782,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   onLayout={updateModelListScrollFades}
                   onScroll={updateModelListScrollFades}
                   className={cn(
-                    "model-picker-list h-full overflow-x-hidden overscroll-y-contain py-1.5 [--fade-size:1.5rem]",
-                    showTopScrollFade && "model-picker-list-scroll-fade-top",
-                    showBottomScrollFade && "model-picker-list-scroll-fade-bottom",
+                    "scrollbar-gutter-stable h-full overflow-x-hidden overscroll-y-contain py-1.5 [&::-webkit-scrollbar-track]:my-2",
+                    getVirtualizedScrollFadeClassName({
+                      top: showTopScrollFade,
+                      bottom: showBottomScrollFade,
+                    }),
                   )}
                 />
               </ComboboxListVirtualized>

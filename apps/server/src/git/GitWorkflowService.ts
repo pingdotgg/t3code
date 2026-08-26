@@ -69,6 +69,10 @@ export class GitWorkflowService extends Context.Service<
       readonly cwd: string;
       readonly remoteName: string;
     }) => Effect.Effect<void, GitCommandError>;
+    readonly remoteExists: (input: {
+      readonly cwd: string;
+      readonly remoteName: string;
+    }) => Effect.Effect<boolean, GitCommandError>;
     readonly resolveRemoteTrackingCommit: (input: {
       readonly cwd: string;
       readonly refName: string;
@@ -80,6 +84,9 @@ export class GitWorkflowService extends Context.Service<
     readonly removeWorktree: (
       input: VcsRemoveWorktreeInput,
     ) => Effect.Effect<void, GitCommandError>;
+    readonly pruneWorktrees: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<void, GitCommandError>;
     readonly createRef: (
       input: VcsCreateRefInput,
     ) => Effect.Effect<VcsCreateRefResult, GitCommandError>;
@@ -303,6 +310,10 @@ export const make = Effect.gen(function* () {
       ensureGitCommand("GitWorkflowService.fetchRemote", input.cwd).pipe(
         Effect.andThen(git.fetchRemote(input)),
       ),
+    remoteExists: (input) =>
+      ensureGitCommand("GitWorkflowService.remoteExists", input.cwd).pipe(
+        Effect.andThen(git.remoteExists(input)),
+      ),
     resolveRemoteTrackingCommit: (input) =>
       ensureGitCommand("GitWorkflowService.resolveRemoteTrackingCommit", input.cwd).pipe(
         Effect.andThen(git.resolveRemoteTrackingCommit(input)),
@@ -310,6 +321,10 @@ export const make = Effect.gen(function* () {
     removeWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
         Effect.andThen(git.removeWorktree(input)),
+      ),
+    pruneWorktrees: (input) =>
+      ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(
+        Effect.andThen(git.pruneWorktrees(input)),
       ),
     createRef: (input) =>
       ensureGitCommand("GitWorkflowService.createRef", input.cwd).pipe(

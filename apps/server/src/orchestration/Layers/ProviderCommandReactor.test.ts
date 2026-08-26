@@ -48,6 +48,8 @@ import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityRes
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import {
   providerErrorLabel,
   providerErrorLabelFromInstanceHint,
@@ -148,6 +150,8 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
+    readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly startSessionEffect?: (
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
@@ -233,23 +237,27 @@ describe("ProviderCommandReactor", () => {
         turnId: asTurnId("turn-1"),
       }),
     );
-    const interruptTurn = vi.fn((_: unknown) => Effect.void);
+    const interruptTurn = vi.fn((_: unknown) => input?.interruptTurnEffect?.() ?? Effect.void);
     const respondToRequest = vi.fn<ProviderServiceShape["respondToRequest"]>(() => Effect.void);
     const respondToUserInput = vi.fn<ProviderServiceShape["respondToUserInput"]>(() => Effect.void);
-    const stopSession = vi.fn((input: unknown) =>
-      Effect.sync(() => {
-        const threadId =
-          typeof input === "object" && input !== null && "threadId" in input
-            ? (input as { threadId?: ThreadId }).threadId
-            : undefined;
-        if (!threadId) {
-          return;
-        }
-        const index = runtimeSessions.findIndex((session) => session.threadId === threadId);
-        if (index >= 0) {
-          runtimeSessions.splice(index, 1);
-        }
-      }),
+    const stopSession = vi.fn((stopInput: unknown) =>
+      (input?.stopSessionEffect?.() ?? Effect.void).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const threadId =
+              typeof stopInput === "object" && stopInput !== null && "threadId" in stopInput
+                ? (stopInput as { threadId?: ThreadId }).threadId
+                : undefined;
+            if (!threadId) {
+              return;
+            }
+            const index = runtimeSessions.findIndex((session) => session.threadId === threadId);
+            if (index >= 0) {
+              runtimeSessions.splice(index, 1);
+            }
+          }),
+        ),
+      ),
     );
     const renameBranch = vi.fn((input: unknown) =>
       Effect.succeed({
@@ -261,6 +269,11 @@ describe("ProviderCommandReactor", () => {
             ? input.newBranch
             : "renamed-branch",
       }),
+    );
+    const pruneWorktrees = vi.fn((_: { readonly cwd: string }) => Effect.void);
+    const createWorktree = vi.fn(
+      (input: { readonly refName: string; readonly path: string | null }) =>
+        Effect.succeed({ worktree: { path: input.path ?? "", refName: input.refName } }),
     );
     const refreshStatus = vi.fn((_: string) =>
       Effect.succeed({
@@ -338,6 +351,7 @@ describe("ProviderCommandReactor", () => {
         });
       },
       rollbackConversation: () => unsupported(),
+      uploadFeedback: () => unsupported(),
       get streamEvents() {
         return Stream.fromPubSub(runtimeEventPubSub);
       },
@@ -345,6 +359,8 @@ describe("ProviderCommandReactor", () => {
 
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(OrchestrationProjectionPipelineLive),
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -352,6 +368,8 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(SqlitePersistenceMemory),
     );
     const projectionSnapshotLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
@@ -389,6 +407,8 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           renameBranch,
+          pruneWorktrees,
+          createWorktree,
         } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
       ),
       Layer.provideMerge(
@@ -493,6 +513,8 @@ describe("ProviderCommandReactor", () => {
       respondToUserInput,
       stopSession,
       renameBranch,
+      pruneWorktrees,
+      createWorktree,
       refreshStatus,
       generateBranchName,
       generateThreadTitle,
@@ -785,6 +807,123 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.titleRegeneration).toBeNull();
   });
 
+  it("pins the first user message when regeneration context is truncated", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const firstUserMessage = `Review subagent monitoring risks. ${"Opening context. ".repeat(200)}`;
+    const recentUserMessage = `LATEST FINDING: ${"implementation detail ".repeat(320)}`;
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({ title: "Review subagent monitoring risks" }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-existing-long"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Generic PR review",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-long-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-long-title-regeneration"),
+          role: "user",
+          text: firstUserMessage,
+          attachments: [
+            {
+              type: "image",
+              id: "opening-context-image",
+              name: "image.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-middle-turn-before-long-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("middle-message-before-long-title-regeneration"),
+          role: "user",
+          text: "Temporary handoff details.",
+          attachments: [
+            {
+              type: "image",
+              id: "middle-context-image",
+              name: "image.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-recent-turn-before-long-title-regeneration"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("recent-message-before-long-title-regeneration"),
+          role: "user",
+          text: recentUserMessage,
+          attachments: [
+            {
+              type: "image",
+              id: "recent-context-image",
+              name: "image.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-regenerate-long"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+
+    await harness.drain();
+
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+    const input = harness.generateThreadTitle.mock.calls[0]?.[0];
+    if (!input) {
+      throw new Error("Expected a title generation input");
+    }
+    const message = input.message;
+    expect(message.startsWith("USER:\nReview subagent monitoring risks.")).toBe(true);
+    expect(message).toContain("[First user message truncated]");
+    expect(message).toContain("[Earlier content truncated]");
+    expect(message).toContain("image.png");
+    expect(message).toHaveLength(8_000);
+    expect(input.attachments?.map((attachment) => attachment.id)).toEqual([
+      "opening-context-image",
+      "recent-context-image",
+    ]);
+  });
+
   it("clears title regeneration state left pending across reactor startup", async () => {
     const harness = await createHarness({
       titleRegenerationBeforeStart: "one",
@@ -972,10 +1111,14 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.titleRegeneration).toBeNull();
   });
 
-  it("keeps the full retained context and excludes attachments outside it", async () => {
+  it("pins the first user context and attachment before the retained tail", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
-    const retainedContext = "x".repeat(8_000);
+    const firstUserContext = "USER:\nOld visual issue\n[Attachments: old-issue.png]";
+    const truncationMarker = "[Earlier content truncated]\n\n";
+    const retainedContext = "x".repeat(
+      8_000 - firstUserContext.length - "\n\n".length - truncationMarker.length,
+    );
 
     await harness.runEffect(
       harness.engine.dispatch({
@@ -1040,9 +1183,14 @@ describe("ProviderCommandReactor", () => {
     await harness.drain();
 
     expect(harness.generateThreadTitle.mock.calls[0]?.[0].message).toBe(
-      `[Earlier content truncated]\n\n${retainedContext}`,
+      `${firstUserContext}\n\n${truncationMarker}${retainedContext}`,
     );
-    expect(harness.generateThreadTitle.mock.calls[0]?.[0].attachments).toBeUndefined();
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0].attachments).toEqual([
+      expect.objectContaining({
+        id: "old-title-context-image",
+        name: "old-issue.png",
+      }),
+    ]);
   });
 
   it("does not overwrite a manual rename while title regeneration is running", async () => {
@@ -1376,6 +1524,50 @@ describe("ProviderCommandReactor", () => {
       message: "Add a safer reconnect backoff.",
     });
     expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
+  });
+
+  it("recreates a missing worktree from the thread branch before starting a turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const worktreePath = NodePath.join(harness.stateDir, "missing-worktree");
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-missing-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        branch: "feature/restore",
+        worktreePath,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-missing-worktree"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-missing-worktree"),
+          role: "user",
+          text: "continue",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    expect(harness.pruneWorktrees).toHaveBeenCalledWith({ cwd: "/tmp/provider-project" });
+    expect(harness.createWorktree).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-project",
+      refName: "feature/restore",
+      path: worktreePath,
+    });
+    expect(harness.createWorktree.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.startSession.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("forwards codex model options through session start and turn send", async () => {
@@ -2353,6 +2545,218 @@ describe("ProviderCommandReactor", () => {
       threadId: "thread-1",
     });
   });
+
+  effectIt.effect(
+    "stops a running session and records the failure when provider interrupt fails",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            interruptTurnEffect: () =>
+              Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "codex",
+                  method: "thread.interrupt",
+                  detail: "provider session disappeared",
+                }),
+              ),
+            stopSessionEffect: () =>
+              Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "codex",
+                  method: "session.stop",
+                  detail: "provider process already exited",
+                }),
+              ),
+          }),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-interrupt-failure"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("turn-1"),
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-provider-failure"),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        });
+
+        yield* Effect.promise(() =>
+          waitFor(async () => {
+            const thread = (await harness.readModel()).threads.find(
+              (entry) => entry.id === ThreadId.make("thread-1"),
+            );
+            return thread?.session?.status === "stopped";
+          }),
+        );
+
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        expect(thread?.session).toMatchObject({
+          status: "stopped",
+          activeTurnId: null,
+          lastError: "provider session disappeared",
+        });
+        expect(
+          thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
+        ).toMatchObject({
+          summary: "Provider turn interrupt failed",
+          payload: { detail: "provider session disappeared" },
+        });
+        expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
+      }),
+  );
+
+  effectIt.effect("stops a starting session without a bound turn when interrupt fails", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          interruptTurnEffect: () =>
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "thread.interrupt",
+                detail: "provider session disappeared",
+              }),
+            ),
+        }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-interrupt-starting"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "starting",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-starting-provider-failure"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() => harness.drain());
+
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === ThreadId.make("thread-1"),
+      );
+      expect(thread?.session).toMatchObject({
+        status: "stopped",
+        activeTurnId: null,
+        lastError: "provider session disappeared",
+      });
+      expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
+      expect(
+        thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
+      ).toMatchObject({ payload: { detail: "provider session disappeared" } });
+    }),
+  );
+
+  effectIt.effect("does not overwrite a session that became ready while an interrupt failed", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+      const completedAt = "2026-01-01T00:00:01.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-interrupt-race"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+
+      harness.interruptTurn.mockImplementation(() =>
+        harness.engine
+          .dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("cmd-session-set-natural-completion"),
+            threadId: ThreadId.make("thread-1"),
+            session: {
+              threadId: ThreadId.make("thread-1"),
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: completedAt,
+            },
+            createdAt: completedAt,
+          })
+          .pipe(
+            Effect.catchCause((cause) => Effect.die(cause)),
+            Effect.andThen(
+              Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "codex",
+                  method: "thread.interrupt",
+                  detail: "provider session disappeared",
+                }),
+              ),
+            ),
+          ),
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-race"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() => harness.drain());
+
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === ThreadId.make("thread-1"),
+      );
+      expect(thread?.session).toMatchObject({
+        status: "ready",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: completedAt,
+      });
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      expect(
+        thread?.activities.some((activity) => activity.kind === "provider.turn.interrupt.failed"),
+      ).toBe(false);
+    }),
+  );
 
   it("starts a fresh session when only projected session state exists", async () => {
     const harness = await createHarness();

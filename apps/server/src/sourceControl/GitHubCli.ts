@@ -51,6 +51,19 @@ export class GitHubCliAuthenticationError extends Schema.TaggedErrorClass<GitHub
   }
 }
 
+export class GitHubCliRateLimitError extends Schema.TaggedErrorClass<GitHubCliRateLimitError>()(
+  "GitHubCliRateLimitError",
+  gitHubCliFailureFields,
+) {
+  get detail(): string {
+    return "GitHub API rate limit exceeded. Run `gh api rate_limit` to inspect the quota and reset time.";
+  }
+
+  override get message(): string {
+    return `GitHub CLI failed in execute: ${this.detail}`;
+  }
+}
+
 export class GitHubPullRequestNotFoundError extends Schema.TaggedErrorClass<GitHubPullRequestNotFoundError>()(
   "GitHubPullRequestNotFoundError",
   gitHubCliFailureFields,
@@ -138,6 +151,7 @@ export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubR
 export const GitHubCliError = Schema.Union([
   GitHubCliUnavailableError,
   GitHubCliAuthenticationError,
+  GitHubCliRateLimitError,
   GitHubPullRequestNotFoundError,
   GitHubCliCommandError,
   GitHubPullRequestListDecodeError,
@@ -169,6 +183,9 @@ export function fromVcsError(
   if (error._tag === "VcsProcessExitError") {
     if (error.failureKind === "authentication") {
       return new GitHubCliAuthenticationError({ ...context, cause: error });
+    }
+    if (error.failureKind === "rate-limited") {
+      return new GitHubCliRateLimitError({ ...context, cause: error });
     }
     if (error.failureKind === "not-found") {
       return new GitHubPullRequestNotFoundError({ ...context, cause: error });
@@ -203,6 +220,9 @@ export class GitHubCli extends Context.Service<
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
+      /** Piped to the child's stdin, for payloads that must never appear in argv. */
+      readonly stdin?: string;
+      readonly maxOutputBytes?: number;
     }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitHubCliError>;
 
     readonly listOpenPullRequests: (input: {
@@ -314,6 +334,8 @@ export const make = Effect.gen(function* () {
         args: input.args,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+        ...(input.maxOutputBytes !== undefined ? { maxOutputBytes: input.maxOutputBytes } : {}),
       })
       .pipe(Effect.mapError((error) => fromVcsError({ command: "gh", cwd: input.cwd }, error)));
 
