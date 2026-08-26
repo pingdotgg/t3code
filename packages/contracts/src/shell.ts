@@ -122,6 +122,16 @@ export const ShellComposerState = Schema.Struct({
   triggerKind: Schema.NullOr(Schema.Literals(["path", "slash-command", "skill"])),
   suggestions: Schema.Array(ShellComposerSuggestion),
   suggestionsEmptyText: Schema.NullOr(Schema.String),
+  /** Attached images and terminal selections on the draft (removable chips). */
+  attachments: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+  terminalContexts: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      label: Schema.String,
+      lineStart: Schema.Number,
+      lineEnd: Schema.Number,
+    }),
+  ),
   placeholder: Schema.String,
   editorDisabled: Schema.Boolean,
   canSend: Schema.Boolean,
@@ -352,6 +362,24 @@ export const ShellAction = Schema.Union([
     cursor: Schema.optional(Schema.Number),
   }),
   Schema.Struct({ type: Schema.Literal("composer.suggest.select"), id: Schema.String }),
+  /** Files the shell read for the user (drop or picker); go through the drop pipeline. */
+  Schema.Struct({
+    type: Schema.Literal("composer.attach"),
+    files: Schema.Array(
+      Schema.Struct({ name: Schema.String, mimeType: Schema.String, base64: Schema.String }),
+    ),
+  }),
+  Schema.Struct({ type: Schema.Literal("composer.attachment.remove"), id: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("composer.terminalContext.remove"), id: Schema.String }),
+  /** A terminal selection from any document, added to the primary's composer. */
+  Schema.Struct({
+    type: Schema.Literal("composer.terminalContext.add"),
+    terminalId: Schema.String,
+    terminalLabel: Schema.String,
+    lineStart: Schema.Number,
+    lineEnd: Schema.Number,
+    text: Schema.String,
+  }),
   Schema.Struct({ type: Schema.Literal("composer.suggest.dismiss") }),
   // `text` rides along so the send is atomic with the latest edit.
   Schema.Struct({
@@ -447,4 +475,6 @@ export interface T3Shell {
   getState(): Promise<Readonly<Record<string, unknown>>>;
   /** Calls `listener` now and on every publish; resolves to an unsubscribe function. */
   onState(listener: (state: Readonly<Record<string, unknown>>) => void): Promise<() => void>;
+  /** Dispatch an action as native chrome would (lets a secondary document reach the primary). */
+  dispatch(action: string, payload?: unknown): Promise<void>;
 }
