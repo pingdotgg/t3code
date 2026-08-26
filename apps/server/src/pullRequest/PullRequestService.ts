@@ -1003,7 +1003,9 @@ export const make = Effect.gen(function* () {
         const first = chunk[0]!;
         const readAcross = first.api.listChangeRequestsAcross;
         const separately = () =>
-          Effect.forEach(chunk, readRepository, { concurrency: REPOSITORY_CONCURRENCY });
+          Effect.forEach(chunk, (project) => readRepository(project), {
+            concurrency: REPOSITORY_CONCURRENCY,
+          });
         if (readAcross === undefined) return separately();
         const viewer = viewers[first.host]!;
         const cursor = cursorOf(first);
