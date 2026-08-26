@@ -1633,19 +1633,22 @@ function TurnDiffTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const expanded = persistedExpanded ?? (isLatestTurn && autoExpanded);
 
   return (
-    <ChangedFilesCard
-      turnId={turnSummary.turnId}
-      files={checkpointFiles}
-      expanded={expanded}
-      showCompactPreview={isLatestTurn}
-      allDirectoriesExpanded={allDirectoriesExpanded}
-      resolvedTheme={ctx.resolvedTheme}
-      onExpandedChange={(nextExpanded) =>
-        setExpanded(ctx.routeThreadKey, turnSummary.turnId, nextExpanded)
-      }
-      onToggleAllDirectories={() => setAllDirectoriesExpanded((current) => !current)}
-      onOpenTurnDiff={ctx.onOpenTurnDiff}
-    />
+    <div className="px-1">
+      <ChangedFilesCard
+        className="mt-0"
+        turnId={turnSummary.turnId}
+        files={checkpointFiles}
+        expanded={expanded}
+        showCompactPreview={isLatestTurn}
+        allDirectoriesExpanded={allDirectoriesExpanded}
+        resolvedTheme={ctx.resolvedTheme}
+        onExpandedChange={(nextExpanded) =>
+          setExpanded(ctx.routeThreadKey, turnSummary.turnId, nextExpanded)
+        }
+        onToggleAllDirectories={() => setAllDirectoriesExpanded((current) => !current)}
+        onOpenTurnDiff={ctx.onOpenTurnDiff}
+      />
+    </div>
   );
 }
 
