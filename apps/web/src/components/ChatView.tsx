@@ -378,7 +378,7 @@ import { WorkspacePageHeader } from "./WorkspacePageHeader";
 import {
   type EnvironmentOption,
   resolveEffectiveEnvMode,
-  resolveLocalCheckoutBranchMismatch,
+  resolveCheckoutBranchMismatch,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
@@ -5226,6 +5226,7 @@ export default function ChatView(props: ChatViewProps) {
         currentModelSelection: serverThread.modelSelection,
         ...(input.modelSelection ? { nextModelSelection: input.modelSelection } : {}),
         currentBranch: serverThread.branch,
+        currentWorktreePath: serverThread.worktreePath,
         ...(input.branch ? { nextBranch: input.branch } : {}),
       });
       if (metadataUpdate) {
@@ -5839,10 +5840,10 @@ export default function ChatView(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
-  const localCheckoutBranchMismatch = useMemo(
+  const checkoutBranchMismatch = useMemo(
     () =>
       isServerThread
-        ? resolveLocalCheckoutBranchMismatch({
+        ? resolveCheckoutBranchMismatch({
             effectiveEnvMode: envMode,
             activeWorktreePath,
             activeThreadBranch,
@@ -6136,10 +6137,10 @@ export default function ChatView(props: ChatViewProps) {
   const [, setBranchMismatchDismissTick] = useState(0);
   const activeBranchMismatchKey = branchMismatchKey(
     activeThread?.id ?? null,
-    localCheckoutBranchMismatch,
+    checkoutBranchMismatch,
   );
   const showBranchMismatchBanner = shouldShowBranchMismatchBanner({
-    hasMismatch: localCheckoutBranchMismatch !== null,
+    hasMismatch: checkoutBranchMismatch !== null,
     isDismissed: isBranchMismatchDismissedForSession(activeBranchMismatchKey),
     composerHasContent: composerHasUnsentContent,
     wasShownForCurrentMismatch:
@@ -6159,7 +6160,8 @@ export default function ChatView(props: ChatViewProps) {
     if (
       !activeProjectCwd ||
       !activeThread ||
-      !localCheckoutBranchMismatch ||
+      !checkoutBranchMismatch ||
+      !checkoutBranchMismatch.canRestoreThreadBranch ||
       isRestoringThreadBranch
     ) {
       return;
@@ -6169,7 +6171,7 @@ export default function ChatView(props: ChatViewProps) {
       environmentId,
       input: {
         cwd: activeProjectCwd,
-        refName: localCheckoutBranchMismatch.threadBranch,
+        refName: checkoutBranchMismatch.threadBranch,
       },
     });
     if (checkoutResult._tag === "Failure") {
@@ -6186,7 +6188,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
-    const nextBranch = checkoutResult.value.refName ?? localCheckoutBranchMismatch.threadBranch;
+    const nextBranch = checkoutResult.value.refName ?? checkoutBranchMismatch.threadBranch;
     if (nextBranch !== activeThread.branch) {
       const updateResult = await updateThreadMetadata({
         environmentId,
@@ -6216,7 +6218,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     gitStatusQuery,
     isRestoringThreadBranch,
-    localCheckoutBranchMismatch,
+    checkoutBranchMismatch,
     scheduleComposerFocus,
     switchGitRef,
     updateThreadMetadata,
@@ -6492,7 +6494,7 @@ export default function ChatView(props: ChatViewProps) {
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
-    if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
+    if (!checkoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
         ...usageLimitsItems,
@@ -6517,24 +6519,26 @@ export default function ChatView(props: ChatViewProps) {
         variant: "info",
         icon: <GitBranchIcon />,
         title: (
-          <span className="flex min-w-0 items-baseline gap-1.5">
-            <span className="shrink-0 font-normal text-muted-foreground">Branch changed — was</span>
-            <Tooltip>
-              <TooltipTrigger
-                render={
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="flex min-w-0 items-baseline gap-1.5">
+                  <span className="shrink-0 font-normal text-muted-foreground">
+                    Branch mismatch — Send will use
+                  </span>
                   <code className="min-w-0 truncate font-medium text-foreground">
-                    {localCheckoutBranchMismatch.threadBranch}
+                    {checkoutBranchMismatch.currentBranch}
                   </code>
-                }
-              />
-              <TooltipPopup side="top" className="max-w-80">
-                This thread last ran on {localCheckoutBranchMismatch.threadBranch}. Sending will
-                continue on {localCheckoutBranchMismatch.currentBranch}.
-              </TooltipPopup>
-            </Tooltip>
-          </span>
+                </span>
+              }
+            />
+            <TooltipPopup side="top" className="max-w-80">
+              This thread last ran on {checkoutBranchMismatch.threadBranch}. Send will use{" "}
+              {checkoutBranchMismatch.currentBranch}.
+            </TooltipPopup>
+          </Tooltip>
         ),
-        actions: (
+        actions: checkoutBranchMismatch.canRestoreThreadBranch ? (
           <Button
             size="xs"
             variant="ghost"
@@ -6543,8 +6547,8 @@ export default function ChatView(props: ChatViewProps) {
           >
             {isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
           </Button>
-        ),
-        dismissLabel: "Dismiss branch change notice",
+        ) : null,
+        dismissLabel: "Dismiss branch mismatch notice",
         onDismiss: () => {
           dismissBranchMismatchForSession(activeBranchMismatchKey);
           setBranchMismatchDismissTick((tick) => tick + 1);
@@ -6558,7 +6562,7 @@ export default function ChatView(props: ChatViewProps) {
     feedbackBannerItems,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
-    localCheckoutBranchMismatch,
+    checkoutBranchMismatch,
     parkedThreadBannerItem,
     projectCloneBannerItem,
     resumeCompactionBannerItem,
@@ -8310,9 +8314,7 @@ export default function ChatView(props: ChatViewProps) {
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
         ...(ctxSelectedModel ? { modelSelection: ctxSelectedModelSelection } : {}),
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
+        ...(checkoutBranchMismatch ? { branch: checkoutBranchMismatch.currentBranch } : {}),
         runtimeMode,
         interactionMode: sendInteractionMode,
       });
@@ -8987,9 +8989,7 @@ export default function ChatView(props: ChatViewProps) {
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
         modelSelection: ctxSelectedModelSelection,
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
+        ...(checkoutBranchMismatch ? { branch: checkoutBranchMismatch.currentBranch } : {}),
         runtimeMode,
         interactionMode: nextInteractionMode,
       });
@@ -9069,7 +9069,7 @@ export default function ChatView(props: ChatViewProps) {
       isConnecting,
       isSendBusy,
       isServerThread,
-      localCheckoutBranchMismatch,
+      checkoutBranchMismatch,
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       runtimeMode,
@@ -10231,7 +10231,7 @@ export default function ChatView(props: ChatViewProps) {
                   <AlertDialogTitle>
                     Switch to{" "}
                     <code className="font-medium">
-                      {localCheckoutBranchMismatch?.threadBranch ?? ""}
+                      {checkoutBranchMismatch?.threadBranch ?? ""}
                     </code>
                     ?
                   </AlertDialogTitle>

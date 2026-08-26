@@ -1,4 +1,5 @@
 import type { EnvironmentId, EnvironmentMachineKind, VcsRef, ProjectId } from "@t3tools/contracts";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as Schema from "effect/Schema";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
@@ -218,20 +219,35 @@ export function resolveBranchToolbarPrBranch(input: {
   return input.activeThreadBranch === input.resolvedActiveBranch ? input.activeThreadBranch : null;
 }
 
-export function resolveLocalCheckoutBranchMismatch(input: {
+export function resolveCheckoutBranchMismatch(input: {
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
-}): { threadBranch: string; currentBranch: string } | null {
+}): {
+  threadBranch: string;
+  currentBranch: string;
+  canRestoreThreadBranch: boolean;
+} | null {
   const { effectiveEnvMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
-  if (effectiveEnvMode !== "local" || activeWorktreePath !== null) {
+  const isLocalCheckout = effectiveEnvMode === "local" && activeWorktreePath === null;
+  const isEstablishedWorktree = effectiveEnvMode === "worktree" && activeWorktreePath !== null;
+  if (!isLocalCheckout && !isEstablishedWorktree) {
     return null;
   }
-  if (!activeThreadBranch || !currentGitBranch || activeThreadBranch === currentGitBranch) {
+  if (
+    !activeThreadBranch ||
+    !currentGitBranch ||
+    activeThreadBranch === currentGitBranch ||
+    (isEstablishedWorktree && isTemporaryWorktreeBranch(currentGitBranch))
+  ) {
     return null;
   }
-  return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
+  return {
+    threadBranch: activeThreadBranch,
+    currentBranch: currentGitBranch,
+    canRestoreThreadBranch: isLocalCheckout,
+  };
 }
 
 export function resolveBranchSelectionTarget(input: {
