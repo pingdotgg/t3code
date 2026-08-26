@@ -9,6 +9,7 @@ import {
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
   rewriteMarkdownFileUriHref,
+  shouldOpenMarkdownFileLinkInBrowserByDefault,
   shouldOpenMarkdownFileLinkInEditor,
 } from "./markdown-links";
 
@@ -69,6 +70,15 @@ describe("shouldOpenMarkdownFileLinkInEditor", () => {
   });
 });
 
+describe("shouldOpenMarkdownFileLinkInBrowserByDefault", () => {
+  it("keeps PDFs browser-first while source files open in the file viewer", () => {
+    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.pdf")).toBe(true);
+    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.PDF?download=1")).toBe(true);
+    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.html")).toBe(false);
+    expect(shouldOpenMarkdownFileLinkInBrowserByDefault("report.xml")).toBe(false);
+  });
+});
+
 describe("rewriteMarkdownFileUriHref", () => {
   it("rewrites file uri hrefs into direct path hrefs", () => {
     expect(rewriteMarkdownFileUriHref("file:///Users/julius/project/src/main.ts#L42")).toBe(
@@ -88,6 +98,18 @@ describe("rewriteMarkdownFileUriHref", () => {
         "file:///D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
       ),
     ).toBe("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69");
+  });
+
+  it("preserves file uri authorities as windows UNC paths", () => {
+    expect(rewriteMarkdownFileUriHref("file://server/share/workspace-image.svg")).toBe(
+      "\\\\server\\share\\workspace-image.svg",
+    );
+  });
+
+  it("treats a localhost file uri as a local path", () => {
+    expect(rewriteMarkdownFileUriHref("file://localhost/home/me/notes.md")).toBe(
+      "/home/me/notes.md",
+    );
   });
 
   it("unwraps angle-bracketed file uri hrefs", () => {
@@ -138,6 +160,18 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
+  it("resolves file uri authorities as windows UNC paths", () => {
+    expect(resolveMarkdownFileLinkTarget("file://server/share/workspace-image.svg")).toBe(
+      "\\\\server\\share\\workspace-image.svg",
+    );
+  });
+
+  it("resolves a localhost file uri as a local path", () => {
+    expect(resolveMarkdownFileLinkTarget("file://localhost/home/me/notes.md")).toBe(
+      "/home/me/notes.md",
+    );
+  });
+
   it("formats tooltip display paths relative to the cwd when possible", () => {
     expect(
       resolveMarkdownFileLinkMeta(
@@ -173,6 +207,20 @@ describe("resolveMarkdownFileLinkTarget", () => {
       basename: "My Folder",
     });
   });
+
+  it.each(["md", "html", "xml"])(
+    "resolves a bare spaced .%s filename from the markdown renderer",
+    (extension) => {
+      const href = renderMarkdownLinkHref(`[checklist](<Updated cutover checklist.${extension}>)`);
+
+      expect(href).toBe(`Updated%20cutover%20checklist.${extension}`);
+      expect(resolveMarkdownFileLinkMeta(href, "/repo/project")).toMatchObject({
+        targetPath: `/repo/project/Updated cutover checklist.${extension}`,
+        workspaceRelativePath: `Updated cutover checklist.${extension}`,
+        basename: `Updated cutover checklist.${extension}`,
+      });
+    },
+  );
 
   it("formats tooltip display paths relative to the cwd for slash-prefixed windows paths", () => {
     expect(

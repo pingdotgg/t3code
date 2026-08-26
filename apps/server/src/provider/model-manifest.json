@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "currentModels": {
+    "codex": [
+      "gpt-5.6-luna",
+      "gpt-5.6-terra",
+      "gpt-5.6-sol",
+      "gpt-daybreak-blue-latest",
+      "gpt-daybreak-red-latest"
+    ],
+    "claudeAgent": ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"]
+  }
+}

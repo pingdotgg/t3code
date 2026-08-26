@@ -11,7 +11,8 @@ const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 const RELATIVE_FILE_PATH_PATTERN =
   /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2}$/;
-const RELATIVE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+const RELATIVE_FILE_NAME_PATTERN =
+  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
 const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
 // Standard OS and dev-container roots; deliberately excludes app-route-ish
@@ -71,6 +72,10 @@ export function shouldOpenMarkdownFileLinkInEditor(
   return isTerminalLinkActivation(event, platform);
 }
 
+export function shouldOpenMarkdownFileLinkInBrowserByDefault(path: string): boolean {
+  return /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
+}
+
 function safeDecode(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -108,7 +113,10 @@ function parseFileUrlHref(
     const parsed = new URL(href);
     if (parsed.protocol.toLowerCase() !== "file:") return null;
 
-    const rawPath = parsed.pathname;
+    const uncHostname = parsed.hostname.toLowerCase() === "localhost" ? "" : parsed.hostname;
+    const rawPath = uncHostname
+      ? `\\\\${uncHostname}${parsed.pathname.replaceAll("/", "\\")}`
+      : parsed.pathname;
     if (rawPath.length === 0) return null;
 
     // Browser URL parser encodes "C:/foo" as "/C:/foo" for file URLs.
