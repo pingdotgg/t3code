@@ -22,6 +22,7 @@ const makeProbeRuntime = Effect.gen(function* () {
     environment: process.env,
     childProcessSpawner,
     cwd: process.cwd(),
+    alwaysApprove: false,
     clientInfo: { name: "t3-grok-probe", version: "0.0.0" },
   });
 });

@@ -34,7 +34,7 @@ const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
 const mockAgentCommand = process.execPath;
 
-async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
+async function makeMockGrokWrapper(extraEnv?: Record<string, string>, argvLogPath?: string) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
   const wrapperPath = NodePath.join(dir, "fake-grok.sh");
   const envExports = Object.entries(extraEnv ?? {})
@@ -42,6 +42,7 @@ async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
     .join("\n");
   const script = `#!/bin/sh
 ${envExports}
+${argvLogPath ? `printf '%s\\n' "$@" > ${JSON.stringify(argvLogPath)}` : ""}
 exec ${JSON.stringify(mockAgentCommand)} ${JSON.stringify(mockAgentPath)} "$@"
 `;
   await NodeFSP.writeFile(wrapperPath, script, "utf8");
@@ -124,6 +125,51 @@ it("requires a settlement to match the live Grok turn", () => {
 });
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
+  it.effect("maps full access to Grok always-approve without changing Auto mode", () =>
+    Effect.gen(function* () {
+      const logDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-argv-log-")),
+      );
+      const fullAccessArgsPath = NodePath.join(logDir, "full-access.txt");
+      const autoArgsPath = NodePath.join(logDir, "auto.txt");
+      const fullAccessWrapper = yield* Effect.promise(() =>
+        makeMockGrokWrapper(undefined, fullAccessArgsPath),
+      );
+      const autoWrapper = yield* Effect.promise(() => makeMockGrokWrapper(undefined, autoArgsPath));
+      const fullAccessAdapter = yield* makeTestAdapter(fullAccessWrapper);
+      const autoAdapter = yield* makeTestAdapter(autoWrapper);
+      const fullAccessThreadId = ThreadId.make("grok-full-access-argv");
+      const autoThreadId = ThreadId.make("grok-auto-argv");
+
+      yield* fullAccessAdapter.startSession({
+        threadId: fullAccessThreadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* autoAdapter.startSession({
+        threadId: autoThreadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "auto",
+      });
+
+      const fullAccessArgs = yield* Effect.promise(() =>
+        NodeFSP.readFile(fullAccessArgsPath, "utf8"),
+      );
+      const autoArgs = yield* Effect.promise(() => NodeFSP.readFile(autoArgsPath, "utf8"));
+      assert.deepStrictEqual(fullAccessArgs.trim().split("\n"), [
+        "agent",
+        "--always-approve",
+        "stdio",
+      ]);
+      assert.deepStrictEqual(autoArgs.trim().split("\n"), ["agent", "stdio"]);
+
+      yield* fullAccessAdapter.stopSession(fullAccessThreadId);
+      yield* autoAdapter.stopSession(autoThreadId);
+    }),
+  );
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-mock-thread");
