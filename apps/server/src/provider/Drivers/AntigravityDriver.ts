@@ -86,6 +86,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const { cwd } = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -113,12 +114,13 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
+      yield* Effect.addFinalizer(() => adapter.stopAll().pipe(Effect.ignore));
       const textGeneration = yield* makeAntigravityTextGeneration(effectiveConfig, processEnv);
 
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
 
-      const checkProvider = checkAntigravityProviderStatus(effectiveConfig, processEnv).pipe(
+      const checkProvider = checkAntigravityProviderStatus(effectiveConfig, processEnv, cwd).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
