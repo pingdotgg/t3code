@@ -11,6 +11,7 @@ qt_add_qml_module(t3bricks
     Composer.qml
     DefaultShell.qml
     RightPanel.qml
+    SettingsNav.qml
     ShellErrorOverlay.qml
     Sidebar.qml
     SidebarThreadRow.qml

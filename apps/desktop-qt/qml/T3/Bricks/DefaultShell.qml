@@ -38,6 +38,15 @@ Window {
             Sidebar {
                 Layout.fillHeight: true
                 Layout.preferredWidth: 260
+                visible: !settingsNav.active
+            }
+
+            SettingsNav {
+                id: settingsNav
+
+                Layout.fillHeight: true
+                Layout.preferredWidth: 260
+                visible: active
             }
 
             ColumnLayout {
@@ -47,6 +56,7 @@ Window {
 
                 Workspace {
                     Layout.fillWidth: true
+                    visible: ready
                 }
 
                 WebSurface {
@@ -57,12 +67,14 @@ Window {
 
                 Composer {
                     Layout.fillWidth: true
+                    visible: ready
                 }
             }
 
             RightPanel {
                 Layout.fillHeight: true
                 Layout.preferredWidth: implicitWidth
+                visible: available
             }
         }
     }
