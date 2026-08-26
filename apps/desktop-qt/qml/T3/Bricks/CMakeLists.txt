@@ -17,6 +17,7 @@ qt_add_qml_module(t3bricks
     TitleBar.qml
     WebProfile.qml
     WebSurface.qml
+    Workspace.qml
   RESOURCES
     qmldir
     js/shell-connect.js

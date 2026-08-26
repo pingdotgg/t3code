@@ -36,6 +36,10 @@ Window {
                 Layout.fillHeight: true
                 spacing: 0
 
+                Workspace {
+                    Layout.fillWidth: true
+                }
+
                 WebSurface {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
