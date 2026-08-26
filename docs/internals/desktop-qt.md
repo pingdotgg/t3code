@@ -82,7 +82,8 @@ which starts the server against a built `apps/web` (`vp run build`).
 
 CLI: `--url`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screenshot <png>`
 (grab the window after the page loads, then quit — PR evidence without a
-screen-recording permission); env
+screen-recording permission), `--action name[=json]` (repeatable; dispatch shell
+actions after the page loads, e.g. `--action rightPanel.toggle`); env
 `T3CODE_CONFIG_DIR`, `T3CODE_QML_DIR`, `T3CODE_NODE`, `T3CODE_SERVER_ENTRY`.
 
 ## Ricing contract
@@ -210,15 +211,43 @@ with the last edit), `composer.interrupt`, `composer.model.select
 {instanceId, model}`, `composer.option.set {id, value}`,
 `composer.runtimeMode.set {mode}`, `composer.interactionMode.set {mode}`.
 
+### `rightPanel`
+
+The right panel is the first brick whose _content_ stays HTML but whose
+_placement_ is the shell's: `RightPanel` renders the tab strip natively and
+loads the app's embed route (`/embed/$environmentId/$threadId`) in a second
+`WebSurface`. Both surfaces use the `WebProfile` singleton, so the embed
+document has the primary's session cookie and authenticates without a
+pairing token; it opens its own WebSocket.
+
+The embed route renders `ChatView` with `presentation="rightPanel"`, which
+returns only the panel's content — every hook, handler and per-surface
+component stays in one place. The two documents converge on the tab model
+through localStorage: `shell/shellDocumentSync.ts` rehydrates the right
+panel, terminal and diff stores whenever another document wrote them.
+Composer drafts are deliberately not synced (both documents write them).
+
+`ShellRightPanelBridge` (mounted by `ChatView` when hosted) publishes
+`ShellRightPanelState`: open flag, surfaces with titles, the active surface,
+what can be added, and `embedPath`. `ChatView` hides its inline panel, sheet
+and layout toggles when hosted. Actions: `rightPanel.toggle`,
+`rightPanel.activate {id}`, `rightPanel.close {id}`, `rightPanel.add {kind}`
+(`diff | files | terminal | pullRequest | agents`).
+
+Known gaps: the browser/preview surface needs the Electron preview host and
+is unavailable under the shell; "add to composer" from a terminal selection in
+the embed document has no composer to reach yet; the embed view reloads when
+the thread changes.
+
 ## Splitting chrome out
 
-Order of work: sidebar (done: `Sidebar` brick), composer (done: `Composer`
-brick), then right panel, workspace switcher, settings. The timeline and terminal stay HTML. Each split-out piece becomes one
+Order of work: sidebar (done: `Sidebar`), composer (done: `Composer`), right
+panel (done: `RightPanel` + embed route), then the workspace strip and
+settings. The timeline and terminal stay HTML. Each split-out piece becomes one
 brick with a documented state/action surface; in the shell the SPA simply does
-not render the parts that moved out. When an HTML brick needs to live somewhere
-QML decides (for example the terminal), it becomes a second `WebEngineView`
-loading an embed route with its own server connection; the primary view stays
-the brain.
+not render the parts that moved out. When an HTML brick needs to live somewhere QML decides, it becomes a second
+`WebEngineView` loading an embed route with its own server connection (the
+right panel is the precedent); the primary view stays the brain.
 
 ## Release targets
 
