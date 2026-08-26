@@ -37,7 +37,7 @@ WebEngineView {
         const connector = WebEngine.script();
         connector.name = "t3-shell-connect";
         connector.sourceUrl = "qrc:/qt/qml/T3/Bricks/js/shell-connect.js";
-        connector.injectionPoint = WebEngineScript.DocumentReady;
+        connector.injectionPoint = WebEngineScript.DocumentCreation;
         connector.worldId = WebEngineScript.MainWorld;
         view.userScripts.insert(connector);
     }

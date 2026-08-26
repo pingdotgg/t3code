@@ -10,6 +10,8 @@ qt_add_qml_module(t3bricks
   QML_FILES
     DefaultShell.qml
     ShellErrorOverlay.qml
+    Sidebar.qml
+    SidebarThreadRow.qml
     TitleBar.qml
     WebSurface.qml
   RESOURCES

@@ -30,10 +30,21 @@ Window {
             window: root
         }
 
-        WebSurface {
+        RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            url: Shell.pageUrl
+            spacing: 0
+
+            Sidebar {
+                Layout.fillHeight: true
+                Layout.preferredWidth: 260
+            }
+
+            WebSurface {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                url: Shell.pageUrl
+            }
         }
     }
 
