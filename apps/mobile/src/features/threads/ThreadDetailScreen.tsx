@@ -561,7 +561,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const hasActiveCodexGoalSession =
     selectedProvider?.driver === "codex" &&
     props.selectedThread.session !== null &&
-    props.selectedThread.session.status !== "stopped";
+    props.selectedThread.session.status === "ready";
   const codexGoal = useCodexGoal(
     hasActiveCodexGoalSession ? props.environmentId : null,
     hasActiveCodexGoalSession ? props.selectedThread.id : null,
