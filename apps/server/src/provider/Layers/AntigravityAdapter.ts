@@ -17,6 +17,7 @@ import {
   type ProviderSendTurnInput,
   type ProviderSession,
   type ProviderSessionStartInput,
+  type ProviderTurnSnapshot,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
   RuntimeItemId,
@@ -66,7 +67,9 @@ interface AntigravitySessionContext {
   activeHandle?: ChildProcessSpawner.ChildProcessHandle | undefined;
   activeScope?: Scope.Scope | undefined;
   activeTurnId?: TurnId | undefined;
+  turnSettled: boolean;
   resume?: { readonly version: number; readonly conversationId: string } | undefined;
+  turns: ProviderTurnSnapshot[];
   stopped: boolean;
 }
 
@@ -164,10 +167,6 @@ function resolveToolDetails(
 }
 
 const parseJsonValue = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
-const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
-const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
-const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
-const isProviderAdapterSessionNotFoundError = Schema.is(ProviderAdapterSessionNotFoundError);
 
 export function makeAntigravityAdapter(
   antigravitySettings: AntigravitySettings,
@@ -234,6 +233,18 @@ export function makeAntigravityAdapter(
     const withThreadLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
       Effect.flatMap(getThreadSemaphore(threadId), (semaphore) => semaphore.withPermit(effect));
 
+    const requireSession = (threadId: ThreadId) =>
+      Effect.gen(function* () {
+        const ctx = sessions.get(threadId);
+        if (!ctx || ctx.stopped) {
+          return yield* new ProviderAdapterSessionNotFoundError({
+            provider: PROVIDER,
+            threadId,
+          });
+        }
+        return ctx;
+      });
+
     const startSession = (
       input: ProviderSessionStartInput,
     ): Effect.Effect<ProviderSession, ProviderAdapterError> =>
@@ -269,6 +280,8 @@ export function makeAntigravityAdapter(
           const ctx: AntigravitySessionContext = {
             threadId: input.threadId,
             session,
+            turnSettled: false,
+            turns: [],
             ...(resumeParsed
               ? {
                   resume: {
@@ -296,34 +309,54 @@ export function makeAntigravityAdapter(
       );
 
     const stopSession = (threadId: ThreadId): Effect.Effect<void, ProviderAdapterError> =>
-      Effect.gen(function* () {
-        const ctx = sessions.get(threadId);
-        if (!ctx) {
-          return;
-        }
+      withThreadLock(
+        threadId,
+        Effect.gen(function* () {
+          const ctx = sessions.get(threadId);
+          if (!ctx) {
+            return;
+          }
 
-        ctx.stopped = true;
-        if (ctx.activeHandle) {
-          yield* ctx.activeHandle.kill().pipe(Effect.ignore);
-          ctx.activeHandle = undefined;
-        }
-        if (ctx.activeScope) {
-          yield* Scope.close(ctx.activeScope, Exit.void).pipe(Effect.ignore);
-          ctx.activeScope = undefined;
-        }
+          ctx.stopped = true;
+          ctx.turnSettled = true;
 
-        sessions.delete(threadId);
+          if (ctx.activeHandle) {
+            yield* ctx.activeHandle.kill().pipe(Effect.ignore);
+            ctx.activeHandle = undefined;
+          }
+          if (ctx.activeScope) {
+            yield* Scope.close(ctx.activeScope, Exit.void).pipe(Effect.ignore);
+            ctx.activeScope = undefined;
+          }
 
-        yield* emit({
-          type: "session.exited",
-          provider: PROVIDER,
-          threadId,
-          payload: {
-            exitKind: "graceful",
-            reason: "Session stopped by user.",
-          },
-        });
-      });
+          if (ctx.activeTurnId) {
+            const activeTurnId = ctx.activeTurnId;
+            ctx.activeTurnId = undefined;
+            yield* emit({
+              type: "turn.completed",
+              provider: PROVIDER,
+              threadId,
+              turnId: activeTurnId,
+              payload: {
+                state: "interrupted",
+              },
+            });
+            ctx.turns.push({ turnId: activeTurnId, status: "interrupted" });
+          }
+
+          sessions.delete(threadId);
+
+          yield* emit({
+            type: "session.exited",
+            provider: PROVIDER,
+            threadId,
+            payload: {
+              exitKind: "graceful",
+              reason: "Session stopped by user.",
+            },
+          });
+        }),
+      );
 
     const hasSession = (threadId: ThreadId): Effect.Effect<boolean> =>
       Effect.sync(() => {
@@ -340,16 +373,11 @@ export function makeAntigravityAdapter(
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
-          const ctx = sessions.get(input.threadId);
-          if (!ctx || ctx.stopped) {
-            return yield* new ProviderAdapterSessionNotFoundError({
-              provider: PROVIDER,
-              threadId: input.threadId,
-            });
-          }
+          const ctx = yield* requireSession(input.threadId);
 
           const turnId = TurnId.make(yield* randomUUIDv4);
           ctx.activeTurnId = turnId;
+          ctx.turnSettled = false;
 
           const promptText = typeof input.input === "string" ? input.input : "";
           if (!promptText.trim()) {
@@ -401,7 +429,6 @@ export function makeAntigravityAdapter(
           const lastEmittedThoughtLengthByItem = new Map<string, number>();
           let conversationId: string | null = resumeData?.conversationId ?? null;
           let finalStatus: "completed" | "failed" = "completed";
-          let turnCompleted = false;
 
           const turnScope = yield* Scope.make("sequential");
           ctx.activeScope = turnScope;
@@ -623,23 +650,16 @@ export function makeAntigravityAdapter(
           });
 
           yield* runProcess.pipe(
-            Effect.catch((cause: unknown) => {
-              if (
-                isProviderAdapterProcessError(cause) ||
-                isProviderAdapterRequestError(cause) ||
-                isProviderAdapterValidationError(cause) ||
-                isProviderAdapterSessionNotFoundError(cause)
-              ) {
-                return Effect.fail(cause);
-              }
-              return Effect.fail(
-                new ProviderAdapterProcessError({
-                  provider: PROVIDER,
-                  threadId: input.threadId,
-                  detail: "Antigravity CLI execution failed.",
-                  cause,
-                }),
-              );
+            Effect.catchTags({
+              PlatformError: (cause) =>
+                Effect.fail(
+                  new ProviderAdapterProcessError({
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    detail: "Antigravity CLI execution failed.",
+                    cause,
+                  }),
+                ),
             }),
             Effect.ensuring(
               Effect.gen(function* () {
@@ -651,8 +671,8 @@ export function makeAntigravityAdapter(
                   yield* Scope.close(ctx.activeScope, Exit.void).pipe(Effect.ignore);
                   ctx.activeScope = undefined;
                 }
-                if (!turnCompleted) {
-                  turnCompleted = true;
+                if (!ctx.turnSettled && !ctx.stopped) {
+                  ctx.turnSettled = true;
                   yield* emit({
                     type: "turn.completed",
                     provider: PROVIDER,
@@ -662,6 +682,7 @@ export function makeAntigravityAdapter(
                       state: finalStatus,
                     },
                   }).pipe(Effect.ignore);
+                  ctx.turns.push({ turnId, status: finalStatus });
                 }
                 ctx.activeTurnId = undefined;
               }),
@@ -687,6 +708,7 @@ export function makeAntigravityAdapter(
           return {
             threadId: input.threadId,
             turnId,
+            resumeCursor: ctx.session.resumeCursor,
           } satisfies ProviderTurnStartResult;
         }),
       );
@@ -697,7 +719,7 @@ export function makeAntigravityAdapter(
     ): Effect.Effect<void, ProviderAdapterError> =>
       Effect.gen(function* () {
         const ctx = sessions.get(threadId);
-        if (!ctx || !ctx.activeHandle) {
+        if (!ctx || !ctx.activeHandle || ctx.stopped) {
           return;
         }
 
@@ -706,6 +728,7 @@ export function makeAntigravityAdapter(
         }
 
         const targetTurnId = turnId ?? ctx.activeTurnId;
+        ctx.turnSettled = true;
 
         yield* ctx.activeHandle.kill().pipe(Effect.ignore);
         ctx.activeHandle = undefined;
@@ -724,6 +747,7 @@ export function makeAntigravityAdapter(
               state: "interrupted",
             },
           });
+          ctx.turns.push({ turnId: targetTurnId, status: "interrupted" });
           ctx.activeTurnId = undefined;
         }
       });
@@ -743,23 +767,40 @@ export function makeAntigravityAdapter(
     const readThread = (
       threadId: ThreadId,
     ): Effect.Effect<ProviderThreadSnapshot, ProviderAdapterError> =>
-      Effect.sync(() => ({
-        threadId,
-        turns: [],
-      }));
+      Effect.gen(function* () {
+        const ctx = yield* requireSession(threadId);
+        return {
+          threadId,
+          turns: ctx.turns,
+        };
+      });
 
     const rollbackThread = (
       threadId: ThreadId,
-      _numTurns: number,
+      numTurns: number,
     ): Effect.Effect<ProviderThreadSnapshot, ProviderAdapterError> =>
-      Effect.sync(() => ({
-        threadId,
-        turns: [],
-      }));
+      Effect.gen(function* () {
+        const ctx = yield* requireSession(threadId);
+        if (!Number.isInteger(numTurns) || numTurns < 1) {
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "rollbackThread",
+            issue: "numTurns must be an integer >= 1.",
+          });
+        }
+        const nextLength = Math.max(0, ctx.turns.length - numTurns);
+        ctx.turns.splice(nextLength);
+        return {
+          threadId,
+          turns: ctx.turns,
+        };
+      });
 
     const stopAll = (): Effect.Effect<void, ProviderAdapterError> =>
       Effect.gen(function* () {
         for (const ctx of sessions.values()) {
+          ctx.stopped = true;
+          ctx.turnSettled = true;
           if (ctx.activeHandle) {
             yield* ctx.activeHandle.kill().pipe(Effect.ignore);
             ctx.activeHandle = undefined;
@@ -768,7 +809,6 @@ export function makeAntigravityAdapter(
             yield* Scope.close(ctx.activeScope, Exit.void).pipe(Effect.ignore);
             ctx.activeScope = undefined;
           }
-          ctx.stopped = true;
         }
         sessions.clear();
         if (managedNativeEventLogger) {
