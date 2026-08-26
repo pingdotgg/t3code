@@ -42,5 +42,15 @@
         shell.actionRequested.connect(listener);
         return () => shell.actionRequested.disconnect(listener);
       }),
+    // Everything any document published, keyed as published; secondary
+    // documents (embed routes) read the primary's view models from here.
+    getState: () => ready.then((shell) => shell.state),
+    onState: (listener) =>
+      ready.then((shell) => {
+        const handler = () => listener(shell.state);
+        shell.stateChanged.connect(handler);
+        handler();
+        return () => shell.stateChanged.disconnect(handler);
+      }),
   });
 })();

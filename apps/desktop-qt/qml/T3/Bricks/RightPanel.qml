@@ -186,8 +186,10 @@ Rectangle {
             Layout.fillHeight: true
             active: panel.open && panel.embedUrl.toString().length > 0
 
+            // The document follows thread changes itself (t3Shell.onState), so
+            // the URL is only the starting point; rebinding it would reload.
             sourceComponent: WebSurface {
-                url: panel.embedUrl
+                Component.onCompleted: url = panel.embedUrl
             }
         }
     }

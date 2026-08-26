@@ -222,4 +222,8 @@ export interface T3Shell {
   publish(key: string, value: unknown): Promise<void>;
   /** Resolves to an unsubscribe function once the channel is connected. */
   onAction(listener: (action: string, payload: unknown) => void): Promise<() => void>;
+  /** Everything published so far, keyed as published (any document's view models). */
+  getState(): Promise<Readonly<Record<string, unknown>>>;
+  /** Calls `listener` now and on every publish; resolves to an unsubscribe function. */
+  onState(listener: (state: Readonly<Record<string, unknown>>) => void): Promise<() => void>;
 }
