@@ -296,6 +296,7 @@ describe("CheckpointReactor", () => {
     readonly threadWorktreePath?: string | null;
     readonly threadBranch?: string | null;
     readonly secondThreadSharingWorktree?: boolean;
+    readonly secondThreadBranch?: string | null;
     readonly localStatusRefName?: string | null;
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
@@ -449,7 +450,7 @@ describe("CheckpointReactor", () => {
                   },
                   interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
                   runtimeMode: "approval-required",
-                  branch: null,
+                  branch: options?.secondThreadBranch ?? null,
                   worktreePath: options?.threadWorktreePath ?? cwd,
                   createdAt,
                 }),
@@ -954,7 +955,7 @@ describe("CheckpointReactor", () => {
     expect(thread?.branch).toBe("t3code/renamed-by-agent");
   });
 
-  it("does not adopt a drifted checkout when the worktree is shared by another thread", async () => {
+  it("adopts a drifted checkout for the completing thread when an inactive sibling shares it", async () => {
     const pullRequestRefreshCalls: string[] = [];
     const harness = await createHarness({
       seedFilesystemCheckpoints: false,
@@ -962,6 +963,7 @@ describe("CheckpointReactor", () => {
       localStatusRefName: "t3code/renamed-by-agent",
       secondThreadSharingWorktree: true,
       pullRequestRefreshCalls,
+      secondThreadBranch: "t3code/sibling-branch",
     });
 
     harness.provider.emit({
@@ -971,6 +973,56 @@ describe("CheckpointReactor", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       threadId: ThreadId.make("thread-1"),
       turnId: asTurnId("turn-branch-drift-shared"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    const sibling = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-2"));
+    expect(thread?.branch).toBe("t3code/renamed-by-agent");
+    expect(sibling?.branch).toBe("t3code/sibling-branch");
+    expect(pullRequestRefreshCalls).toEqual([harness.cwd]);
+  });
+
+  it("does not adopt a shared checkout while a sibling thread has an active turn", async () => {
+    const pullRequestRefreshCalls: string[] = [];
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "t3code/original-branch",
+      localStatusRefName: "t3code/renamed-by-agent",
+      secondThreadSharingWorktree: true,
+      secondThreadBranch: "t3code/sibling-branch",
+      pullRequestRefreshCalls,
+    });
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-shared-sibling-running"),
+        threadId: ThreadId.make("thread-2"),
+        session: {
+          threadId: ThreadId.make("thread-2"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-shared-sibling"),
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-branch-drift-shared-active"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-branch-drift-shared-active"),
       payload: { state: "completed" },
     });
 
@@ -996,6 +1048,30 @@ describe("CheckpointReactor", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       threadId: ThreadId.make("thread-1"),
       turnId: asTurnId("turn-branch-drift-temp"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.branch).toBe("t3code/original-branch");
+  });
+
+  it("does not adopt a detached HEAD as the thread branch", async () => {
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "t3code/original-branch",
+      localStatusRefName: null,
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-branch-drift-detached"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-branch-drift-detached"),
       payload: { state: "completed" },
     });
 

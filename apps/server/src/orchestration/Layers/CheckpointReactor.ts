@@ -535,8 +535,8 @@ const make = Effect.gen(function* () {
   // stale. Since #4460 the client only attributes PR state to a thread when
   // the checked-out branch equals the recorded one, so stale metadata silently
   // orphans the thread's PR. Follow the drift here: adopt the checked-out
-  // branch as the thread's branch, but only when the worktree belongs to
-  // exactly this thread — for shared cwds the strict matching is the point.
+  // branch as the completing thread's branch. Other threads that reference
+  // the same checkout keep their own recorded branch.
   const followWorktreeBranchDrift = Effect.fn("followWorktreeBranchDrift")(function* (input: {
     readonly threadId: ThreadId;
     readonly cwd: string;
@@ -565,10 +565,15 @@ const make = Effect.gen(function* () {
       }
 
       const shell = yield* projectionSnapshotQuery.getShellSnapshot();
-      const worktreeIsShared = shell.threads.some(
-        (other) => other.id !== thread.id && other.worktreePath === thread.worktreePath,
+      const checkoutHasActiveSibling = shell.threads.some(
+        (other) =>
+          other.id !== thread.id &&
+          other.worktreePath === thread.worktreePath &&
+          (other.session?.activeTurnId != null ||
+            other.session?.status === "starting" ||
+            other.session?.status === "running"),
       );
-      if (worktreeIsShared) {
+      if (checkoutHasActiveSibling) {
         return;
       }
 
