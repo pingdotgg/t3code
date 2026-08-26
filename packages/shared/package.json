@@ -286,6 +286,10 @@
     "./dateTime": {
       "types": "./src/dateTime.ts",
       "import": "./src/dateTime.ts"
+    },
+    "./i18n": {
+      "types": "./src/i18n/index.ts",
+      "import": "./src/i18n/index.ts"
     }
   },
   "scripts": {
