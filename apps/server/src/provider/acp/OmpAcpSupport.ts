@@ -484,9 +484,29 @@ export function ompProfileFromLaunchArgs(launchArgs: string | undefined): string
   return profile;
 }
 
-function textGenerationProfileArgs(launchArgs: string | undefined): ReadonlyArray<string> {
+function textGenerationSettingsArgs(launchArgs: string | undefined): ReadonlyArray<string> {
+  if (!hasBalancedCliQuotes(launchArgs)) return [];
+  const safeArgs: string[] = [];
   const profile = ompProfileFromLaunchArgs(launchArgs);
-  return profile ? ["--profile", profile] : [];
+  if (profile) safeArgs.push("--profile", profile);
+
+  const args = tokenizeCliArgs(launchArgs);
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--config") {
+      const value = args[index + 1];
+      if (value && !value.startsWith("-")) {
+        safeArgs.push("--config", value);
+        index++;
+      }
+      continue;
+    }
+    if (arg?.startsWith("--config=")) {
+      const value = arg.slice("--config=".length);
+      if (value) safeArgs.push("--config", value);
+    }
+  }
+  return safeArgs;
 }
 
 export function buildOmpTextGenerationAcpSpawnInput(
@@ -499,7 +519,7 @@ export function buildOmpTextGenerationAcpSpawnInput(
     command: ompSettings?.binaryPath?.trim() || "omp",
     args: [
       "acp",
-      ...textGenerationProfileArgs(ompSettings?.launchArgs),
+      ...textGenerationSettingsArgs(ompSettings?.launchArgs),
       "--session-dir",
       sessionDir,
       ...OMP_TEXT_GENERATION_ACP_ARGS,

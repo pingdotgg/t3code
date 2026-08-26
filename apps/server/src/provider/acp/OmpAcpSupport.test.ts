@@ -49,13 +49,13 @@ describe("buildOmpAcpSpawnInput", () => {
 });
 
 describe("buildOmpTextGenerationAcpSpawnInput", () => {
-  it("keeps one unambiguous profile and ignores other launch arguments", () => {
+  it("keeps profile and config overlays while ignoring unsafe launch arguments", () => {
     expect(
       buildOmpTextGenerationAcpSpawnInput(
         {
           binaryPath: "/usr/local/bin/omp",
           launchArgs:
-            '--profile "text generation" --tools bash --yolo -e /tmp/unsafe.ts --extension /tmp/unsafe-two.ts',
+            '--config ./base.yml --profile "text generation" --tools bash --config=./model.yml --yolo -e /tmp/unsafe.ts --extension /tmp/unsafe-two.ts',
         },
         "/tmp/project",
         "/tmp/omp-session",
@@ -66,6 +66,10 @@ describe("buildOmpTextGenerationAcpSpawnInput", () => {
         "acp",
         "--profile",
         "text generation",
+        "--config",
+        "./base.yml",
+        "--config",
+        "./model.yml",
         "--session-dir",
         "/tmp/omp-session",
         "--no-tools",

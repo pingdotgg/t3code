@@ -28,8 +28,14 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
-import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
-import type { ProviderServiceError } from "../../provider/Errors.ts";
+import {
+  ProviderAdapterProcessError,
+  ProviderAdapterRequestError,
+  ProviderAdapterSessionClosedError,
+  ProviderAdapterSessionNotFoundError,
+  ProviderAdapterValidationError,
+  type ProviderServiceError,
+} from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
@@ -47,7 +53,11 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
+const isProviderAdapterSessionClosedError = Schema.is(ProviderAdapterSessionClosedError);
+const isProviderAdapterSessionNotFoundError = Schema.is(ProviderAdapterSessionNotFoundError);
+const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
 type ProviderIntentEvent = Extract<
@@ -370,12 +380,18 @@ const make = Effect.gen(function* () {
     );
 
   const formatFailureDetail = (cause: Cause.Cause<unknown>): string => {
-    const failReason = cause.reasons.find(Cause.isFailReason);
-    const providerError = isProviderAdapterRequestError(failReason?.error)
-      ? failReason.error
-      : undefined;
-    if (providerError) {
-      return providerError.detail;
+    const error = cause.reasons.find(Cause.isFailReason)?.error;
+    if (isProviderAdapterRequestError(error) || isProviderAdapterProcessError(error)) {
+      return error.detail;
+    }
+    if (isProviderAdapterValidationError(error)) {
+      return error.issue;
+    }
+    if (isProviderAdapterSessionClosedError(error)) {
+      return "Provider session is closed.";
+    }
+    if (isProviderAdapterSessionNotFoundError(error)) {
+      return "Provider session was not found.";
     }
     return Cause.pretty(cause);
   };

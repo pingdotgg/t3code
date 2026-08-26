@@ -34,7 +34,11 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "@t3tools/contracts";
-import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import {
+  type ProviderAdapterError,
+  ProviderAdapterProcessError,
+  ProviderAdapterRequestError,
+} from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -155,7 +159,7 @@ describe("ProviderCommandReactor", () => {
     readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly startSessionEffect?: (
       session: ProviderSession,
-    ) => Effect.Effect<ProviderSession, ProviderAdapterRequestError>;
+    ) => Effect.Effect<ProviderSession, ProviderAdapterError>;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -618,10 +622,11 @@ describe("ProviderCommandReactor", () => {
           startSessionEffect: (session) =>
             failStartup
               ? Effect.fail(
-                  new ProviderAdapterRequestError({
-                    provider: "codex",
-                    method: "thread.start",
+                  new ProviderAdapterProcessError({
+                    provider: "omp",
+                    threadId: "thread-1",
                     detail: "deterministic startup failure",
+                    cause: new Error("private spawn details"),
                   }),
                 )
               : Effect.succeed(session),
@@ -655,7 +660,8 @@ describe("ProviderCommandReactor", () => {
       );
       let readModel = yield* Effect.promise(() => harness.readModel());
       let thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-      expect(thread?.session?.lastError).toContain("deterministic startup failure");
+      expect(thread?.session?.lastError).toBe("deterministic startup failure");
+      expect(thread?.session?.lastError).not.toContain("private spawn details");
       expect(harness.sendTurn).not.toHaveBeenCalled();
 
       failStartup = false;

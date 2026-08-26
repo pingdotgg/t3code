@@ -40,7 +40,6 @@ import {
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
-import { mapAcpToAdapterError } from "../acp/AcpAdapterSupport.ts";
 import type * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import {
   makeAcpAssistantItemEvent,
@@ -70,6 +69,15 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
 const PROVIDER = ProviderDriverKind.make("omp");
+
+function mapOmpAcpToAdapterError(method: string, cause: unknown): ProviderAdapterRequestError {
+  return new ProviderAdapterRequestError({
+    provider: PROVIDER,
+    method,
+    detail: "Oh My Pi ACP request failed.",
+    cause,
+  });
+}
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -107,6 +115,11 @@ interface OmpSessionContext {
   exitFiber: Fiber.Fiber<void, never> | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
+  turnInProgress: boolean;
+  promptInFlight: boolean;
+  stopRequested: boolean;
+  interruptPending: boolean;
+  readonly interruptedTurnIds: Set<TurnId>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
@@ -310,6 +323,13 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
       return Effect.succeed(ctx);
     };
 
+    const hasInterruptibleWork = (ctx: OmpSessionContext) =>
+      ctx.turnInProgress ||
+      ctx.activeTurnId !== undefined ||
+      ctx.session.activeTurnId !== undefined ||
+      ctx.pendingApprovals.size > 0 ||
+      ctx.pendingUserInputs.size > 0;
+
     const stopSessionInternal = (ctx: OmpSessionContext) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
@@ -325,13 +345,25 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
         if (sessions.get(ctx.threadId) !== ctx) return;
         sessions.delete(ctx.threadId);
-        yield* offerRuntimeEvent({
-          type: "session.exited",
-          ...(yield* makeEventStamp()),
-          provider: PROVIDER,
-          threadId: ctx.threadId,
-          payload: { exitKind: "graceful" },
-        });
+        yield* makeEventStamp().pipe(
+          Effect.flatMap((stamp) =>
+            offerRuntimeEvent({
+              type: "session.exited",
+              ...stamp,
+              provider: PROVIDER,
+              threadId: ctx.threadId,
+              payload: { exitKind: "graceful" },
+            }),
+          ),
+          Effect.catchCause((cause) =>
+            Cause.hasInterrupts(cause)
+              ? Effect.interrupt
+              : Effect.logError("Failed to publish graceful OMP session exit.", {
+                  cause: Cause.pretty(cause),
+                  threadId: ctx.threadId,
+                }),
+          ),
+        );
       });
 
     const handleUnexpectedExit = (ctx: OmpSessionContext, reason: string) =>
@@ -374,11 +406,11 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
           threadId: ctx.threadId,
           payload: { reason, recoverable: false, exitKind: "error" },
         });
-        yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
-      });
+      }).pipe(Effect.ensuring(Scope.close(ctx.scope, Exit.void).pipe(Effect.ignore)));
 
-    const startSession: OmpAdapterShape["startSession"] = (input) =>
-      Effect.gen(function* () {
+    const startSession: OmpAdapterShape["startSession"] = (input) => {
+      let stopReservation: OmpSessionContext | undefined;
+      return Effect.gen(function* () {
         if (input.provider !== undefined && input.provider !== PROVIDER) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
@@ -397,7 +429,11 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
 
         const activeSession = sessions.get(input.threadId);
         if (activeSession && !activeSession.stopped) {
-          yield* stopSessionInternal(activeSession);
+          stopReservation = activeSession;
+          activeSession.stopRequested = true;
+          if (hasInterruptibleWork(activeSession)) {
+            yield* stopSessionInternal(activeSession);
+          }
         }
 
         return yield* withThreadLock(
@@ -600,11 +636,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
                 ),
               );
               return yield* acp.start();
-            }).pipe(
-              Effect.mapError((error) =>
-                mapAcpToAdapterError(PROVIDER, input.threadId, "session/start", error),
-              ),
-            );
+            }).pipe(Effect.mapError((error) => mapOmpAcpToAdapterError("session/start", error)));
 
             const defaultModel = getOmpAcpCurrentModel(yield* acp.getConfigOptions);
 
@@ -612,8 +644,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
               runtime: acp,
               modelSelection: ompModelSelection,
               defaultModel,
-              mapError: ({ cause, method }) =>
-                mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+              mapError: ({ cause, method }) => mapOmpAcpToAdapterError(method, cause),
             });
 
             const now = yield* nowIso;
@@ -635,6 +666,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
 
             ctx = {
               threadId: input.threadId,
+              stopRequested: false,
               session,
               scope: sessionScope,
               acp,
@@ -643,6 +675,10 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
               exitFiber: undefined,
               pendingApprovals,
               pendingUserInputs,
+              turnInProgress: false,
+              promptInFlight: false,
+              interruptPending: false,
+              interruptedTurnIds: new Set(),
               turns: [],
               lastPlanFingerprint: undefined,
               activeTurnId: undefined,
@@ -828,13 +864,36 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             return session;
           }).pipe(Effect.scoped),
         );
-      });
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (
+              stopReservation &&
+              sessions.get(input.threadId) === stopReservation &&
+              !stopReservation.stopped
+            ) {
+              stopReservation.stopRequested = false;
+            }
+          }),
+        ),
+      );
+    };
 
-    const sendTurn: OmpAdapterShape["sendTurn"] = (input) =>
-      withThreadLock(
+    const sendTurn: OmpAdapterShape["sendTurn"] = (input) => {
+      let turnContext: OmpSessionContext | undefined;
+      return withThreadLock(
         input.threadId,
         Effect.gen(function* () {
           const ctx = yield* requireSession(input.threadId);
+          turnContext = ctx;
+          ctx.turnInProgress = true;
+          if (ctx.interruptPending) {
+            ctx.interruptPending = false;
+            return yield* Effect.interrupt;
+          }
+          if (ctx.stopRequested) {
+            return yield* Effect.interrupt;
+          }
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           if (input.input?.trim()) {
             promptParts.push({ type: "text", text: input.input.trim() });
@@ -897,11 +956,33 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             modelSelection:
               model === undefined ? undefined : { model, options: turnModelSelection?.options },
             defaultModel: ctx.defaultModel,
-            mapError: ({ cause, method }) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, method, cause),
+            mapError: ({ cause, method }) => mapOmpAcpToAdapterError(method, cause),
           });
 
           const turnId = TurnId.make(yield* randomUUIDv4);
+          const turnStartedStamp = yield* makeEventStamp();
+          if (ctx.stopped) {
+            return yield* Effect.interrupt;
+          }
+          if (ctx.interruptPending) {
+            ctx.interruptPending = false;
+            return yield* Effect.interrupt;
+          }
+          const resetOwnedActiveTurn = Effect.gen(function* () {
+            if (ctx.stopped || ctx.activeTurnId !== turnId || ctx.session.activeTurnId !== turnId) {
+              return false;
+            }
+            const { activeTurnId: _activeTurnId, ...inactiveSession } = ctx.session;
+            ctx.activeTurnId = undefined;
+            ctx.session = {
+              ...inactiveSession,
+              status: "ready",
+              updatedAt: yield* nowIso,
+            };
+            ctx.turnInProgress = false;
+            ctx.interruptPending = false;
+            return true;
+          });
           ctx.activeTurnId = turnId;
           ctx.lastPlanFingerprint = undefined;
           ctx.session = {
@@ -910,39 +991,53 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             activeTurnId: turnId,
             updatedAt: yield* nowIso,
           };
-          yield* offerRuntimeEvent({
+          const turnStartedExit = yield* offerRuntimeEvent({
             type: "turn.started",
-            ...(yield* makeEventStamp()),
+            ...turnStartedStamp,
             provider: PROVIDER,
             threadId: input.threadId,
             turnId,
             payload: { model },
-          });
+          }).pipe(Effect.exit);
+          if (Exit.isFailure(turnStartedExit)) {
+            yield* resetOwnedActiveTurn;
+            return yield* Effect.failCause(turnStartedExit.cause);
+          }
+          if (ctx.stopped) {
+            return yield* Effect.interrupt;
+          }
+          if (ctx.interruptPending || ctx.interruptedTurnIds.delete(turnId)) {
+            ctx.interruptPending = false;
+            if (yield* resetOwnedActiveTurn) {
+              yield* offerRuntimeEvent({
+                type: "turn.completed",
+                ...(yield* makeEventStamp()),
+                provider: PROVIDER,
+                threadId: input.threadId,
+                turnId,
+                payload: { state: "cancelled", stopReason: "cancelled" },
+              }).pipe(Effect.ignore);
+            }
+            return yield* Effect.interrupt;
+          }
 
+          ctx.promptInFlight = true;
           const promptExit = yield* ctx.acp.prompt({ prompt: promptParts }).pipe(
-            Effect.mapError((error) =>
-              mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
-            ),
+            Effect.mapError((error) => mapOmpAcpToAdapterError("session/prompt", error)),
             Effect.exit,
           );
+          ctx.promptInFlight = false;
+          yield* ctx.acp.clearPendingCancel;
           if (Exit.isFailure(promptExit)) {
             if (ctx.stopped) {
               return yield* Effect.interrupt;
             }
+            ctx.interruptedTurnIds.delete(turnId);
             yield* Effect.logError("Oh My Pi ACP prompt failed.", {
               cause: Cause.pretty(promptExit.cause),
               threadId: input.threadId,
             });
-            const ownsActiveTurn =
-              ctx.activeTurnId === turnId && ctx.session.activeTurnId === turnId && !ctx.stopped;
-            if (ownsActiveTurn) {
-              const { activeTurnId: _activeTurnId, ...inactiveSession } = ctx.session;
-              ctx.activeTurnId = undefined;
-              ctx.session = {
-                ...inactiveSession,
-                status: "ready",
-                updatedAt: yield* nowIso,
-              };
+            if (yield* resetOwnedActiveTurn) {
               yield* offerRuntimeEvent({
                 type: "turn.completed",
                 ...(yield* makeEventStamp()),
@@ -969,6 +1064,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
               detail: "Oh My Pi ACP exited before the turn settled.",
             });
           }
+          ctx.interruptedTurnIds.delete(turnId);
           ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
           const { activeTurnId: _activeTurnId, ...inactiveSession } = ctx.session;
           ctx.activeTurnId = undefined;
@@ -978,6 +1074,8 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             updatedAt: yield* nowIso,
             model,
           };
+          ctx.turnInProgress = false;
+          ctx.interruptPending = false;
           yield* offerRuntimeEvent({
             type: "turn.completed",
             ...(yield* makeEventStamp()),
@@ -995,20 +1093,40 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             resumeCursor: ctx.session.resumeCursor,
           };
         }),
+      ).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            if (!turnContext) return;
+            turnContext.turnInProgress = false;
+            turnContext.promptInFlight = false;
+            turnContext.interruptPending = false;
+            yield* turnContext.acp.clearPendingCancel;
+          }),
+        ),
       );
+    };
 
-    const interruptTurn: OmpAdapterShape["interruptTurn"] = (threadId) =>
+    const interruptTurn: OmpAdapterShape["interruptTurn"] = (threadId, turnId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
+        const activeTurnId = ctx.activeTurnId ?? ctx.session.activeTurnId;
+        if (turnId !== undefined && activeTurnId !== turnId) return;
+        if (activeTurnId !== undefined) {
+          ctx.interruptedTurnIds.add(activeTurnId);
+        } else if (ctx.turnInProgress) {
+          ctx.interruptPending = true;
+        } else {
+          return;
+        }
         yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
-        yield* Effect.ignore(
-          ctx.acp.cancel.pipe(
-            Effect.mapError((error) =>
-              mapAcpToAdapterError(PROVIDER, threadId, "session/cancel", error),
+        if (ctx.promptInFlight) {
+          yield* Effect.ignore(
+            ctx.acp.cancel.pipe(
+              Effect.mapError((error) => mapOmpAcpToAdapterError("session/cancel", error)),
             ),
-          ),
-        );
+          );
+        }
       });
 
     const respondToRequest: OmpAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
@@ -1066,12 +1184,17 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
         });
       });
 
-    const stopSession: OmpAdapterShape["stopSession"] = (threadId) =>
-      Effect.gen(function* () {
+    const stopSession: OmpAdapterShape["stopSession"] = (threadId) => {
+      let stopReservation: OmpSessionContext | undefined;
+      return Effect.gen(function* () {
         const activeSession = sessions.get(threadId);
         if (activeSession && !activeSession.stopped) {
-          yield* stopSessionInternal(activeSession);
-          return;
+          stopReservation = activeSession;
+          activeSession.stopRequested = true;
+          if (hasInterruptibleWork(activeSession)) {
+            yield* stopSessionInternal(activeSession);
+            return;
+          }
         }
 
         yield* withThreadLock(
@@ -1081,7 +1204,20 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             yield* stopSessionInternal(ctx);
           }),
         );
-      });
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (
+              stopReservation &&
+              sessions.get(threadId) === stopReservation &&
+              !stopReservation.stopped
+            ) {
+              stopReservation.stopRequested = false;
+            }
+          }),
+        ),
+      );
+    };
 
     const listSessions: OmpAdapterShape["listSessions"] = () =>
       Effect.sync(() => Array.from(sessions.values(), (c) => ({ ...c.session })));
@@ -1097,9 +1233,6 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
 
     yield* Effect.addFinalizer(() =>
       Effect.forEach(sessions.values(), stopSessionInternal, { discard: true }).pipe(
-        Effect.catch((cause) =>
-          Effect.logError("Failed to emit an OMP session shutdown event.", { cause }),
-        ),
         Effect.tap(() => PubSub.shutdown(runtimeEventPubSub)),
         Effect.tap(() => managedNativeEventLogger?.close() ?? Effect.void),
       ),

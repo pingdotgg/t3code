@@ -210,6 +210,8 @@ export class AcpSessionRuntime extends Context.Service<
      * @see https://agentclientprotocol.com/protocol/schema#session/cancel
      */
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /** Clears a queued cancel after the caller has observed prompt settlement. */
+    readonly clearPendingCancel: Effect.Effect<void>;
     /**
      * Selects the active mode through the negotiated `mode` configuration option.
      * This is a no-op when the requested mode is already active.
@@ -307,6 +309,7 @@ export const make = (
     const activePromptFiberRef = yield* Ref.make<
       Option.Option<Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>>
     >(Option.none());
+    const cancelRequestedRef = yield* Ref.make(false);
     const sessionLoadGateRef = yield* Ref.make<Option.Option<SessionLoadGate>>(Option.none());
 
     const logRequest = (event: AcpSessionRequestLogEvent) =>
@@ -768,12 +771,18 @@ export const make = (
             const cancelledResponse = {
               stopReason: "cancelled",
             } satisfies EffectAcpSchema.PromptResponse;
+            if (yield* Ref.getAndSet(cancelRequestedRef, false)) {
+              return cancelledResponse;
+            }
             const promptRpcFiber = yield* runLoggedRequest(
               "session/prompt",
               requestPayload,
               acp.agent.prompt(requestPayload),
             ).pipe(Effect.forkIn(runtimeScope));
             yield* Ref.set(activePromptFiberRef, Option.some(promptRpcFiber));
+            if (yield* Ref.getAndSet(cancelRequestedRef, false)) {
+              yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
+            }
             return yield* Fiber.join(promptRpcFiber).pipe(
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)
@@ -784,6 +793,7 @@ export const make = (
                 Effect.gen(function* () {
                   yield* Fiber.interrupt(promptRpcFiber).pipe(Effect.ignore);
                   yield* Ref.set(activePromptFiberRef, Option.none());
+                  yield* Ref.set(cancelRequestedRef, false);
                 }),
               ),
               Effect.tap(() =>
@@ -798,6 +808,7 @@ export const make = (
       cancel: getStartedState.pipe(
         Effect.flatMap((started) =>
           Effect.gen(function* () {
+            yield* Ref.set(cancelRequestedRef, true);
             const activePromptFiber = yield* Ref.get(activePromptFiberRef);
             if (Option.isSome(activePromptFiber)) {
               yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
@@ -808,6 +819,7 @@ export const make = (
           }),
         ),
       ),
+      clearPendingCancel: Ref.set(cancelRequestedRef, false),
       setMode: (modeId) =>
         Ref.get(modeStateRef).pipe(
           Effect.flatMap((modeState) => {

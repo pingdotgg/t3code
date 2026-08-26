@@ -8,13 +8,20 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-
-import { OmpSettings, ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EventId,
+  OmpSettings,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -438,6 +445,460 @@ ompAdapterTestLayer("OmpAdapterLive", (it) => {
       }
 
       yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("clears stop intent when a waiting stop is interrupted", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const resolveSettings = serverSettings.getSettings.pipe(
+        Effect.map((snapshot) => snapshot.providers.omp),
+        Effect.orDie,
+      );
+      const firstStampRequested = yield* Deferred.make<void>();
+      const releaseFirstStamp = yield* Deferred.make<void>();
+      let stampIndex = 0;
+      const adapter = yield* makeOmpAdapter(decodeOmpSettings({}), {
+        resolveSettings,
+        makeEventStamp: () =>
+          Effect.gen(function* () {
+            stampIndex += 1;
+            if (stampIndex === 1) {
+              yield* Deferred.succeed(firstStampRequested, undefined);
+              yield* Deferred.await(releaseFirstStamp);
+            }
+            return {
+              eventId: EventId.make(`omp-interrupted-stop-${stampIndex}`),
+              createdAt: "2026-08-26T00:00:00.000Z",
+            };
+          }),
+      });
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      const threadId = ThreadId.make("omp-interrupted-stop-reservation");
+      const startFiber = yield* adapter
+        .startSession({
+          threadId,
+          provider: ProviderDriverKind.make("omp"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.exit, Effect.forkChild);
+
+      yield* Deferred.await(firstStampRequested);
+      const stopFiber = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(stopFiber);
+      yield* Deferred.succeed(releaseFirstStamp, undefined);
+      assert.equal((yield* Fiber.join(startFiber))._tag, "Success");
+
+      const turnResult = yield* adapter
+        .sendTurn({ threadId, input: "continue after cancelled stop", attachments: [] })
+        .pipe(Effect.exit);
+      assert.equal(turnResult._tag, "Success");
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("serializes stop with startup lifecycle publication", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const resolveSettings = serverSettings.getSettings.pipe(
+        Effect.map((snapshot) => snapshot.providers.omp),
+        Effect.orDie,
+      );
+      const threadId = ThreadId.make("omp-stop-during-startup");
+      const stopExit = yield* Deferred.make<Exit.Exit<void, unknown>>();
+      let stampIndex = 0;
+      let sessionVisibleDuringFirstStamp = false;
+      let adapter!: OmpAdapterShape;
+      adapter = yield* makeOmpAdapter(decodeOmpSettings({}), {
+        resolveSettings,
+        makeEventStamp: () =>
+          Effect.gen(function* () {
+            stampIndex += 1;
+            if (stampIndex === 1) {
+              yield* adapter.stopSession(threadId).pipe(
+                Effect.exit,
+                Effect.flatMap((exit) => Deferred.succeed(stopExit, exit)),
+                Effect.forkChild,
+              );
+              yield* Effect.yieldNow;
+              sessionVisibleDuringFirstStamp = yield* adapter.hasSession(threadId);
+            }
+            return {
+              eventId: EventId.make(`omp-startup-stop-${stampIndex}`),
+              createdAt: "2026-08-26T00:00:00.000Z",
+            };
+          }),
+      });
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(4),
+        Stream.runCollect,
+        Effect.timeout("5 seconds"),
+        Effect.forkChild,
+      );
+
+      const startResult = yield* adapter
+        .startSession({
+          threadId,
+          provider: ProviderDriverKind.make("omp"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.exit);
+      const stopped = yield* Deferred.await(stopExit);
+      const eventTypes = Array.from(yield* Fiber.join(eventsFiber), (event) => event.type);
+
+      assert.equal(startResult._tag, "Success");
+      assert.isTrue(sessionVisibleDuringFirstStamp);
+      assert.equal(stopped._tag, "Success");
+      assert.deepStrictEqual(eventTypes, [
+        "session.started",
+        "session.state.changed",
+        "thread.started",
+        "session.exited",
+      ]);
+      assert.isFalse(yield* adapter.hasSession(threadId));
+    }),
+  );
+  it.effect("clears active turn state when the turn-start stamp fails", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const resolveSettings = serverSettings.getSettings.pipe(
+        Effect.map((snapshot) => snapshot.providers.omp),
+        Effect.orDie,
+      );
+      let stampIndex = 0;
+      const adapter = yield* makeOmpAdapter(decodeOmpSettings({}), {
+        resolveSettings,
+        makeEventStamp: () => {
+          stampIndex += 1;
+          return stampIndex === 4
+            ? Effect.die("simulated turn-start stamp failure")
+            : Effect.succeed({
+                eventId: EventId.make(`omp-turn-stamp-${stampIndex}`),
+                createdAt: "2026-08-26T00:00:00.000Z",
+              });
+        },
+      });
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      const threadId = ThreadId.make("omp-turn-start-stamp-failure");
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter
+        .sendTurn({ threadId, input: "fail before prompt", attachments: [] })
+        .pipe(Effect.exit);
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+
+      assert.equal(result._tag, "Failure");
+      assert.equal(session?.status, "ready");
+      assert.equal(session?.activeTurnId, undefined);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("honors an interrupt requested before the ACP prompt starts", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const resolveSettings = serverSettings.getSettings.pipe(
+        Effect.map((snapshot) => snapshot.providers.omp),
+        Effect.orDie,
+      );
+      const threadId = ThreadId.make("omp-interrupt-before-prompt");
+      let stampIndex = 0;
+      let adapter!: OmpAdapterShape;
+      adapter = yield* makeOmpAdapter(decodeOmpSettings({}), {
+        resolveSettings,
+        makeEventStamp: () =>
+          Effect.gen(function* () {
+            stampIndex += 1;
+            if (stampIndex === 4) {
+              yield* adapter.interruptTurn(threadId).pipe(Effect.forkChild);
+              yield* Effect.yieldNow;
+            }
+            return {
+              eventId: EventId.make(`omp-pre-prompt-interrupt-${stampIndex}`),
+              createdAt: "2026-08-26T00:00:00.000Z",
+            };
+          }),
+      });
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter
+        .sendTurn({ threadId, input: "do not start", attachments: [] })
+        .pipe(Effect.exit);
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.isTrue(Cause.hasInterruptsOnly(result.cause), Cause.pretty(result.cause));
+      }
+      assert.equal(session?.status, "ready");
+      assert.equal((yield* adapter.readThread(threadId)).turns.length, 0);
+      const nextCompletionFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed" && event.threadId === threadId),
+        Stream.take(1),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.sendTurn({ threadId, input: "start normally", attachments: [] });
+      const nextCompletion = yield* Fiber.join(nextCompletionFiber);
+      assert.equal(nextCompletion._tag, "Some");
+      if (nextCompletion._tag === "Some" && nextCompletion.value.type === "turn.completed") {
+        assert.equal(nextCompletion.value.payload.state, "completed");
+      }
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("preempts a stop requested during turn preparation", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const resolveSettings = serverSettings.getSettings.pipe(
+        Effect.map((snapshot) => snapshot.providers.omp),
+        Effect.orDie,
+      );
+      const threadId = ThreadId.make("omp-stop-during-turn-preparation");
+      let stampIndex = 0;
+      let stoppedDuringStamp = false;
+      let adapter!: OmpAdapterShape;
+      adapter = yield* makeOmpAdapter(decodeOmpSettings({}), {
+        resolveSettings,
+        makeEventStamp: () =>
+          Effect.gen(function* () {
+            stampIndex += 1;
+            if (stampIndex === 4) {
+              yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
+              yield* Effect.yieldNow;
+              stoppedDuringStamp = !(yield* adapter.hasSession(threadId));
+            }
+            return {
+              eventId: EventId.make(`omp-turn-preparation-stop-${stampIndex}`),
+              createdAt: "2026-08-26T00:00:00.000Z",
+            };
+          }),
+      });
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const result = yield* adapter
+        .sendTurn({ threadId, input: "stop before prompt", attachments: [] })
+        .pipe(Effect.exit);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.isTrue(Cause.hasInterruptsOnly(result.cause), Cause.pretty(result.cause));
+      }
+      assert.isTrue(stoppedDuringStamp);
+      assert.isFalse(yield* adapter.hasSession(threadId));
+    }),
+  );
+
+  it.effect("does not carry a settled-turn interrupt into the next prompt", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const resolveSettings = serverSettings.getSettings.pipe(
+        Effect.map((snapshot) => snapshot.providers.omp),
+        Effect.orDie,
+      );
+      const threadId = ThreadId.make("omp-interrupt-after-turn-settlement");
+      let stampIndex = 0;
+      let interruptInjected = false;
+      let adapter!: OmpAdapterShape;
+      adapter = yield* makeOmpAdapter(decodeOmpSettings({}), {
+        resolveSettings,
+        makeEventStamp: () =>
+          Effect.gen(function* () {
+            stampIndex += 1;
+            if (stampIndex > 4 && !interruptInjected) {
+              const session = (yield* adapter.listSessions()).find(
+                (entry) => entry.threadId === threadId,
+              );
+              if (session?.status === "ready") {
+                interruptInjected = true;
+                yield* adapter.interruptTurn(threadId).pipe(Effect.forkChild);
+                yield* Effect.yieldNow;
+              }
+            }
+            return {
+              eventId: EventId.make(`omp-post-settlement-interrupt-${stampIndex}`),
+              createdAt: "2026-08-26T00:00:00.000Z",
+            };
+          }),
+      });
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const completedTurnsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed" && event.threadId === threadId),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.timeout("5 seconds"),
+        Effect.forkChild,
+      );
+
+      yield* adapter.sendTurn({ threadId, input: "first", attachments: [] });
+      yield* adapter.sendTurn({ threadId, input: "second", attachments: [] });
+      const states = Array.from(yield* Fiber.join(completedTurnsFiber), (event) =>
+        event.type === "turn.completed" ? event.payload.state : "unknown",
+      );
+
+      assert.deepStrictEqual(states, ["completed", "completed"]);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("publishes turn completion before a concurrent session stop", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const resolveSettings = serverSettings.getSettings.pipe(
+        Effect.map((snapshot) => snapshot.providers.omp),
+        Effect.orDie,
+      );
+      const threadId = ThreadId.make("omp-stop-during-turn-completion");
+      const stopExit = yield* Deferred.make<Exit.Exit<void, unknown>>();
+      let stampIndex = 0;
+      let stopInjected = false;
+      let sessionVisibleDuringTerminalStamp = false;
+      let adapter!: OmpAdapterShape;
+      adapter = yield* makeOmpAdapter(decodeOmpSettings({}), {
+        resolveSettings,
+        makeEventStamp: () =>
+          Effect.gen(function* () {
+            stampIndex += 1;
+            if (stampIndex > 4 && !stopInjected) {
+              const session = (yield* adapter.listSessions()).find(
+                (entry) => entry.threadId === threadId,
+              );
+              if (session?.status === "ready") {
+                stopInjected = true;
+                yield* adapter.stopSession(threadId).pipe(
+                  Effect.exit,
+                  Effect.flatMap((exit) => Deferred.succeed(stopExit, exit)),
+                  Effect.forkChild,
+                );
+                yield* Effect.yieldNow;
+                sessionVisibleDuringTerminalStamp = yield* adapter.hasSession(threadId);
+              }
+            }
+            return {
+              eventId: EventId.make(`omp-terminal-stop-${stampIndex}`),
+              createdAt: "2026-08-26T00:00:00.000Z",
+            };
+          }),
+      });
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const terminalEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.completed" || event.type === "session.exited"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.timeout("5 seconds"),
+        Effect.forkChild,
+      );
+
+      const turnResult = yield* adapter
+        .sendTurn({ threadId, input: "complete before stopping", attachments: [] })
+        .pipe(Effect.exit);
+      const stopped = yield* Deferred.await(stopExit);
+      const eventTypes = Array.from(yield* Fiber.join(terminalEventsFiber), (event) => event.type);
+
+      assert.equal(turnResult._tag, "Success");
+      assert.equal(stopped._tag, "Success");
+      assert.isTrue(sessionVisibleDuringTerminalStamp);
+      assert.deepStrictEqual(eventTypes, ["turn.completed", "session.exited"]);
+      assert.isFalse(yield* adapter.hasSession(threadId));
+    }),
+  );
+
+  it.effect("completes session stop when exit event stamping fails", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const resolveSettings = serverSettings.getSettings.pipe(
+        Effect.map((snapshot) => snapshot.providers.omp),
+        Effect.orDie,
+      );
+      let stampIndex = 0;
+      const adapter = yield* makeOmpAdapter(decodeOmpSettings({}), {
+        resolveSettings,
+        makeEventStamp: () => {
+          stampIndex += 1;
+          return stampIndex === 4
+            ? Effect.die("simulated session-exit stamp failure")
+            : Effect.succeed({
+                eventId: EventId.make(`omp-stop-stamp-${stampIndex}`),
+                createdAt: "2026-08-26T00:00:00.000Z",
+              });
+        },
+      });
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      const threadId = ThreadId.make("omp-stop-stamp-failure");
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("omp"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const stopped = yield* adapter.stopSession(threadId).pipe(Effect.exit);
+
+      assert.equal(stopped._tag, "Success");
+      assert.isFalse(yield* adapter.hasSession(threadId));
     }),
   );
 
