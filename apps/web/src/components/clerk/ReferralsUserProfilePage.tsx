@@ -161,7 +161,13 @@ export function ReferralsUserProfilePage() {
               They must claim the code before linking their first environment.
             </p>
             <div className="mt-3 flex gap-2">
-              <Input nativeInput readOnly value={referralLink ?? ""} aria-label="Referral link" />
+              <Input
+                nativeInput
+                readOnly
+                size="sm"
+                value={referralLink ?? ""}
+                aria-label="Referral link"
+              />
               <Button
                 size="sm"
                 variant="outline"
@@ -190,6 +196,7 @@ export function ReferralsUserProfilePage() {
               <div className="mt-3 flex gap-2">
                 <Input
                   nativeInput
+                  size="sm"
                   value={referralCode}
                   placeholder="ABCD1234EFAB5678"
                   aria-label="Referral code"
