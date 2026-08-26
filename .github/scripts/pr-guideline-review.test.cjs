@@ -380,6 +380,22 @@ test("recognizes a plain-language feature title", () => {
   );
 });
 
+test("does not classify a test-only PR as a feature", () => {
+  const result = evaluate({
+    pull: { title: "Add a test for receipt retries" },
+    files: [
+      {
+        filename: "apps/server/src/receipts.test.ts",
+        additions: 12,
+        deletions: 0,
+      },
+    ],
+  });
+
+  assert.equal(result.status, "pass");
+  assert.deepEqual(result.findings, []);
+});
+
 test("ignores repository links hidden in HTML comments", () => {
   const feature = evaluate({
     pull: {
