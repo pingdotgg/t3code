@@ -1,6 +1,8 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import {
   createBuildConfig,
@@ -81,7 +83,11 @@ it.effect("builds a legacy-compatible 2code updater configuration", () =>
     assert.equal(mac.entitlements, "/tmp/entitlements.2code.mac.plist");
     assert.equal(mac.entitlementsInherit, "/tmp/entitlements.2code.mac.plist");
     assert.notProperty(mac, "provisioningProfile");
-  }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  }).pipe(
+    Effect.provide(
+      Layer.merge(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })), NodePath.layer),
+    ),
+  ),
 );
 
 it("does not require the T3 passkey profile for a signed 2code production build", () => {
@@ -117,10 +123,13 @@ it.effect("keeps GitHub update defaults when no fork distribution is selected", 
     assert.notProperty(config.mac as Record<string, unknown>, "executableName");
   }).pipe(
     Effect.provide(
-      ConfigProvider.layer(
-        ConfigProvider.fromEnv({
-          env: { T3CODE_DESKTOP_UPDATE_REPOSITORY: "pingdotgg/t3code" },
-        }),
+      Layer.merge(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: { T3CODE_DESKTOP_UPDATE_REPOSITORY: "pingdotgg/t3code" },
+          }),
+        ),
+        NodePath.layer,
       ),
     ),
   ),

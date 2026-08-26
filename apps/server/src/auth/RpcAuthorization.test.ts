@@ -67,6 +67,12 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires permission to operate on a thread before uploading feedback", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.providerUploadFeedback)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   // fork: f4 — the source-control panel. The split is the whole reason a
   // read-only paired client is safe to hand the panel: it can look at the
   // working copy but cannot change it.

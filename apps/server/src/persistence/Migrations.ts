@@ -55,6 +55,9 @@ import Migration0039 from "./Migrations/039_ProjectionProjectsDefaultThreadEnvMo
 import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
 import ForkMigration0039 from "./Migrations/039_ProjectionThreadSubtitles.ts"; // fork: generated thread subtitles
 import ForkMigration0040 from "./Migrations/040_RepairForkMigrationCollisions.ts";
+import UpstreamMigration0041 from "./Migrations/041_AuthSessionClientConnection.ts";
+import UpstreamMigration0042 from "./Migrations/042_ProjectionThreadLinkedPullRequest.ts";
+import UpstreamMigration0043 from "./Migrations/043_ProjectionThreadsUnsettledAt.ts";
 
 // fork: released 2code databases already used IDs 39 and 40. Re-run every
 // colliding migration idempotently at the next free ID so those databases gain
@@ -118,6 +121,11 @@ export const migrationEntries = [
   [39, "ProjectionProjectsDefaultThreadEnvMode", Migration0039],
   [40, "ProjectionProjectFaviconPath", Migration0040],
   [41, "ReconcileForkMigrationCollisions", Migration0041], // fork: preserve released 2code schemas
+  // Released 2code databases already own migration 41, so new upstream
+  // migrations continue at the next free IDs in the fork.
+  [42, "AuthSessionClientConnection", UpstreamMigration0041],
+  [43, "ProjectionThreadLinkedPullRequest", UpstreamMigration0042],
+  [44, "ProjectionThreadsUnsettledAt", UpstreamMigration0043],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

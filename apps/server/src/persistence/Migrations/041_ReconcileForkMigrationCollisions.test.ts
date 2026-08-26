@@ -36,7 +36,7 @@ legacyForkLayer("041_ReconcileForkMigrationCollisions legacy fork", (it) => {
       );
       assert.notOk(projectColumnsBefore.some((column) => column.name === "favicon_path"));
 
-      const executed = yield* runMigrations();
+      const executed = yield* runMigrations({ toMigrationInclusive: 41 });
       assert.deepStrictEqual(executed, [[41, "ReconcileForkMigrationCollisions"]]);
 
       const projectColumns = yield* tableColumns("projection_projects");
@@ -61,7 +61,7 @@ legacyForkLayer("041_ReconcileForkMigrationCollisions legacy fork", (it) => {
         { migration_id: 40, name: "RepairForkMigrationCollisions" },
         { migration_id: 41, name: "ReconcileForkMigrationCollisions" },
       ]);
-      assert.deepStrictEqual(yield* runMigrations(), []);
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 41 }), []);
     }),
   );
 });
@@ -87,7 +87,7 @@ upstreamLayer("041_ReconcileForkMigrationCollisions upstream", (it) => {
       const threadColumnsBefore = yield* tableColumns("projection_threads");
       assert.notOk(threadColumnsBefore.some((column) => column.name === "subtitle"));
 
-      const executed = yield* runMigrations();
+      const executed = yield* runMigrations({ toMigrationInclusive: 41 });
       assert.deepStrictEqual(executed, [[41, "ReconcileForkMigrationCollisions"]]);
 
       const projectColumns = yield* tableColumns("projection_projects");
@@ -105,7 +105,7 @@ upstreamLayer("041_ReconcileForkMigrationCollisions upstream", (it) => {
         PRAGMA index_list(projection_turns)
       `;
       assert.ok(indexes.some((index) => index.name === "idx_projection_turns_thread_keyset"));
-      assert.deepStrictEqual(yield* runMigrations(), []);
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 41 }), []);
     }),
   );
 });
