@@ -131,6 +131,7 @@ import {
   normalizeIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
   hasChangedBackgroundActivitySettings,
+  hasChangedThreadSettlingSettings,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
   readLastEnabledProjectGroupingMode,
@@ -472,6 +473,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
+  const isThreadSettlingDirty = hasChangedThreadSettlingSettings(settings);
 
   const changedSettingLabels = useMemo(
     () => [
@@ -496,11 +498,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
         ? ["Project Grouping"]
         : []),
-      ...(settings.sidebarAutoSettleMode !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleMode ||
-      (settings.sidebarAutoSettleMode === "inactivity" &&
-        settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays)
-        ? ["Thread settling"]
-        : []),
+      ...(isThreadSettlingDirty ? ["Thread settling"] : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
@@ -546,6 +544,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       isTextGenerationModelDirty,
       isBackgroundActivityDirty,
+      isThreadSettlingDirty,
       settings.browserDefaultViewport,
       settings.browserDefaultZoomFactor,
       settings.browserDefaultAppearance,
@@ -571,8 +570,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.glassOpacity,
       settings.enableLegacyTokenStreaming,
       settings.enableProviderUpdateChecks,
-      settings.sidebarAutoSettleAfterDays,
-      settings.sidebarAutoSettleMode,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -1953,12 +1950,13 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("thread-settling")}
           description="Choose the only event allowed to settle a thread automatically. Manual settling always remains available."
           resetAction={
-            settings.sidebarAutoSettleMode !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleMode ? (
+            hasChangedThreadSettlingSettings(settings) ? (
               <SettingResetButton
                 label="thread settling"
                 onClick={() =>
                   updateSettings({
                     sidebarAutoSettleMode: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleMode,
+                    sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
                   })
                 }
               />
