@@ -289,7 +289,11 @@ describe("ReferralProgram", () => {
         }),
       );
 
-      expect(error._tag).toBe("ReferralProgramPersistenceError");
+      expect(error).toMatchObject({
+        _tag: "ReferralProgramPersistenceError",
+        operation: "qualify-referral",
+        cause: state.pointInsertFailure,
+      });
       expect(state.accounts.get("referred")?.referrerUserId).toBeNull();
       expect(state.pointEntries).toHaveLength(0);
     }).pipe(Effect.provide(makeTestLayer(state)));

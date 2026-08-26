@@ -42,6 +42,8 @@ export class ReferralProgramPersistenceError extends Schema.TaggedErrorClass<Ref
   }
 }
 
+const isReferralProgramPersistenceError = Schema.is(ReferralProgramPersistenceError);
+
 export class ReferralProgram extends Context.Service<
   ReferralProgram,
   {
@@ -248,13 +250,33 @@ export const make = Effect.gen(function* () {
           createdAt: now,
         })
         .onConflictDoNothing()
-        .returning({ id: relayReferralPointEntries.id });
+        .returning({ id: relayReferralPointEntries.id })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ReferralProgramPersistenceError({
+                operation: "qualify-referral",
+                userId: input.userId,
+                cause,
+              }),
+          ),
+        );
       if (inserted.length === 0) return false;
 
       yield* db
         .update(relayReferralAccounts)
         .set({ qualifiedAt: now, updatedAt: now })
-        .where(eq(relayReferralAccounts.userId, input.userId));
+        .where(eq(relayReferralAccounts.userId, input.userId))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ReferralProgramPersistenceError({
+                operation: "qualify-referral",
+                userId: input.userId,
+                cause,
+              }),
+          ),
+        );
       return true;
     },
   );
@@ -263,13 +285,14 @@ export const make = Effect.gen(function* () {
     readonly userId: string;
   }) {
     return yield* transactions.withTransaction(qualifyInCurrentTransaction(input)).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ReferralProgramPersistenceError({
-            operation: "qualify-referral",
-            userId: input.userId,
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        isReferralProgramPersistenceError(cause)
+          ? cause
+          : new ReferralProgramPersistenceError({
+              operation: "qualify-referral",
+              userId: input.userId,
+              cause,
+            }),
       ),
     );
   });
@@ -340,13 +363,14 @@ export const make = Effect.gen(function* () {
             }),
           )
           .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ReferralProgramPersistenceError({
-                  operation: "claim-referral",
-                  userId: input.userId,
-                  cause,
-                }),
+            Effect.mapError((cause) =>
+              isReferralProgramPersistenceError(cause)
+                ? cause
+                : new ReferralProgramPersistenceError({
+                    operation: "claim-referral",
+                    userId: input.userId,
+                    cause,
+                  }),
             ),
           );
       }
