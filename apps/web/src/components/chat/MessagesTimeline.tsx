@@ -1246,8 +1246,10 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
         {steps.length > 1 ? (
           <span
             aria-hidden
-            tabIndex={-1}
-            className="h-5 w-max min-w-0 max-w-[50%] shrink overflow-x-auto px-2 [mask-image:linear-gradient(to_right,transparent,black_0.5rem,black_calc(100%-0.5rem),transparent)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="h-5 w-max min-w-0 max-w-[50%] shrink overflow-x-hidden px-2 [mask-image:linear-gradient(to_right,transparent,black_0.5rem,black_calc(100%-0.5rem),transparent)]"
+            onWheel={(event) => {
+              event.currentTarget.scrollLeft += event.deltaX;
+            }}
           >
             <span className="flex h-full w-max items-center gap-0.5">
               {steps.map((step) => (

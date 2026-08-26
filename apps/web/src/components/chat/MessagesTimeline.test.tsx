@@ -382,8 +382,8 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("max-w-[50%]");
     expect(markup).toContain("[mask-image:linear-gradient(to_right");
-    expect(markup).toContain("[scrollbar-width:none]");
-    expect(markup).toContain('aria-hidden="true" tabindex="-1"');
+    expect(markup).toContain("overflow-x-hidden");
+    expect(markup).not.toContain('tabindex="-1"');
     expect(markup).toContain("min-w-0 flex-1 truncate");
     expect(markup).toContain(">3/48</span>");
   });
