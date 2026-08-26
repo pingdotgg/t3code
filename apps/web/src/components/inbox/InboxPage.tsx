@@ -64,7 +64,7 @@ import {
 } from "./inboxSections.logic";
 import { ReportRow } from "./ReportRow";
 import { SectionEditorDialog } from "./SectionEditorDialog";
-import { TriageFocus } from "./TriageFocus";
+import { TriageFocus, type TriagePassControls } from "./TriageFocus";
 import { useTriageStore } from "./triageStore";
 
 export type InboxView = "inbox" | "done";
@@ -225,6 +225,7 @@ function ConnectedInboxPage({
   readonly view: InboxView;
 }) {
   const reportsQuery = usePostHogQuery(reportsListAtom(environmentId));
+  const refreshReports = reportsQuery.refresh;
   const seen = useReportSeenStore(selectReportSeenMap);
   const serverSettings = useAtomValue(primaryServerSettingsAtom);
   const updateSettings = useUpdatePrimarySettings();
@@ -234,11 +235,13 @@ function ConnectedInboxPage({
   const setReportState = useAtomCommand(postHogEnvironment.setReportState, {
     reportFailure: false,
   });
+  const setReviewers = useAtomCommand(postHogEnvironment.setReviewers, { reportFailure: false });
   const { openReport, error: openError, dismissError } = useReportOpener(environmentId);
   const navigate = useNavigate();
 
   const triageActive = useTriageStore((state) => state.active);
-  const setTriageActive = useTriageStore((state) => state.setActive);
+  const beginTriage = useTriageStore((state) => state.begin);
+  const endTriage = useTriageStore((state) => state.end);
   const [scope, setScope] = useState<InboxScope>("for-you");
 
   // The half of a report's state PostHog cannot see: conversations, worktrees,
@@ -260,14 +263,6 @@ function ConnectedInboxPage({
   const [handedBackReportIds, setHandedBackReportIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const setHandedBack = useCallback((reportId: string, handedBack: boolean) => {
-    setHandedBackReportIds((current) => {
-      const next = new Set(current);
-      if (handedBack) next.add(reportId);
-      else next.delete(reportId);
-      return next;
-    });
-  }, []);
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
   const [creatingSection, setCreatingSection] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -287,6 +282,38 @@ function ConnectedInboxPage({
         : { ...report, status, is_suggested_reviewer: isSuggestedReviewer };
     });
   }, [handedBackReportIds, reportsQuery.data, statusOverrides]);
+
+  // A local override outranks the server so a decision shows the instant it is
+  // made. Once PostHog's own answer agrees, the override has nothing left to
+  // say — and leaving it in place would quietly outrank a later change made
+  // anywhere else, for the life of the session.
+  useEffect(() => {
+    const fetched = reportsQuery.data?.reports;
+    if (fetched === undefined) return;
+    setStatusOverrides((current) => {
+      let settled = false;
+      const next = { ...current };
+      for (const report of fetched) {
+        if (next[report.id] === report.status) {
+          delete next[report.id];
+          settled = true;
+        }
+      }
+      return settled ? next : current;
+    });
+    setHandedBackReportIds((current) => {
+      if (current.size === 0) return current;
+      let settled = false;
+      const next = new Set(current);
+      for (const report of fetched) {
+        if (next.has(report.id) && report.is_suggested_reviewer !== true) {
+          next.delete(report.id);
+          settled = true;
+        }
+      }
+      return settled ? next : current;
+    });
+  }, [reportsQuery.data]);
 
   const sections = useMemo(
     () =>
@@ -384,8 +411,8 @@ function ConnectedInboxPage({
   }, [focusedReportId, triageActive]);
 
   const changeState = useCallback(
-    async (report: PostHogReport, state: "suppressed" | "potential") => {
-      if (busyReportIds.has(report.id)) return;
+    async (report: PostHogReport, state: "suppressed" | "potential"): Promise<boolean> => {
+      if (busyReportIds.has(report.id)) return false;
       setBusyReportIds((current) => new Set(current).add(report.id));
       setActionError(null);
       setFocusedReportId(nextFocusedReportId(orderedIds, report.id));
@@ -410,11 +437,42 @@ function ConnectedInboxPage({
             ? "Could not archive the report."
             : "Could not restore the report.",
         );
-        return;
+        return false;
       }
-      reportsQuery.refresh();
+      refreshReports();
+      return true;
     },
-    [busyReportIds, environmentId, orderedIds, reportsQuery, setReportState],
+    [busyReportIds, environmentId, orderedIds, refreshReports, setReportState],
+  );
+
+  /**
+   * Takes the reader off a report's reviewers. Optimistic like archiving: the
+   * list stops calling the report theirs before PostHog answers, and puts it
+   * back if PostHog refuses.
+   */
+  const handBack = useCallback(
+    async (
+      report: PostHogReport,
+      remainingReviewers: ReadonlyArray<{ readonly github_login: string }>,
+    ): Promise<boolean> => {
+      setActionError(null);
+      setHandedBackReportIds((current) => new Set(current).add(report.id));
+      const result = await setReviewers({
+        environmentId,
+        input: { reportId: report.id, content: remainingReviewers },
+      });
+      if (result._tag === "Failure") {
+        setHandedBackReportIds((current) => {
+          const next = new Set(current);
+          next.delete(report.id);
+          return next;
+        });
+        return false;
+      }
+      refreshReports();
+      return true;
+    },
+    [environmentId, refreshReports, setReviewers],
   );
 
   const saveSections = useCallback(
@@ -430,7 +488,7 @@ function ConnectedInboxPage({
   );
 
   const makeHandlers = useCallback(
-    (report: PostHogReport, advance: () => void): ReportDecisionHandlers => ({
+    (report: PostHogReport, pass: TriagePassControls): ReportDecisionHandlers => ({
       onImplement: (direction) =>
         openReport(report, {
           intent: direction.length > 0 ? `${IMPLEMENT_INTENT}\n\n${direction}` : IMPLEMENT_INTENT,
@@ -447,8 +505,12 @@ function ConnectedInboxPage({
         if (url) window.open(url, "_blank", "noopener,noreferrer");
       },
       onArchive: () => {
-        void changeState(report, "suppressed");
-        advance();
+        // Out of the pass first, then the request. A refusal is the only case
+        // where the card was wrong to leave, and it still needs a decision.
+        pass.rule();
+        void changeState(report, "suppressed").then((landed) => {
+          if (!landed) pass.restore();
+        });
       },
     }),
     [changeState, navigate, openReport],
@@ -470,7 +532,7 @@ function ConnectedInboxPage({
       }
       if (event.key === "t" && view === "inbox" && decisionQueue.length > 0) {
         event.preventDefault();
-        setTriageActive(true);
+        beginTriage(decisionQueue.map((report) => report.id));
         return;
       }
       if (event.key !== "j" && event.key !== "k" && event.key !== "Enter" && event.key !== "e") {
@@ -498,12 +560,12 @@ function ConnectedInboxPage({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
+    beginTriage,
     changeState,
-    decisionQueue.length,
+    decisionQueue,
     focusedReport,
     navigate,
     orderedIds,
-    setTriageActive,
     triageActive,
     view,
   ]);
@@ -582,7 +644,10 @@ function ConnectedInboxPage({
                     variant="ghost"
                     aria-disabled={decisionQueue.length === 0}
                     className="aria-disabled:cursor-default aria-disabled:opacity-64 aria-disabled:hover:bg-transparent"
-                    onClick={() => decisionQueue.length > 0 && setTriageActive(true)}
+                    onClick={() =>
+                      decisionQueue.length > 0 &&
+                      beginTriage(decisionQueue.map((report) => report.id))
+                    }
                   >
                     <ListChecksIcon className="size-3.5" />
                     Triage
@@ -608,7 +673,7 @@ function ConnectedInboxPage({
                   variant="ghost"
                   aria-label="Refresh reports"
                   disabled={reportsQuery.isPending}
-                  onClick={reportsQuery.refresh}
+                  onClick={refreshReports}
                 >
                   <RefreshCwIcon
                     className={cn(
@@ -674,11 +739,12 @@ function ConnectedInboxPage({
         <div className="min-h-0 flex-1 overflow-y-auto">
           <TriageFocus
             environmentId={environmentId}
-            reports={decisionQueue}
+            reports={reports}
+            decisionQueue={decisionQueue}
             busyReportIds={busyReportIds}
             onActionError={setActionError}
-            onHandBack={setHandedBack}
-            onExit={() => setTriageActive(false)}
+            onHandBack={handBack}
+            onExit={endTriage}
             onOpenReport={(report) =>
               void navigate({ to: "/inbox/$reportId", params: { reportId: report.id } })
             }
