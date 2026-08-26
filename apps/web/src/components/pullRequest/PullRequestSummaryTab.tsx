@@ -33,8 +33,10 @@ import {
   PullRequestActorAvatar,
   PullRequestActorLabel,
   PullRequestCheckStatusIcon,
+  PullRequestDeploymentStatusIcon,
   PullRequestReviewOutcomeBadge,
   pullRequestCheckStatusLabel,
+  pullRequestDeploymentStatusLabel,
   pullRequestReviewOutcomeLabel,
   pullRequestReviewOutcomeRingClassName,
   pullRequestReviewOutcomeStaleLabel,
@@ -748,6 +750,34 @@ export function PullRequestSummaryTab({
           </div>
         )}
       </Section>
+
+      {/* No section at all rather than an empty one: the field is absent from a host that has no
+          deployments to report and from a read that failed, neither of which is a section a
+          reader can ever fill. */}
+      {detail.deployments && detail.deployments.length > 0 ? (
+        <Section title="Deployments" count={detail.deployments.length}>
+          <div className="space-y-0.5">
+            {detail.deployments.map((deployment) => (
+              <button
+                key={deployment.environment}
+                type="button"
+                disabled={!deployment.url}
+                onClick={() => deployment.url && openCheck(deployment.url)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
+                  deployment.url ? "hover:bg-accent/60" : "cursor-default",
+                )}
+              >
+                <PullRequestDeploymentStatusIcon status={deployment.status} />
+                <span className="min-w-0 flex-1 truncate">{deployment.environment}</span>
+                <span className="shrink-0 text-muted-foreground">
+                  {pullRequestDeploymentStatusLabel(deployment.status)}
+                </span>
+              </button>
+            ))}
+          </div>
+        </Section>
+      ) : null}
 
       <Section
         title="Comments"

@@ -45,6 +45,12 @@ T3 Code works with the platforms your team already uses:
 - Command-click (Control-click on Windows and Linux) a pull request number in the sidebar to open it in your browser instead of in T3 Code
 - Check out a teammate's branch to review code locally
 
+**See preview deployments**
+
+- If a pull request has preview deployments (for example, Vercel preview environments on GitHub), the review's Summary tab shows a Deployments section listing each environment and its current state
+- A globe button in the review header opens the newest live preview in your browser
+- When there are several environments, the globe button opens a menu so you can pick which one to open
+
 **Fix what you wrote, in place**
 
 - Rewrite a pull request's title and description from the review itself, in Markdown, with a

@@ -9,6 +9,7 @@ import type {
   PullRequestCheck,
   PullRequestComment,
   PullRequestCommit,
+  PullRequestDeployment,
   PullRequestInvolvement,
   PullRequestLabel,
   PullRequestListFilters,
@@ -158,6 +159,8 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly closedAt: string | null;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
+  /** Where the change is running, newest first. Absent from a read that could not ask. */
+  readonly deployments?: ReadonlyArray<PullRequestDeployment>;
   readonly mergeCapabilities: PullRequestMergeCapabilities;
   readonly viewerPermissions: PullRequestViewerPermissions;
   /** Absent from a host that cannot compare the branch with its base, which is most of them. */

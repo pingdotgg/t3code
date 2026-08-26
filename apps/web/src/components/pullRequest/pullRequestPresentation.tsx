@@ -3,6 +3,7 @@ import type {
   PullRequestCheck,
   PullRequestCheckStatus,
   PullRequestChecksState,
+  PullRequestDeploymentStatus,
   PullRequestMergeability,
   PullRequestState,
 } from "@t3tools/contracts";
@@ -140,6 +141,55 @@ export function pullRequestCheckStatusLabel(status: PullRequestCheckStatus): str
 
 export function PullRequestCheckStatusIcon({ status }: { status: PullRequestCheckStatus }) {
   const presentation = CHECK_STATUS_PRESENTATION[status];
+  return (
+    <presentation.Icon
+      aria-hidden
+      className={cn("size-3.5 shrink-0", presentation.toneClassName)}
+    />
+  );
+}
+
+/**
+ * The checks' tones, without their spinner: a deployment is read where it stands rather than
+ * watched, so nothing here repaints.
+ */
+const DEPLOYMENT_STATUS_PRESENTATION = {
+  pending: {
+    label: "Pending",
+    Icon: CircleDotIcon,
+    toneClassName: "text-amber-500",
+  },
+  "in-progress": {
+    label: "Deploying",
+    Icon: CircleDotIcon,
+    toneClassName: "text-amber-500",
+  },
+  success: {
+    label: "Live",
+    Icon: CircleCheckIcon,
+    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
+  },
+  failure: { label: "Failed", Icon: CircleXIcon, toneClassName: "text-destructive" },
+  inactive: {
+    label: "Inactive",
+    Icon: CircleDashedIcon,
+    toneClassName: "text-muted-foreground/70",
+  },
+} as const satisfies Record<
+  PullRequestDeploymentStatus,
+  { label: string; Icon: typeof CircleCheckIcon; toneClassName: string }
+>;
+
+export function pullRequestDeploymentStatusLabel(status: PullRequestDeploymentStatus): string {
+  return DEPLOYMENT_STATUS_PRESENTATION[status].label;
+}
+
+export function PullRequestDeploymentStatusIcon({
+  status,
+}: {
+  status: PullRequestDeploymentStatus;
+}) {
+  const presentation = DEPLOYMENT_STATUS_PRESENTATION[status];
   return (
     <presentation.Icon
       aria-hidden

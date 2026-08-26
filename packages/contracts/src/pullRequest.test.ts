@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   PullRequestActionInput,
   PullRequestCapabilities,
+  PullRequestDetail,
   PullRequestListInput,
   PullRequestListResult,
   PullRequestReviewerRequestInput,
@@ -210,6 +211,69 @@ describe("PullRequestCapabilities", () => {
 
   it("decodes a server that says nothing about reactions as a server with none", () => {
     expect(decodeCapabilities(base).reactions).toBeUndefined();
+  });
+});
+
+describe("PullRequestDetail", () => {
+  const decodeDetail = Schema.decodeUnknownSync(PullRequestDetail);
+  const base = {
+    provider: "github",
+    capabilities: {
+      diff: true,
+      comment: true,
+      actions: [],
+      mergeMethods: [],
+      search: true,
+      review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
+      reviewers: { request: true, listCandidates: true },
+    },
+    viewerPermissions: {
+      actions: [],
+      comment: true,
+      resolve: true,
+      verdicts: [],
+      requestReviewers: true,
+    },
+    projectId: "project-1",
+    projectTitle: "t3code",
+    workspaceRoot: "/w",
+    repository: "acme/web",
+    number: 7,
+    title: "Add a pull requests page",
+    body: "",
+    url: "https://github.com/acme/web/pull/7",
+    author: null,
+    state: "open",
+    isDraft: false,
+    mergeability: "mergeable",
+    additions: 1,
+    deletions: 0,
+    changedFiles: 1,
+    headBranch: "feat/page",
+    baseBranch: "main",
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-02T00:00:00Z",
+    mergedAt: null,
+    closedAt: null,
+    reviewers: [],
+    labels: [],
+    checks: [],
+    mergeCapabilities: { merge: true, squash: true, rebase: true },
+  };
+
+  it("decodes a server that says nothing about deployments as a server that was not asked", () => {
+    expect(decodeDetail(base).deployments).toBeUndefined();
+  });
+
+  it("carries the environments a server does report", () => {
+    expect(
+      decodeDetail({
+        ...base,
+        deployments: [
+          { environment: "Preview", status: "success", url: "https://preview.example.com" },
+        ],
+      }).deployments,
+    ).toEqual([{ environment: "Preview", status: "success", url: "https://preview.example.com" }]);
   });
 });
 

@@ -148,6 +148,38 @@ export const PullRequestCheck = Schema.Struct({
 export type PullRequestCheck = typeof PullRequestCheck.Type;
 
 /**
+ * Where a deployment of the change stands. "pending" covers everything before the build starts —
+ * queued, waiting on an approval, and a deployment the host has said nothing about yet.
+ * "inactive" is one that was superseded or torn down, so its environment no longer serves this
+ * change.
+ */
+export const PullRequestDeploymentStatus = Schema.Literals([
+  "pending",
+  "in-progress",
+  "success",
+  "failure",
+  "inactive",
+]);
+export type PullRequestDeploymentStatus = typeof PullRequestDeploymentStatus.Type;
+
+/**
+ * One environment the change has been deployed to — a preview build, a staging box — holding that
+ * environment's latest deployment: a push redeploys the same environment, and every build before
+ * the current one is history nobody is going to open.
+ */
+export const PullRequestDeployment = Schema.Struct({
+  environment: TrimmedNonEmptyString,
+  status: PullRequestDeploymentStatus,
+  /**
+   * Where the deployment can be opened, which is the whole point of showing it. The environment's
+   * own address where the host reported one, the build log where it did not, and null where the
+   * deployment has nothing to open yet — a queued build has no address.
+   */
+  url: Schema.NullOr(Schema.String),
+});
+export type PullRequestDeployment = typeof PullRequestDeployment.Type;
+
+/**
  * The reactions a remark can carry. GitHub's eight, which is also what the picker offers: GitLab
  * accepts any emoji as an award, and the ones outside this set are read as nothing rather than
  * shown under a name no other host would recognise.
@@ -668,6 +700,12 @@ export const PullRequestDetail = Schema.Struct({
   reviewers: Schema.Array(PullRequestActor),
   labels: Schema.Array(PullRequestLabel),
   checks: Schema.Array(PullRequestCheck),
+  /**
+   * Where the change is running, most recent first. Absent from a host that does not report
+   * deployments, which is most of them, and from a read that could not ask — neither of which is
+   * the same as the empty list a change that deploys nowhere answers with.
+   */
+  deployments: Schema.optional(Schema.Array(PullRequestDeployment)),
   mergeCapabilities: PullRequestMergeCapabilities,
   /**
    * Who the host says the reader is, which is the one thing a conversation cannot be read without

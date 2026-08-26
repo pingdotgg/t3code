@@ -9,6 +9,8 @@ import type {
   PullRequestChecksState,
   PullRequestComment,
   PullRequestCommit,
+  PullRequestDeployment,
+  PullRequestDeploymentStatus,
   PullRequestLabel,
   PullRequestMergeCapabilities,
   PullRequestOmittedFileStat,
@@ -1985,6 +1987,127 @@ export function decodeBaseComparisonJson(
     behindBy: typeof behindBy === "number" && behindBy >= 0 ? behindBy : null,
     viewerCanUpdate: pullRequest?.viewerCanUpdateBranch === true,
   });
+}
+
+/**
+ * Where the change is running, read off its head commit.
+ *
+ * GitHub hangs a deployment on the commit it was built from rather than on the pull request, so
+ * the last commit is the only one whose environments describe the change as it stands now — an
+ * earlier commit's previews were torn down or replaced by this one's. Newest first, which is what
+ * makes the first deployment of an environment the one serving it now.
+ */
+export const PULL_REQUEST_DEPLOYMENTS_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      commits(last: 1) {
+        nodes {
+          commit {
+            deployments(first: ${GRAPHQL_PAGE_SIZE}, orderBy: { field: CREATED_AT, direction: DESC }) {
+              nodes {
+                environment
+                latestStatus { state environmentUrl logUrl }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+const RawDeploymentSchema = Schema.Struct({
+  environment: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Null until the deployment's first status lands, which is a deployment nobody has built yet. */
+  latestStatus: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        state: Schema.optional(Schema.NullOr(Schema.String)),
+        environmentUrl: Schema.optional(Schema.NullOr(Schema.String)),
+        logUrl: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+});
+
+const RawDeploymentsSchema = Schema.Struct({
+  data: Schema.Struct({
+    /** Null for a repository, or a number, the viewer cannot see — which is no deployments. */
+    repository: Schema.NullOr(
+      Schema.Struct({
+        pullRequest: Schema.NullOr(
+          Schema.Struct({
+            commits: Schema.Struct({
+              nodes: Schema.Array(
+                Schema.NullOr(
+                  Schema.Struct({
+                    commit: Schema.Struct({
+                      deployments: Schema.Struct({
+                        nodes: Schema.Array(Schema.NullOr(RawDeploymentSchema)),
+                      }),
+                    }),
+                  }),
+                ),
+              ),
+            }),
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodeDeployments = decodeJsonResult(RawDeploymentsSchema);
+
+/**
+ * Anything GitHub adds, and a deployment with no status at all, reads as pending: a deployment
+ * nobody has heard from is one that has not happened yet.
+ */
+function toDeploymentStatus(state: string | null | undefined): PullRequestDeploymentStatus {
+  switch (state?.trim().toUpperCase()) {
+    case "IN_PROGRESS":
+      return "in-progress";
+    case "ACTIVE":
+    case "SUCCESS":
+      return "success";
+    case "ERROR":
+    case "FAILURE":
+      return "failure";
+    case "ABANDONED":
+    case "DESTROYED":
+    case "INACTIVE":
+      return "inactive";
+    default:
+      return "pending";
+  }
+}
+
+/**
+ * One row per environment rather than one per deployment of it. A commit that was redeployed — a
+ * retried build, a second provider pushing to the same name — carries the same environment several
+ * times over, and the query hands them over newest first, so the first one to name an environment
+ * is the one serving it now.
+ */
+export function decodePullRequestDeploymentsJson(
+  raw: string,
+): Result.Result<ReadonlyArray<PullRequestDeployment>, DecodeFailure> {
+  const decoded = decodeDeployments(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const commits = decoded.success.data.repository?.pullRequest?.commits.nodes ?? [];
+  const latestByEnvironment = new Map<string, PullRequestDeployment>();
+  for (const node of commits.flatMap((commit) => commit?.commit.deployments.nodes ?? [])) {
+    const environment = trimmed(node?.environment);
+    if (environment === null || latestByEnvironment.has(environment)) continue;
+    const status = toDeploymentStatus(node?.latestStatus?.state);
+    const environmentUrl = trimmed(node?.latestStatus?.environmentUrl);
+    // The log fallback is for a deployment worth investigating. A success with no environment
+    // URL has nothing live to open, so it stays null rather than pointing at a build log — the
+    // header button promises a preview, not a log.
+    const url =
+      environmentUrl ?? (status === "success" ? null : trimmed(node?.latestStatus?.logUrl));
+    latestByEnvironment.set(environment, { environment, status, url });
+  }
+  return Result.succeed([...latestByEnvironment.values()]);
 }
 
 export const REVIEWER_CANDIDATES_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {

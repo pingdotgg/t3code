@@ -7,6 +7,7 @@ import {
   resolvePullRequestAuthorFilter,
   type PullRequestAction,
   type PullRequestActor,
+  type PullRequestDeployment,
   type PullRequestInvolvement,
   type PullRequestListFilters,
   type PullRequestListState,
@@ -32,6 +33,7 @@ import {
   buildReviewerRequestJson,
   decodeActorAvatarsJson,
   decodePullRequestActivityJson,
+  decodePullRequestDeploymentsJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
   decodePullRequestListJson,
@@ -51,6 +53,7 @@ import {
   PULL_REQUEST_ACTIVITY_JSON_FIELDS,
   BASE_COMPARISON_GRAPHQL_QUERY,
   decodeBaseComparisonJson,
+  PULL_REQUEST_DEPLOYMENTS_GRAPHQL_QUERY,
   PULL_REQUEST_DETAIL_JSON_FIELDS,
   PULL_REQUEST_LIST_JSON_FIELDS,
   PULL_REQUEST_NODE_ID_GRAPHQL_QUERY,
@@ -382,6 +385,18 @@ export class GitHubPullRequestCli extends Context.Service<
       /** Manual action checks may use the quota held back from automatic reads. */
       readonly allowReserve?: boolean | undefined;
     }) => Effect.Effect<GitHubBaseComparison, GitHubPullRequestCliError>;
+
+    /**
+     * Where the change is running, one row per environment. Its own read because `gh pr view`
+     * reports no deployment of any kind, and one a caller is expected to degrade rather than fail
+     * on: a preview environment is an extra the detail is readable without.
+     */
+    readonly getPullRequestDeployments: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<ReadonlyArray<PullRequestDeployment>, GitHubPullRequestCliError>;
 
     readonly getPullRequestActivity: (input: {
       readonly cwd: string;
@@ -1370,6 +1385,22 @@ export const make = Effect.gen(function* () {
         ],
         query: BASE_COMPARISON_GRAPHQL_QUERY,
         decode: decodeBaseComparisonJson,
+      });
+    },
+
+    getPullRequestDeployments: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      return graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getPullRequestDeployments",
+        variables: [
+          ["-f", `owner=${owner}`],
+          ["-f", `name=${name}`],
+          ["-F", `number=${input.number}`],
+        ],
+        query: PULL_REQUEST_DEPLOYMENTS_GRAPHQL_QUERY,
+        decode: decodePullRequestDeploymentsJson,
       });
     },
 

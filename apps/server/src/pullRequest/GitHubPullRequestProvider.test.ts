@@ -1,11 +1,43 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { PullRequestReaction } from "@t3tools/contracts";
+import type { PullRequestDeployment, PullRequestReaction } from "@t3tools/contracts";
 
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
+
+// Shared by every fixture below that needs a full pull request detail and only overrides the
+// one or two fields its scenario is actually about.
+const openDetail = {
+  authorId: null,
+  number: 7,
+  title: "Pull request 7",
+  url: "https://github.com/acme/web/pull/7",
+  author: null,
+  headRepositoryOwner: "acme",
+  headBranch: "feat/page",
+  baseBranch: "main",
+  state: "open" as const,
+  isDraft: false,
+  mergeability: "mergeable" as const,
+  reviewDecision: null,
+  additions: 1,
+  deletions: 1,
+  createdAt: "2026-07-01T00:00:00Z",
+  updatedAt: "2026-07-02T00:00:00Z",
+  reviewRequestLogins: [],
+  hasTeamReviewRequest: false,
+  checksState: null,
+  labels: [],
+  body: "",
+  changedFiles: 1,
+  mergedAt: null,
+  closedAt: null,
+  checks: [],
+  comments: [],
+  commits: [],
+};
 
 describe("gitHubViewerPermissions", () => {
   it("offers everything to a viewer who can write to the repository", () => {
@@ -111,6 +143,7 @@ describe("gitHubViewerPermissions", () => {
             }),
           getViewerAccess: () =>
             Effect.succeed({ canWrite: false, canUpdate: true, didAuthor: false }),
+          getPullRequestDeployments: () => Effect.succeed([]),
         }),
       ),
     ),
@@ -118,36 +151,6 @@ describe("gitHubViewerPermissions", () => {
 });
 
 describe("getViewerPermissions", () => {
-  const openDetail = {
-    authorId: null,
-    number: 7,
-    title: "Pull request 7",
-    url: "https://github.com/acme/web/pull/7",
-    author: null,
-    headRepositoryOwner: "acme",
-    headBranch: "feat/page",
-    baseBranch: "main",
-    state: "open" as const,
-    isDraft: false,
-    mergeability: "mergeable" as const,
-    reviewDecision: null,
-    additions: 1,
-    deletions: 1,
-    createdAt: "2026-07-01T00:00:00Z",
-    updatedAt: "2026-07-02T00:00:00Z",
-    reviewRequestLogins: [],
-    hasTeamReviewRequest: false,
-    checksState: null,
-    labels: [],
-    body: "",
-    changedFiles: 1,
-    mergedAt: null,
-    closedAt: null,
-    checks: [],
-    comments: [],
-    commits: [],
-  };
-
   const layerWithComparison = (
     comparison: Effect.Effect<{
       readonly behindBy: number | null;
@@ -240,6 +243,78 @@ describe("getViewerPermissions", () => {
           getViewerAccess: () =>
             Effect.succeed({ canWrite: true, canUpdate: true, didAuthor: false }),
         }),
+      ),
+    ),
+  );
+});
+
+describe("getChangeRequest deployments", () => {
+  // A pull request whose head repository is unknown, so nothing but the deployments is read.
+  const pullRequest = { ...openDetail, headRepositoryOwner: null };
+
+  const detailWithDeployments = (
+    deployments: Effect.Effect<
+      ReadonlyArray<PullRequestDeployment>,
+      GitHubPullRequestCli.GitHubPullRequestCliError
+    >,
+  ) =>
+    Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+      getPullRequestDetail: () => Effect.succeed(pullRequest),
+      getRepositoryAccess: () =>
+        Effect.succeed({
+          canWrite: false,
+          mergeCapabilities: { merge: true, squash: true, rebase: true },
+        }),
+      getViewerAccess: () => Effect.succeed({ canWrite: false, canUpdate: true, didAuthor: false }),
+      getPullRequestDeployments: () => deployments,
+    });
+
+  const preview: PullRequestDeployment = {
+    environment: "Preview",
+    status: "success",
+    url: "https://preview.example.com",
+  };
+
+  it.effect("carries the host's environments on the detail", () =>
+    Effect.gen(function* () {
+      const provider = yield* make;
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      expect(detail.deployments).toEqual([preview]);
+    }).pipe(Effect.provide(detailWithDeployments(Effect.succeed([preview])))),
+  );
+
+  it.effect("leaves the field absent where the deployments could not be read", () =>
+    Effect.gen(function* () {
+      const provider = yield* make;
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      // Absent rather than empty: the rest of the page must survive a read that failed, and
+      // "none" is a claim this answer cannot make.
+      expect(detail.deployments).toBeUndefined();
+      expect(detail.title).toBe("Pull request 7");
+    }).pipe(
+      Effect.provide(
+        detailWithDeployments(
+          Effect.fail(
+            new GitHubPullRequestCli.GitHubPullRequestReadError({
+              command: "gh",
+              cwd: "/w",
+              operation: "getPullRequestDeployments",
+              cause: new Error("unreadable"),
+            }),
+          ),
+        ),
       ),
     ),
   );

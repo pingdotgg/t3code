@@ -6,6 +6,7 @@ import {
   buildReviewerRequestJson,
   decodeBaseComparisonJson,
   decodePullRequestActivityJson,
+  decodePullRequestDeploymentsJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
   decodePullRequestListJson,
@@ -1359,5 +1360,151 @@ describe("how far a branch trails its base", () => {
 
   it("refuses a body that is not the answer to this question", () => {
     expect(Result.isSuccess(decodeBaseComparisonJson("{"))).toBe(false);
+  });
+});
+
+describe("where the change is running", () => {
+  const deployments = (nodes: ReadonlyArray<unknown>) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: { commits: { nodes: [{ commit: { deployments: { nodes } } }] } },
+        },
+      },
+    });
+
+  const deployment = (entry: Record<string, unknown>) => ({
+    environment: "Preview",
+    latestStatus: {
+      state: "SUCCESS",
+      environmentUrl: "https://preview.example.com",
+      logUrl: "https://logs.example.com",
+    },
+    ...entry,
+  });
+
+  it("reads an environment, where it stands, and where to open it", () => {
+    expect(expectSuccess(decodePullRequestDeploymentsJson(deployments([deployment({})])))).toEqual([
+      { environment: "Preview", status: "success", url: "https://preview.example.com" },
+    ]);
+  });
+
+  it("maps each of GitHub's states onto what a reader is waiting for", () => {
+    const statuses = [
+      "PENDING",
+      "QUEUED",
+      "WAITING",
+      "IN_PROGRESS",
+      "SUCCESS",
+      "FAILURE",
+      "ERROR",
+      "INACTIVE",
+      "DESTROYED",
+      "SOMETHING_NEW",
+    ].map(
+      (state, index) =>
+        expectSuccess(
+          decodePullRequestDeploymentsJson(
+            deployments([deployment({ environment: `env-${index}`, latestStatus: { state } })]),
+          ),
+        )[0]?.status,
+    );
+
+    expect(statuses).toEqual([
+      "pending",
+      "pending",
+      "pending",
+      "in-progress",
+      "success",
+      "failure",
+      "failure",
+      "inactive",
+      "inactive",
+      // A state this build has never heard of is one nothing can be claimed about yet.
+      "pending",
+    ]);
+  });
+
+  it("treats a deployment the host has said nothing about as pending", () => {
+    expect(
+      expectSuccess(
+        decodePullRequestDeploymentsJson(deployments([deployment({ latestStatus: null })])),
+      ),
+    ).toEqual([{ environment: "Preview", status: "pending", url: null }]);
+  });
+
+  it("falls back to the build log where the environment has no address of its own", () => {
+    const [entry] = expectSuccess(
+      decodePullRequestDeploymentsJson(
+        deployments([
+          deployment({
+            latestStatus: {
+              state: "FAILURE",
+              environmentUrl: "",
+              logUrl: "https://logs.example.com",
+            },
+          }),
+        ]),
+      ),
+    );
+
+    expect(entry?.url).toBe("https://logs.example.com");
+  });
+
+  it("never opens a build log for a live deployment, even where it has no address of its own", () => {
+    const [entry] = expectSuccess(
+      decodePullRequestDeploymentsJson(
+        deployments([
+          deployment({
+            latestStatus: {
+              state: "SUCCESS",
+              environmentUrl: "",
+              logUrl: "https://logs.example.com",
+            },
+          }),
+        ]),
+      ),
+    );
+
+    expect(entry?.url).toBeNull();
+  });
+
+  it("keeps the newest deployment of each environment, in the order the host answered", () => {
+    const decoded = expectSuccess(
+      decodePullRequestDeploymentsJson(
+        deployments([
+          // Newest first, which is what the query orders by, so the retry leads the failure it
+          // replaced and the failure is never shown.
+          deployment({ environment: "Preview", latestStatus: { state: "SUCCESS" } }),
+          deployment({ environment: "Preview", latestStatus: { state: "FAILURE" } }),
+          deployment({ environment: "Storybook", latestStatus: { state: "SUCCESS" } }),
+        ]),
+      ),
+    );
+
+    expect(decoded.map((entry) => [entry.environment, entry.status])).toEqual([
+      ["Preview", "success"],
+      ["Storybook", "success"],
+    ]);
+  });
+
+  it("skips a deployment with no environment to name it by", () => {
+    expect(
+      expectSuccess(
+        decodePullRequestDeploymentsJson(deployments([deployment({ environment: "  " }), null])),
+      ),
+    ).toEqual([]);
+  });
+
+  it("answers nothing for a pull request the viewer cannot see", () => {
+    expect(
+      expectSuccess(
+        decodePullRequestDeploymentsJson(JSON.stringify({ data: { repository: null } })),
+      ),
+    ).toEqual([]);
+  });
+
+  it("refuses a body that is not the answer to this question", () => {
+    expect(Result.isSuccess(decodePullRequestDeploymentsJson("{"))).toBe(false);
   });
 });

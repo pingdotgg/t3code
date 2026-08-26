@@ -24,6 +24,7 @@ import {
   GitPullRequestClosedIcon,
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
+  GlobeIcon,
   HammerIcon,
   LayersIcon,
   MessageCircleQuestionIcon,
@@ -1104,6 +1105,15 @@ export function PullRequestDetailPanel({
           (entry) => entry.outcome === "approved" && !entry.stale,
         ).length
       : 0;
+  // Environments that are both live and reachable, since deployments arrive newest first. A
+  // live deployment can still have nothing to open, which is a status rather than a link.
+  const openableDeployments =
+    detail?.deployments?.filter(
+      (deployment): deployment is typeof deployment & { url: string } =>
+        deployment.status === "success" && !!deployment.url,
+    ) ?? [];
+  const soleOpenableDeployment =
+    openableDeployments.length === 1 ? openableDeployments[0] : undefined;
 
   if (detailQuery.isPending && !detail) {
     return <PullRequestDetailGhost />;
@@ -1307,6 +1317,55 @@ export function PullRequestDetailPanel({
                 >
                   {pendingAction === "merge" ? "Merging..." : selectedMergeMethodLabel}
                 </Button>
+              ) : null}
+              {soleOpenableDeployment ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        aria-label="Open preview"
+                        className="size-6"
+                        size="icon-xs"
+                        variant="ghost-muted"
+                        onClick={() =>
+                          void readLocalApi()?.shell.openExternal(soleOpenableDeployment.url)
+                        }
+                      />
+                    }
+                  >
+                    <GlobeIcon className="size-4" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Open preview</TooltipPopup>
+                </Tooltip>
+              ) : openableDeployments.length > 1 ? (
+                // Two or more live environments means one button can no longer say which URL it
+                // opens, so it becomes a menu instead. No tooltip here: a tooltip on a menu
+                // trigger fights the popup for the same space.
+                <Menu>
+                  <MenuTrigger
+                    render={
+                      <Button
+                        aria-label="Open preview"
+                        className="size-6"
+                        size="icon-xs"
+                        variant="ghost-muted"
+                      />
+                    }
+                  >
+                    <GlobeIcon className="size-4" />
+                  </MenuTrigger>
+                  <MenuPopup align="end" side="bottom" className="min-w-48">
+                    {openableDeployments.map((deployment) => (
+                      <MenuItem
+                        key={deployment.environment}
+                        onClick={() => void readLocalApi()?.shell.openExternal(deployment.url)}
+                      >
+                        <GlobeIcon className="size-3.5" />
+                        {deployment.environment}
+                      </MenuItem>
+                    ))}
+                  </MenuPopup>
+                </Menu>
               ) : null}
               <Menu>
                 <MenuTrigger

@@ -252,12 +252,16 @@ export const make = Effect.gen(function* () {
           // A small permissions query replaces the deeply paginated review-thread walk on the
           // core path. Writes ask again immediately before mutating, so this is presentation.
           cli.getViewerAccess(input),
+          // Undefined rather than an empty list where the read failed — a rate limit, a token
+          // that may not read deployments — so the page says nothing instead of claiming there
+          // are none.
+          cli.getPullRequestDeployments(input).pipe(Effect.orElseSucceed(() => undefined)),
         ],
-        { concurrency: 3 },
+        { concurrency: 4 },
       ).pipe(
         Effect.mapError(fail("getChangeRequest")),
         Effect.map(
-          ([detail, repository, viewerAccess]): ProviderChangeRequestDetail => ({
+          ([detail, repository, viewerAccess, deployments]): ProviderChangeRequestDetail => ({
             ...detail.pullRequest,
             reviewers: detail.pullRequest.reviewRequestLogins.map((login) => ({
               login,
@@ -278,6 +282,7 @@ export const make = Effect.gen(function* () {
             ...(detail.comparison?.behindBy == null
               ? {}
               : { behindBy: detail.comparison.behindBy }),
+            ...(deployments === undefined ? {} : { deployments }),
           }),
         ),
       ),
