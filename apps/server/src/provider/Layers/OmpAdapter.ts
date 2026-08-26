@@ -778,21 +778,25 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
                 ),
               ),
               Effect.catchCause((cause) =>
-                Effect.gen(function* () {
-                  yield* Effect.logError("Failed to observe OMP ACP process exit.", {
-                    cause: Cause.pretty(cause),
-                    threadId: ctx.threadId,
-                  });
-                  yield* withThreadLock(
-                    ctx.threadId,
-                    handleUnexpectedExit(ctx, "Failed to observe OMP ACP process exit."),
-                  );
-                }),
+                Cause.hasInterrupts(cause)
+                  ? Effect.interrupt
+                  : Effect.gen(function* () {
+                      yield* Effect.logError("Failed to observe OMP ACP process exit.", {
+                        cause: Cause.pretty(cause),
+                        threadId: ctx.threadId,
+                      });
+                      yield* withThreadLock(
+                        ctx.threadId,
+                        handleUnexpectedExit(ctx, "Failed to observe OMP ACP process exit."),
+                      );
+                    }),
               ),
               Effect.catchCause((cause) =>
-                Effect.logError("Failed to settle an exited OMP ACP process.", {
-                  cause: Cause.pretty(cause),
-                }),
+                Cause.hasInterrupts(cause)
+                  ? Effect.interrupt
+                  : Effect.logError("Failed to settle an exited OMP ACP process.", {
+                      cause: Cause.pretty(cause),
+                    }),
               ),
               Effect.forkIn(adapterScope),
             );
