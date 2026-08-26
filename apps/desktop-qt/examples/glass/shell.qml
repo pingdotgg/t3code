@@ -12,7 +12,7 @@ Window {
     property date now: new Date()
 
     readonly property bool settingsActive: Shell.state.settings ? Shell.state.settings.active : false
-    readonly property color glass: Qt.rgba(Theme.color("surface", "#1b2033").r, Theme.color("surface", "#1b2033").g, Theme.color("surface", "#1b2033").b, 0.72)
+    readonly property color glass: Qt.rgba(Theme.color("surface", "#1b2033").r, Theme.color("surface", "#1b2033").g, Theme.color("surface", "#1b2033").b, 0.82)
     readonly property color line: Qt.rgba(1, 1, 1, 0.08)
 
     width: 1400

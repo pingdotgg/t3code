@@ -63,7 +63,7 @@
     "terminalScrollbarHover": "#8f95b3"
   },
   "window": {
-    "opacity": 0.94,
+    "opacity": 1,
     "transparent": true,
     "blur": true,
     "frameless": true

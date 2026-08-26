@@ -9,11 +9,13 @@ Button {
 
     property bool primary: false
     property bool subtle: false
+    // Shows a down chevron instead of text (split-button menus).
+    property bool chevron: false
     property color tint: primary ? Theme.color("accentForeground", "#ffffff") : Theme.color("text", "#e4e4e7")
 
     implicitHeight: 30
-    leftPadding: 10
-    rightPadding: 10
+    leftPadding: chevron ? 6 : 10
+    rightPadding: chevron ? 6 : 10
     font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
     font.pixelSize: 13
     hoverEnabled: true
@@ -26,13 +28,29 @@ Button {
         opacity: control.enabled ? 1 : 0.5
     }
 
-    contentItem: Text {
-        text: control.text
-        font: control.font
-        color: control.tint
-        opacity: control.enabled ? 1 : 0.5
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        elide: Text.ElideRight
+    contentItem: Item {
+        implicitWidth: control.chevron ? 9 : label.implicitWidth
+        implicitHeight: control.chevron ? 6 : label.implicitHeight
+
+        Text {
+            id: label
+
+            anchors.fill: parent
+            visible: !control.chevron
+            text: control.text
+            font: control.font
+            color: control.tint
+            opacity: control.enabled ? 1 : 0.5
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+
+        ShellChevron {
+            anchors.centerIn: parent
+            visible: control.chevron
+            color: control.tint
+            opacity: control.enabled ? 1 : 0.5
+        }
     }
 }

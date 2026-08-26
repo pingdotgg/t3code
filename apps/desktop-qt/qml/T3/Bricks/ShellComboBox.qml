@@ -30,12 +30,10 @@ ComboBox {
         elide: Text.ElideRight
     }
 
-    indicator: Text {
-        x: control.width - width - 10
+    indicator: ShellChevron {
+        x: control.width - width - 11
         y: (control.height - height) / 2
-        text: "⌄"
         color: Theme.color("textMuted", "#8b8b93")
-        font.pixelSize: 14
     }
 
     delegate: ItemDelegate {

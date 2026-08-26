@@ -39,7 +39,7 @@ RowLayout {
         visible: git.ready && git.model.isRepo
         enabled: git.ready && !git.model.busy
         subtle: true
-        text: "▾"
+        chevron: true
         Accessible.name: qsTr("Git actions")
         onClicked: {
             Shell.dispatch("git.refresh");

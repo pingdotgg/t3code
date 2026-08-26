@@ -50,6 +50,7 @@ qt_add_executable(t3code-qt
   src/ShellRuntime.h
   src/ThemeStore.cpp
   src/ThemeStore.h
+  src/PlatformWindow.h
 )
 
 if(T3_QWEBCHANNEL_JS)
@@ -66,6 +67,13 @@ target_compile_definitions(t3code-qt PRIVATE
   T3_HOST_ENTRY="${T3_HOST_ENTRY}"
   T3_APP_VERSION="${PROJECT_VERSION}"
 )
+
+if(APPLE)
+  target_sources(t3code-qt PRIVATE src/PlatformWindow.mm)
+  target_link_libraries(t3code-qt PRIVATE "-framework AppKit")
+else()
+  target_sources(t3code-qt PRIVATE src/PlatformWindow.cpp)
+endif()
 
 add_subdirectory(qml/T3/Bricks)
 

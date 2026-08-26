@@ -315,7 +315,7 @@ Rectangle {
         ShellButton {
             subtle: true
             visible: openButton.visible
-            text: "▾"
+            chevron: true
             Accessible.name: qsTr("Choose editor")
             onClicked: editorsMenu.open()
 

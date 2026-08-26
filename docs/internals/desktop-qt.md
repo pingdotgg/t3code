@@ -355,6 +355,8 @@ published as removable chips (`composer.attachment.remove`,
 
 ## Linux and packaging
 
+`window.blur` is native on macOS (an `NSVisualEffectView` behind the Qt view,
+`src/PlatformWindow.mm`, tinted by the theme's appearance). On Linux
 `QGuiApplication::setDesktopFileName("t3code")` sets the Wayland app id /
 X11 `WM_CLASS`, so compositor rules can target the window — on Hyprland:
 `windowrulev2 = opacity 0.9, class:^(t3code)$` and `decorate:blur` — with

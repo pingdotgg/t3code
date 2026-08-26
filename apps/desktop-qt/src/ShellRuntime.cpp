@@ -11,6 +11,7 @@
 #include <QtLogging>
 #include <QtQml/qqml.h>
 
+#include "PlatformWindow.h"
 #include "ShellBridge.h"
 #include "ThemeStore.h"
 
@@ -106,6 +107,12 @@ void ShellRuntime::reload() {
   // "last window closed" mid-reload.
   if (previous != nullptr) {
     previous->deleteLater();
+  }
+  for (QObject* root : m_engine->rootObjects()) {
+    if (auto* window = qobject_cast<QQuickWindow*>(root)) {
+      applyWindowBlur(window, m_theme->windowTransparent() && m_theme->windowBlur(),
+                      m_theme->appearance() != QStringLiteral("light"));
+    }
   }
   m_fingerprint = sourceFingerprint();
   ++m_generation;
