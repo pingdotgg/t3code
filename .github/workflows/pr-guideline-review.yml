@@ -2,13 +2,23 @@ name: PR Guideline Review
 
 on:
   pull_request:
-    types: [opened, reopened, edited, synchronize, ready_for_review]
+    types: [opened, reopened, edited, synchronize, ready_for_review, converted_to_draft]
     paths:
       - .github/scripts/pr-guideline-review.cjs
       - .github/scripts/pr-guideline-review.test.cjs
       - .github/workflows/pr-guideline-review.yml
   pull_request_target:
-    types: [opened, reopened, edited, synchronize, ready_for_review]
+    types:
+      [
+        opened,
+        reopened,
+        edited,
+        synchronize,
+        ready_for_review,
+        converted_to_draft,
+        labeled,
+        unlabeled,
+      ]
 
 permissions: {}
 
@@ -25,7 +35,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Download proposed reviewer
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
             const fs = require("node:fs");
@@ -68,7 +78,7 @@ jobs:
             }
 
       - name: Setup Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24.13.1
 
@@ -96,7 +106,7 @@ jobs:
       # the trusted base-branch reviewer. PR files are API data and are never
       # checked out or executed.
       - name: Checkout trusted reviewer
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -107,7 +117,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Update contribution sniff test
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
             const fs = require("node:fs");
@@ -132,4 +142,5 @@ jobs:
               });
             } catch (error) {
               core.warning(`Advisory contribution review was unavailable: ${error instanceof Error ? error.message : String(error)}`);
+              throw error;
             }
