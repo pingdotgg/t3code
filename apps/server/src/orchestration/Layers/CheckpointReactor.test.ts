@@ -147,13 +147,16 @@ async function waitForThread(
     readonly threads: ReadonlyArray<{
       readonly id: ThreadId;
       readonly latestTurn: { readonly turnId: string } | null;
-      readonly checkpoints: ReadonlyArray<{ readonly checkpointTurnCount: number }>;
+      readonly checkpoints: ReadonlyArray<{
+        readonly checkpointTurnCount: number;
+        readonly completedAt: string;
+      }>;
       readonly activities: ReadonlyArray<{ readonly kind: string }>;
     }>;
   }>,
   predicate: (thread: {
     latestTurn: { turnId: string } | null;
-    checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
+    checkpoints: ReadonlyArray<{ checkpointTurnCount: number; completedAt: string }>;
     activities: ReadonlyArray<{ kind: string }>;
   }) => boolean,
   timeoutMs = 15_000,
@@ -161,7 +164,7 @@ async function waitForThread(
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
   const poll = async (): Promise<{
     latestTurn: { turnId: string } | null;
-    checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
+    checkpoints: ReadonlyArray<{ checkpointTurnCount: number; completedAt: string }>;
     activities: ReadonlyArray<{ kind: string }>;
   }> => {
     const snapshot = await readModel();
@@ -180,7 +183,7 @@ async function waitForThread(
 
 async function waitForEvent(
   engine: OrchestrationEngineShape,
-  predicate: (event: { type: string }) => boolean,
+  predicate: (event: { type: string; occurredAt: string }) => boolean,
   timeoutMs = 15_000,
 ) {
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
@@ -449,6 +452,7 @@ describe("CheckpointReactor", () => {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       provider,
+      checkpointStore,
       cwd,
       drain,
     };
@@ -528,6 +532,66 @@ describe("CheckpointReactor", () => {
         "README.md",
       ),
     ).toBe("v2\n");
+  });
+
+  it("replaces a legacy mid-turn checkpoint with the filesystem state at completion", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const turnId = asTurnId("turn-1");
+    const checkpointRef = checkpointRefForThreadTurn(threadId, 1);
+    const midTurnAt = "2026-01-01T00:00:10.000Z";
+    const completedAt = "2026-01-01T00:00:30.000Z";
+
+    await Effect.runPromise(
+      harness.checkpointStore.captureCheckpoint({
+        cwd: harness.cwd,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 0),
+      }),
+    );
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "mid-turn\n", "utf8");
+    await Effect.runPromise(
+      harness.checkpointStore.captureCheckpoint({ cwd: harness.cwd, checkpointRef }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-legacy-mid-turn-diff"),
+        threadId,
+        turnId,
+        completedAt: midTurnAt,
+        checkpointRef,
+        status: "ready",
+        files: [{ path: "README.md", kind: "modified", additions: 1, deletions: 1 }],
+        checkpointTurnCount: 1,
+        createdAt: midTurnAt,
+      }),
+    );
+    await harness.drain();
+    expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("mid-turn\n");
+
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "final\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-after-legacy-checkpoint"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+
+    await waitForEvent(
+      harness.engine,
+      (event) => event.type === "thread.turn-diff-completed" && event.occurredAt === completedAt,
+    );
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.checkpoints.length === 1 && entry.checkpoints[0]?.completedAt === completedAt,
+    );
+
+    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+    expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("final\n");
   });
 
   it("refreshes local git status state on turn completion using the session cwd", async () => {

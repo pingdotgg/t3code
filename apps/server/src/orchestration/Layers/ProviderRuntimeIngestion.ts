@@ -6,14 +6,12 @@ import {
   type OrchestrationEvent,
   type OrchestrationMessage,
   type OrchestrationProposedPlanId,
-  CheckpointRef,
   classifyTaskAgentKind,
   EventId,
   isToolLifecycleItemType,
   ThreadId,
   type ThreadTokenUsageSnapshot,
   TurnId,
-  type OrchestrationCheckpointSummary,
   type OrchestrationProposedPlan,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
@@ -32,7 +30,6 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
-import { isGitRepository } from "../../git/Utils.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
 import { ThreadPlanProgressService } from "../ThreadPlanProgress.ts";
@@ -180,31 +177,6 @@ function findProposedPlanById(
     }
   }
   return undefined;
-}
-
-function hasCheckpointForTurn(
-  checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>,
-  turnId: TurnId,
-): boolean {
-  for (let index = 0; index < checkpoints.length; index += 1) {
-    if (checkpoints[index]?.turnId === turnId) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function maxCheckpointTurnCount(
-  checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>,
-): number {
-  let maxTurnCount = 0;
-  for (let index = 0; index < checkpoints.length; index += 1) {
-    const checkpoint = checkpoints[index];
-    if (checkpoint && checkpoint.checkpointTurnCount > maxTurnCount) {
-      maxTurnCount = checkpoint.checkpointTurnCount;
-    }
-  }
-  return maxTurnCount;
 }
 
 function truncateDetail(value: string, limit = 180): string {
@@ -1920,43 +1892,6 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             title: event.payload.name,
           });
-        }
-      }
-
-      if (event.type === "turn.diff.updated") {
-        const turnId = toTurnId(event.turnId);
-        const checkpointContext = turnId
-          ? yield* projectionSnapshotQuery
-              .getThreadCheckpointContext(thread.id)
-              .pipe(Effect.map(Option.getOrUndefined))
-          : undefined;
-        const workspaceCwd =
-          checkpointContext?.worktreePath ?? checkpointContext?.workspaceRoot ?? undefined;
-        if (turnId && checkpointContext && workspaceCwd && isGitRepository(workspaceCwd)) {
-          // Skip if a checkpoint already exists for this turn. A real
-          // (non-placeholder) capture from CheckpointReactor should not
-          // be clobbered, and dispatching a duplicate placeholder for the
-          // same turnId would produce an unstable checkpointTurnCount.
-          if (hasCheckpointForTurn(checkpointContext.checkpoints, turnId)) {
-            // Already tracked; no-op.
-          } else {
-            const assistantMessageId = MessageId.make(
-              `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
-            );
-            yield* orchestrationEngine.dispatch({
-              type: "thread.turn.diff.complete",
-              commandId: yield* providerCommandId(event, "thread-turn-diff-complete"),
-              threadId: thread.id,
-              turnId,
-              completedAt: now,
-              checkpointRef: CheckpointRef.make(`provider-diff:${event.eventId}`),
-              status: "missing",
-              files: [],
-              assistantMessageId,
-              checkpointTurnCount: maxCheckpointTurnCount(checkpointContext.checkpoints) + 1,
-              createdAt: now,
-            });
-          }
         }
       }
 

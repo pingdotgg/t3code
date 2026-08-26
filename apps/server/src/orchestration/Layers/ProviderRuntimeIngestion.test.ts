@@ -171,7 +171,6 @@ type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number]
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
 type ProviderRuntimeTestProposedPlan = ProviderRuntimeTestThread["proposedPlans"][number];
 type ProviderRuntimeTestActivity = ProviderRuntimeTestThread["activities"][number];
-type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][number];
 
 async function waitForThread(
   readModel: () => Promise<ProviderRuntimeTestReadModel>,
@@ -2856,7 +2855,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
-  it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
+  it("consumes P1 runtime events without checkpointing mid-turn diff updates", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
@@ -2906,19 +2905,6 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     harness.emit({
-      type: "runtime.warning",
-      eventId: asEventId("evt-runtime-warning"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
-      threadId: asThreadId("thread-1"),
-      turnId: asTurnId("turn-p1"),
-      payload: {
-        message: "Provider got slow",
-        detail: { latencyMs: 1500 },
-      },
-    });
-
-    harness.emit({
       type: "turn.diff.updated",
       eventId: asEventId("evt-turn-diff-updated"),
       provider: ProviderDriverKind.make("codex"),
@@ -2928,6 +2914,19 @@ describe("ProviderRuntimeIngestion", () => {
       itemId: asItemId("item-p1-assistant"),
       payload: {
         unifiedDiff: "diff --git a/file.txt b/file.txt\n+hello\n",
+      },
+    });
+
+    harness.emit({
+      type: "runtime.warning",
+      eventId: asEventId("evt-runtime-warning"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-p1"),
+      payload: {
+        message: "Provider got slow",
+        detail: { latencyMs: 1500 },
       },
     });
 
@@ -2943,9 +2942,6 @@ describe("ProviderRuntimeIngestion", () => {
         ) &&
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "runtime.warning",
-        ) &&
-        entry.checkpoints.some(
-          (checkpoint: ProviderRuntimeTestCheckpoint) => checkpoint.turnId === "turn-p1",
         ),
     );
 
@@ -2983,12 +2979,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(warning?.kind).toBe("runtime.warning");
     expect(warningPayload?.message).toBe("Provider got slow");
 
-    const checkpoint = thread.checkpoints.find(
-      (entry: ProviderRuntimeTestCheckpoint) => entry.turnId === "turn-p1",
-    );
-    expect(checkpoint?.status).toBe("missing");
-    expect(checkpoint?.assistantMessageId).toBe("assistant:item-p1-assistant");
-    expect(checkpoint?.checkpointRef).toBe("provider-diff:evt-turn-diff-updated");
+    expect(thread.checkpoints).toEqual([]);
   });
 
   it("mirrors a provider title only while the thread still has the default title", async () => {

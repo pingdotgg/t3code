@@ -199,6 +199,7 @@ export type MessagesTimelineRow =
       kind: "work-toggle";
       id: string;
       createdAt: string;
+      turnId: TurnId | null;
       groupId: string;
       hiddenCount: number;
       expanded: boolean;
@@ -216,6 +217,12 @@ export type MessagesTimelineRow =
       expanded: boolean;
     }
   | {
+      kind: "turn-diff";
+      id: string;
+      createdAt: string;
+      turnSummary: TurnDiffSummary;
+    }
+  | {
       kind: "message";
       id: string;
       createdAt: string;
@@ -224,7 +231,6 @@ export type MessagesTimelineRow =
       showAssistantMeta: boolean;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
-      assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
     }
   | {
@@ -520,6 +526,75 @@ function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
   return entry.kind === "work" ? (entry.entry.turnId ?? null) : null;
 }
 
+function timelineRowTurnId(row: MessagesTimelineRow): TurnId | null {
+  switch (row.kind) {
+    case "work":
+      return row.groupedEntries.findLast((entry) => entry.turnId !== undefined)?.turnId ?? null;
+    case "work-live":
+      return row.entry.turnId ?? null;
+    case "work-toggle":
+    case "turn-fold":
+      return row.turnId;
+    case "turn-diff":
+      return row.turnSummary.turnId;
+    case "message":
+      return row.message.role === "assistant" ? (row.message.turnId ?? null) : null;
+    case "proposed-plan":
+      return row.proposedPlan.turnId;
+    case "turn-plan":
+      return row.turnPlan.turnId;
+    case "working":
+      return null;
+  }
+}
+
+function appendTurnDiffRows(input: {
+  rows: MessagesTimelineRow[];
+  turnDiffSummaryByTurnId: ReadonlyMap<TurnId, TurnDiffSummary>;
+  unsettledTurnId: TurnId | null;
+}): MessagesTimelineRow[] {
+  const lastRowIndexByTurnId = new Map<TurnId, number>();
+  for (let index = 0; index < input.rows.length; index += 1) {
+    const row = input.rows[index];
+    if (!row) continue;
+    const turnId = timelineRowTurnId(row);
+    if (turnId !== null) {
+      lastRowIndexByTurnId.set(turnId, index);
+    }
+  }
+
+  const summaryByAnchorIndex = new Map<number, TurnDiffSummary>();
+  for (const summary of input.turnDiffSummaryByTurnId.values()) {
+    if (summary.turnId === input.unsettledTurnId || summary.files.length === 0) {
+      continue;
+    }
+    const anchorIndex = lastRowIndexByTurnId.get(summary.turnId);
+    if (anchorIndex !== undefined) {
+      summaryByAnchorIndex.set(anchorIndex, summary);
+    }
+  }
+  if (summaryByAnchorIndex.size === 0) {
+    return input.rows;
+  }
+
+  const rowsWithDiffs: MessagesTimelineRow[] = [];
+  for (let index = 0; index < input.rows.length; index += 1) {
+    const row = input.rows[index];
+    if (!row) continue;
+    rowsWithDiffs.push(row);
+    const turnSummary = summaryByAnchorIndex.get(index);
+    if (turnSummary) {
+      rowsWithDiffs.push({
+        kind: "turn-diff",
+        id: `turn-diff:${turnSummary.turnId}`,
+        createdAt: turnSummary.completedAt,
+        turnSummary,
+      });
+    }
+  }
+  return rowsWithDiffs;
+}
+
 /**
  * Settled turns keep their first and terminal assistant messages visible.
  * Everything between them folds behind a "Worked for ..." row anchored at
@@ -665,7 +740,7 @@ export function deriveMessagesTimelineRows(input: {
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
-  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+  turnDiffSummaryByTurnId: ReadonlyMap<TurnId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
@@ -893,6 +968,7 @@ export function deriveMessagesTimelineRows(input: {
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
             createdAt: timelineEntry.createdAt,
+            turnId: timelineEntry.entry.turnId ?? null,
             groupId,
             hiddenCount: visibleGroupedEntries.length,
             expanded,
@@ -959,6 +1035,7 @@ export function deriveMessagesTimelineRows(input: {
               kind: "work-toggle",
               id: `work-toggle:${timelineEntry.id}`,
               createdAt: timelineEntry.createdAt,
+              turnId: timelineEntry.entry.turnId ?? null,
               groupId,
               hiddenCount: hiddenEntries.length,
               expanded,
@@ -1022,10 +1099,6 @@ export function deriveMessagesTimelineRows(input: {
       showAssistantMeta,
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantTurnStillInProgress,
-      assistantTurnDiffSummary:
-        timelineEntry.message.role === "assistant"
-          ? input.turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
-          : undefined,
       revertTurnCount:
         timelineEntry.message.role === "user"
           ? input.revertTurnCountByUserMessageId.get(timelineEntry.message.id)
@@ -1037,7 +1110,11 @@ export function deriveMessagesTimelineRows(input: {
     appendWorkingRow();
   }
 
-  return nextRows;
+  return appendTurnDiffRows({
+    rows: nextRows,
+    turnDiffSummaryByTurnId: input.turnDiffSummaryByTurnId,
+    unsettledTurnId,
+  });
 }
 
 export function computeStableMessagesTimelineRows(
@@ -1075,6 +1152,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
     }
 
+    case "turn-diff":
+      return a.turnSummary === (b as typeof a).turnSummary;
+
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
 
@@ -1109,6 +1189,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       const bw = b as typeof a;
       return (
         a.createdAt === bw.createdAt &&
+        a.turnId === bw.turnId &&
         a.groupId === bw.groupId &&
         a.hiddenCount === bw.hiddenCount &&
         a.expanded === bw.expanded &&
@@ -1127,7 +1208,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantMeta === bm.showAssistantMeta &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
-        a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
         a.revertTurnCount === bm.revertTurnCount
       );
     }

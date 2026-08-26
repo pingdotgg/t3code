@@ -369,13 +369,16 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      // Only skip if a real (non-placeholder) checkpoint already exists for this turn.
-      // ProviderRuntimeIngestion may insert placeholder entries with status "missing"
-      // before this reactor runs; those must not prevent real git capture.
+      const existingCheckpoint = thread.checkpoints.find(
+        (checkpoint) => checkpoint.turnId === turnId,
+      );
+      // A replayed completion event must not recapture an already-final checkpoint.
+      // Older servers could capture on a mid-turn diff update, so a checkpoint
+      // timestamped before the completion event still needs to be replaced.
       if (
-        thread.checkpoints.some(
-          (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
-        )
+        existingCheckpoint &&
+        existingCheckpoint.status !== "missing" &&
+        existingCheckpoint.completedAt === event.createdAt
       ) {
         return;
       }
@@ -391,18 +394,11 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      // If a placeholder checkpoint exists for this turn, reuse its turn count
-      // instead of incrementing past it.
-      const existingPlaceholder = thread.checkpoints.find(
-        (checkpoint) => checkpoint.turnId === turnId && checkpoint.status === "missing",
-      );
       const currentTurnCount = thread.checkpoints.reduce(
         (maxTurnCount, checkpoint) => Math.max(maxTurnCount, checkpoint.checkpointTurnCount),
         0,
       );
-      const nextTurnCount = existingPlaceholder
-        ? existingPlaceholder.checkpointTurnCount
-        : currentTurnCount + 1;
+      const nextTurnCount = existingCheckpoint?.checkpointTurnCount ?? currentTurnCount + 1;
 
       yield* captureAndDispatchCheckpoint({
         threadId: thread.id,
@@ -416,68 +412,6 @@ const make = Effect.gen(function* () {
       });
     },
   );
-
-  // Captures a real git checkpoint when a placeholder checkpoint (status "missing")
-  // is detected via a domain event. This replaces the placeholder with a real
-  // git-ref-based checkpoint.
-  //
-  // ProviderRuntimeIngestion creates placeholder checkpoints on turn.diff.updated
-  // events from the Codex runtime. This handler fires when the corresponding
-  // domain event arrives, allowing the reactor to capture the actual filesystem
-  // state into a git ref and dispatch a replacement checkpoint.
-  const captureCheckpointFromPlaceholder = Effect.fn("captureCheckpointFromPlaceholder")(function* (
-    event: Extract<OrchestrationEvent, { type: "thread.turn-diff-completed" }>,
-  ) {
-    const { threadId, turnId, checkpointTurnCount, status } = event.payload;
-
-    // Only replace placeholders; skip events from our own real captures.
-    if (status !== "missing") {
-      return;
-    }
-
-    const thread = yield* resolveThreadDetail(threadId);
-    if (!thread) {
-      yield* Effect.logWarning("checkpoint capture from placeholder skipped: thread not found", {
-        threadId,
-      });
-      return;
-    }
-
-    // If a real checkpoint already exists for this turn, skip.
-    if (
-      thread.checkpoints.some(
-        (checkpoint) => checkpoint.turnId === turnId && checkpoint.status !== "missing",
-      )
-    ) {
-      yield* Effect.logDebug(
-        "checkpoint capture from placeholder skipped: real checkpoint already exists",
-        { threadId, turnId },
-      );
-      return;
-    }
-
-    const projects = yield* resolveThreadProjects(thread.projectId);
-    const checkpointCwd = yield* resolveCheckpointCwd({
-      threadId,
-      thread,
-      projects,
-      preferSessionRuntime: true,
-    });
-    if (!checkpointCwd) {
-      return;
-    }
-
-    yield* captureAndDispatchCheckpoint({
-      threadId,
-      turnId,
-      thread,
-      cwd: checkpointCwd,
-      turnCount: checkpointTurnCount,
-      status: "ready",
-      assistantMessageId: event.payload.assistantMessageId ?? undefined,
-      createdAt: event.payload.completedAt,
-    });
-  });
 
   const ensurePreTurnBaselineFromTurnStart = Effect.fn("ensurePreTurnBaselineFromTurnStart")(
     function* (event: Extract<ProviderRuntimeEvent, { type: "turn.started" }>) {
@@ -838,26 +772,6 @@ const make = Effect.gen(function* () {
       );
       return;
     }
-
-    // When ProviderRuntimeIngestion creates a placeholder checkpoint (status "missing")
-    // from a turn.diff.updated runtime event, capture the real git checkpoint to
-    // replace it. The providerService.streamEvents PubSub does not reliably deliver
-    // turn.completed runtime events to this reactor (shared subscription), so
-    // reacting to the domain event is the reliable path.
-    if (event.type === "thread.turn-diff-completed") {
-      yield* captureCheckpointFromPlaceholder(event).pipe(
-        Effect.catch((error) =>
-          Effect.flatMap(nowIso, (createdAt) =>
-            appendCaptureFailureActivity({
-              threadId: event.payload.threadId,
-              turnId: event.payload.turnId,
-              detail: error.message,
-              createdAt,
-            }).pipe(Effect.catch(() => Effect.void)),
-          ),
-        ),
-      );
-    }
   });
 
   const processRuntimeEvent = Effect.fn("processRuntimeEvent")(function* (
@@ -918,8 +832,7 @@ const make = Effect.gen(function* () {
         if (
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
-          event.type !== "thread.checkpoint-revert-requested" &&
-          event.type !== "thread.turn-diff-completed"
+          event.type !== "thread.checkpoint-revert-requested"
         ) {
           return Effect.void;
         }

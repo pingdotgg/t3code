@@ -181,7 +181,7 @@ function buildProps() {
     listRef: createRef<LegendListRef | null>(),
     latestTurn: null,
     runningTurnId: null,
-    turnDiffSummaryByAssistantMessageId: new Map(),
+    turnDiffSummaryByTurnId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
     revertTurnCountByUserMessageId: new Map(),
@@ -346,7 +346,7 @@ describe("MessagesTimeline", () => {
     expect(fadedMarkup).toContain("topbar-scroll-fade");
   });
 
-  it("keeps assistant changed-files headers sticky below the thread header", () => {
+  it("keeps changed files after the turn's folded work with a sticky header", () => {
     const assistantMessageId = MessageId.make("message-assistant-with-files");
     const turnId = TurnId.make("turn-with-files");
     const markup = renderToStaticMarkup(
@@ -373,11 +373,24 @@ describe("MessagesTimeline", () => {
               streaming: false,
             },
           },
+          {
+            id: "entry-tool-after-assistant",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "tool-after-assistant",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              turnId,
+              label: "Ran tests",
+              tone: "tool",
+              toolLifecycleStatus: "completed",
+            },
+          },
         ]}
-        turnDiffSummaryByAssistantMessageId={
+        turnDiffSummaryByTurnId={
           new Map([
             [
-              assistantMessageId,
+              turnId,
               {
                 turnId,
                 checkpointTurnCount: 1,
@@ -401,6 +414,10 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Collapse all folders"');
     expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain("1 changed file");
+    expect(markup).toContain('data-timeline-row-kind="turn-fold"');
+    expect(markup.indexOf('data-timeline-row-kind="turn-diff"')).toBeGreaterThan(
+      markup.indexOf('data-timeline-row-kind="turn-fold"'),
+    );
   });
 
   it("treats only the strict list end as the live edge", async () => {
