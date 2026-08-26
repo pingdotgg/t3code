@@ -22,6 +22,7 @@ import {
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getStartedThreadModelChangeBlockReason,
+  deriveLockedProvider,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
@@ -372,6 +373,32 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("locked provider resolution", () => {
+  it("locks a custom instance to its owning driver", () => {
+    const customOmpInstanceId = ProviderInstanceId.make("omp_work");
+
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({
+          session: {
+            ...readySession,
+            providerName: null,
+            providerInstanceId: customOmpInstanceId,
+          },
+        }),
+        selectedProvider: null,
+        threadProvider: customOmpInstanceId,
+        providers: [
+          {
+            instanceId: customOmpInstanceId,
+            driverKind: ProviderDriverKind.make("omp"),
+          },
+        ],
+      }),
+    ).toBe(ProviderDriverKind.make("omp"));
+  });
+});
 
 describe("buildLoadingThreadFromShell", () => {
   it("preserves shell metadata and supplies empty detail collections", () => {
