@@ -1,4 +1,7 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+
+import { toSortableTimestamp } from "./threadSort";
 
 // One-shot capture animation (ScreenshotCaptureCoordinator): a floating
 // thumbnail springing onto the composer chip. The camera flash itself is
@@ -16,18 +19,22 @@ export interface ScreenshotTargetThreadShell {
  * Where a screenshot should land when no composer is on the current route:
  * the most recently visited thread that still exists and is not archived.
  * Returns null when nothing qualifies (fresh profile, all visits stale).
+ *
+ * Visits are keyed by scoped thread key (`environmentId:threadId`) — see
+ * markThreadVisited call sites — never by the bare thread id.
  */
 export function resolveScreenshotNavigationTarget(
   shells: ReadonlyArray<ScreenshotTargetThreadShell>,
   threadLastVisitedAtById: Readonly<Record<string, string>>,
 ): ScopedThreadRef | null {
   let best: ScreenshotTargetThreadShell | null = null;
-  let bestVisitedAt = "";
+  let bestVisitedAt = Number.NEGATIVE_INFINITY;
   for (const shell of shells) {
     if (shell.archivedAt !== null) continue;
-    const visitedAt = threadLastVisitedAtById[shell.id];
-    if (visitedAt === undefined) continue;
-    // ISO timestamps compare lexically.
+    const visitedAtIso =
+      threadLastVisitedAtById[scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id))];
+    const visitedAt = toSortableTimestamp(visitedAtIso);
+    if (visitedAt === null) continue;
     if (visitedAt > bestVisitedAt) {
       best = shell;
       bestVisitedAt = visitedAt;

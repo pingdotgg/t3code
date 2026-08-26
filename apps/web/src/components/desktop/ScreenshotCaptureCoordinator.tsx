@@ -212,9 +212,13 @@ export function ScreenshotCaptureCoordinator() {
         };
         const unsubscribe = onComposerReady(() => settle?.(true));
         const timer = setTimeout(() => settle?.(false), COMPOSER_WAIT_TIMEOUT_MS);
+        // The cleanup settles the promise too: a superseded capture's
+        // handleCaptured must resolve (its generation check then bails), not
+        // stay suspended holding the decoded screenshot forever.
         const remove = track(() => {
           unsubscribe();
           clearTimeout(timer);
+          settle?.(false);
         });
       });
 

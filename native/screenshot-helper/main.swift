@@ -42,8 +42,8 @@ private func emit(_ payload: [String: Any]) {
   FileHandle.standardOutput.write(Data((line + "\n").utf8))
 }
 
-private func emitCaptureFailure(_ reason: String) {
-  emit(["type": "capture", "ok": false, "reason": reason])
+private func emitCaptureFailure(_ requestId: String, _ reason: String) {
+  emit(["type": "capture", "id": requestId, "ok": false, "reason": reason])
 }
 
 // MARK: - Modifier state
@@ -156,16 +156,16 @@ private func imageSize(atPath path: String) -> (width: Int, height: Int)? {
   return (width, height)
 }
 
-private func handleCapture() {
+private func handleCapture(_ requestId: String) {
   if !CGPreflightScreenCaptureAccess() {
     // Fires the Screen Recording TCC prompt on first ask; the verdict is
     // cached per-process, so the parent respawns this helper after a grant.
     CGRequestScreenCaptureAccess()
-    emitCaptureFailure("permission-denied")
+    emitCaptureFailure(requestId, "permission-denied")
     return
   }
   guard let target = frontmostWindow() else {
-    emitCaptureFailure("no-window")
+    emitCaptureFailure(requestId, "no-window")
     return
   }
   let path = NSTemporaryDirectory() + "t3-screenshot-" + UUID().uuidString + ".png"
@@ -177,19 +177,20 @@ private func handleCapture() {
     try process.run()
     process.waitUntilExit()
   } catch {
-    emitCaptureFailure("capture-failed")
+    emitCaptureFailure(requestId, "capture-failed")
     return
   }
   guard process.terminationStatus == 0, let size = imageSize(atPath: path) else {
     try? FileManager.default.removeItem(atPath: path)
-    emitCaptureFailure("capture-failed")
+    emitCaptureFailure(requestId, "capture-failed")
     return
   }
   if let bounds = target.bounds {
     DispatchQueue.main.async { showCaptureFlash(over: bounds) }
   }
   var payload: [String: Any] = [
-    "type": "capture", "ok": true, "path": path, "width": size.width, "height": size.height,
+    "type": "capture", "id": requestId, "ok": true, "path": path,
+    "width": size.width, "height": size.height,
   ]
   if let appName = target.appName { payload["appName"] = appName }
   if let bounds = target.bounds {
@@ -217,8 +218,12 @@ NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { event in
 let captureQueue = DispatchQueue(label: "capture")
 DispatchQueue.global(qos: .utility).async {
   while let line = readLine(strippingNewline: true) {
-    if line == "capture" {
-      captureQueue.async { handleCapture() }
+    // "capture <requestId>": the id is echoed in the reply so the parent can
+    // match replies to requests (a late reply after a timeout must not be
+    // mistaken for the next capture's).
+    if line == "capture" || line.hasPrefix("capture ") {
+      let requestId = line.count > "capture ".count ? String(line.dropFirst("capture ".count)) : ""
+      captureQueue.async { handleCapture(requestId) }
     }
   }
   // Parent gone. Let any in-flight capture reply drain, then die.

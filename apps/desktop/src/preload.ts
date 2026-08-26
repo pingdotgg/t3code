@@ -11,6 +11,24 @@ import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
 
+// Screenshot-hotkey pushes are subscribed from the preload's first moment so
+// a capture completing during renderer boot is buffered, not lost. Bounded:
+// only the newest few matter if the renderer never subscribes.
+const SCREENSHOT_HOTKEY_BUFFER_LIMIT = 4;
+const pendingScreenshotHotkeyEvents: unknown[] = [];
+let screenshotHotkeyListener: ((event: unknown) => void) | null = null;
+ipcRenderer.on(IpcChannels.SCREENSHOT_HOTKEY_CHANNEL, (_event, payload: unknown) => {
+  if (typeof payload !== "object" || payload === null) return;
+  if (screenshotHotkeyListener) {
+    screenshotHotkeyListener(payload);
+    return;
+  }
+  pendingScreenshotHotkeyEvents.push(payload);
+  if (pendingScreenshotHotkeyEvents.length > SCREENSHOT_HOTKEY_BUFFER_LIMIT) {
+    pendingScreenshotHotkeyEvents.shift();
+  }
+});
+
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
     typeof result === "object" &&
@@ -135,14 +153,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     };
   },
   onScreenshotHotkey: (listener) => {
-    const wrappedListener = (_event: Electron.IpcRendererEvent, event: unknown) => {
-      if (typeof event !== "object" || event === null) return;
+    screenshotHotkeyListener = (event) => {
       listener(event as Parameters<typeof listener>[0]);
     };
-
-    ipcRenderer.on(IpcChannels.SCREENSHOT_HOTKEY_CHANNEL, wrappedListener);
+    // A capture can arrive before the renderer subscribes (main sends on
+    // did-finish-load; React mounts later). Deliver anything buffered by the
+    // load-time IPC listener below.
+    const buffered = pendingScreenshotHotkeyEvents.splice(0);
+    for (const event of buffered) {
+      screenshotHotkeyListener(event);
+    }
     return () => {
-      ipcRenderer.removeListener(IpcChannels.SCREENSHOT_HOTKEY_CHANNEL, wrappedListener);
+      screenshotHotkeyListener = null;
     };
   },
   openScreenRecordingSettings: () =>

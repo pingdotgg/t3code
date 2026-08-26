@@ -45,6 +45,7 @@ const { logInfo: logHotkeyInfo, logWarning: logHotkeyWarning } = makeComponentLo
 const CaptureReply = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("capture"),
+    id: Schema.optionalKey(Schema.String),
     ok: Schema.Literal(true),
     path: Schema.String,
     width: Schema.Int,
@@ -61,6 +62,7 @@ const CaptureReply = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("capture"),
+    id: Schema.optionalKey(Schema.String),
     ok: Schema.Literal(false),
     reason: Schema.Literals(["permission-denied", "no-window", "capture-failed"]),
   }),
@@ -82,6 +84,11 @@ const decodeHelperEvent = Schema.decodeEffect(HelperEvent);
 
 interface HelperSession {
   readonly commands: Queue.Queue<string, Cause.Done>;
+}
+
+interface PendingCapture {
+  readonly id: string;
+  readonly deferred: Deferred.Deferred<CaptureReply>;
 }
 
 export class DesktopScreenshotHotkey extends Context.Service<
@@ -143,7 +150,8 @@ export const make = Effect.gen(function* () {
   const reconcileMutex = yield* Semaphore.make(1);
   const supervisorFiberRef = yield* Ref.make(Option.none<Fiber.Fiber<void>>());
   const sessionRef = yield* Ref.make(Option.none<HelperSession>());
-  const pendingCaptureRef = yield* Ref.make(Option.none<Deferred.Deferred<CaptureReply>>());
+  const pendingCaptureRef = yield* Ref.make(Option.none<PendingCapture>());
+  const captureCounterRef = yield* Ref.make(0);
   // Set before deliberately killing the helper (fresh-TCC restart after a
   // permission denial) so the supervisor doesn't count it as a crash.
   const intentionalRestartRef = yield* Ref.make(false);
@@ -215,18 +223,32 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  // Clears only its own pending entry: an unconditional clear could wipe out
+  // a newer capture registered after this one already finished.
+  const clearPendingCapture = (deferred: Deferred.Deferred<CaptureReply>) =>
+    Ref.update(pendingCaptureRef, (pending) =>
+      Option.isSome(pending) && pending.value.deferred === deferred ? Option.none() : pending,
+    );
+
   const runCapture = Effect.gen(function* () {
     const session = yield* Ref.get(sessionRef);
     if (Option.isNone(session)) return;
     const existing = yield* Ref.get(pendingCaptureRef);
     // A capture is already in flight; drop the chord instead of queueing.
     if (Option.isSome(existing)) return;
+    const id = `c${yield* Ref.getAndUpdate(captureCounterRef, (n) => n + 1)}`;
     const deferred = yield* Deferred.make<CaptureReply>();
-    yield* Ref.set(pendingCaptureRef, Option.some(deferred));
-    yield* Queue.offer(session.value.commands, "capture\n");
-    const reply = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(CAPTURE_TIMEOUT));
-    yield* Ref.set(pendingCaptureRef, Option.none());
-    yield* handleCaptureReply(reply);
+    yield* Ref.set(pendingCaptureRef, Option.some({ id, deferred }));
+    yield* Effect.gen(function* () {
+      yield* Queue.offer(session.value.commands, `capture ${id}\n`);
+      const reply = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(CAPTURE_TIMEOUT));
+      yield* clearPendingCapture(deferred);
+      yield* handleCaptureReply(reply);
+    }).pipe(
+      // Whatever happens above, a dead capture must never leave its pending
+      // entry behind — future chords would see it as in-flight and no-op.
+      Effect.ensuring(clearPendingCapture(deferred)),
+    );
   }).pipe(Effect.withSpan("desktop.screenshotHotkey.capture"));
 
   const chordHandler = makeScreenshotChordHandler({
@@ -248,12 +270,21 @@ export const make = Effect.gen(function* () {
             });
           case "capture":
             return Ref.get(pendingCaptureRef).pipe(
-              Effect.flatMap(
-                Option.match({
-                  onNone: () => logHotkeyWarning("dropping unrequested capture reply"),
-                  onSome: (deferred) => Deferred.succeed(deferred, event),
-                }),
-              ),
+              Effect.flatMap((pending) => {
+                if (Option.isSome(pending) && pending.value.id === event.id) {
+                  return Deferred.succeed(pending.value.deferred, event);
+                }
+                // Unrequested or stale (a late reply after its capture timed
+                // out): its screenshot must not leak into the temp directory
+                // — or into a later capture's attach.
+                return logHotkeyWarning("dropping unmatched capture reply", {
+                  replyId: event.id ?? null,
+                }).pipe(
+                  Effect.andThen(
+                    event.ok ? fileSystem.remove(event.path).pipe(Effect.ignore) : Effect.void,
+                  ),
+                );
+              }),
             );
         }
       }),
@@ -300,8 +331,8 @@ export const make = Effect.gen(function* () {
     Effect.flatMap(
       Option.match({
         onNone: () => Effect.void,
-        onSome: (deferred) =>
-          Deferred.succeed(deferred, {
+        onSome: (pending) =>
+          Deferred.succeed(pending.deferred, {
             type: "capture",
             ok: false,
             reason: "capture-failed",
