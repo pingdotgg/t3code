@@ -170,7 +170,7 @@ test("requires images and video for a visible motion change", () => {
 test("accepts GitHub image and video evidence", () => {
   const result = evaluate({
     pull: {
-      body: `${completeBody}\n![Before](https://github.com/user-attachments/assets/before)\n![After](https://github.com/user-attachments/assets/after)\nVideo: https://github.com/user-attachments/assets/demo-video`,
+      body: `${completeBody}\n## UI Changes\n![Before](https://github.com/user-attachments/assets/before)\n![After](https://github.com/user-attachments/assets/after)\nVideo: https://github.com/user-attachments/assets/demo-video`,
     },
     files: [
       {
@@ -269,6 +269,42 @@ test("does not treat an HTML image attachment as video evidence", () => {
   assert.equal(hasVideo("Video: https://github.com/user-attachments/assets/demo"), true);
 });
 
+test("requires non-empty HTML evidence sources", () => {
+  assert.equal(imageCount("<img><img src=''>"), 0);
+  assert.equal(imageCount('<img src="before.png"><img src="after.png">'), 2);
+  assert.equal(hasVideo("<video></video>"), false);
+  assert.equal(hasVideo("<video><source src=''></video>"), false);
+  assert.equal(hasVideo('<video src="demo.mp4"></video>'), true);
+  assert.equal(hasVideo('<video><source src="demo.webm"></video>'), true);
+});
+
+test("counts UI evidence only in the UI Changes section", () => {
+  const result = evaluate({
+    pull: {
+      body: `${completeBody}
+## UI Changes
+Changed the sidebar layout.
+## Validation
+![Unrelated](https://github.com/user-attachments/assets/unrelated)
+![Also unrelated](https://github.com/user-attachments/assets/also-unrelated)
+Video: https://github.com/user-attachments/assets/unrelated-video`,
+    },
+    files: [
+      {
+        filename: "apps/web/src/sidebar.tsx",
+        additions: 3,
+        deletions: 1,
+        patch: "+transition: opacity 120ms ease;",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    result.findings.map((entry) => entry.code),
+    ["missing-ui-images", "missing-interaction-video"],
+  );
+});
+
 test("requires prior repository context for features and large changes", () => {
   const feature = evaluate({
     pull: {
@@ -310,6 +346,92 @@ test("requires prior repository context for features and large changes", () => {
   assert.deepEqual(
     large.findings.map((entry) => entry.code),
     ["large-change"],
+  );
+});
+
+test("recognizes a plain-language feature title", () => {
+  const result = evaluate({
+    pull: { title: "Add a dashboard" },
+    files: [
+      {
+        filename: "apps/web/src/dashboard.tsx",
+        additions: 20,
+        deletions: 0,
+        patch: "+export const dashboardEnabled = true;",
+      },
+    ],
+  });
+
+  assert.equal(result.status, "needs_work");
+  assert.deepEqual(
+    result.findings.map((entry) => entry.code),
+    ["missing-feature-discussion"],
+  );
+});
+
+test("ignores repository links hidden in HTML comments", () => {
+  const feature = evaluate({
+    pull: {
+      title: "feat(web): add a dashboard",
+      body: `${completeBody}\n<!-- https://github.com/pingdotgg/t3code/discussions/1234 -->`,
+    },
+  });
+  assert.equal(feature.findings.at(-1).code, "missing-feature-discussion");
+
+  const large = evaluate({
+    pull: {
+      body: `${completeBody}\n<!-- https://github.com/pingdotgg/t3code/issues/1234 -->`,
+    },
+    files: [{ filename: "apps/server/src/receipts.ts", additions: 120, deletions: 0 }],
+  });
+  assert.deepEqual(
+    large.findings.map((entry) => entry.code),
+    ["missing-nontrivial-context", "large-change"],
+  );
+
+  const hiddenMaintainerContext = evaluate({
+    pull: {
+      title: "feat(web): add a dashboard",
+      body: `${completeBody}\n<!-- Maintainer-directed work. -->`,
+    },
+  });
+  assert.equal(hiddenMaintainerContext.findings.at(-1).code, "missing-feature-discussion");
+});
+
+test("ignores section headings inside fenced code blocks", () => {
+  const result = evaluate({
+    pull: {
+      body: `
+\`\`\`markdown
+## What Changed
+Pretend change.
+## Why
+Pretend reason.
+\`\`\`
+`,
+    },
+  });
+
+  assert.deepEqual(
+    result.findings.map((entry) => entry.code),
+    ["missing-what-changed", "missing-why"],
+  );
+
+  const tildeFence = evaluate({
+    pull: {
+      body: `
+~~~\`markdown
+## What Changed
+Pretend change.
+## Why
+Pretend reason.
+~~~
+`,
+    },
+  });
+  assert.deepEqual(
+    tildeFence.findings.map((entry) => entry.code),
+    ["missing-what-changed", "missing-why"],
   );
 });
 

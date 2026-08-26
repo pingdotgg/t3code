@@ -36,11 +36,43 @@ function stripComments(markdown) {
 }
 
 function section(markdown, heading) {
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = markdown.match(
-    new RegExp(`^##[ \\t]+${escaped}[ \\t]*\\r?\\n([^]*?)(?=^##[ \\t]+|(?![^]))`, "im"),
-  );
-  return stripComments(match?.[1] ?? "");
+  const lines = markdown.split(/\r?\n/);
+  const content = [];
+  let fence;
+  let collecting = false;
+
+  for (const line of lines) {
+    if (fence) {
+      if (collecting) content.push(line);
+      const closingFence = line.match(/^[ \t]{0,3}(`{3,}|~{3,})[ \t]*$/);
+      if (
+        closingFence &&
+        closingFence[1][0] === fence.character &&
+        closingFence[1].length >= fence.length
+      ) {
+        fence = undefined;
+      }
+      continue;
+    }
+
+    const openingFence = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/);
+    if (openingFence && (openingFence[1][0] === "~" || !openingFence[2].includes("`"))) {
+      if (collecting) content.push(line);
+      fence = { character: openingFence[1][0], length: openingFence[1].length };
+      continue;
+    }
+
+    const levelTwoHeading = line.match(/^##[ \t]+(.+?)[ \t]*$/);
+    if (levelTwoHeading) {
+      if (collecting) break;
+      collecting = levelTwoHeading[1].toLowerCase() === heading.toLowerCase();
+      continue;
+    }
+
+    if (collecting) content.push(line);
+  }
+
+  return stripComments(content.join("\n"));
 }
 
 function sectionAny(markdown, headings) {
@@ -78,15 +110,24 @@ function isDefiniteUiFile(file) {
 
 function imageCount(markdown) {
   const markdownImages = markdown.match(/!\[[^\]]*\]\([^\s)]+(?:\s+"[^"]*")?\)/gi) ?? [];
-  const htmlImages = markdown.match(/<img\b[^>]*>/gi) ?? [];
+  const htmlImages = (markdown.match(/<img\b[^>]*>/gi) ?? []).filter((tag) =>
+    hasNonEmptySrc(tag, "img"),
+  );
   const remaining = markdown.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/<img\b[^>]*>/gi, "");
   const bareImageUrls =
     remaining.match(/https?:\/\/[^\s)]+\.(?:avif|gif|jpe?g|png|webp)(?:\?[^\s)]*)?/gi) ?? [];
   return markdownImages.length + htmlImages.length + bareImageUrls.length;
 }
 
+function hasNonEmptySrc(markdown, tagName) {
+  const tags = markdown.match(new RegExp(`<${tagName}\\b[^>]*>`, "gi")) ?? [];
+  return tags.some((tag) => /\bsrc\s*=\s*(?:"[^"\s][^"]*"|'[^'\s][^']*'|[^\s"'=<>]+)/i.test(tag));
+}
+
 function hasVideo(markdown) {
-  if (/<video\b[^>]*>/i.test(markdown)) return true;
+  if (hasNonEmptySrc(markdown, "video")) return true;
+  const videoBlocks = markdown.match(/<video\b[^>]*>[^]*?<\/video\s*>/gi) ?? [];
+  if (videoBlocks.some((block) => hasNonEmptySrc(block, "source"))) return true;
   if (/https?:\/\/[^\s)]+\.(?:mov|mp4|webm)(?:\?[^\s)]*)?/i.test(markdown)) return true;
 
   const withoutImages = markdown.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/<img\b[^>]*>/gi, "");
@@ -108,7 +149,13 @@ function hasDiscussionLink(markdown, repository) {
 }
 
 function isFeaturePull(title) {
-  return /^(?:feat|feature)(?:\([^)]*\))?[!:]/i.test(title.trim());
+  const normalized = title.trim();
+  return (
+    /^(?:feat|feature)(?:\([^)]*\))?[!:]/i.test(normalized) ||
+    /^(?:(?:add|create|implement|introduce|launch)\s+(?:a|an|the|new)\b|(?:enable|support)\b)/i.test(
+      normalized,
+    )
+  );
 }
 
 function hasMaintainerContextStatement(markdown) {
@@ -206,14 +253,16 @@ function evaluatePull({
   const lines = effectiveChangedLines(files);
   const lineKind = lines.nonTest === 0 && lines.test > 0 ? "test" : "non-test";
   const areas = changedAreas(files);
-  const contextLink = hasRepositoryContextLink(body, repository);
-  const discussionLink = hasDiscussionLink(body, repository);
-  const maintainerContext = hasMaintainerContextStatement(body);
+  const visibleBody = stripComments(body);
+  const contextLink = hasRepositoryContextLink(visibleBody, repository);
+  const discussionLink = hasDiscussionLink(visibleBody, repository);
+  const maintainerContext = hasMaintainerContextStatement(visibleBody);
   const uiCandidates = files.filter((file) => isUiCandidate(file.filename));
   const uiFiles = uiCandidates.filter((file) => isDefiniteUiFile(file));
   const uninspectableUiFiles = uiCandidates.filter((file) => file.patch === undefined);
   const trustedPull = isTrustedPull(pull, vouchedUsers);
   const hasMotionChange = uiFiles.some((file) => MOTION_PATTERN.test(changedPatch(file)));
+  const uiEvidence = section(body, "UI Changes");
   const findings = [];
 
   if (!whatChanged) {
@@ -279,7 +328,7 @@ function evaluatePull({
       ),
     );
   }
-  if (uiFiles.length > 0 && imageCount(body) < 2 && !explainsNoVisualChange(body)) {
+  if (uiFiles.length > 0 && imageCount(uiEvidence) < 2 && !explainsNoVisualChange(body)) {
     findings.push(
       finding(
         "missing-ui-images",
@@ -288,7 +337,7 @@ function evaluatePull({
       ),
     );
   }
-  if (hasMotionChange && !hasVideo(body) && !explainsNoInteractionChange(body)) {
+  if (hasMotionChange && !hasVideo(uiEvidence) && !explainsNoInteractionChange(body)) {
     findings.push(
       finding(
         "missing-interaction-video",
