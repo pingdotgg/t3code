@@ -1694,6 +1694,70 @@ routing.layer("ProviderServiceLive routing", (it) => {
     );
   });
 
+  it.effect("serializes recovered Goal mutations with session stops", () => {
+    const originalStartSession = routing.codex.startSession.getMockImplementation();
+    const originalSetCodexGoal = routing.codex.setCodexGoal.getMockImplementation();
+    if (!originalStartSession || !originalSetCodexGoal) {
+      throw new Error("fake Codex adapter has no Goal recovery implementation");
+    }
+
+    return Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("goal-recovery-stop-race-thread");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/goal-recovery-stop-race-thread",
+        runtimeMode: "full-access",
+      });
+      yield* provider.stopSession({ threadId });
+      routing.codex.stopSession.mockClear();
+
+      const recoveryStarted = yield* Deferred.make<void>();
+      const releaseRecovery = yield* Deferred.make<void>();
+      const mutationStarted = yield* Deferred.make<void>();
+      const releaseMutation = yield* Deferred.make<void>();
+      routing.codex.startSession.mockImplementation((input) =>
+        Deferred.succeed(recoveryStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseRecovery)),
+          Effect.andThen(originalStartSession(input)),
+        ),
+      );
+      routing.codex.setCodexGoal.mockImplementation((input) =>
+        Deferred.succeed(mutationStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseMutation)),
+          Effect.andThen(originalSetCodexGoal(input)),
+        ),
+      );
+
+      const mutation = yield* provider
+        .setCodexGoal({ threadId, objective: "Resume safely" })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(recoveryStarted);
+      const stop = yield* provider.stopSession({ threadId }).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.equal(routing.codex.stopSession.mock.calls.length, 0);
+
+      yield* Deferred.succeed(releaseRecovery, undefined);
+      yield* Deferred.await(mutationStarted);
+      yield* Effect.yieldNow;
+      assert.equal(routing.codex.stopSession.mock.calls.length, 0);
+
+      yield* Deferred.succeed(releaseMutation, undefined);
+      yield* Fiber.join(mutation);
+      yield* Fiber.join(stop);
+      assert.equal(routing.codex.stopSession.mock.calls.length, 1);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          routing.codex.startSession.mockImplementation(originalStartSession);
+          routing.codex.setCodexGoal.mockImplementation(originalSetCodexGoal);
+        }),
+      ),
+    );
+  });
+
   it.effect("rejects native Codex Goal operations for unsupported providers", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

@@ -992,6 +992,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       next.set(threadId, lock);
       return [lock, next] as const;
     });
+  const withRecoveryLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
+    Effect.flatMap(getRecoveryLock(threadId), (lock) => lock.withPermit(effect));
 
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
@@ -1069,8 +1071,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       return { adapter, session: resumed } as const;
     }).pipe(
-      (recover) =>
-        Effect.flatMap(getRecoveryLock(input.binding.threadId), (lock) => lock.withPermit(recover)),
       withMetrics({
         counter: providerSessionsTotal,
         attributes: providerMetricAttributes(input.binding.provider, {
@@ -1084,6 +1084,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly threadId: ThreadId;
     readonly operation: string;
     readonly allowRecovery: boolean;
+    readonly recoveryLockHeld?: boolean;
   }) {
     const bindingOption = yield* directory.getBinding(input.threadId);
     const binding = Option.getOrUndefined(bindingOption);
@@ -1117,10 +1118,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       } as const;
     }
 
-    const recovered = yield* recoverSessionForThread({
+    const recover = recoverSessionForThread({
       binding,
       operation: input.operation,
     });
+    const recovered = yield* input.recoveryLockHeld
+      ? recover
+      : withRecoveryLock(input.threadId, recover);
     return {
       adapter: recovered.adapter,
       instanceId,
@@ -1326,7 +1330,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
         return sessionWithInstance;
       }).pipe(
-        (start) => Effect.flatMap(getRecoveryLock(threadId), (lock) => lock.withPermit(start)),
+        (start) => withRecoveryLock(threadId, start),
         withMetrics({
           counter: providerSessionsTotal,
           attributes: () =>
@@ -1784,6 +1788,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           provider: routed.adapter.provider,
         });
       }).pipe(
+        (stop) => withRecoveryLock(input.threadId, stop),
         withMetrics({
           counter: providerSessionsTotal,
           outcomeAttributes: () =>
@@ -2069,6 +2074,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     threadId: ThreadId,
     operation: "get" | "set" | "clear",
     allowRecovery = true,
+    recoveryLockHeld = false,
   ) {
     const operationName = `ProviderService.${operation}CodexGoal`;
     const routeInput = { threadId, operation: operationName };
@@ -2080,7 +2086,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
     if (!routed.adapter.codexGoal) return yield* unsupported();
     if (!routed.isActive && allowRecovery) {
-      routed = yield* resolveRoutableSession({ ...routeInput, allowRecovery: true });
+      routed = yield* resolveRoutableSession({
+        ...routeInput,
+        allowRecovery: true,
+        recoveryLockHeld,
+      });
     }
     const goal = routed.adapter.codexGoal;
     if (!goal) return yield* unsupported();
@@ -2109,15 +2119,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const setCodexGoal: ProviderServiceMethod<"setCodexGoal"> = Effect.fn("setCodexGoal")(
     function* (input) {
-      const { goal } = yield* resolveCodexGoalRoute(input.threadId, "set");
-      return yield* goal.set(input);
+      return yield* Effect.gen(function* () {
+        const { goal } = yield* resolveCodexGoalRoute(input.threadId, "set", true, true);
+        return yield* goal.set(input);
+      }).pipe((set) => withRecoveryLock(input.threadId, set));
     },
   );
 
   const clearCodexGoal: ProviderServiceMethod<"clearCodexGoal"> = Effect.fn("clearCodexGoal")(
     function* (threadId) {
-      const { routed, goal } = yield* resolveCodexGoalRoute(threadId, "clear");
-      return yield* goal.clear(routed.threadId);
+      return yield* Effect.gen(function* () {
+        const { routed, goal } = yield* resolveCodexGoalRoute(threadId, "clear", true, true);
+        return yield* goal.clear(routed.threadId);
+      }).pipe((clear) => withRecoveryLock(threadId, clear));
     },
   );
 
