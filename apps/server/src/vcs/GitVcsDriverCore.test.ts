@@ -160,7 +160,7 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
     yield* driver.listRefs({ cwd });
 
     assert.deepStrictEqual(commands, [
-      { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
+      { args: ["status", "--porcelain=2", "--branch", "-z"], lcAll: "C" },
       { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
       { args: ["rev-parse", "--git-common-dir"], lcAll: "C" },
     ]);
@@ -981,6 +981,152 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           insertions: 1,
           deletions: 0,
         });
+      }),
+    );
+
+    it.effect("reports a directory rename under its real paths", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "src/old/file.ts", "export const value = 1;\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add nested file"]);
+        yield* git(cwd, ["mv", "src/old", "src/new"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(
+          status.workingTree.files.map((file) => file.path),
+          ["src/new/file.ts", "src/old/file.ts"],
+        );
+      }),
+    );
+
+    it.effect("reports a rename that moves a file up a directory level", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "a/b/deep.txt", "deep\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add deep file"]);
+        yield* git(cwd, ["mv", "a/b/deep.txt", "a/deep.txt"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(
+          status.workingTree.files.map((file) => file.path),
+          ["a/b/deep.txt", "a/deep.txt"],
+        );
+      }),
+    );
+
+    it.effect("reports both halves of a top-level rename", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "top.txt", "top\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add top file"]);
+        yield* git(cwd, ["mv", "top.txt", "renamed-top.txt"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(
+          status.workingTree.files.map((file) => file.path),
+          ["renamed-top.txt", "top.txt"],
+        );
+      }),
+    );
+
+    it.effect("omits a rename destination that was deleted from the worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "src.txt", "source\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add source"]);
+        yield* git(cwd, ["mv", "src.txt", "new.txt"]);
+        yield* fileSystem.remove(pathService.join(cwd, "new.txt"));
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(
+          status.workingTree.files.map((file) => file.path),
+          ["src.txt"],
+        );
+      }),
+    );
+
+    it.effect("reports paths that contain spaces without truncating them", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "my file.txt", "hello\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add spaced file"]);
+        yield* writeTextFile(cwd, "my file.txt", "hello\nworld\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(status.workingTree.files, [
+          { path: "my file.txt", insertions: 1, deletions: 0 },
+        ]);
+      }),
+    );
+
+    it.effect("reports an unmerged path that contains spaces", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "con flict.txt", "base\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add conflict file"]);
+        yield* git(cwd, ["checkout", "-b", "other"]);
+        yield* writeTextFile(cwd, "con flict.txt", "other\n");
+        yield* git(cwd, ["commit", "-am", "other change"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+        yield* writeTextFile(cwd, "con flict.txt", "main\n");
+        yield* git(cwd, ["commit", "-am", "main change"]);
+        yield* git(cwd, ["merge", "other"]).pipe(Effect.ignore);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(
+          status.workingTree.files.map((file) => file.path),
+          ["con flict.txt"],
+        );
+      }),
+    );
+
+    it.effect("reports a non-ASCII path without git's quoted escapes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "caf\u00e9.txt", "espresso\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(
+          status.workingTree.files.map((file) => file.path),
+          ["caf\u00e9.txt"],
+        );
+      }),
+    );
+
+    it.effect("reports an untracked path that contains spaces", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "new file.txt", "fresh\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepStrictEqual(
+          status.workingTree.files.map((file) => file.path),
+          ["new file.txt"],
+        );
       }),
     );
 
