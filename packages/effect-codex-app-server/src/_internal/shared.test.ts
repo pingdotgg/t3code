@@ -136,44 +136,82 @@ it.effect("passes request errors through without adding a wrapper", () =>
   }),
 );
 
-it.effect("normalizes unrecognized plan types to unknown before decoding", () =>
+it.effect("decodes account plans the pinned protocol schema does not know", () =>
+  Effect.gen(function* () {
+    // Present in the schema codex 0.149.1 generates, absent from the pinned ref.
+    const plansAddedAfterThePinnedSchema = [
+      "self_serve_business_prolite",
+      "ent26",
+      "enterprise_cbp_automation",
+      "edu_plus",
+      "edu_pro",
+    ];
+
+    for (const planType of plansAddedAfterThePinnedSchema) {
+      const account = yield* Shared.decodeOptionalPayload(
+        "account/read",
+        CodexSchema.V2GetAccountResponse,
+        {
+          account: { type: "chatgpt", email: "new-plan@example.com", planType },
+          requiresOpenaiAuth: false,
+        },
+      );
+
+      assert.deepEqual(account.account, {
+        type: "chatgpt",
+        email: "new-plan@example.com",
+        planType: "unknown",
+      });
+    }
+  }),
+);
+
+it.effect("leaves known account plans untouched", () =>
   Effect.gen(function* () {
     const account = yield* Shared.decodeOptionalPayload(
       "account/read",
       CodexSchema.V2GetAccountResponse,
       {
-        account: {
-          type: "chatgpt",
-          email: "edu@example.com",
-          planType: "edu_plus",
-        },
+        account: { type: "chatgpt", email: "plus@example.com", planType: "plus" },
         requiresOpenaiAuth: false,
       },
     );
 
     assert.deepEqual(account.account, {
       type: "chatgpt",
-      email: "edu@example.com",
-      planType: "unknown",
+      email: "plus@example.com",
+      planType: "plus",
     });
+  }),
+);
 
-    const knownPlan = yield* Shared.decodeOptionalPayload(
-      "account/read",
-      CodexSchema.V2GetAccountResponse,
+it.effect("decodes account notification plans the pinned protocol schema does not know", () =>
+  Effect.gen(function* () {
+    const notification = yield* Shared.decodeNotificationPayload(
+      "account/updated",
+      CodexSchema.V2AccountUpdatedNotification,
+      { authMode: "chatgpt", planType: "edu_pro" },
+    );
+
+    assert.equal(notification.planType, "unknown");
+  }),
+);
+
+it.effect("leaves planType inside opaque tool arguments untouched", () =>
+  Effect.gen(function* () {
+    const params = yield* Shared.decodeOptionalPayload(
+      "dynamicTool/call",
+      CodexSchema.ServerRequest__DynamicToolCallParams,
       {
-        account: {
-          type: "chatgpt",
-          email: "plus@example.com",
-          planType: "plus",
-        },
-        requiresOpenaiAuth: false,
+        arguments: { planType: "premium" },
+        callId: "call-1",
+        threadId: "thread-1",
+        tool: "billing_lookup",
+        turnId: "turn-1",
       },
     );
 
-    assert.equal(knownPlan.account?.type, "chatgpt");
-    if (knownPlan.account?.type === "chatgpt") {
-      assert.equal(knownPlan.account.planType, "plus");
-    }
+    assert.deepEqual(params.arguments, { planType: "premium" });
   }),
 );
 

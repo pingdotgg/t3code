@@ -3,6 +3,8 @@
 
 import * as Schema from "effect/Schema";
 
+import { ForwardCompatibleLiterals } from "../_internal/forwardCompatible.ts";
+
 export type ApplyPatchApprovalParams__FileChange =
   | { readonly content: string; readonly type: "add" }
   | { readonly content: string; readonly type: "delete" }
@@ -2417,20 +2419,23 @@ export type ServerNotification__PlanType =
   | "enterprise"
   | "edu"
   | "unknown";
-export const ServerNotification__PlanType = Schema.Literals([
-  "free",
-  "go",
-  "plus",
-  "pro",
-  "prolite",
-  "team",
-  "self_serve_business_usage_based",
-  "business",
-  "enterprise_cbp_usage_based",
-  "enterprise",
-  "edu",
+export const ServerNotification__PlanType = ForwardCompatibleLiterals(
+  [
+    "free",
+    "go",
+    "plus",
+    "pro",
+    "prolite",
+    "team",
+    "self_serve_business_usage_based",
+    "business",
+    "enterprise_cbp_usage_based",
+    "enterprise",
+    "edu",
+    "unknown",
+  ],
   "unknown",
-]);
+);
 
 export type ServerNotification__ProcessExitedNotification = {
   readonly exitCode: number;
@@ -3249,20 +3254,23 @@ export type V2AccountRateLimitsUpdatedNotification__PlanType =
   | "enterprise"
   | "edu"
   | "unknown";
-export const V2AccountRateLimitsUpdatedNotification__PlanType = Schema.Literals([
-  "free",
-  "go",
-  "plus",
-  "pro",
-  "prolite",
-  "team",
-  "self_serve_business_usage_based",
-  "business",
-  "enterprise_cbp_usage_based",
-  "enterprise",
-  "edu",
+export const V2AccountRateLimitsUpdatedNotification__PlanType = ForwardCompatibleLiterals(
+  [
+    "free",
+    "go",
+    "plus",
+    "pro",
+    "prolite",
+    "team",
+    "self_serve_business_usage_based",
+    "business",
+    "enterprise_cbp_usage_based",
+    "enterprise",
+    "edu",
+    "unknown",
+  ],
   "unknown",
-]);
+);
 
 export type V2AccountRateLimitsUpdatedNotification__RateLimitReachedType =
   | "rate_limit_reached"
@@ -3337,20 +3345,23 @@ export type V2AccountUpdatedNotification__PlanType =
   | "enterprise"
   | "edu"
   | "unknown";
-export const V2AccountUpdatedNotification__PlanType = Schema.Literals([
-  "free",
-  "go",
-  "plus",
-  "pro",
-  "prolite",
-  "team",
-  "self_serve_business_usage_based",
-  "business",
-  "enterprise_cbp_usage_based",
-  "enterprise",
-  "edu",
+export const V2AccountUpdatedNotification__PlanType = ForwardCompatibleLiterals(
+  [
+    "free",
+    "go",
+    "plus",
+    "pro",
+    "prolite",
+    "team",
+    "self_serve_business_usage_based",
+    "business",
+    "enterprise_cbp_usage_based",
+    "enterprise",
+    "edu",
+    "unknown",
+  ],
   "unknown",
-]);
+);
 
 export type V2AppListUpdatedNotification__AppBranding = {
   readonly category?: string | null;
@@ -4141,20 +4152,23 @@ export type V2GetAccountRateLimitsResponse__PlanType =
   | "enterprise"
   | "edu"
   | "unknown";
-export const V2GetAccountRateLimitsResponse__PlanType = Schema.Literals([
-  "free",
-  "go",
-  "plus",
-  "pro",
-  "prolite",
-  "team",
-  "self_serve_business_usage_based",
-  "business",
-  "enterprise_cbp_usage_based",
-  "enterprise",
-  "edu",
+export const V2GetAccountRateLimitsResponse__PlanType = ForwardCompatibleLiterals(
+  [
+    "free",
+    "go",
+    "plus",
+    "pro",
+    "prolite",
+    "team",
+    "self_serve_business_usage_based",
+    "business",
+    "enterprise_cbp_usage_based",
+    "enterprise",
+    "edu",
+    "unknown",
+  ],
   "unknown",
-]);
+);
 
 export type V2GetAccountRateLimitsResponse__RateLimitReachedType =
   | "rate_limit_reached"
@@ -4229,20 +4243,23 @@ export type V2GetAccountResponse__PlanType =
   | "enterprise"
   | "edu"
   | "unknown";
-export const V2GetAccountResponse__PlanType = Schema.Literals([
-  "free",
-  "go",
-  "plus",
-  "pro",
-  "prolite",
-  "team",
-  "self_serve_business_usage_based",
-  "business",
-  "enterprise_cbp_usage_based",
-  "enterprise",
-  "edu",
+export const V2GetAccountResponse__PlanType = ForwardCompatibleLiterals(
+  [
+    "free",
+    "go",
+    "plus",
+    "pro",
+    "prolite",
+    "team",
+    "self_serve_business_usage_based",
+    "business",
+    "enterprise_cbp_usage_based",
+    "enterprise",
+    "edu",
+    "unknown",
+  ],
   "unknown",
-]);
+);
 
 export type V2GetAccountTokenUsageResponse__AccountTokenUsageDailyBucket = {
   readonly startDate: string;

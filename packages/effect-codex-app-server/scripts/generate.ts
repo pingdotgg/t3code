@@ -183,6 +183,44 @@ const fetchDirectoryEntries = Effect.fn("fetchDirectoryEntries")(function* (path
   return yield* decodeGithubContentEntries(raw);
 });
 
+// Plan-type enums are `#[serde(other)]` catch-alls upstream: a codex binary newer
+// than the pinned protocol ref emits members this schema does not list (e.g.
+// "edu_plus", added in codex 0.148.0). Decode those to the catch-all member the
+// way serde does, so one unrecognised plan cannot fail the whole account payload.
+const FORWARD_COMPATIBLE_ENUM_PATTERN = /__PlanType$/;
+const FORWARD_COMPATIBLE_FALLBACK = "unknown";
+
+function applyForwardCompatibleEnum(name: string, code: string): string {
+  if (!FORWARD_COMPATIBLE_ENUM_PATTERN.test(name)) {
+    return code;
+  }
+
+  const [typeLine, constLine] = code.split("\n");
+  if (typeLine === undefined || constLine === undefined) {
+    throw new Error(`Malformed schema entry for ${name}`);
+  }
+
+  const match = /^(export const [A-Za-z0-9_]+ = )Schema\.Literals\((\[[^\]]*\])\)(.*)$/.exec(
+    constLine,
+  );
+  if (!match?.[1] || !match[2] || match[3] === undefined) {
+    throw new Error(
+      `Expected ${name} to be a literal union so the serde catch-all fallback can be applied`,
+    );
+  }
+
+  if (!(JSON.parse(match[2]) as ReadonlyArray<string>).includes(FORWARD_COMPATIBLE_FALLBACK)) {
+    throw new Error(
+      `Expected ${name} to include a ${JSON.stringify(FORWARD_COMPATIBLE_FALLBACK)} catch-all member`,
+    );
+  }
+
+  return [
+    typeLine,
+    `${match[1]}ForwardCompatibleLiterals(${match[2]}, ${JSON.stringify(FORWARD_COMPATIBLE_FALLBACK)})${match[3]}`,
+  ].join("\n");
+}
+
 function collectSchemaEntries(
   chunk: string,
 ): ReadonlyArray<{ readonly name: string; readonly code: string }> {
@@ -605,7 +643,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   if (output.length > 0) {
     for (const entry of collectSchemaEntries(output)) {
       if (!generatedEntries.has(entry.name)) {
-        generatedEntries.set(entry.name, entry.code);
+        generatedEntries.set(entry.name, applyForwardCompatibleEnum(entry.name, entry.code));
       }
     }
   }
@@ -638,6 +676,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   const schemaOutput = [
     ...prelude,
     'import * as Schema from "effect/Schema";',
+    'import { ForwardCompatibleLiterals } from "../_internal/forwardCompatible.ts";',
     "",
     [...generatedEntries.values()].join("\n\n"),
     "",
