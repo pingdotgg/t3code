@@ -159,6 +159,10 @@
       "types": "./src/connectAuth.ts",
       "import": "./src/connectAuth.ts"
     },
+    "./referral": {
+      "types": "./src/referral.ts",
+      "import": "./src/referral.ts"
+    },
     "./path": {
       "types": "./src/path.ts",
       "import": "./src/path.ts"

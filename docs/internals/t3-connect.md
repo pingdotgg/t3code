@@ -255,6 +255,22 @@ Desktop renders the same web bundle, so it has them too. The waitlist enrollment
 private beta was removed when Connect went GA; sign-up is open unless a Clerk restriction below is
 enabled.
 
+## Referral Points
+
+Referral points are account state owned by the hosted relay. `relay_referral_accounts` maps each
+Clerk user ID to one random referral code and records an optional referrer. The append-only
+`relay_referral_point_entries` table is the balance ledger; summaries derive the balance by summing
+the ledger instead of trusting a mutable counter.
+
+A signed-in user can claim one code only before their account has an environment link. The claim is
+pending until `linkEnvironment` succeeds for that account. The link handler then qualifies the
+referral and appends one 67-point ledger entry for the referrer. A unique index on referrer, reason,
+and referred user makes retries idempotent.
+
+Web and desktop expose referrals in the Clerk account menu. A hosted `?ref=` link is captured before
+sign-in and claimed after Clerk supplies the account session. Mobile exposes the same relay-backed
+summary under Settings and shares hosted links, so every client reads the same account balance.
+
 ## Restricting Sign-ups: Known-User Allowlist
 
 For a closed deployment where all permitted users are known in advance, restrict sign-up to

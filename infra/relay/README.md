@@ -20,6 +20,7 @@ The relay currently owns:
 - Provisioning and tracking managed environment endpoints.
 - Issuing short-lived credentials used to connect clients to linked environments.
 - Listing linked environments and registered mobile devices for an account.
+- Tracking account referral codes, qualification, and the referral-point ledger.
 - Registering mobile notification preferences and APNs tokens.
 - Receiving published agent activity and delivering notifications or Live Activity updates.
 - Persisting relay state and exposing relay-specific traces for diagnostics.
@@ -38,6 +39,7 @@ credential, or authorization behavior.
   provisioning, and connection flows.
 - [`src/agentActivity`](./src/agentActivity) contains mobile device registration, activity state,
   APNs delivery, and queue processing.
+- [`src/referrals`](./src/referrals) contains referral claiming, qualification, and balance logic.
 - [`src/auth`](./src/auth) contains relay token and DPoP proof handling.
 - [`src/persistence/schema.ts`](./src/persistence/schema.ts) defines persisted relay state. Keep
   schema and migration changes together.

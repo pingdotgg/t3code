@@ -76,6 +76,8 @@ function relayClient(
     relayUrl: "https://relay.example.test",
     listEnvironments: () => unsupported("listEnvironments"),
     listDevices: () => unsupported("listDevices"),
+    getReferralSummary: () => unsupported("getReferralSummary"),
+    claimReferral: () => unsupported("claimReferral"),
     createEnvironmentLinkChallenge: () => unsupported("createEnvironmentLinkChallenge"),
     linkEnvironment: () => unsupported("linkEnvironment"),
     unlinkEnvironment: () => unsupported("unlinkEnvironment"),

@@ -631,6 +631,38 @@ export const RelayListEnvironmentsResponse = Schema.Struct({
 });
 export type RelayListEnvironmentsResponse = typeof RelayListEnvironmentsResponse.Type;
 
+const RelayNonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+export const RelayReferralSummary = Schema.Struct({
+  points: RelayNonNegativeInt,
+  referralCode: TrimmedNonEmptyString,
+  awardPoints: Schema.Int.check(Schema.isGreaterThan(0)),
+  qualifiedReferrals: RelayNonNegativeInt,
+  pendingReferrals: RelayNonNegativeInt,
+  hasClaimedReferral: Schema.Boolean,
+});
+export type RelayReferralSummary = typeof RelayReferralSummary.Type;
+
+export const RelayReferralClaimRequest = Schema.Struct({
+  referralCode: TrimmedNonEmptyString,
+});
+export type RelayReferralClaimRequest = typeof RelayReferralClaimRequest.Type;
+
+export const RelayReferralClaimResult = Schema.Literals([
+  "claimed",
+  "already_claimed",
+  "invalid_code",
+  "self_referral",
+  "ineligible",
+]);
+export type RelayReferralClaimResult = typeof RelayReferralClaimResult.Type;
+
+export const RelayReferralClaimResponse = Schema.Struct({
+  result: RelayReferralClaimResult,
+  summary: RelayReferralSummary,
+});
+export type RelayReferralClaimResponse = typeof RelayReferralClaimResponse.Type;
+
 export const RelayEnvironmentConnectRequest = Schema.Struct({
   deviceId: Schema.optional(
     TrimmedNonEmptyString.annotate({
@@ -958,6 +990,17 @@ export const RelayClientGroup = HttpApiGroup.make("client")
       success: RelayListDevicesResponse,
       error: RelayAuthAndInternalErrors,
     }).annotate(OpenApi.Summary, "List registered mobile devices"),
+    HttpApiEndpoint.get("getReferralSummary", "/v1/client/referrals", {
+      headers: RelayBearerRequestHeaders,
+      success: RelayReferralSummary,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Read the signed-in account's referral points"),
+    HttpApiEndpoint.post("claimReferral", "/v1/client/referrals/claim", {
+      headers: RelayBearerRequestHeaders,
+      payload: RelayReferralClaimRequest,
+      success: RelayReferralClaimResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Claim a referral code"),
     HttpApiEndpoint.post("linkEnvironment", "/v1/client/environment-links", {
       headers: RelayBearerRequestHeaders,
       payload: RelayEnvironmentLinkRequest,

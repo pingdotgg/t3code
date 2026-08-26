@@ -14,6 +14,7 @@ import { afterEach, vi } from "vite-plus/test";
 
 import * as ManagedRelay from "./managedRelay.ts";
 import {
+  claimManagedRelayReferral,
   createManagedRelayQueryManager,
   createManagedRelaySession,
   deregisterManagedRelayEnvironment,
@@ -58,6 +59,15 @@ const device = {
   updatedAt: "2026-06-01T00:00:00.000Z",
 } satisfies RelayClientDeviceRecord;
 
+const referralSummary = {
+  points: 67,
+  referralCode: "ABCD1234EFAB5678",
+  awardPoints: 67,
+  qualifiedReferrals: 1,
+  pendingReferrals: 0,
+  hasClaimedReferral: false,
+} as const;
+
 function resetRegistry() {
   registry.dispose();
   registry = AtomRegistry.make();
@@ -68,6 +78,8 @@ function createClient(overrides?: Partial<ManagedRelay.ManagedRelayClient["Servi
     relayUrl: "https://relay.example.test",
     listEnvironments: () => Effect.succeed([environment]),
     listDevices: () => Effect.succeed([device]),
+    getReferralSummary: () => Effect.die("unused"),
+    claimReferral: () => Effect.die("unused"),
     createEnvironmentLinkChallenge: () => Effect.die("unused"),
     linkEnvironment: () => Effect.die("unused"),
     unlinkEnvironment: () => Effect.die("unused"),
@@ -142,6 +154,28 @@ describe("createManagedRelayQueryManager", () => {
       expect(unlinkEnvironment).toHaveBeenCalledWith({
         clerkToken: "clerk-token",
         environmentId: environment.environmentId,
+      });
+    }),
+  );
+
+  it.effect("claims a referral through the current account session", () =>
+    Effect.gen(function* () {
+      const claimReferral = vi.fn(() =>
+        Effect.succeed({ result: "claimed" as const, summary: referralSummary }),
+      );
+      setSession();
+
+      expect(
+        yield* claimManagedRelayReferral(registry, {
+          accountId: "account-1",
+          referralCode: referralSummary.referralCode,
+        }).pipe(
+          Effect.provideService(ManagedRelay.ManagedRelayClient, createClient({ claimReferral })),
+        ),
+      ).toEqual({ result: "claimed", summary: referralSummary });
+      expect(claimReferral).toHaveBeenCalledWith({
+        clerkToken: "clerk-token",
+        referralCode: referralSummary.referralCode,
       });
     }),
   );
@@ -347,6 +381,19 @@ describe("createManagedRelayQueryManager", () => {
     await vi.waitFor(() => {
       expect(readManagedRelaySnapshotState(registry.get(atom)).data).toEqual([device]);
     });
+  });
+
+  it("loads referral points through the current account session", async () => {
+    const getReferralSummary = vi.fn(() => Effect.succeed(referralSummary));
+    const manager = createManager({ getReferralSummary });
+    setSession();
+    const atom = manager.referralSummaryAtom("account-1");
+
+    registry.get(atom);
+    await vi.waitFor(() => {
+      expect(readManagedRelaySnapshotState(registry.get(atom)).data).toEqual(referralSummary);
+    });
+    expect(getReferralSummary).toHaveBeenCalledWith({ clerkToken: "clerk-token" });
   });
 
   it("reports token and relay request phases for environment status queries", async () => {

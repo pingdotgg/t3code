@@ -458,6 +458,14 @@ function ConfiguredSettingsRouteScreen() {
               value={accountLabel}
               onPress={openAccount}
             />
+            {isSignedIn ? (
+              <SettingsRow
+                icon="link"
+                label="Referrals"
+                value="67 points each"
+                target="SettingsReferrals"
+              />
+            ) : null}
           </SettingsSection>
           <Text className="px-2 text-sm text-foreground-muted">
             T3 Code works locally without signing in. Cloud features are optional.

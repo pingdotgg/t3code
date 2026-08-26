@@ -67,6 +67,7 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
+import * as ReferralProgram from "../referrals/ReferralProgram.ts";
 import { withSpanAttributes } from "../observability.ts";
 import * as RelayDb from "../db.ts";
 
@@ -532,6 +533,7 @@ export const clientApi = HttpApiBuilder.group(
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
     const devices = yield* Devices.Devices;
+    const referrals = yield* ReferralProgram.ReferralProgram;
     return handlers
       .handle(
         "listEnvironments",
@@ -549,6 +551,20 @@ export const clientApi = HttpApiBuilder.group(
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
+        "getReferralSummary",
+        Effect.fn("relay.api.client.getReferralSummary")(function* () {
+          const { userId } = yield* RelayClientPrincipal;
+          return yield* referrals.getSummary({ userId });
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "claimReferral",
+        Effect.fn("relay.api.client.claimReferral")(function* ({ payload }) {
+          const { userId } = yield* RelayClientPrincipal;
+          return yield* referrals.claim({ userId, referralCode: payload.referralCode });
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
         "linkEnvironment",
         Effect.fn("relay.api.client.linkEnvironment")(
           function* (args) {
@@ -556,6 +572,7 @@ export const clientApi = HttpApiBuilder.group(
             yield* appendRelayCredentialResponseHeaders;
             const { userId } = yield* RelayClientPrincipal;
             const result = yield* linker.link({ userId, request: payload });
+            yield* referrals.qualify({ userId });
             return {
               ok: true,
               cloudUserId: userId,
@@ -1025,6 +1042,7 @@ const RelayCommonPersistenceError = Schema.Union([
   AgentActivityRows.AgentActivityRowListPersistenceError,
   LiveActivities.LiveActivityDeliveryMarkPersistenceError,
   DeliveryAttempts.DeliveryAttemptRecordPersistenceError,
+  ReferralProgram.ReferralProgramPersistenceError,
 ]);
 type RelayCommonPersistenceError = typeof RelayCommonPersistenceError.Type;
 const isRelayCommonPersistenceError = Schema.is(RelayCommonPersistenceError);

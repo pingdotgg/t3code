@@ -1,9 +1,10 @@
 import { UserButton, useAuth } from "@clerk/react";
-import { LogInIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
+import { GiftIcon, LogInIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { MobileClientsUserProfilePage } from "./MobileClientsUserProfilePage";
+import { ReferralsUserProfilePage } from "./ReferralsUserProfilePage";
 import { T3ConnectUserProfilePage } from "./T3ConnectUserProfilePage";
 import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
 
@@ -46,6 +47,13 @@ function ConfiguredT3ConnectSidebarAvatar() {
         url="t3-connect"
       >
         <T3ConnectUserProfilePage />
+      </UserButton.UserProfilePage>
+      <UserButton.UserProfilePage
+        label="Referrals"
+        labelIcon={<GiftIcon className="size-4" />}
+        url="referrals"
+      >
+        <ReferralsUserProfilePage />
       </UserButton.UserProfilePage>
     </UserButton>
   );

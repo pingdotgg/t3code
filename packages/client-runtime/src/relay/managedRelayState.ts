@@ -47,7 +47,7 @@ export interface ManagedRelaySnapshotState<A> {
 }
 
 export interface ManagedRelayQueryEvent {
-  readonly operation: "environments" | "devices" | "environment-status";
+  readonly operation: "environments" | "devices" | "referrals" | "environment-status";
   readonly stage: "clerk-token" | "relay-request" | "validation";
   readonly phase: "start" | "success" | "failure";
   readonly accountId: string;
@@ -237,6 +237,23 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
   yield* relay.unlinkEnvironment({ clerkToken, environmentId: input.environmentId });
 });
 
+export const claimManagedRelayReferral = Effect.fn(
+  "clientRuntime.managedRelaySession.claimReferral",
+)(function* (
+  registry: AtomRegistry.AtomRegistry,
+  input: { readonly accountId: string; readonly referralCode: string },
+) {
+  const session = registry.get(managedRelaySessionAtom);
+  if (!session || session.accountId !== input.accountId) {
+    return yield* new ManagedRelaySessionError({
+      message: "Sign in to T3 Connect before claiming a referral code.",
+    });
+  }
+  const clerkToken = yield* readSessionClerkToken(session);
+  const relay = yield* ManagedRelay.ManagedRelayClient;
+  return yield* relay.claimReferral({ clerkToken, referralCode: input.referralCode });
+});
+
 function requireClerkToken(
   get: Atom.AtomContext,
   accountId: string,
@@ -407,6 +424,29 @@ export function createManagedRelayQueryManager(
       ),
   );
 
+  const referralSummaryAtom = Atom.family((accountId: string) =>
+    runtime
+      .atom((get) =>
+        Effect.gen(function* () {
+          const base = { operation: "referrals" as const, accountId };
+          const clerkToken = yield* observe(
+            { ...base, stage: "clerk-token" },
+            requireClerkToken(get, accountId),
+          );
+          const relay = yield* ManagedRelay.ManagedRelayClient;
+          return yield* observe(
+            { ...base, stage: "relay-request" },
+            relay.getReferralSummary({ clerkToken }),
+          );
+        }),
+      )
+      .pipe(
+        Atom.swr({ staleTime, revalidateOnMount: true }),
+        Atom.setIdleTTL(idleTtl),
+        Atom.withLabel(`managed-relay:referrals:${accountId}`),
+      ),
+  );
+
   const environmentStatusAtom = Atom.family((key: string) => {
     const { accountId, environment } = parseStatusKey(key);
     return runtime
@@ -446,6 +486,7 @@ export function createManagedRelayQueryManager(
   return {
     environmentsAtom,
     devicesAtom,
+    referralSummaryAtom: (accountId: string) => referralSummaryAtom(accountId),
     environmentStatusAtom: (input: {
       readonly accountId: string;
       readonly environment: RelayClientEnvironmentRecord;
@@ -455,6 +496,9 @@ export function createManagedRelayQueryManager(
     },
     refreshDevices(registry: AtomRegistry.AtomRegistry, accountId: string): void {
       registry.refresh(devicesAtom(accountId));
+    },
+    refreshReferralSummary(registry: AtomRegistry.AtomRegistry, accountId: string): void {
+      registry.refresh(referralSummaryAtom(accountId));
     },
     refreshEnvironmentStatus(
       registry: AtomRegistry.AtomRegistry,

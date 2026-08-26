@@ -22,6 +22,8 @@ import {
   RelayMobileRegistrationScope,
   type RelayOkResponse,
   type RelayPublicClientId,
+  type RelayReferralClaimResponse,
+  type RelayReferralSummary,
   RelayRegisterDeviceEndpoint,
   RelayAgentActivitySnapshotEndpoint,
   RelayRegisterLiveActivityEndpoint,
@@ -86,6 +88,8 @@ export const ManagedRelayRequestAction = Schema.Literals([
   "exchange relay DPoP access token",
   "list relay-managed environments",
   "list relay client devices",
+  "read referral points",
+  "claim referral code",
   "create relay environment link challenge",
   "link relay environment",
   "unlink relay environment",
@@ -102,6 +106,8 @@ export const ManagedRelayRequestActivity = Schema.Literals([
   "Relay DPoP access token exchange",
   "Relay environment listing",
   "Relay client device listing",
+  "Relay referral summary",
+  "Relay referral claim",
   "Relay environment link challenge",
   "Relay environment linking",
   "Relay environment unlinking",
@@ -259,6 +265,13 @@ export class ManagedRelayClient extends Context.Service<
     readonly listDevices: (input: {
       readonly clerkToken: string;
     }) => Effect.Effect<ReadonlyArray<RelayClientDeviceRecord>, ManagedRelayClientError>;
+    readonly getReferralSummary: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<RelayReferralSummary, ManagedRelayClientError>;
+    readonly claimReferral: (input: {
+      readonly clerkToken: string;
+      readonly referralCode: string;
+    }) => Effect.Effect<RelayReferralClaimResponse, ManagedRelayClientError>;
     readonly createEnvironmentLinkChallenge: (input: {
       readonly clerkToken: string;
       readonly payload: RelayEnvironmentLinkChallengeRequest;
@@ -407,6 +420,8 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
     relayUrl,
     listEnvironments: unavailable("clientRuntime.managedRelay.listEnvironments"),
     listDevices: unavailable("clientRuntime.managedRelay.listDevices"),
+    getReferralSummary: unavailable("clientRuntime.managedRelay.getReferralSummary"),
+    claimReferral: unavailable("clientRuntime.managedRelay.claimReferral"),
     createEnvironmentLinkChallenge: unavailable(
       "clientRuntime.managedRelay.createEnvironmentLinkChallenge",
     ),
@@ -719,6 +734,33 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           );
       },
       Effect.withSpan("clientRuntime.managedRelay.listDevices"),
+      withRelayClientTracing,
+    ),
+    getReferralSummary: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .getReferralSummary({ headers: bearerHeaders(input.clerkToken) })
+          .pipe(
+            Effect.mapError(relayRequestError("read referral points")),
+            timeoutRelayRequest("Relay referral summary"),
+          );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.getReferralSummary"),
+      withRelayClientTracing,
+    ),
+    claimReferral: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .claimReferral({
+            headers: bearerHeaders(input.clerkToken),
+            payload: { referralCode: input.referralCode },
+          })
+          .pipe(
+            Effect.mapError(relayRequestError("claim referral code")),
+            timeoutRelayRequest("Relay referral claim"),
+          );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.claimReferral"),
       withRelayClientTracing,
     ),
     createEnvironmentLinkChallenge: Effect.fnUntraced(
