@@ -1,17 +1,4 @@
-/**
- * CursorDriver — `ProviderDriver` for the Cursor Agent (`cursor-agent`) runtime.
- *
- * Cursor exposes an ACP-based CLI. Model catalog and capability refreshes
- * happen during the managed provider status check via Cursor's
- * `list_available_models` extension method.
- *
- * Text generation is supported via the ACP runtime — `makeCursorTextGeneration`
- * drives `runtime.prompt` with a structured-output schema and collects the
- * agent's `agent_message_chunk` stream into a single JSON blob.
- *
- * @module provider/Drivers/CursorDriver
- */
-import { CursorSettings, ProviderDriverKind } from "@t3tools/contracts";
+import { PiSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,14 +10,14 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
+import { makePiTextGeneration } from "../../textGeneration/PiTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
+import { makePiAdapter } from "../Layers/PiAdapter.ts";
 import {
-  buildInitialCursorProviderSnapshot,
-  checkCursorProviderStatus,
-  enrichCursorSnapshot,
-} from "../Layers/CursorProvider.ts";
+  buildInitialPiProviderSnapshot,
+  checkPiProviderStatus,
+  enrichPiSnapshot,
+} from "../Layers/PiProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -41,8 +28,8 @@ import {
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { makeWithInstanceIdentity } from "./providerIdentity.ts";
 import {
-  makeProviderMaintenanceCapabilities,
-  type ProviderMaintenanceCapabilitiesResolver,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  makeStaticProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -50,21 +37,18 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
-const DRIVER_KIND = ProviderDriverKind.make("cursor");
-const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
-  resolve: (options) =>
-    makeProviderMaintenanceCapabilities({
-      provider: DRIVER_KIND,
-      packageName: null,
-      updateExecutable: options?.binaryPath?.trim() || "cursor-agent",
-      updateArgs: ["update"],
-      updateLockKey: "cursor-agent",
-    }),
-};
+const decodePiSettings = Schema.decodeSync(PiSettings);
 
-export type CursorDriverEnv =
+const DRIVER_KIND = ProviderDriverKind.make("pi");
+const UPDATE = makeStaticProviderMaintenanceResolver(
+  makeManualOnlyProviderMaintenanceCapabilities({
+    provider: DRIVER_KIND,
+    packageName: "@earendil-works/pi-coding-agent",
+  }),
+);
+
+export type PiDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
@@ -77,20 +61,18 @@ export type CursorDriverEnv =
 
 const withInstanceIdentity = makeWithInstanceIdentity(DRIVER_KIND);
 
-export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
+export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
   driverKind: DRIVER_KIND,
   metadata: {
-    displayName: "Cursor",
+    displayName: "Pi",
     supportsMultipleInstances: true,
   },
-  configSchema: CursorSettings,
-  defaultConfig: (): CursorSettings => decodeCursorSettings({}),
+  configSchema: PiSettings,
+  defaultConfig: (): PiSettings => decodePiSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
@@ -105,55 +87,50 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
+      const effectiveConfig = { ...config, enabled } satisfies PiSettings;
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
       });
 
-      const adapter = yield* makeCursorAdapter(effectiveConfig, {
+      const adapter = yield* makePiAdapter(effectiveConfig, {
         environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
       });
-      const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
+      const textGeneration = yield* makePiTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv).pipe(
+      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+
+      const checkProvider = Effect.flatMap(snapshotSettings.getSettings, (settings) =>
+        checkPiProviderStatus(settings.provider, processEnv),
+      ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
       );
-
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
-      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<CursorSettings>>({
+      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<PiSettings>>({
         maintenanceCapabilities,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          buildInitialCursorProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
+          buildInitialPiProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        // Model catalog and capabilities come exclusively from Cursor's
-        // list_available_models extension method during provider checks.
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-          enrichCursorSnapshot({
-            settings: settings.provider,
+          enrichPiSnapshot({
             snapshot: currentSnapshot,
             maintenanceCapabilities,
             enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
             publishSnapshot,
-            stampIdentity,
             httpClient,
-          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+          }),
       }).pipe(
         Effect.mapError(
           (cause) =>
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Cursor snapshot: ${cause.message ?? String(cause)}`,
+              detail: `Failed to build Pi snapshot: ${cause.message ?? String(cause)}`,
               cause,
             }),
         ),
