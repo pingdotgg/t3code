@@ -265,6 +265,22 @@ export const ShellSettingsState = Schema.Struct({
 });
 export type ShellSettingsState = typeof ShellSettingsState.Type;
 
+/**
+ * Published under the `theme` key: the page's resolved active theme, so the
+ * shell's default look is whatever the user picked in Settings. Colours are
+ * theme roles (see ThemeColorRole) resolved to `#rrggbb[aa]`.
+ */
+export const ShellThemeState = Schema.Struct({
+  id: Schema.NullOr(Schema.String),
+  appearance: Schema.Literals(["light", "dark"]),
+  colors: Schema.Record(Schema.String, Schema.String),
+  /** `--radius` in CSS pixels. */
+  radius: Schema.Number,
+  fontUi: Schema.NullOr(Schema.String),
+  fontMono: Schema.NullOr(Schema.String),
+});
+export type ShellThemeState = typeof ShellThemeState.Type;
+
 /** Actions the shell's chrome dispatches; `type` is the action name on the wire. */
 export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("thread.open"), key: Schema.String }),
