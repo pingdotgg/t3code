@@ -357,6 +357,11 @@ export const make = Effect.gen(function* () {
       yield* failPendingCapture;
       const uptime = (yield* Clock.currentTimeMillis) - startedAt;
       const intentional = yield* Ref.getAndSet(intentionalRestartRef, false);
+      // A healthy run forgives past instability: without this, one crash long
+      // after a rough start would still wait the maximum backoff.
+      if (uptime >= HELPER_FAST_EXIT_WINDOW_MS) {
+        restarts = 0;
+      }
       if (!intentional) {
         fastExits = uptime < HELPER_FAST_EXIT_WINDOW_MS ? fastExits + 1 : 1;
         if (fastExits >= HELPER_MAX_FAST_EXITS) {
