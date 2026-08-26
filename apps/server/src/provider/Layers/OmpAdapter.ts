@@ -83,6 +83,10 @@ export interface OmpAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   /** Overrides construction settings when a session starts. */
   readonly resolveSettings?: Effect.Effect<OmpSettings>;
+  readonly makeEventStamp?: () => Effect.Effect<{
+    readonly eventId: EventId;
+    readonly createdAt: string;
+  }>;
 }
 
 interface PendingApproval {
@@ -177,7 +181,8 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
       ),
     );
     const nextEventId = Effect.map(randomUUIDv4, (id) => EventId.make(id));
-    const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
+    const makeEventStamp =
+      options?.makeEventStamp ?? (() => Effect.all({ eventId: nextEventId, createdAt: nowIso }));
     const mapAcpCallbackFailure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.mapError(
@@ -411,9 +416,13 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
             const sessionScope = yield* Scope.make("sequential");
             let sessionScopeTransferred = false;
-            yield* Effect.addFinalizer(() =>
-              sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
-            );
+            let startupContext: OmpSessionContext | undefined;
+            yield* Effect.addFinalizer(() => {
+              if (sessionScopeTransferred) return Effect.void;
+              return startupContext
+                ? stopSessionInternal(startupContext).pipe(Effect.ignore)
+                : Scope.close(sessionScope, Exit.void).pipe(Effect.ignore);
+            });
             let ctx!: OmpSessionContext;
 
             const resumeSessionId = parseOmpResume(input.resumeCursor)?.sessionId;
@@ -639,6 +648,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
               activeTurnId: undefined,
               stopped: false,
             };
+            startupContext = ctx;
 
             const nf = yield* Stream.runDrain(
               Stream.mapEffect(acp.getEvents(), (event) =>
@@ -784,7 +794,6 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
               Effect.forkIn(adapterScope),
             );
             ctx.exitFiber = exitFiber;
-            sessionScopeTransferred = true;
 
             yield* offerRuntimeEvent({
               type: "session.started",
@@ -807,6 +816,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
               threadId: input.threadId,
               payload: { providerThreadId: started.sessionId },
             });
+            sessionScopeTransferred = true;
 
             return session;
           }).pipe(Effect.scoped),

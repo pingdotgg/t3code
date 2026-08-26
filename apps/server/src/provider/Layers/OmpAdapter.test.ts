@@ -39,6 +39,11 @@ class FaultingNativeLogOmpAdapter extends Context.Service<
   OmpAdapterShape
 >()("t3/provider/Layers/OmpAdapter.test/FaultingNativeLogOmpAdapter") {}
 
+class FailingStartupStampOmpAdapter extends Context.Service<
+  FailingStartupStampOmpAdapter,
+  OmpAdapterShape
+>()("t3/provider/Layers/OmpAdapter.test/FailingStartupStampOmpAdapter") {}
+
 async function makeMockAgentWrapper(extraEnv?: Record<string, string>) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "omp-acp-mock-"));
   const wrapperPath = NodePath.join(dir, "fake-omp.sh");
@@ -109,6 +114,56 @@ const faultingNativeLogOmpAdapterTestLayer = it.layer(
   ),
 );
 
+const failingStartupStampOmpAdapterTestLayer = it.layer(
+  Layer.effect(
+    FailingStartupStampOmpAdapter,
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const resolveSettings = serverSettings.getSettings.pipe(
+        Effect.map((snapshot) => snapshot.providers.omp),
+        Effect.orDie,
+      );
+      return yield* makeOmpAdapter(decodeOmpSettings({}), {
+        resolveSettings,
+        makeEventStamp: () => Effect.die("simulated startup event stamp failure"),
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3code-omp-adapter-startup-failure-test-",
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+failingStartupStampOmpAdapterTestLayer("OmpAdapter startup cleanup", (it) => {
+  it.effect("removes a session when startup event stamping fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* FailingStartupStampOmpAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* serverSettings.updateSettings({
+        providers: { omp: { binaryPath: wrapperPath, enabled: true } },
+      });
+      const threadId = ThreadId.make("omp-startup-stamp-failure");
+
+      const result = yield* adapter
+        .startSession({
+          threadId,
+          provider: ProviderDriverKind.make("omp"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.exit);
+
+      assert.equal(result._tag, "Failure");
+      assert.isFalse(yield* adapter.hasSession(threadId));
+    }),
+  );
+});
 describe("OMP elicitation mapping", () => {
   it("maps OMP choice forms and custom answers", () => {
     const request = {
