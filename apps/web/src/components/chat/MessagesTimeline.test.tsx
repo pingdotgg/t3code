@@ -415,7 +415,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain("1 changed file");
     expect(markup).toContain('data-timeline-row-kind="turn-fold"');
-    expect(markup).toContain('data-timeline-row-kind="turn-diff"><div class="px-1">');
+    expect(markup).toContain('data-timeline-row-kind="turn-diff"><div class="min-w-0 px-1">');
     expect(markup).toMatch(/class="[^"]*@container\/changed-files[^"]*mt-0[^"]*"/u);
     expect(markup.indexOf('data-timeline-row-kind="turn-diff"')).toBeGreaterThan(
       markup.indexOf('data-timeline-row-kind="turn-fold"'),

@@ -1633,7 +1633,7 @@ function TurnDiffTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   const expanded = persistedExpanded ?? (isLatestTurn && autoExpanded);
 
   return (
-    <div className="px-1">
+    <div className="min-w-0 px-1">
       <ChangedFilesCard
         className="mt-0"
         turnId={turnSummary.turnId}
