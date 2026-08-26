@@ -3455,9 +3455,14 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
+      // The embed document has no composer; the primary's bridge adds it.
+      if (presentation === "rightPanel" && window.t3Shell) {
+        void window.t3Shell.dispatch("composer.terminalContext.add", selection);
+        return;
+      }
       composerRef.current?.addTerminalContext(selection);
     },
-    [composerRef],
+    [composerRef, presentation],
   );
   const setTerminalOpen = useCallback(
     (open: boolean) => {

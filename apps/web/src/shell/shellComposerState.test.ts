@@ -47,6 +47,8 @@ function baseInput() {
     triggerKind: null,
     suggestions: [],
     suggestionsEmptyText: null,
+    attachments: [],
+    terminalContexts: [],
     placeholder: "Ask anything",
     editorDisabled: false,
     hasSendableContent: true,

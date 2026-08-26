@@ -14,6 +14,10 @@ import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useRef } from "react";
 
 import type { ComposerCommandItem } from "../components/chat/ComposerCommandMenu";
+import {
+  normalizeTerminalContextSelection,
+  type TerminalContextSelection,
+} from "../lib/terminalContext";
 import { expandCollapsedComposerCursor } from "../composer-logic";
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import type { AppModelOption } from "../modelSelection";
@@ -43,6 +47,18 @@ export interface ShellComposerBridgeProps {
   readonly onCursorChange: (expandedCursor: number) => void;
   readonly onSelectSuggestion: (item: ComposerCommandItem) => void;
   readonly onDismissSuggestions: () => void;
+  /** The drop pipeline (validation, limits, downscaling, uploads). */
+  readonly onAttachFiles: (files: File[]) => void;
+  readonly onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  readonly attachments: ReadonlyArray<{ id: string; name: string }>;
+  readonly terminalContexts: ReadonlyArray<{
+    id: string;
+    terminalLabel: string;
+    lineStart: number;
+    lineEnd: number;
+  }>;
+  readonly onRemoveAttachment: (id: string) => void;
+  readonly onRemoveTerminalContext: (id: string) => void;
   readonly placeholder: string;
   readonly editorDisabled: boolean;
   readonly hasSendableContent: boolean;
@@ -122,6 +138,13 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
           description: item.description,
         })),
         suggestionsEmptyText: props.suggestionsEmptyText,
+        attachments: props.attachments.map((image) => ({ id: image.id, name: image.name })),
+        terminalContexts: props.terminalContexts.map((context) => ({
+          id: context.id,
+          label: context.terminalLabel,
+          lineStart: context.lineStart,
+          lineEnd: context.lineEnd,
+        })),
         placeholder: props.placeholder,
         editorDisabled: props.editorDisabled,
         hasSendableContent: props.hasSendableContent,
@@ -196,6 +219,32 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
           case "composer.suggest.dismiss":
             current.onDismissSuggestions();
             return;
+          case "composer.attach": {
+            const files: File[] = [];
+            for (const entry of candidate.files) {
+              const bytes = Uint8Array.from(atob(entry.base64), (char) => char.charCodeAt(0));
+              files.push(new File([bytes], entry.name, { type: entry.mimeType }));
+            }
+            if (files.length > 0) current.onAttachFiles(files);
+            return;
+          }
+          case "composer.attachment.remove":
+            current.onRemoveAttachment(candidate.id);
+            return;
+          case "composer.terminalContext.remove":
+            current.onRemoveTerminalContext(candidate.id);
+            return;
+          case "composer.terminalContext.add": {
+            const selection = normalizeTerminalContextSelection({
+              terminalId: candidate.terminalId,
+              terminalLabel: candidate.terminalLabel,
+              lineStart: candidate.lineStart,
+              lineEnd: candidate.lineEnd,
+              text: candidate.text,
+            });
+            if (selection) current.onAddTerminalContext(selection);
+            return;
+          }
           case "composer.submit":
             if (candidate.text !== undefined) {
               current.setPrompt(candidate.text);

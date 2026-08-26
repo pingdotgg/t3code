@@ -29,6 +29,8 @@ export interface ShellComposerStateInput {
   readonly triggerKind: ShellComposerState["triggerKind"];
   readonly suggestions: ReadonlyArray<ShellComposerSuggestion>;
   readonly suggestionsEmptyText: string | null;
+  readonly attachments: ShellComposerState["attachments"];
+  readonly terminalContexts: ShellComposerState["terminalContexts"];
   readonly placeholder: string;
   readonly editorDisabled: boolean;
   readonly hasSendableContent: boolean;
@@ -123,6 +125,8 @@ export function buildShellComposerState(input: ShellComposerStateInput): ShellCo
     triggerKind: input.triggerKind,
     suggestions: input.suggestions,
     suggestionsEmptyText: input.suggestionsEmptyText,
+    attachments: input.attachments,
+    terminalContexts: input.terminalContexts,
     placeholder: input.placeholder,
     editorDisabled: input.editorDisabled,
     canSend: !blocked && (input.hasSendableContent || input.showPlanFollowUpPrompt),

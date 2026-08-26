@@ -5561,6 +5561,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onCursorChange={onShellCursorChange}
                 onSelectSuggestion={onSelectComposerItem}
                 onDismissSuggestions={dismissComposerTrigger}
+                onAttachFiles={(files) => {
+                  void addComposerAttachments(files);
+                }}
+                onAddTerminalContext={(selection) => {
+                  composerRef.current?.addTerminalContext(selection);
+                }}
+                attachments={composerImages}
+                terminalContexts={composerTerminalContexts}
+                onRemoveAttachment={removeComposerImage}
+                onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 placeholder={composerPlaceholder}
                 editorDisabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
                 hasSendableContent={composerSendState.hasSendableContent}
