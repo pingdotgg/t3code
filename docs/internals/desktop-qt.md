@@ -191,10 +191,29 @@ Actions (`Shell.dispatch(name, payload)` in QML → `ShellAction` on the page):
 `pullRequests.open`, `usage.open`, `palette.open`. Unknown or malformed
 actions are dropped by the schema guard.
 
+### `composer`
+
+`apps/web/src/shell/ShellComposerBridge.tsx` is mounted _inside_
+`ChatComposer` when hosted, so approvals, user-input questions, plan
+follow-ups, attachments and mentions keep their one implementation. It
+publishes `ShellComposerState` — draft text, placeholder, whether sending is
+possible and why not, running/connecting flags, enabled provider instances
+with their models (and per-model disabled reasons), the selected model, the
+provider option descriptors (reasoning effort etc.), runtime modes and the
+plan/build toggle. `ChatComposer` hides its editor and footer when hosted;
+the editor comes back for approval and user-input flows, which type answers
+through it.
+
+Actions: `composer.text.set {text}` (debounced from the QML editor),
+`composer.submit {text?, intent?}` (text rides along so the send is atomic
+with the last edit), `composer.interrupt`, `composer.model.select
+{instanceId, model}`, `composer.option.set {id, value}`,
+`composer.runtimeMode.set {mode}`, `composer.interactionMode.set {mode}`.
+
 ## Splitting chrome out
 
-Order of work: sidebar (done: `Sidebar` brick), then composer, right panel,
-workspace switcher, settings. The timeline and terminal stay HTML. Each split-out piece becomes one
+Order of work: sidebar (done: `Sidebar` brick), composer (done: `Composer`
+brick), then right panel, workspace switcher, settings. The timeline and terminal stay HTML. Each split-out piece becomes one
 brick with a documented state/action surface; in the shell the SPA simply does
 not render the parts that moved out. When an HTML brick needs to live somewhere
 QML decides (for example the terminal), it becomes a second `WebEngineView`
