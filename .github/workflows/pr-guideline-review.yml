@@ -1,0 +1,135 @@
+name: PR Guideline Review
+
+on:
+  pull_request:
+    types: [opened, reopened, edited, synchronize, ready_for_review]
+    paths:
+      - .github/scripts/pr-guideline-review.cjs
+      - .github/scripts/pr-guideline-review.test.cjs
+      - .github/workflows/pr-guideline-review.yml
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize, ready_for_review]
+
+permissions: {}
+
+jobs:
+  validate:
+    name: Validate contribution reviewer
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: pr-guideline-validate-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: Download proposed reviewer
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const pull = context.payload.pull_request;
+            const source = pull.head.repo?.full_name ?? context.payload.repository.full_name;
+            const [owner, repo] = source.split("/");
+            const files = [
+              ".github/scripts/pr-guideline-review.cjs",
+              ".github/scripts/pr-guideline-review.test.cjs",
+            ];
+
+            for (const file of files) {
+              let data;
+              try {
+                ({ data } = await github.rest.repos.getContent({
+                  owner,
+                  repo,
+                  path: file,
+                  ref: pull.head.sha,
+                }));
+              } catch (error) {
+                throw new Error(
+                  `Could not load ${file} at ${pull.head.sha}: ${error instanceof Error ? error.message : String(error)}`,
+                );
+              }
+              if (
+                Array.isArray(data) ||
+                data.type !== "file" ||
+                data.encoding !== "base64" ||
+                !data.content
+              ) {
+                throw new Error(
+                  `Expected ${file} at ${pull.head.sha} to be a base64 file within GitHub's 1 MB inline-content limit.`,
+                );
+              }
+
+              fs.mkdirSync(path.dirname(file), { recursive: true });
+              fs.writeFileSync(file, Buffer.from(data.content, "base64"));
+            }
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.13.1
+
+      - name: Test proposed reviewer
+        run: |
+          node --test --test-reporter=tap .github/scripts/pr-guideline-review.test.cjs | tee tap.log
+          grep -Eq '^# pass [1-9][0-9]*$' tap.log
+
+  review:
+    name: Review contribution guidelines
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    timeout-minutes: 5
+    concurrency:
+      group: pr-guideline-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      # pull_request_target has a write-capable token for fork PRs. Load only
+      # the trusted base-branch reviewer. PR files are API data and are never
+      # checked out or executed.
+      - name: Checkout trusted reviewer
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/VOUCHED.td
+            CONTRIBUTING_VOUCHED.md
+          sparse-checkout-cone-mode: false
+
+      - name: Update contribution sniff test
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require("node:fs");
+            const reviewer = require("./.github/scripts/pr-guideline-review.cjs");
+            try {
+              let vouchedUsers = new Set();
+              try {
+                vouchedUsers = reviewer.parseVouchedUsers(
+                  fs.readFileSync(".github/VOUCHED.td", "utf8"),
+                );
+              } catch (error) {
+                core.warning(`Trusted contributor list was unavailable; using PR association and labels: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              const vouchedStandardAvailable = fs.existsSync("CONTRIBUTING_VOUCHED.md");
+              await reviewer.reviewPull({
+                github,
+                context,
+                core,
+                policyRevision: context.sha,
+                vouchedUsers,
+                vouchedStandardAvailable,
+              });
+            } catch (error) {
+              core.warning(`Advisory contribution review was unavailable: ${error instanceof Error ? error.message : String(error)}`);
+            }
