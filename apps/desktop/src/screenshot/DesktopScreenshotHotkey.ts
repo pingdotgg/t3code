@@ -240,7 +240,10 @@ export const make = Effect.gen(function* () {
     const deferred = yield* Deferred.make<CaptureReply>();
     yield* Ref.set(pendingCaptureRef, Option.some({ id, deferred }));
     yield* Effect.gen(function* () {
-      yield* Queue.offer(session.value.commands, `capture ${id}\n`);
+      // A false offer means the queue is already ended (helper mid-restart):
+      // bail now instead of holding the pending slot for the full timeout.
+      const offered = yield* Queue.offer(session.value.commands, `capture ${id}\n`);
+      if (!offered) return;
       const reply = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(CAPTURE_TIMEOUT));
       yield* clearPendingCapture(deferred);
       yield* handleCaptureReply(reply);

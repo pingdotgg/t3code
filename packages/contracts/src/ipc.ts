@@ -1197,10 +1197,10 @@ export interface DesktopBridge {
   onScreenshotHotkey?: (listener: (event: DesktopScreenshotHotkeyEvent) => void) => () => void;
   /**
    * Opens macOS System Settings at Privacy & Security → Screen Recording,
-   * for recovering from a denied screenshot-hotkey capture. Optional: older
-   * desktop builds lack it.
+   * for recovering from a denied screenshot-hotkey capture. Resolves false
+   * when the OS refused to open it. Optional: older desktop builds lack it.
    */
-  openScreenRecordingSettings?: () => Promise<void>;
+  openScreenRecordingSettings?: () => Promise<boolean>;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;

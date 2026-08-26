@@ -799,6 +799,28 @@ function AnchoredToasts() {
   );
 }
 
+/**
+ * Inline link inside a toast description. The single owner of the "link in a
+ * toast" treatment; call sites provide only the label and onClick.
+ */
+export function ToastInlineLink({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      className="ml-2 inline cursor-pointer text-muted-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
+      onClick={onClick}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
 export { hiddenToastActionProps, stackedThreadToast } from "./toastHelpers";
 export type { StackedThreadToastOptions } from "./toastHelpers";
 

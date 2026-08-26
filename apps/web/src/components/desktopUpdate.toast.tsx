@@ -5,7 +5,7 @@ import {
   getDesktopUpdateDownloadedVersion,
   getDesktopUpdateReleaseUrl,
 } from "./desktopUpdate.logic";
-import { toastManager } from "./ui/toast";
+import { ToastInlineLink, toastManager } from "./ui/toast";
 
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
 
@@ -17,8 +17,7 @@ function ReleaseNotesLink({
   releaseUrl: string;
 }) {
   return (
-    <button
-      className="ml-2 inline cursor-pointer text-muted-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
+    <ToastInlineLink
       onClick={() => {
         void (async () => {
           try {
@@ -29,7 +28,6 @@ function ReleaseNotesLink({
           toastManager.add({ type: "error", title: "Unable to open release notes" });
         })();
       }}
-      type="button"
     >
       Read more
       <ArrowRightIcon
@@ -37,7 +35,7 @@ function ReleaseNotesLink({
         className="ml-1 inline size-3 -rotate-45 align-[-0.125em]"
         strokeWidth={2.25}
       />
-    </button>
+    </ToastInlineLink>
   );
 }
 

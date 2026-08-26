@@ -48,7 +48,7 @@ export class ElectronShell extends Context.Service<
   ElectronShell,
   {
     readonly openExternal: (rawUrl: unknown) => Effect.Effect<boolean>;
-    readonly openScreenRecordingSettings: Effect.Effect<void>;
+    readonly openScreenRecordingSettings: Effect.Effect<boolean>;
     readonly copyText: (text: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/electron/ElectronShell") {}
@@ -70,8 +70,8 @@ export const make = ElectronShell.of({
   // arbitrary openExternal calls.
   openScreenRecordingSettings: Effect.promise(() =>
     Electron.shell.openExternal(SCREEN_RECORDING_SETTINGS_URL).then(
-      () => undefined,
-      () => undefined,
+      () => true,
+      () => false,
     ),
   ),
   copyText: (text) =>

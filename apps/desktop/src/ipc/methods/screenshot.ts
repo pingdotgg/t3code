@@ -8,9 +8,9 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 export const openScreenRecordingSettings = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.OPEN_SCREEN_RECORDING_SETTINGS_CHANNEL,
   payload: Schema.Void,
-  result: Schema.Void,
+  result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.screenshot.openScreenRecordingSettings")(function* () {
     const shell = yield* ElectronShell.ElectronShell;
-    yield* shell.openScreenRecordingSettings;
+    return yield* shell.openScreenRecordingSettings;
   }),
 });

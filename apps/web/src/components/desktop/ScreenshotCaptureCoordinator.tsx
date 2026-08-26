@@ -16,7 +16,7 @@ import {
 import { readThreadShells } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useUiStateStore } from "../../uiStateStore";
-import { toastManager } from "../ui/toast";
+import { ToastInlineLink, toastManager } from "../ui/toast";
 
 const COMPOSER_WAIT_TIMEOUT_MS = 5_000;
 
@@ -32,17 +32,20 @@ function showScreenshotCaptureErrorToast(reason: "permission-denied" | "capture-
       description: (
         <>
           Grant T3 Code the Screen Recording permission to capture screenshots.
-          <button
-            className="ml-2 inline cursor-pointer text-muted-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground"
+          <ToastInlineLink
             onClick={() => {
-              void window.desktopBridge?.openScreenRecordingSettings?.().catch(() => {
+              void (async () => {
+                try {
+                  if (await window.desktopBridge?.openScreenRecordingSettings?.()) return;
+                } catch {
+                  // Surface rejected IPC calls through the same fallback.
+                }
                 toastManager.add({ type: "error", title: "Unable to open System Settings" });
-              });
+              })();
             }}
-            type="button"
           >
             Open System Settings
-          </button>
+          </ToastInlineLink>
         </>
       ),
     });

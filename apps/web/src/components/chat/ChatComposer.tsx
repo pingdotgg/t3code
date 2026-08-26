@@ -3294,7 +3294,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   (image) =>
                     !composerPreviewAnnotations.some((annotation) => annotation.id === image.id),
                 ) && (
-                  <div data-composer-attachments="" className="mb-3 flex flex-wrap gap-2">
+                  <div className="mb-3 flex flex-wrap gap-2">
                     {composerImages
                       .filter(
                         (image) =>
