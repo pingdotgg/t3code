@@ -15,17 +15,17 @@ import {
   MessagesSquareIcon,
   WrenchIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useImperativeHandle, useRef, useState, type Ref } from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
+import { ClampedBlock } from "./ClampedBlock";
 import {
   deriveReportDecision,
   type ReportActionKind,
   type ReportVerdictTone,
 } from "./reportVerdict";
-import { reportBranchName } from "./useReportThreadContext";
 
 const TONE_CLASS: Readonly<Record<ReportVerdictTone, string>> = {
   decision: "border-primary/30 bg-primary/[0.06]",
@@ -42,6 +42,20 @@ const ACTION_ICON: Partial<Record<ReportActionKind, typeof WrenchIcon>> = {
   ask: MessagesSquareIcon,
   archive: ArchiveXIcon,
 };
+
+/**
+ * The card's controls, reachable from a key handler that owns the whole
+ * screen. Each returns whether there was anything to do, so the caller knows
+ * whether to swallow the key or leave it to the browser.
+ */
+export interface ReportDecisionControls {
+  /** Focus the reply field, on the reports that have one. */
+  readonly focusInput: () => boolean;
+  /** Commit the one thing this report is asking for. */
+  readonly runPrimary: () => boolean;
+  /** Archive, wherever archiving sits among this report's controls. */
+  readonly runArchive: () => boolean;
+}
 
 export interface ReportDecisionHandlers {
   /** `direction` is whatever the reader typed before committing, if anything. */
@@ -63,6 +77,7 @@ export function ReportDecision({
   reasoning = null,
   repository = null,
   handlers,
+  controls,
 }: {
   readonly report: PostHogReport;
   readonly hasExistingPr: boolean;
@@ -77,9 +92,12 @@ export function ReportDecision({
   /** The repository the agent's selection step chose, when it chose one. */
   readonly repository?: string | null;
   readonly handlers: ReportDecisionHandlers;
+  /** Lets a surface that owns the keyboard drive these controls. */
+  readonly controls?: Ref<ReportDecisionControls | null>;
 }) {
   const decision = deriveReportDecision(report, { hasExistingPr });
   const [text, setText] = useState("");
+  const fieldRef = useRef<HTMLDivElement | null>(null);
 
   const run = (kind: ReportActionKind) => {
     switch (kind) {
@@ -111,42 +129,80 @@ export function ReportDecision({
   // Answering is the decision, so the field is the control: the button stays
   // disabled until there is an answer to send.
   const answering = primary?.kind === "answer";
-  const body = decision.showsReasoning && reasoning?.trim() ? reasoning.trim() : verdict.body;
+  const reasons = decision.showsReasoning && Boolean(reasoning?.trim());
+  const body = reasons && reasoning ? reasoning.trim() : verdict.body;
   const PrimaryIcon = primary ? ACTION_ICON[primary.kind] : undefined;
+  const archivable =
+    primary?.kind === "archive" ? primary : (secondary.find((a) => a.kind === "archive") ?? null);
+
+  useImperativeHandle(
+    controls,
+    () => ({
+      focusInput: () => {
+        // Base UI's field owns the control's ref, so the element is reached
+        // through the wrapper rather than by holding a second ref to it.
+        const input = fieldRef.current?.querySelector("textarea");
+        if (!input) return false;
+        input.focus();
+        return true;
+      },
+      runPrimary: () => {
+        if (primary === null || busy) return false;
+        run(primary.kind);
+        return true;
+      },
+      runArchive: () => {
+        if (archivable === null || busy) return false;
+        run("archive");
+        return true;
+      },
+    }),
+    // `run` closes over the draft text, so the handle is rebuilt as it is
+    // typed — committing must send what is in the field right now.
+    [archivable, busy, primary, run],
+  );
 
   return (
     <div className={cn("rounded-lg border p-3.5", TONE_CLASS[verdict.tone], className)}>
-      <p className="text-sm leading-relaxed">
-        <span className="font-medium">{verdict.title}.</span>{" "}
-        <span className="text-muted-foreground">{body}</span>
-      </p>
-
-      {/* What "implement" costs, before it is spent: the repository the agent
-          chose and the branch it will cut. */}
-      {primary?.kind === "implement" && repository ? (
-        <p className="mt-1.5 font-mono text-xs text-muted-foreground">
-          {repository}
-          <span className="mx-1.5 opacity-50">·</span>
-          {reportBranchName(report.id)}
+      {/* The state line is never clipped — it is the sentence the reader is
+          scanning for. Only the agent's account of it folds, and only when it
+          runs past the card. */}
+      <ClampedBlock
+        lines={4}
+        className="text-sm leading-relaxed"
+        expandLabel={reasons ? "Show the agent's full reasoning" : "Show more"}
+      >
+        <p>
+          <span className="font-medium">{verdict.title}.</span>{" "}
+          <span className="text-muted-foreground">{body}</span>
         </p>
+      </ClampedBlock>
+
+      {/* Where "implement" will land, before it is spent. */}
+      {primary?.kind === "implement" && repository ? (
+        <p className="mt-1.5 truncate font-mono text-xs text-muted-foreground">{repository}</p>
       ) : null}
 
+      {/* Deliberately not autofocused. This card is read before it is answered,
+          and a field that grabs the caret on arrival turns every shortcut on
+          the surface into a letter. The surface offers a key to focus it. */}
       {answering ? (
-        <Textarea
-          value={text}
-          rows={3}
-          autoFocus
-          aria-label="Your answer"
-          placeholder="Optional: tell the agent what you decided or did…"
-          className="mt-3 bg-background"
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault();
-              run("answer");
-            }
-          }}
-        />
+        <div ref={fieldRef}>
+          <Textarea
+            value={text}
+            rows={3}
+            aria-label="Your answer"
+            placeholder="Optional: tell the agent what you decided or did…"
+            className="mt-3 bg-background"
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                run("answer");
+              }
+            }}
+          />
+        </div>
       ) : null}
 
       {primary || secondary.length > 0 ? (

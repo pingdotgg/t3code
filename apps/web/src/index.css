@@ -2466,6 +2466,46 @@ code {
   }
 }
 
+/* Triage deals one card at a time: the next report arrives from the direction
+   the reader sent the last one away in. One-shot and event-driven — React
+   remounts the card by report id — so nothing repaints between decisions. The
+   card is a fixed frame, so this moves its contents, never the page. */
+@keyframes triage-card-next {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes triage-card-previous {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+[data-triage-card] {
+  animation: triage-card-next 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+[data-triage-card="previous"] {
+  animation-name: triage-card-previous;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-triage-card] {
+    animation: none;
+  }
+}
+
 @keyframes provider-update-pill-countdown {
   from {
     transform: scaleX(1);

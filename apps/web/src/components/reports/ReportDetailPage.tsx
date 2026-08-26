@@ -11,7 +11,7 @@ import { postHogReportUrl } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ExternalLinkIcon, InboxIcon, MessagesSquareIcon, XIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { EmptyState } from "../../brand/EmptyState";
 import { isElectron } from "../../env";
@@ -33,7 +33,11 @@ import { SidebarInset } from "../ui/sidebar";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { PriorityChip } from "./PriorityChip";
 import { readReportArtefacts } from "./reportArtefacts";
-import { ReportDecision, type ReportDecisionHandlers } from "./ReportDecision";
+import {
+  ReportDecision,
+  type ReportDecisionControls,
+  type ReportDecisionHandlers,
+} from "./ReportDecision";
 import { PriorityExplanation, ReportDocument } from "./ReportDocument";
 import { IMPLEMENT_INTENT } from "./reportIntent";
 import { usePostHogQuery } from "./reportsQuery";
@@ -157,7 +161,8 @@ function LoadedReportDetail({
     markSeen(report.id, report.updated_at);
   }, [markSeen, report.id, report.updated_at]);
 
-  useBackToInboxShortcut();
+  const decisionControls = useRef<ReportDecisionControls | null>(null);
+  useReportPageShortcuts(decisionControls);
 
   const reportUrl = postHogReportUrl({
     host: serverSettings.posthog.host,
@@ -251,6 +256,7 @@ function LoadedReportDetail({
             </div>
 
             <ReportDecision
+              controls={decisionControls}
               report={report}
               hasExistingPr={hasExistingPr}
               reasoning={view.actionability?.explanation ?? null}
@@ -306,14 +312,19 @@ function LoadedReportDetail({
 }
 
 /**
- * `u` goes back to the inbox, the way it does in a mail client. Not while the
- * reader is typing: inside a field, `u` is a letter.
+ * `u` goes back to the inbox, the way it does in a mail client, and `r` puts
+ * the caret in the reply field on the reports that have one. Neither fires
+ * while the reader is typing: inside a field, both are letters.
+ *
+ * The field is reached by a key rather than by autofocus so that arriving at a
+ * report leaves the keyboard where the reader can still use it.
  */
-function useBackToInboxShortcut(): void {
+function useReportPageShortcuts(controls: RefObject<ReportDecisionControls | null>): void {
   const navigate = useNavigate();
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "u" || event.defaultPrevented) return;
+      if (event.key !== "u" && event.key !== "r") return;
+      if (event.defaultPrevented) return;
       if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
       const target = event.target;
       if (
@@ -325,10 +336,14 @@ function useBackToInboxShortcut(): void {
       ) {
         return;
       }
+      if (event.key === "r") {
+        if (controls.current?.focusInput() === true) event.preventDefault();
+        return;
+      }
       event.preventDefault();
       void navigate({ to: "/inbox" });
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigate]);
+  }, [controls, navigate]);
 }

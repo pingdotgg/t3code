@@ -6044,15 +6044,26 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadReportId || !activeServerThread) return;
     if (timelineEntries.length > 0 || isWorking) return;
     if (reportThreadContext.reportPrompt === null) return;
+    // Everything `onSend` would refuse on, checked before the intent is taken
+    // rather than after. The store clears the intent as it hands it over, so
+    // handing it to a send that turns around and bails loses the decision the
+    // reader made on the report screen — silently, with the thread sitting
+    // there empty. A thread this new is usually still syncing on first pass;
+    // the effect runs again when it lands.
+    if (threadDetailLoading || activeEnvironmentUnavailable || activePendingProgress) return;
+    if (composerRef.current?.getSendContext()?.providerAvailable !== true) return;
     const intent = takeReportIntent(activeServerThread.id);
     if (intent === null || intent.trim().length === 0) return;
     void sendReportIntentRef.current(undefined, "foreground", undefined, intent);
   }, [
+    activeEnvironmentUnavailable,
+    activePendingProgress,
     activeServerThread,
     activeThreadReportId,
     isWorking,
     reportThreadContext.reportPrompt,
     takeReportIntent,
+    threadDetailLoading,
     timelineEntries.length,
   ]);
 

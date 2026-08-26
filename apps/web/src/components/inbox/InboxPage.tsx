@@ -37,6 +37,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { IMPLEMENT_INTENT } from "../reports/reportIntent";
 import type { ReportDecisionHandlers } from "../reports/ReportDecision";
 import { usePostHogQuery, type PostHogQueryError } from "../reports/reportsQuery";
+import { ReportArtefactWarmup, usePostHogViewerLogin, useSettled } from "../reports/reportWarmup";
 import { useReportOpener } from "../reports/useOpenReport";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
@@ -84,6 +85,9 @@ const SCOPE_OPTIONS = [
 
 /** Sections whose reports are asking for something, in the order they read. */
 const DECISION_SECTION_IDS: ReadonlySet<string> = new Set(["needs-you"]);
+
+/** How much of the decision queue is in hand before `t` is pressed. */
+const TRIAGE_WARM_HEAD = 3;
 
 function PostHogErrorState({ error }: { readonly error: PostHogQueryError }) {
   const navigate = useNavigate();
@@ -245,9 +249,25 @@ function ConnectedInboxPage({
   // Archiving is written to PostHog and confirmed by the next list fetch; the
   // row leaves the list immediately so the reader keeps moving.
   const [statusOverrides, setStatusOverrides] = useState<Readonly<Record<string, string>>>({});
-  const [busyReportId, setBusyReportId] = useState<string | null>(null);
+  // Per report, not one flag for the page: archiving one report must not
+  // disable the controls on the card that slides up behind it.
+  const [busyReportIds, setBusyReportIds] = useState<ReadonlySet<string>>(() => new Set());
   const [focusedReportId, setFocusedReportId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Reports the reader has taken themselves off. PostHog's own answer only
+  // changes on the next reports fetch, so the pass and the For-you list carry
+  // the decision until then — the same way archiving carries its status.
+  const [handedBackReportIds, setHandedBackReportIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const setHandedBack = useCallback((reportId: string, handedBack: boolean) => {
+    setHandedBackReportIds((current) => {
+      const next = new Set(current);
+      if (handedBack) next.add(reportId);
+      else next.delete(reportId);
+      return next;
+    });
+  }, []);
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
   const [creatingSection, setCreatingSection] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
@@ -255,12 +275,18 @@ function ConnectedInboxPage({
   const reports = useMemo(() => {
     const fetched = reportsQuery.data?.reports ?? [];
     return fetched.map((report) => {
-      const override = statusOverrides[report.id];
-      return override === undefined || override === report.status
+      const status = statusOverrides[report.id] ?? report.status;
+      const isSuggestedReviewer = handedBackReportIds.has(report.id)
+        ? false
+        : report.is_suggested_reviewer;
+      // Identity preserved where nothing was overridden: these rows feed every
+      // memo below, and a fresh object per report per render is a re-render of
+      // the whole list.
+      return status === report.status && isSuggestedReviewer === report.is_suggested_reviewer
         ? report
-        : { ...report, status: override };
+        : { ...report, status, is_suggested_reviewer: isSuggestedReviewer };
     });
-  }, [reportsQuery.data, statusOverrides]);
+  }, [handedBackReportIds, reportsQuery.data, statusOverrides]);
 
   const sections = useMemo(
     () =>
@@ -333,8 +359,11 @@ function ConnectedInboxPage({
     () =>
       sections
         .filter((section) => !section.builtIn || DECISION_SECTION_IDS.has(section.id))
-        .flatMap((section) => section.reports),
-    [sections],
+        .flatMap((section) => section.reports)
+        // A report handed back is not asking the reader for anything, whatever
+        // scope the list is in. It leaves the pass the moment they say so.
+        .filter((report) => !handedBackReportIds.has(report.id)),
+    [handedBackReportIds, sections],
   );
 
   useEffect(() => {
@@ -356,8 +385,8 @@ function ConnectedInboxPage({
 
   const changeState = useCallback(
     async (report: PostHogReport, state: "suppressed" | "potential") => {
-      if (busyReportId !== null) return;
-      setBusyReportId(report.id);
+      if (busyReportIds.has(report.id)) return;
+      setBusyReportIds((current) => new Set(current).add(report.id));
       setActionError(null);
       setFocusedReportId(nextFocusedReportId(orderedIds, report.id));
       setStatusOverrides((current) => ({ ...current, [report.id]: state }));
@@ -365,7 +394,11 @@ function ConnectedInboxPage({
         environmentId,
         input: { reportId: report.id, state },
       });
-      setBusyReportId(null);
+      setBusyReportIds((current) => {
+        const next = new Set(current);
+        next.delete(report.id);
+        return next;
+      });
       if (result._tag === "Failure") {
         setStatusOverrides((current) => {
           const next = { ...current };
@@ -381,7 +414,7 @@ function ConnectedInboxPage({
       }
       reportsQuery.refresh();
     },
-    [busyReportId, environmentId, orderedIds, reportsQuery, setReportState],
+    [busyReportIds, environmentId, orderedIds, reportsQuery, setReportState],
   );
 
   const saveSections = useCallback(
@@ -477,10 +510,33 @@ function ConnectedInboxPage({
 
   usePrefetchFocusedReport(environmentId, focusedReportId);
 
+  // Triage must not open on a card it has to go and fetch. The head of the
+  // decision queue is where `t` lands, and the reader's own login is what
+  // every card checks itself against — both are warmed here, once the list
+  // itself has settled, so the mode opens complete.
+  usePostHogViewerLogin(environmentId);
+  const warmHeadKey = useSettled(
+    triageActive || decisionQueue.length === 0
+      ? null
+      : decisionQueue
+          .slice(0, TRIAGE_WARM_HEAD)
+          .map((report) => report.id)
+          .join(" "),
+    600,
+  );
+  const warmHeadIds = useMemo(
+    () =>
+      warmHeadKey === null
+        ? []
+        : decisionQueue.slice(0, TRIAGE_WARM_HEAD).map((report) => report.id),
+    [decisionQueue, warmHeadKey],
+  );
+
   const editingSection = customSections.find((section) => section.id === editingSectionId) ?? null;
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+      <ReportArtefactWarmup environmentId={environmentId} reportIds={warmHeadIds} />
       <WorkspacePageHeader electron={isElectron} className="border-b border-border/60">
         <h1 className="text-sm font-semibold">{VIEW_TITLES[view]}</h1>
         {view === "inbox" && !triageActive ? (
@@ -619,7 +675,9 @@ function ConnectedInboxPage({
           <TriageFocus
             environmentId={environmentId}
             reports={decisionQueue}
-            busy={busyReportId !== null}
+            busyReportIds={busyReportIds}
+            onActionError={setActionError}
+            onHandBack={setHandedBack}
             onExit={() => setTriageActive(false)}
             onOpenReport={(report) =>
               void navigate({ to: "/inbox/$reportId", params: { reportId: report.id } })
@@ -667,7 +725,7 @@ function ConnectedInboxPage({
                       showsRouting={scope === "everyone"}
                       unread={isReportUnread(report, seen)}
                       focused={focusedReportId === report.id}
-                      busy={busyReportId === report.id}
+                      busy={busyReportIds.has(report.id)}
                       closed={view === "done"}
                       onFocus={() => setFocusedReportId(report.id)}
                       onOpen={() =>

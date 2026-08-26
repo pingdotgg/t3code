@@ -30,6 +30,17 @@ export const postHogEnvironment = {
     label: "environment-data:posthog:set-report-state",
     tag: WS_METHODS.posthogSetReportState,
   }),
+  // Who the API key belongs to, in the one identity PostHog keys reviewer rows
+  // by. Moves on the timescale of linking a GitHub account, so it is held long.
+  currentUser: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:posthog:current-user",
+    tag: WS_METHODS.posthogCurrentUser,
+    staleTimeMs: 600_000,
+  }),
+  setReviewers: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "environment-data:posthog:set-reviewers",
+    tag: WS_METHODS.posthogSetReviewers,
+  }),
 };
 
 // Every status the app can show, so one fetch feeds the inbox, the Done list,

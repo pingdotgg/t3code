@@ -2146,6 +2146,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.posthogSetReportState, postHogClient.setReportState(input), {
             "rpc.aggregate": "posthog",
           }),
+        [WS_METHODS.posthogCurrentUser]: (input) =>
+          observeRpcEffect(WS_METHODS.posthogCurrentUser, postHogClient.getCurrentUser(input), {
+            "rpc.aggregate": "posthog",
+          }),
+        [WS_METHODS.posthogSetReviewers]: (input) =>
+          observeRpcEffect(WS_METHODS.posthogSetReviewers, postHogClient.setReviewers(input), {
+            "rpc.aggregate": "posthog",
+          }),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitPreparePullRequestThread,

@@ -217,6 +217,46 @@ export const PostHogSetReportStateResult = Schema.Struct({
 });
 export type PostHogSetReportStateResult = typeof PostHogSetReportStateResult.Type;
 
+/**
+ * One entry in a `suggested_reviewers` write. PostHog resolves the login to an
+ * org member and rejects the write if it cannot, so this is not free text.
+ */
+export const PostHogReviewerWriteEntry = Schema.Struct({
+  github_login: TrimmedNonEmptyString,
+});
+export type PostHogReviewerWriteEntry = typeof PostHogReviewerWriteEntry.Type;
+
+/**
+ * A full replacement of the report's reviewer list, not a delta — PostHog
+ * appends a new latest-wins `suggested_reviewers` row from exactly this set.
+ * Reviewers that survive keep their commits, name, and reason: the server
+ * merges those forward from the previous row.
+ */
+export const PostHogSetReviewersInput = Schema.Struct({
+  reportId: PostHogReportId,
+  content: Schema.Array(PostHogReviewerWriteEntry),
+});
+export type PostHogSetReviewersInput = typeof PostHogSetReviewersInput.Type;
+
+export const PostHogSetReviewersResult = Schema.Struct({
+  artefact: PostHogReportArtefact,
+});
+export type PostHogSetReviewersResult = typeof PostHogSetReviewersResult.Type;
+
+export const PostHogCurrentUserInput = Schema.Struct({});
+export type PostHogCurrentUserInput = typeof PostHogCurrentUserInput.Type;
+
+/**
+ * The reading user's GitHub login, as PostHog resolved it from their linked
+ * identity. This is the key `suggested_reviewers` entries carry, so it is what
+ * matches a reviewer row to the person reading it. Null when they have not
+ * connected GitHub to PostHog, in which case no row can be matched to them.
+ */
+export const PostHogCurrentUserResult = Schema.Struct({
+  github_login: Schema.NullOr(Schema.String),
+});
+export type PostHogCurrentUserResult = typeof PostHogCurrentUserResult.Type;
+
 // ── Errors ─────────────────────────────────────────────────────────────────
 
 /** Host, project id, or API key is missing. The UI links to settings. */

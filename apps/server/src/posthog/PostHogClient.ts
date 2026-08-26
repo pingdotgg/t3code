@@ -7,6 +7,8 @@
  * @module PostHogClient
  */
 import {
+  type PostHogCurrentUserInput,
+  type PostHogCurrentUserResult,
   PostHogNotConfiguredError,
   PostHogReport,
   PostHogReportArtefact,
@@ -21,6 +23,8 @@ import {
   type PostHogRpcError,
   type PostHogSetReportStateInput,
   type PostHogSetReportStateResult,
+  type PostHogSetReviewersInput,
+  type PostHogSetReviewersResult,
   PostHogUnauthorizedError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -55,6 +59,13 @@ const ReportSignalsBody = Schema.Struct({
 });
 const decodeReportSignals = Schema.decodeUnknownEffect(ReportSignalsBody);
 const decodeReport = Schema.decodeUnknownEffect(PostHogReport);
+// Account-scoped, and its own serializer: `/api/users/@me/` does not carry the
+// GitHub login, only this sub-resource does.
+const CurrentUserBody = Schema.Struct({
+  github_login: Schema.optional(Schema.NullOr(Schema.String)),
+});
+const decodeCurrentUser = Schema.decodeUnknownEffect(CurrentUserBody);
+const decodeArtefact = Schema.decodeUnknownEffect(PostHogReportArtefact);
 
 export class PostHogClient extends Context.Service<
   PostHogClient,
@@ -71,6 +82,12 @@ export class PostHogClient extends Context.Service<
     readonly setReportState: (
       input: PostHogSetReportStateInput,
     ) => Effect.Effect<PostHogSetReportStateResult, PostHogRpcError>;
+    readonly getCurrentUser: (
+      input: PostHogCurrentUserInput,
+    ) => Effect.Effect<PostHogCurrentUserResult, PostHogRpcError>;
+    readonly setReviewers: (
+      input: PostHogSetReviewersInput,
+    ) => Effect.Effect<PostHogSetReviewersResult, PostHogRpcError>;
   }
 >()("t3/posthog/PostHogClient") {}
 
@@ -115,14 +132,12 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const getJson = Effect.fn("PostHogClient.getJson")(function* (
+  const getUrlJson = Effect.fn("PostHogClient.getUrlJson")(function* (
     connection: PostHogConnection,
-    path: string,
+    url: string,
     urlParams: Record<string, string>,
   ) {
-    const request = HttpClientRequest.get(
-      `${connection.host}/api/projects/${encodeURIComponent(connection.projectId)}${path}`,
-    ).pipe(
+    const request = HttpClientRequest.get(url).pipe(
       HttpClientRequest.setUrlParams(urlParams),
       HttpClientRequest.setHeaders({
         accept: "application/json",
@@ -142,7 +157,7 @@ export const make = Effect.gen(function* () {
     }
     if (response.status < 200 || response.status >= 300) {
       return yield* new PostHogRequestError({
-        message: `PostHog answered ${response.status} for ${path}.`,
+        message: `PostHog answered ${response.status} for ${url}.`,
         status: response.status,
       });
     }
@@ -154,13 +169,27 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const postJson = Effect.fn("PostHogClient.postJson")(function* (
+  /** Project-scoped read. Most of the PostHog API this app touches lives here. */
+  const getJson = (
     connection: PostHogConnection,
+    path: string,
+    urlParams: Record<string, string>,
+  ) =>
+    getUrlJson(
+      connection,
+      `${connection.host}/api/projects/${encodeURIComponent(connection.projectId)}${path}`,
+      urlParams,
+    );
+
+  const sendJson = Effect.fn("PostHogClient.sendJson")(function* (
+    connection: PostHogConnection,
+    method: "post" | "put",
     path: string,
     body: unknown,
   ) {
-    const request = HttpClientRequest.post(
-      `${connection.host}/api/projects/${encodeURIComponent(connection.projectId)}${path}`,
+    const url = `${connection.host}/api/projects/${encodeURIComponent(connection.projectId)}${path}`;
+    const request = (
+      method === "put" ? HttpClientRequest.put(url) : HttpClientRequest.post(url)
     ).pipe(
       HttpClientRequest.setHeaders({
         accept: "application/json",
@@ -259,8 +288,9 @@ export const make = Effect.gen(function* () {
     "PostHogClient.setReportState",
   )(function* (input) {
     const connection = yield* resolveConnection;
-    const body = yield* postJson(
+    const body = yield* sendJson(
       connection,
+      "post",
       `/signals/reports/${encodeURIComponent(input.reportId)}/state/`,
       { state: input.state },
     );
@@ -273,11 +303,50 @@ export const make = Effect.gen(function* () {
     return { report };
   });
 
+  const getCurrentUser: PostHogClient["Service"]["getCurrentUser"] = Effect.fn(
+    "PostHogClient.getCurrentUser",
+  )(function* () {
+    const connection = yield* resolveConnection;
+    const body = yield* getUrlJson(
+      connection,
+      `${connection.host}/api/users/@me/github_login/`,
+      {},
+    );
+    const decoded = yield* decodeCurrentUser(body).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({ message: "PostHog returned an unexpected user.", cause }),
+      ),
+    );
+    return { github_login: decoded.github_login ?? null };
+  });
+
+  const setReviewers: PostHogClient["Service"]["setReviewers"] = Effect.fn(
+    "PostHogClient.setReviewers",
+  )(function* (input) {
+    const connection = yield* resolveConnection;
+    const body = yield* sendJson(
+      connection,
+      "put",
+      `/signals/reports/${encodeURIComponent(input.reportId)}/reviewers/`,
+      { content: input.content },
+    );
+    const artefact = yield* decodeArtefact(body).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({ message: "PostHog returned an unexpected artefact.", cause }),
+      ),
+    );
+    return { artefact };
+  });
+
   return {
     listReports,
     listReportArtefacts,
     listReportSignals,
     setReportState,
+    getCurrentUser,
+    setReviewers,
   } satisfies PostHogClient["Service"];
 });
 
