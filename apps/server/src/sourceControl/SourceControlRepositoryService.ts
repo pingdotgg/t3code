@@ -118,10 +118,19 @@ export const make = Effect.gen(function* () {
       operation: "lookupRepository",
       provider: input.provider,
     });
+    const repository = input.repository.trim();
+    if (providerKind === "github" && !/^[^/\s]+\/[^/\s]+$/u.test(repository)) {
+      return yield* new SourceControlRepositoryError({
+        operation: "lookupRepository",
+        provider: providerKind,
+        detail: "Enter a GitHub repository as owner/repo.",
+      });
+    }
+
     const provider = yield* providers.get(providerKind);
     const urls = yield* provider.getRepositoryCloneUrls({
       cwd: input.cwd ?? config.cwd,
-      repository: input.repository.trim(),
+      repository,
     });
     return toRepositoryInfo(providerKind, urls);
   });

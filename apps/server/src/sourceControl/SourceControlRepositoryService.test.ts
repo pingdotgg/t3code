@@ -117,6 +117,33 @@ it.effect("looks up repositories through the requested provider without search",
   }).pipe(Effect.provide(makeLayer({ provider })));
 });
 
+it.effect("rejects GitHub repository names without an owner", () => {
+  let lookupCalls = 0;
+  const provider = makeProvider({
+    getRepositoryCloneUrls: () =>
+      Effect.sync(() => {
+        lookupCalls += 1;
+        return CLONE_URLS;
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const error = yield* Effect.flip(
+      service.lookupRepository({
+        provider: "github",
+        repository: "t3code",
+        cwd: "/workspace",
+      }),
+    );
+
+    assert.strictEqual(error.provider, "github");
+    assert.strictEqual(error.operation, "lookupRepository");
+    assert.strictEqual(error.detail, "Enter a GitHub repository as owner/repo.");
+    assert.strictEqual(lookupCalls, 0);
+  }).pipe(Effect.provide(makeLayer({ provider })));
+});
+
 it.effect("preserves provider failures without deriving the repository message from them", () => {
   const providerCause = new SourceControlProviderError({
     provider: "github",
