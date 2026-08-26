@@ -59,6 +59,7 @@ import {
   useComposerThreadDraft,
   useEffectiveComposerModelState,
 } from "../../composerDraftStore";
+import { announceComposerReady } from "../../composerReadyBus";
 import {
   MAX_STASH_ENTRIES,
   partitionStashAttachments,
@@ -509,6 +510,11 @@ export interface ChatComposerHandle {
   focusAtEnd: () => void;
   focusAt: (cursor: number) => void;
   addDroppedFiles: (files: File[]) => void;
+  /**
+   * Attach externally captured images (screenshot hotkey) and resolve with
+   * the ids of the attachments that landed, for chip-targeted animation.
+   */
+  addCapturedFiles: (files: File[]) => Promise<string[]>;
   insertTextAtEnd: (text: string, options?: { ensureLeadingBoundary?: boolean }) => boolean;
   openModelPicker: () => void;
   toggleModelPicker: () => void;
@@ -2580,14 +2586,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: images
   // ------------------------------------------------------------------
-  const addComposerImages = async (files: File[]) => {
-    if (!activeThreadId || files.length === 0) return;
+  // Resolves with the ids of the attachments that actually landed, so
+  // callers like the screenshot hotkey can animate the created chip.
+  const addComposerImages = async (files: File[]): Promise<string[]> => {
+    if (!activeThreadId || files.length === 0) return [];
     if (pendingUserInputs.length > 0) {
       toastManager.add({
         type: "error",
         title: "Attach images after answering plan questions.",
       });
-      return;
+      return [];
     }
     // Captured before the awaits below: the user may switch threads while a
     // large image is being compressed, and the attachments and errors belong
@@ -2619,7 +2627,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       reservedCount += 1;
     }
     setThreadError(threadId, error);
-    if (acceptedFiles.length === 0) return;
+    if (acceptedFiles.length === 0) return [];
 
     pendingImageCompressionsRef.current.set(threadId, pendingCount + acceptedFiles.length);
     try {
@@ -2663,6 +2671,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (compressionError !== null) {
         setThreadError(threadId, compressionError);
       }
+      return nextImages.map((image) => image.id);
     } finally {
       const remaining =
         (pendingImageCompressionsRef.current.get(threadId) ?? 0) - acceptedFiles.length;
@@ -2802,6 +2811,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, []);
 
+  // The imperative handle commits before passive effects, so features waiting
+  // on onComposerReady (screenshot hotkey) see a populated handle ref.
+  useEffect(() => {
+    announceComposerReady();
+  }, []);
+
   // ------------------------------------------------------------------
   // Imperative handle
   // ------------------------------------------------------------------
@@ -2817,6 +2832,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addDroppedFiles: (files: File[]) => {
         void addComposerImages(files);
         focusComposer();
+      },
+      addCapturedFiles: async (files: File[]) => {
+        const ids = await addComposerImages(files);
+        focusComposer();
+        return ids;
       },
       insertTextAtEnd: insertComposerTextAtEnd,
       openModelPicker: () => {
@@ -3274,7 +3294,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   (image) =>
                     !composerPreviewAnnotations.some((annotation) => annotation.id === image.id),
                 ) && (
-                  <div className="mb-3 flex flex-wrap gap-2">
+                  <div data-composer-attachments="" className="mb-3 flex flex-wrap gap-2">
                     {composerImages
                       .filter(
                         (image) =>
@@ -3289,6 +3309,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         return (
                           <div
                             key={image.id}
+                            data-composer-image-id={image.id}
                             className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
                           >
                             {image.previewUrl ? (

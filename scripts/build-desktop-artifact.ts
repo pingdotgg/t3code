@@ -300,6 +300,19 @@ export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedErrorCl
   }
 }
 
+export class ScreenshotHelperBuildOutputMissingError extends Schema.TaggedErrorClass<ScreenshotHelperBuildOutputMissingError>()(
+  "ScreenshotHelperBuildOutputMissingError",
+  {
+    binaryPath: Schema.String,
+    swiftTarget: Schema.String,
+    arch: BuildArch,
+  },
+) {
+  override get message(): string {
+    return `Screenshot helper build for ${this.swiftTarget} did not produce ${this.binaryPath}.`;
+  }
+}
+
 const desktopIconPlatformNames = {
   mac: "macOS",
   linux: "Linux",
@@ -856,6 +869,13 @@ export const DESKTOP_EXTRA_RESOURCES = [
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
+  },
+] as const;
+// The screenshot-hotkey helper (native/screenshot-helper) ships on macOS only.
+export const MAC_SCREENSHOT_HELPER_EXTRA_RESOURCES = [
+  {
+    from: "apps/desktop/prod-resources/screenshot-helper",
+    to: "screenshot-helper",
   },
 ] as const;
 
@@ -1759,6 +1779,73 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   }
 });
 
+function screenshotHelperSwiftTargets(arch: typeof BuildArch.Type): readonly string[] {
+  if (arch === "universal") {
+    return ["arm64-apple-macos11.0", "x86_64-apple-macos11.0"];
+  }
+  return [arch === "arm64" ? "arm64-apple-macos11.0" : "x86_64-apple-macos11.0"];
+}
+
+// macOS-only sidecar for the screenshot hotkey: a single-file swiftc build,
+// staged like the resource monitor. osx-sign walks Contents/ and signs every
+// Mach-O it finds, so no sign-macos.ts change is needed.
+export const stageScreenshotHelper = Effect.fn("stageScreenshotHelper")(function* (input: {
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const sourcePath = path.join(input.repoRoot, "native/screenshot-helper/main.swift");
+  const executableName = "t3-screenshot-helper";
+  const builtBinaries: string[] = [];
+
+  for (const swiftTarget of screenshotHelperSwiftTargets(input.arch)) {
+    const binaryPath = path.join(
+      input.repoRoot,
+      "native/screenshot-helper/target",
+      swiftTarget,
+      executableName,
+    );
+    yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
+    yield* runCommand(
+      ChildProcess.make("swiftc", ["-O", "-target", swiftTarget, sourcePath, "-o", binaryPath]),
+      {
+        label: `swiftc screenshot helper (${swiftTarget})`,
+        verbose: input.verbose,
+      },
+    );
+    if (!(yield* fs.exists(binaryPath))) {
+      return yield* new ScreenshotHelperBuildOutputMissingError({
+        binaryPath,
+        swiftTarget,
+        arch: input.arch,
+      });
+    }
+    builtBinaries.push(binaryPath);
+  }
+
+  const destinationDirectory = path.join(input.stageResourcesDir, "screenshot-helper");
+  const destinationPath = path.join(destinationDirectory, executableName);
+  yield* fs.remove(destinationDirectory, { recursive: true, force: true }).pipe(Effect.ignore);
+  yield* fs.makeDirectory(destinationDirectory, { recursive: true });
+
+  if (builtBinaries.length === 1) {
+    yield* fs.copyFile(builtBinaries[0]!, destinationPath);
+  } else {
+    yield* runCommand(
+      ChildProcess.make("lipo", ["-create", ...builtBinaries, "-output", destinationPath]),
+      {
+        label: "lipo screenshot helper universal binary",
+        verbose: input.verbose,
+      },
+    );
+  }
+
+  yield* fs.chmod(destinationPath, 0o755);
+});
+
 function generateMacIconSet(
   sourcePng: string,
   targetIcns: string,
@@ -2089,6 +2176,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // hand-packed server.asar sidecar (see WINDOWS_SERVER_ASAR_RESOURCE).
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "mac" ? MAC_SCREENSHOT_HELPER_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
     ],
   };
@@ -2874,6 +2962,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     arch: options.arch,
     verbose: options.verbose,
   });
+  if (options.platform === "mac") {
+    yield* stageScreenshotHelper({
+      repoRoot,
+      stageResourcesDir,
+      arch: options.arch,
+      verbose: options.verbose,
+    });
+  }
 
   yield* assertPlatformBuildResources(
     options.platform,

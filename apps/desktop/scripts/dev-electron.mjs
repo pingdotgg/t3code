@@ -44,6 +44,37 @@ await waitForResources({
   tcpPort: port,
 });
 
+// Build the macOS screenshot-hotkey helper when missing or stale. Non-fatal:
+// without swiftc (no Xcode CLT) the main process resolves no helper binary
+// and the feature is simply off, matching resource-monitor's optionality.
+function ensureScreenshotHelper() {
+  if (hostPlatform !== "darwin") {
+    return;
+  }
+
+  const helperDir = NodePath.resolve(desktopDir, "../../native/screenshot-helper");
+  const sourcePath = NodePath.join(helperDir, "main.swift");
+  const outputPath = NodePath.join(helperDir, "build", "t3-screenshot-helper");
+  try {
+    const sourceMtime = NodeFS.statSync(sourcePath).mtimeMs;
+    const outputMtime = NodeFS.existsSync(outputPath) ? NodeFS.statSync(outputPath).mtimeMs : 0;
+    if (outputMtime >= sourceMtime) {
+      return;
+    }
+    NodeFS.mkdirSync(NodePath.dirname(outputPath), { recursive: true });
+    const result = NodeChildProcess.spawnSync("swiftc", ["-O", sourcePath, "-o", outputPath], {
+      stdio: "ignore",
+    });
+    if (result.status !== 0) {
+      console.warn("[dev-electron] swiftc failed; screenshot hotkey will be unavailable");
+    }
+  } catch (error) {
+    console.warn("[dev-electron] could not build screenshot helper:", error?.message ?? error);
+  }
+}
+
+ensureScreenshotHelper();
+
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
 const devProtocolClient = resolveDevProtocolClient();

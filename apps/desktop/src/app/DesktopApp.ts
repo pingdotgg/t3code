@@ -22,6 +22,7 @@ import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
+import * as DesktopScreenshotHotkey from "../screenshot/DesktopScreenshotHotkey.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
@@ -199,6 +200,9 @@ const bootstrap = Effect.gen(function* () {
 
   yield* installDesktopIpcHandlers();
   yield* logBootstrapInfo("bootstrap ipc handlers registered");
+
+  const screenshotHotkey = yield* DesktopScreenshotHotkey.DesktopScreenshotHotkey;
+  yield* screenshotHotkey.reconcile;
 
   if (!(yield* Ref.get(state.quitting))) {
     // In wsl-only mode the renderer is served by the WSL backend, which can be

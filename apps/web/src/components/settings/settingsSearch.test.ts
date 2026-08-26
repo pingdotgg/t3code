@@ -65,6 +65,11 @@ describe("searchSettings", () => {
     expect(searchSettings("quit confirmation")).toEqual([]);
   });
 
+  it("hides mac-only settings outside macOS desktop", () => {
+    expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "screenshot-hotkey")).toBe(true);
+    expect(searchSettings("screenshot hotkey")).toEqual([]);
+  });
+
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);

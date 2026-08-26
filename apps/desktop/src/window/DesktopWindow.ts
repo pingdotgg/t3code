@@ -8,7 +8,7 @@ import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
-import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, type DesktopScreenshotHotkeyEvent } from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -21,6 +21,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
+  SCREENSHOT_HOTKEY_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
@@ -100,6 +101,11 @@ export class DesktopWindow extends Context.Service<
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
     readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
+    // Push a screenshot-hotkey capture (or its failure) to the renderer and
+    // reveal the window so the flash + attach animation is seen.
+    readonly dispatchScreenshotHotkeyEvent: (
+      event: DesktopScreenshotHotkeyEvent,
+    ) => Effect.Effect<void, DesktopWindowError>;
     // Zooms the main window's own webContents. The Electron `zoomIn`/`zoomOut`
     // menu roles act on whichever webContents has keyboard focus, so with an
     // embedded preview WebContentsView (or DevTools) focused they zoom the
@@ -892,6 +898,31 @@ export const make = Effect.gen(function* () {
 
       send();
     }),
+    dispatchScreenshotHotkeyEvent: Effect.fn("desktop.window.dispatchScreenshotHotkeyEvent")(
+      function* (event) {
+        yield* Effect.annotateCurrentSpan({ eventType: event.type });
+        const existingWindow = yield* focusedMainWindow;
+        if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) {
+          return;
+        }
+        const targetWindow = Option.isSome(existingWindow)
+          ? existingWindow.value
+          : yield* ensureMain;
+
+        const send = () => {
+          if (targetWindow.isDestroyed()) return;
+          targetWindow.webContents.send(SCREENSHOT_HOTKEY_CHANNEL, event);
+          void runPromise(electronWindow.reveal(targetWindow));
+        };
+
+        if (targetWindow.webContents.isLoadingMainFrame()) {
+          targetWindow.webContents.once("did-finish-load", send);
+          return;
+        }
+
+        send();
+      },
+    ),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
       const window = yield* focusedMainWindow;

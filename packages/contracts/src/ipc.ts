@@ -1061,6 +1061,58 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   input: PreviewAutomationWaitForInput,
 });
 
+/**
+ * Screenshot hotkey pushes (macOS desktop only). Pressing both Command keys
+ * captures the frontmost OS window; "captured" carries the PNG as a data URL,
+ * "error" reports why no capture was produced.
+ */
+export interface DesktopScreenshotWindowBounds {
+  /** Global display points, top-left origin — window.screenX/Y coordinate space. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type DesktopScreenshotHotkeyEvent =
+  | {
+      type: "captured";
+      dataUrl: string;
+      width: number;
+      height: number;
+      appName?: string;
+      /** On-screen bounds of the captured window, for animating from it. */
+      windowBounds?: DesktopScreenshotWindowBounds;
+    }
+  | {
+      type: "error";
+      reason: "permission-denied" | "capture-failed";
+    };
+
+export const DesktopScreenshotWindowBoundsSchema: Schema.Codec<DesktopScreenshotWindowBounds> =
+  Schema.Struct({
+    x: Schema.Number,
+    y: Schema.Number,
+    width: Schema.Number,
+    height: Schema.Number,
+  });
+
+export const DesktopScreenshotHotkeyEventSchema: Schema.Codec<DesktopScreenshotHotkeyEvent> =
+  Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("captured"),
+      dataUrl: Schema.String,
+      width: Schema.Int,
+      height: Schema.Int,
+      appName: Schema.optionalKey(Schema.String),
+      windowBounds: Schema.optionalKey(DesktopScreenshotWindowBoundsSchema),
+    }),
+    Schema.Struct({
+      type: Schema.Literal("error"),
+      reason: Schema.Literals(["permission-denied", "capture-failed"]),
+    }),
+  ]);
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /**
@@ -1137,6 +1189,18 @@ export interface DesktopBridge {
    * desktop builds never emit it.
    */
   onQuitShortcut?: (listener: (state: "down" | "up") => void) => () => void;
+  /**
+   * Screenshot hotkey pushes (macOS desktop only), fired after the main
+   * process captures the frontmost window via the both-Command-keys chord.
+   * Optional: older desktop builds never emit it.
+   */
+  onScreenshotHotkey?: (listener: (event: DesktopScreenshotHotkeyEvent) => void) => () => void;
+  /**
+   * Opens macOS System Settings at Privacy & Security → Screen Recording,
+   * for recovering from a denied screenshot-hotkey capture. Optional: older
+   * desktop builds lack it.
+   */
+  openScreenRecordingSettings?: () => Promise<void>;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;

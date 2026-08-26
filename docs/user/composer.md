@@ -10,6 +10,16 @@ becomes available after every upload finishes. Failed uploads can be retried or 
 On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
 the composer or paste them into a message.
 
+## Screenshot hotkey (macOS desktop)
+
+On the macOS desktop app, press both Command keys together to capture the window you're working in
+and attach it to your current thread. T3 Code comes to the front with the screenshot already in the
+composer; add your message and send. If no thread is open, the screenshot lands in the thread you
+visited most recently.
+
+The first capture asks for the Screen Recording permission in System Settings. To turn the shortcut
+off, disable **Screenshot hotkey** in **Settings → General**.
+
 ## Commands and skills
 
 Type `/` to open the command menu. Type `$` to find and add a skill. Skill rows show their source,

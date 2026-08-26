@@ -39,10 +39,16 @@ export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
   }
 }
 
+// Deep link into System Settings → Privacy & Security → Screen Recording,
+// where the user grants the screenshot hotkey's capture permission.
+const SCREEN_RECORDING_SETTINGS_URL =
+  "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+
 export class ElectronShell extends Context.Service<
   ElectronShell,
   {
     readonly openExternal: (rawUrl: unknown) => Effect.Effect<boolean>;
+    readonly openScreenRecordingSettings: Effect.Effect<void>;
     readonly copyText: (text: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/electron/ElectronShell") {}
@@ -59,6 +65,15 @@ export const make = ElectronShell.of({
           ),
         ),
     }),
+  // Deliberately bypasses parseSafeExternalUrl: the URL is a hardcoded
+  // constant, never renderer-supplied, and its scheme must stay blocked for
+  // arbitrary openExternal calls.
+  openScreenRecordingSettings: Effect.promise(() =>
+    Electron.shell.openExternal(SCREEN_RECORDING_SETTINGS_URL).then(
+      () => undefined,
+      () => undefined,
+    ),
+  ),
   copyText: (text) =>
     Effect.sync(() => {
       Electron.clipboard.writeText(text);

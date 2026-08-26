@@ -1,4 +1,5 @@
 import { isElectron } from "~/env";
+import { isMacPlatform } from "~/lib/utils";
 
 export type SettingsPath =
   | "/settings/general"
@@ -18,6 +19,8 @@ export interface SettingsSearchItem {
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
+  // Its row only renders on macOS (implies desktop), for the same reason.
+  readonly macOnly?: boolean;
 }
 
 /**
@@ -174,6 +177,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "screenshot-hotkey",
+    title: "Screenshot hotkey",
+    to: "/settings/general",
+    desktopOnly: true,
+    macOnly: true,
+  },
+  {
     id: "text-generation-model",
     title: "Text generation model",
     to: "/settings/general",
@@ -293,6 +303,8 @@ export function searchSettings(
   return items.filter(
     (item) =>
       (isElectron || item.desktopOnly !== true) &&
+      (item.macOnly !== true ||
+        (typeof navigator !== "undefined" && isMacPlatform(navigator.platform))) &&
       normalizeSearchText(item.title).includes(normalizedQuery),
   );
 }

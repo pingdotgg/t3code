@@ -2396,6 +2396,32 @@ export function GeneralSettingsPanel() {
           />
         ) : null}
 
+        {isElectron && isMacPlatform(navigator.platform) ? (
+          <SettingsRow
+            {...searchableSetting("screenshot-hotkey")}
+            description="Press both Command keys together to capture the frontmost window and attach it to your current thread."
+            resetAction={
+              settings.screenshotHotkey !== DEFAULT_UNIFIED_SETTINGS.screenshotHotkey ? (
+                <SettingResetButton
+                  label="screenshot hotkey"
+                  onClick={() =>
+                    updateSettings({ screenshotHotkey: DEFAULT_UNIFIED_SETTINGS.screenshotHotkey })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.screenshotHotkey}
+                onCheckedChange={(checked) =>
+                  updateSettings({ screenshotHotkey: Boolean(checked) })
+                }
+                aria-label="Screenshot hotkey"
+              />
+            }
+          />
+        ) : null}
+
         <SettingsRow
           {...searchableSetting("text-generation-model")}
           description="Default model for generated text like thread titles and source control content. Source control settings can override it with a dedicated source control writer model."
