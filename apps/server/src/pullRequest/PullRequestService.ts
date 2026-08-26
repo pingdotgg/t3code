@@ -912,11 +912,14 @@ export const make = Effect.gen(function* () {
        * One repository asked on its own. What every host without a search across repositories
        * does, and what a batched read falls back to for a repository it could not answer for.
        */
-      const readRepository = (project: SupportedProject): Effect.Effect<RepositoryBatch> => {
+      const readRepository = (
+        project: SupportedProject,
+        options?: { readonly fromStart: boolean },
+      ): Effect.Effect<RepositoryBatch> => {
         {
           const viewer = viewers[project.host]!;
           const key = listCursorKey(project.host, project.repository);
-          const cursor = cursorOf(project);
+          const cursor = options?.fromStart === true ? undefined : cursorOf(project);
           return project.api
             .listChangeRequests({
               cwd: project.project.workspaceRoot,
@@ -1053,7 +1056,10 @@ export const make = Effect.gen(function* () {
                   (cursorHere?.delivered ?? 0) === 0 &&
                   (!page.truncated || boundary === null)
                 ) {
-                  return readRepository(project);
+                  // This verifies whether the repository was absent from search, not whether it
+                  // has rows older than the batch boundary. Start at its head so an index gap
+                  // cannot hide newer rows behind the cursor that brought the batch here.
+                  return readRepository(project, { fromStart: true });
                 }
                 const items =
                   cursorHere === undefined

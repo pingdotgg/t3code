@@ -665,8 +665,8 @@ function PullRequestsRouteView() {
   // or review-requested row can be missing from its first page; partitioned from these
   // server-filtered reads instead, the priority view starts with the host's own matching page and
   // a continuation can only ever append below what is already on screen. A search re-ranks the
-  // so no partitions are read for one. These are the same atoms the Authored and Reviewing tabs
-  // ask for, so switching to either is answered from cache.
+  // whole list by match, so no partitions are read for one. These are the same atoms the Authored
+  // and Reviewing tabs ask for, so switching to either is answered from cache.
   const partitionsWanted = search.involvement === "all" && typedQuery.length === 0;
   // Let the feed arrive before spending two more host searches on its priority groups. Those
   // reads used to start together, and each may fan out to repositories the host search could not

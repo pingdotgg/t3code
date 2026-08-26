@@ -2557,6 +2557,7 @@ it.effect("carries every repository of a slice on from the oldest row in it", ()
 it.effect("verifies an unseen repository when a batched search reaches its end", () =>
   Effect.gen(function* () {
     const separately: string[] = [];
+    const separateCursors: unknown[] = [];
     const service = yield* makeService({
       projects: [
         project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
@@ -2564,10 +2565,14 @@ it.effect("verifies an unseen repository when a batched search reaches its end",
       ],
       providers: [
         fakeProvider("github", {
-          listChangeRequests: ({ repository }) => {
+          listChangeRequests: ({ repository, cursor }) => {
             separately.push(repository);
+            separateCursors.push(cursor);
             return Effect.succeed({
-              items: repository === "acme/docs" ? [changeRequest(2, "2026-07-01T00:00:00Z")] : [],
+              items:
+                repository === "acme/docs" && cursor === undefined
+                  ? [changeRequest(2, "2026-07-04T00:00:00Z")]
+                  : [],
               truncated: false,
               continues: true,
             });
@@ -2591,8 +2596,10 @@ it.effect("verifies an unseen repository when a batched search reaches its end",
     const second = yield* service.list({ state: "open", cursors: first.nextCursors });
 
     // The first page stays one host request. If the search never produces a row for `acme/docs`,
-    // the final slice still checks it directly so a search-index gap cannot hide its pull request.
+    // the final slice still checks it directly from the repository head. Its pull request is
+    // newer than the batch boundary, so forwarding that cursor would hide it.
     assert.deepStrictEqual(separately, ["acme/docs"]);
+    assert.deepStrictEqual(separateCursors, [undefined]);
     assert.deepStrictEqual(
       second.entries.map((entry) => [entry.repository, entry.number]),
       [["acme/docs", 2]],
