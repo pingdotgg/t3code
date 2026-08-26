@@ -18,8 +18,12 @@ import * as Schema from "effect/Schema";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
-// Well-known favicon paths checked in order.
+// Well-known favicon paths checked in order. The `.t3` entries come first: a
+// project that has no icon of its own can be given one without touching a path
+// the repository tracks, since `.t3` is already local-state territory.
 const FAVICON_CANDIDATES = [
+  ".t3/icon.png",
+  ".t3/icon.svg",
   "favicon.svg",
   "favicon.ico",
   "favicon.png",
