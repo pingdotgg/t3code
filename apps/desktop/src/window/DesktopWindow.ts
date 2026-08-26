@@ -478,10 +478,9 @@ export const make = Effect.gen(function* () {
     });
 
     window.webContents.on("context-menu", (event, params) => {
-      // Build a native menu only for Electron-exclusive capabilities that the
-      // web renderer cannot provide: spellcheck suggestions, Copy Link, and
-      // Copy Image. Standard text editing (Cut / Copy / Paste / Select All)
-      // is handled by the themed web-side context menu instead.
+      // Build a native menu for Electron-exclusive capabilities and native
+      // text editing. Empty-space/thread right-clicks stay suppressed so the
+      // renderer's themed fallback can show its icons.
       const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
 
       if (params.misspelledWord) {
@@ -517,6 +516,19 @@ export const make = Effect.gen(function* () {
         menuTemplate.push({ type: "separator" });
       }
 
+      const hasTextEditingContext = params.isEditable || params.selectionText.length > 0;
+      if (hasTextEditingContext) {
+        if (menuTemplate.length > 0 && menuTemplate.at(-1)?.type !== "separator") {
+          menuTemplate.push({ type: "separator" });
+        }
+        menuTemplate.push(
+          { role: "cut", enabled: params.editFlags.canCut },
+          { role: "copy", enabled: params.editFlags.canCopy },
+          { role: "paste", enabled: params.editFlags.canPaste },
+          { role: "selectAll", enabled: params.editFlags.canSelectAll },
+        );
+      }
+
       if (menuTemplate.length > 0) {
         // Strip trailing separator before showing.
         const last = menuTemplate[menuTemplate.length - 1];
@@ -524,16 +536,11 @@ export const make = Effect.gen(function* () {
           menuTemplate.pop();
         }
         void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
-        // Electron-exclusive entries own this gesture.
         event.preventDefault();
         return;
       }
 
-      // Preserve the native editing menu for text selections and editable
-      // controls, while keeping empty-space right-clicks dismissed.
-      if (params.isEditable || params.selectionText.length > 0) {
-        return;
-      }
+      // The renderer fallback owns empty-space and thread context menus.
       event.preventDefault();
     });
 

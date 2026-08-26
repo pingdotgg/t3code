@@ -101,7 +101,6 @@ export function buildMultiSelectThreadContextMenuItems(input: {
       id: "archive",
       label: `Archive (${input.count})`,
       icon: "archive",
-      tone: "warning",
       disabled: input.hasRunningThread,
       separatorBefore: true,
     },

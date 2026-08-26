@@ -230,7 +230,6 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
       id: "archive",
       label: "Archive (3)",
       icon: "archive",
-      tone: "warning",
       disabled: false,
       separatorBefore: true,
     });
@@ -243,7 +242,6 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
       id: "archive",
       label: "Archive (2)",
       icon: "archive",
-      tone: "warning",
       disabled: true,
       separatorBefore: true,
     });

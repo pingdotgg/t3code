@@ -1,5 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 
+import { toastManager } from "./components/ui/toast";
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Inline Lucide-style icon paths (stroke-based, viewBox 0 0 24 24, strokeWidth 2).
@@ -203,13 +205,7 @@ function createIconElement(name: string, tone: ContextMenuTone): SVGSVGElement |
         ? "size-4.5 shrink-0 text-warning-foreground sm:size-4"
         : "size-4.5 shrink-0 text-muted-foreground sm:size-4",
   );
-  svg.style.cssText =
-    "width:1rem;height:1rem;flex-shrink:0;pointer-events:none;" +
-    (tone === "destructive"
-      ? "color:var(--destructive-foreground);"
-      : tone === "warning"
-        ? "color:var(--warning-foreground);"
-        : "color:var(--contrast-muted-foreground);opacity:0.8;");
+  svg.style.cssText = "pointer-events:none;";
   for (const node of paths) {
     const child = document.createElementNS(SVG_NS, node.tag);
     for (const [key, value] of Object.entries(node.attrs)) {
@@ -473,8 +469,7 @@ export function showContextMenuFallback<T extends string>(
               "class",
               "-me-0.5 ms-auto size-4.5 shrink-0 text-muted-foreground opacity-80 sm:size-4",
             );
-            chevron.style.cssText =
-              "margin-left:auto;width:1rem;height:1rem;flex-shrink:0;pointer-events:none;color:var(--contrast-muted-foreground);opacity:0.8;";
+            chevron.style.cssText = "pointer-events:none;";
             chevron.setAttribute("aria-hidden", "true");
             chevron.dataset.contextMenuChevron = "true";
             button.appendChild(chevron);
@@ -646,6 +641,8 @@ export function installGlobalTextContextMenu(): () => void {
       target instanceof HTMLElement ? findContentEditableHost(target) : null;
     const isContentEditable = contentEditableHost !== null;
     const isEditable = isInputElement || isTextAreaElement || isContentEditable;
+    const canReadClipboard =
+      typeof navigator !== "undefined" && typeof navigator.clipboard?.readText === "function";
 
     const selection = window.getSelection();
     const selectedText = selection?.toString() ?? "";
@@ -720,7 +717,7 @@ export function installGlobalTextContextMenu(): () => void {
           id: "paste",
           label: "Paste",
           icon: "clipboard",
-          disabled: isReadOnly,
+          disabled: isReadOnly || !canReadClipboard,
         },
         {
           id: "select-all",
@@ -826,10 +823,28 @@ export function installGlobalTextContextMenu(): () => void {
             }
             input.dispatchEvent(new Event("input", { bubbles: true }));
           } else {
+            restoreWindowSelection();
             document.execCommand("insertText", false, text);
           }
         } catch {
-          document.execCommand("paste");
+          if (contentEditableHost) {
+            restoreWindowSelection();
+          }
+          try {
+            if (!document.execCommand("paste")) {
+              toastManager.add({
+                type: "error",
+                title: "Unable to paste",
+                description: "Clipboard access was denied.",
+              });
+            }
+          } catch {
+            toastManager.add({
+              type: "error",
+              title: "Unable to paste",
+              description: "Clipboard access was denied.",
+            });
+          }
         }
       } else if (clicked === "select-all") {
         if (isInputElement || isTextAreaElement) {

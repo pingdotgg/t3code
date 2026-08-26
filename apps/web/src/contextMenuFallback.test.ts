@@ -258,36 +258,47 @@ describe("showContextMenuFallback", () => {
   it("renders icons and applies appropriate tone classes and colors", async () => {
     const selectionPromise = showContextMenuFallback([
       { id: "rename", label: "Rename", icon: "pencil" },
-      { id: "archive", label: "Archive", tone: "warning", icon: "archive" },
+      { id: "warning", label: "Warning", tone: "warning", icon: "clock" },
       { id: "delete", label: "Delete", destructive: true, icon: "trash" },
       { id: "disabled-item", label: "Disabled", disabled: true, icon: "clock" },
+      {
+        id: "submenu",
+        label: "More",
+        children: [{ id: "child", label: "Child" }],
+      },
     ]);
 
     const renameButton = findButton("Rename");
-    const archiveButton = findButton("Archive");
+    const warningButton = findButton("Warning");
     const deleteButton = findButton("Delete");
     const disabledButton = findButton("Disabled");
+    const submenuButton = findButton("More");
 
     expect(renameButton).toBeTruthy();
-    expect(archiveButton).toBeTruthy();
+    expect(warningButton).toBeTruthy();
     expect(deleteButton).toBeTruthy();
     expect(disabledButton).toBeTruthy();
+    expect(submenuButton).toBeTruthy();
 
     const renameSvg = renameButton?.querySelectorAll("svg")[0];
-    const archiveSvg = archiveButton?.querySelectorAll("svg")[0];
+    const warningSvg = warningButton?.querySelectorAll("svg")[0];
     const deleteSvg = deleteButton?.querySelectorAll("svg")[0];
     const disabledSvg = disabledButton?.querySelectorAll("svg")[0];
+    const chevronSvg = submenuButton?.querySelectorAll("svg")[0];
 
     expect(renameSvg).toBeTruthy();
     expect(renameSvg?.className).toContain("text-muted-foreground");
-    expect(archiveSvg).toBeTruthy();
-    expect(archiveSvg?.className).toContain("text-warning-foreground");
+    expect(renameSvg?.style.cssText).toBe("pointer-events:none;");
+    expect(warningSvg).toBeTruthy();
+    expect(warningSvg?.className).toContain("text-warning-foreground");
     expect(deleteSvg).toBeTruthy();
     expect(deleteSvg?.className).toContain("text-destructive-foreground");
     expect(disabledSvg).toBeTruthy();
     expect(disabledSvg?.className).toContain("text-muted-foreground");
+    expect(chevronSvg?.className).toContain("ms-auto");
+    expect(chevronSvg?.style.cssText).toBe("pointer-events:none;");
 
-    expect(archiveButton?.style.color).toBe("var(--warning-foreground)");
+    expect(warningButton?.style.color).toBe("var(--warning-foreground)");
     expect(deleteButton?.style.color).toBe("var(--destructive-foreground)");
     expect(disabledButton?.style.color).toBe("var(--contrast-muted-foreground)");
     expect(disabledButton?.style.opacity).toBe("0.64");
@@ -298,7 +309,7 @@ describe("showContextMenuFallback", () => {
 
   it("does not infer a warning tone from an archive-like id", () => {
     expect(resolveItemTone({ id: "archive", label: "Archive" })).toBe("neutral");
-    expect(resolveItemTone({ id: "archive", label: "Archive", tone: "warning" })).toBe("warning");
+    expect(resolveItemTone({ id: "notice", label: "Notice", tone: "warning" })).toBe("warning");
   });
 
   it("resolves a clicked flat menu item", async () => {

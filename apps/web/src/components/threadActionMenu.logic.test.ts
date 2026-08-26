@@ -119,6 +119,7 @@ describe("buildThreadActionMenuItems", () => {
     expect(archiveItem?.icon).toBe("archive");
     expect(archiveItem?.separatorBefore).toBe(true);
     expect(archiveItem?.destructive).toBeFalsy();
+    expect(archiveItem?.tone).toBeUndefined();
     expect(items.at(-1)?.id).toBe("delete");
   });
 
