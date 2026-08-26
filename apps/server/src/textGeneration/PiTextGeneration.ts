@@ -46,15 +46,19 @@ const runPiJson = <S extends Schema.Top>({
     const launchArgs = tokenizeCliArgs(piSettings.launchArgs?.trim() ?? "");
     // Use print mode with structured JSON instruction: pi will return assistant text directly.
     // We ask pi to output JSON; then extract JSON blob from stdout.
+    // Always disable tools/extensions for deterministic JSON output; filter launchArgs so
+    // user-provided flags cannot re-enable them.
+    const filteredLaunchArgs = launchArgs.filter(
+      (arg) => arg !== "--tools" && arg !== "--extension" && !arg.startsWith("--tools=") && !arg.startsWith("--extension="),
+    );
     const spawnCommand = yield* resolveSpawnCommand(
       binaryPath,
-      ["-p", "--no-session", "--no-context-files", ...launchArgs, prompt],
+      ["-p", "--no-session", "--no-context-files", "--no-tools", "--no-extensions", ...filteredLaunchArgs, prompt],
       { env: environment },
     ).pipe(
       Effect.mapError(
         (cause) =>
           new TextGenerationError({
-            provider: "pi",
             operation: "spawn",
             detail: cause.message,
             cause,
@@ -74,7 +78,6 @@ const runPiJson = <S extends Schema.Top>({
         duration: PI_TIMEOUT_MS,
         onTimeout: () =>
           new TextGenerationError({
-            provider: "pi",
             operation: "timeout",
             detail: `Pi text generation timed out after ${PI_TIMEOUT_MS}ms`,
           }),
@@ -82,7 +85,6 @@ const runPiJson = <S extends Schema.Top>({
       Effect.mapError((cause) => {
         if (isTextGenerationError(cause)) return cause;
         return new TextGenerationError({
-          provider: "pi",
           operation: "spawn",
           detail: cause instanceof Error ? cause.message : String(cause),
           cause,
@@ -93,7 +95,6 @@ const runPiJson = <S extends Schema.Top>({
     if (result.code !== 0) {
       const stderr = result.stderr.trim() || result.stdout.trim();
       return yield* new TextGenerationError({
-        provider: "pi",
         operation: "spawn",
         detail: stderr || `Pi exited with code ${result.code}`,
       });
@@ -102,7 +103,6 @@ const runPiJson = <S extends Schema.Top>({
     const stdout = result.stdout.trim();
     if (!stdout) {
       return yield* new TextGenerationError({
-        provider: "pi",
         operation: "decode",
         detail: "Pi returned empty output",
       });
@@ -135,7 +135,6 @@ const runPiJson = <S extends Schema.Top>({
     }
     if (parsed === undefined) {
       return yield* new TextGenerationError({
-        provider: "pi",
         operation: "decode",
         detail: `Pi output was not valid JSON: ${stdout.slice(0, 500)}`,
       });
@@ -145,7 +144,6 @@ const runPiJson = <S extends Schema.Top>({
       Effect.mapError(
         (cause) =>
           new TextGenerationError({
-            provider: "pi",
             operation: "decode",
             detail: cause.message ?? String(cause),
             cause,

@@ -10,12 +10,13 @@ import {
   type ApprovalRequestId,
   type ProviderApprovalDecision,
   type ProviderUserInputAnswers,
+  RuntimeRequestId,
+  type CanonicalItemType,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
@@ -36,6 +37,7 @@ import {
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 
 const PROVIDER = ProviderDriverKind.make("pi");
+const PI_RAW_SOURCE = "acp.pi.extension" as const;
 
 interface PiRpcCommand {
   readonly id?: string;
@@ -49,12 +51,28 @@ interface PiSessionContext {
   readonly scope: Scope.CloseableScope;
   child: NodeChildProcess | undefined;
   activeTurnId: TurnId | undefined;
-  pendingCommands: Map<string, Deferred.Deferred<{ success: boolean; data?: unknown; error?: string }>>;
+  pendingCommands: Map<
+    string,
+    Deferred.Deferred<{ success: boolean; data?: unknown; error?: string }, ProviderAdapterRequestError>
+  >;
   stopped: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toCanonicalItemType(toolName: string): CanonicalItemType {
+  const name = toolName.toLowerCase();
+  if (name === "bash" || name === "command_execution" || name.includes("command")) return "command_execution";
+  if (name === "read" || name === "edit" || name === "write" || name === "file_change" || name.includes("file")) return "file_change";
+  if (name === "mcp_tool_call" || name.startsWith("mcp_")) return "mcp_tool_call";
+  if (name === "web_search") return "web_search";
+  return "dynamic_tool_call";
+}
+
+function asRuntimeRequestId(value: string): RuntimeRequestId {
+  return RuntimeRequestId.make(value);
 }
 
 export interface PiAdapterLiveOptions {
@@ -120,6 +138,14 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
       return Effect.succeed(ctx);
     };
 
+    const markSessionReady = (ctx: PiSessionContext) =>
+      Effect.gen(function* () {
+        const updatedAt = yield* nowIso;
+        const { activeTurnId: _a, ...ready } = ctx.session as unknown as Record<string, unknown>;
+        ctx.session = { ...(ready as unknown as ProviderSession), status: "ready", updatedAt } as ProviderSession;
+        ctx.activeTurnId = undefined;
+      });
+
     const stopSessionInternal = (ctx: PiSessionContext) =>
       Effect.gen(function* () {
         if (ctx.stopped) return;
@@ -132,7 +158,14 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
         yield* Effect.ignore(Scope.close(ctx.scope, Effect.void as any));
         sessions.delete(ctx.threadId);
         for (const deferred of ctx.pendingCommands.values()) {
-          yield* Deferred.fail(deferred, new Error("Session stopped")).pipe(Effect.ignore);
+          yield* Deferred.fail(
+            deferred,
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "session",
+              detail: "Session stopped",
+            }),
+          ).pipe(Effect.ignore);
         }
         ctx.pendingCommands.clear();
         yield* offerRuntimeEvent({
@@ -158,11 +191,14 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
         }
         const id = (command.id ?? (yield* randomUUIDv4)) as string;
         const payload = { ...command, id };
-        const deferred = yield* Deferred.make<{ success: boolean; data?: unknown; error?: string }>();
+        const deferred = yield* Deferred.make<
+          { success: boolean; data?: unknown; error?: string },
+          ProviderAdapterRequestError
+        >();
         ctx.pendingCommands.set(id, deferred);
         const line = JSON.stringify(payload) + "\n";
         const stdin = ctx.child.stdin as NodeJS.WritableStream;
-        const writeDone = yield* Effect.async<void, ProviderAdapterRequestError>((resume) => {
+        yield* Effect.async<void, ProviderAdapterRequestError>((resume) => {
           stdin.write(line, (err: unknown) => {
             if (err) {
               resume(
@@ -180,7 +216,6 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
             }
           });
         });
-        void writeDone;
         const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(30_000));
         if (result._tag === "None") {
           ctx.pendingCommands.delete(id);
@@ -234,7 +269,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                   threadId: ctx.threadId,
                   turnId,
                   payload: { kind: "assistant_text", delta: delta.delta as string },
-                  raw: { source: "codex.sdk.thread-event" as const, payload: raw },
+                  raw: { source: PI_RAW_SOURCE, payload: raw },
                 });
               } else if (deltaType === "thinking_delta" && typeof delta.delta === "string") {
                 yield* offerRuntimeEvent({
@@ -244,7 +279,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                   threadId: ctx.threadId,
                   turnId,
                   payload: { kind: "reasoning_text", delta: delta.delta as string },
-                  raw: { source: "codex.sdk.thread-event" as const, payload: raw },
+                  raw: { source: PI_RAW_SOURCE, payload: raw },
                 });
               } else if (deltaType === "toolcall_start") {
                 const toolName = typeof delta.toolName === "string" ? (delta.toolName as string) : "tool";
@@ -254,8 +289,8 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                   provider: PROVIDER,
                   threadId: ctx.threadId,
                   turnId,
-                  payload: { kind: toolName as never, status: "inProgress" },
-                  raw: { source: "codex.sdk.thread-event" as const, payload: raw },
+                  payload: { kind: toCanonicalItemType(toolName), status: "inProgress" },
+                  raw: { source: PI_RAW_SOURCE, payload: raw },
                 });
               }
             }
@@ -270,7 +305,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                 threadId: ctx.threadId,
                 turnId,
                 payload: { kind: "assistant_message", status: "completed" },
-                raw: { source: "codex.sdk.thread-event" as const, payload: raw },
+                raw: { source: PI_RAW_SOURCE, payload: raw },
               });
             }
             break;
@@ -288,7 +323,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                   status: "running",
                   message: `Running ${((raw as Record<string, unknown>).toolName as string) ?? "tool"}`,
                 },
-                raw: { source: "codex.sdk.thread-event" as const, payload: raw },
+                raw: { source: PI_RAW_SOURCE, payload: raw },
               });
             }
             break;
@@ -305,7 +340,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                   tool: ((raw as Record<string, unknown>).toolName as string) ?? "bash",
                   status: (raw as Record<string, unknown>).isError ? "failed" : "completed",
                 },
-                raw: { source: "codex.sdk.thread-event" as const, payload: raw },
+                raw: { source: PI_RAW_SOURCE, payload: raw },
               });
             }
             break;
@@ -331,9 +366,9 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
               provider: PROVIDER,
               threadId: ctx.threadId,
               ...(turnId ? { turnId } : {}),
-              requestId: requestId as never,
+              requestId: asRuntimeRequestId(requestId),
               payload: { kind: "tool_user_input" as never, prompt: title, options },
-              raw: { source: "codex.sdk.thread-event" as const, payload: raw },
+              raw: { source: PI_RAW_SOURCE, payload: raw },
             });
             break;
           }
@@ -416,7 +451,6 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
             stopped: false,
           };
 
-          // stderr logging
           const stderr = nodeChild.stderr as NodeJS.ReadableStream | null | undefined;
           if (stderr) {
             stderr.on("data", (chunk: Buffer) => {
@@ -429,10 +463,9 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
             });
           }
 
-          // stdout JSONL loop
           const stdout = nodeChild.stdout as NodeJS.ReadableStream | null | undefined;
           if (stdout) {
-            yield* Effect.gen(function* () {
+            const stdoutEffect = Effect.promise(async () => {
               let buffer = "";
               for await (const chunk of stdout as unknown as AsyncIterable<Buffer | string>) {
                 const text = typeof chunk === "string" ? chunk : (chunk as Buffer).toString("utf-8");
@@ -447,37 +480,47 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                   try {
                     parsed = JSON.parse(line);
                   } catch {
-                    yield* Effect.logWarning("Pi RPC parse error", { line: line.slice(0, 500) });
+                    await Effect.runPromise(Effect.logWarning("Pi RPC parse error", { line: line.slice(0, 500) }));
                     continue;
                   }
-                  yield* handlePiEvent(ctx, parsed);
+                  await Effect.runPromise(handlePiEvent(ctx, parsed));
                 }
               }
-            }).pipe(
-              Effect.catchCause((cause) => Effect.logWarning("Pi stdout loop failed", { cause })),
-              Effect.forkIn(scope),
-            );
+            }).pipe(Effect.catchCause((cause) => Effect.logWarning("Pi stdout loop failed", { cause })));
+            yield* stdoutEffect.pipe(Effect.forkIn(scope));
           }
 
-          // exit handler
           yield* Effect.async<void, never>((resume) => {
             const onExit = (code: number | null, signal: string | null) => {
-              if (!ctx.stopped) {
+              ctx.stopped = true;
+              sessions.delete(ctx.threadId);
+              for (const deferred of ctx.pendingCommands.values()) {
                 Effect.runSync(
-                  offerRuntimeEvent({
+                  Deferred.fail(
+                    deferred,
+                    new ProviderAdapterRequestError({
+                      provider: PROVIDER,
+                      method: "session",
+                      detail: `Pi process exited with code ${code} signal ${signal}`,
+                    }),
+                  ).pipe(Effect.ignore),
+                );
+              }
+              ctx.pendingCommands.clear();
+              Effect.runPromise(
+                Effect.gen(function* () {
+                  yield* offerRuntimeEvent({
                     type: "session.exited",
-                    eventId: EventId.make(`${Date.now()}-${Math.random()}` as never),
+                    ...(yield* makeEventStamp()),
                     provider: PROVIDER,
                     threadId: ctx.threadId,
-                    createdAt: new Date().toISOString() as never,
                     payload: {
                       exitKind: code === 0 ? "graceful" : "error",
                       reason: `exit code ${code} signal ${signal}`,
                     },
-                  }),
-                );
-              }
-              resume(Effect.void);
+                  });
+                }),
+              ).finally(() => resume(Effect.void));
             };
             nodeChild.on("exit", onExit);
             nodeChild.on("error", () => resume(Effect.void));
@@ -592,9 +635,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                   turnId,
                   payload: { state: "failed", errorMessage: cause.message ?? String(cause) },
                 });
-                ctx.activeTurnId = undefined;
-                const { activeTurnId: _a, ...ready } = ctx.session as unknown as Record<string, unknown>;
-                ctx.session = { ...(ready as unknown as ProviderSession), status: "ready", updatedAt: yield* nowIso } as ProviderSession;
+                yield* markSessionReady(ctx);
                 return yield* Effect.fail(cause);
               }),
             ),
@@ -609,9 +650,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
               turnId,
               payload: { state: "failed", errorMessage: rpcResult.error ?? "Pi prompt rejected" },
             });
-            ctx.activeTurnId = undefined;
-            const { activeTurnId: _a, ...ready } = ctx.session as unknown as Record<string, unknown>;
-            ctx.session = { ...(ready as unknown as ProviderSession), status: "ready", updatedAt: yield* nowIso } as ProviderSession;
+            yield* markSessionReady(ctx);
             return yield* new ProviderAdapterRequestError({
               provider: PROVIDER,
               method: "prompt",
@@ -619,33 +658,31 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
             });
           }
 
-          // Poll get_state until not streaming, then complete turn
           yield* Effect.forkScoped(
             Effect.gen(function* () {
+              const ownedTurnId = turnId;
               for (let attempt = 0; attempt < 600; attempt++) {
                 yield* Effect.sleep(1000);
                 if (ctx.stopped) break;
+                if (ctx.activeTurnId !== ownedTurnId) break;
                 const stateRes = yield* writeRpcCommand(ctx, { type: "get_state" }).pipe(
                   Effect.orElseSucceed(() => ({ success: false as const })),
                 );
                 if (!stateRes.success) continue;
                 const data = (stateRes.data ?? {}) as Record<string, unknown>;
                 if (data.isStreaming === false) {
+                  if (ctx.activeTurnId !== ownedTurnId) break;
                   yield* offerRuntimeEvent({
                     type: "turn.completed",
                     ...(yield* makeEventStamp()),
                     provider: PROVIDER,
                     threadId: input.threadId,
-                    turnId,
+                    turnId: ownedTurnId,
                     payload: { state: "completed", stopReason: "stop" },
                   });
-                  ctx.activeTurnId = undefined;
-                  const { activeTurnId: _a, ...ready } = ctx.session as unknown as Record<string, unknown>;
-                  ctx.session = {
-                    ...(ready as unknown as ProviderSession),
-                    status: "ready",
-                    updatedAt: yield* nowIso,
-                  } as ProviderSession;
+                  if (ctx.activeTurnId === ownedTurnId) {
+                    yield* markSessionReady(ctx);
+                  }
                   break;
                 }
               }
@@ -664,8 +701,10 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
       Effect.gen(function* () {
         const ctx = sessions.get(threadId);
         if (!ctx || ctx.stopped) return;
-        yield* writeRpcCommand(ctx, { type: "abort" }).pipe(Effect.ignore);
+        // Cancel poller by clearing activeTurnId first so polling loop exits
         const targetTurnId = turnId ?? ctx.activeTurnId;
+        ctx.activeTurnId = undefined;
+        yield* writeRpcCommand(ctx, { type: "abort" }).pipe(Effect.ignore);
         if (targetTurnId) {
           yield* offerRuntimeEvent({
             type: "turn.completed",
@@ -676,9 +715,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
             payload: { state: "cancelled", stopReason: "cancelled" },
           });
         }
-        ctx.activeTurnId = undefined;
-        const { activeTurnId: _a, ...ready } = ctx.session as unknown as Record<string, unknown>;
-        ctx.session = { ...(ready as unknown as ProviderSession), status: "ready", updatedAt: yield* nowIso } as ProviderSession;
+        yield* markSessionReady(ctx);
       });
 
     const respondToRequest: ProviderAdapterShape<never>["respondToRequest"] = (
@@ -696,13 +733,13 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                 id: requestId as string,
                 value: decision === "accept" || decision === "acceptForSession" ? "Allow" : "Block",
               };
-        yield* writeRpcCommand(ctx, response).pipe(Effect.ignore);
+        yield* writeRpcCommand(ctx, response);
         yield* offerRuntimeEvent({
           type: "request.resolved",
           ...(yield* makeEventStamp()),
           provider: PROVIDER,
           threadId,
-          requestId: requestId as never,
+          requestId: asRuntimeRequestId(requestId as string),
           payload: { decision } as never,
         });
       });
@@ -719,13 +756,13 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
           type: "extension_ui_response",
           id: requestId as string,
           value: String(firstAnswer),
-        }).pipe(Effect.ignore);
+        });
         yield* offerRuntimeEvent({
           type: "user-input.resolved",
           ...(yield* makeEventStamp()),
           provider: PROVIDER,
           threadId,
-          requestId: requestId as never,
+          requestId: asRuntimeRequestId(requestId as string),
           payload: { answers },
         });
       });
@@ -772,9 +809,21 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
         };
       });
 
-    const rollbackThread: ProviderAdapterShape<never>["rollbackThread"] = (threadId) =>
+    const rollbackThread: ProviderAdapterShape<never>["rollbackThread"] = (threadId, numTurns) =>
       Effect.gen(function* () {
-        return yield* readThread(threadId);
+        const ctx = yield* requireSession(threadId);
+        const result = yield* writeRpcCommand(ctx, {
+          type: "rollback",
+          numTurns,
+        }).pipe(Effect.either);
+        if (result._tag === "Right" && result.right.success) {
+          return yield* readThread(threadId);
+        }
+        return yield* new ProviderAdapterRequestError({
+          provider: PROVIDER,
+          method: "rollbackThread",
+          detail: "Pi does not support rollback; use checkpoint restore instead",
+        });
       });
 
     const stopAll: ProviderAdapterShape<never>["stopAll"] = () =>

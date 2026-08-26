@@ -152,8 +152,8 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
         status: "error",
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
-          ? "Pi CLI (`pi`) is not installed or not on PATH."
-          : "Failed to execute Pi CLI health check.",
+          ? `Pi CLI (\`${piSettings.binaryPath || "pi"}\`) is not installed or not on PATH.`
+          : `Failed to execute Pi CLI health check (\`${piSettings.binaryPath || "pi"}\`).`,
       },
     });
   }

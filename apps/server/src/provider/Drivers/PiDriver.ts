@@ -113,13 +113,15 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       });
       const textGeneration = yield* makePiTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkPiProviderStatus(effectiveConfig, processEnv).pipe(
+      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+
+      const checkProvider = Effect.flatMap(snapshotSettings.getSettings, (settings) =>
+        checkPiProviderStatus(settings.provider, processEnv),
+      ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
-
-      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<PiSettings>>({
         maintenanceCapabilities,
         getSettings: snapshotSettings.getSettings,
