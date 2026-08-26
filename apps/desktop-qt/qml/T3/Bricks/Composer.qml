@@ -12,6 +12,9 @@ Rectangle {
     readonly property var model: Shell.state.composer ?? null
     readonly property bool ready: model !== null && model.target !== null
     readonly property string publishedText: ready ? model.text : ""
+    readonly property int publishedCursor: ready ? model.cursor : 0
+    readonly property var suggestions: ready ? model.suggestions : []
+    readonly property bool suggesting: ready && model.triggerKind !== null && (suggestions.length > 0 || model.suggestionsEmptyText !== null)
     readonly property color surface: Theme.color("surface", "#141416")
     readonly property color border: Theme.color("border", "#27272a")
     readonly property color foreground: Theme.color("text", "#e4e4e7")
@@ -41,14 +44,28 @@ Rectangle {
         return choices;
     }
 
+    property int lastSentCursor: -1
+
     function flushText() {
         textDebounce.stop();
-        if (input.text !== composer.lastSentText) {
+        if (input.text !== composer.lastSentText || input.cursorPosition !== composer.lastSentCursor) {
             composer.lastSentText = input.text;
+            composer.lastSentCursor = input.cursorPosition;
             Shell.dispatch("composer.text.set", {
-                text: input.text
+                text: input.text,
+                cursor: input.cursorPosition
             });
         }
+    }
+
+    function selectSuggestion(index) {
+        const item = composer.suggestions[index];
+        if (!item) {
+            return;
+        }
+        Shell.dispatch("composer.suggest.select", {
+            id: item.id
+        });
     }
 
     function submit(intent) {
@@ -69,8 +86,14 @@ Rectangle {
         if (publishedText !== input.text && publishedText !== lastSentText) {
             input.text = publishedText;
             lastSentText = publishedText;
+            // The page moved the caret (a suggestion was inserted, a send cleared
+            // the prompt); follow it.
+            input.cursorPosition = Math.min(publishedCursor, input.text.length);
+            lastSentCursor = input.cursorPosition;
         }
     }
+
+    onSuggestionsChanged: suggestionList.currentIndex = suggestions.length > 0 ? 0 : -1
 
     Timer {
         id: textDebounce
@@ -85,6 +108,84 @@ Rectangle {
         anchors.fill: parent
         anchors.margins: 12
         spacing: 8
+
+        // @file, $skill and /command suggestions, computed by the page for the
+        // caret it was last told about.
+        Rectangle {
+            Layout.fillWidth: true
+            visible: composer.suggesting
+            implicitHeight: visible ? Math.min(suggestionList.contentHeight, 240) + 8 : 0
+            radius: 8
+            color: Theme.color("surfaceOverlay", "#18181b")
+            border.color: composer.border
+            border.width: 1
+
+            ListView {
+                id: suggestionList
+
+                anchors.fill: parent
+                anchors.margins: 4
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                model: composer.suggestions
+                highlightMoveDuration: 0
+                keyNavigationWraps: true
+
+                delegate: Rectangle {
+                    id: suggestion
+
+                    required property var modelData
+                    required property int index
+
+                    width: ListView.view.width
+                    height: 34
+                    radius: 6
+                    color: ListView.isCurrentItem ? Theme.color("sidebarRowSelected", "#2a2a30") : suggestionHover.hovered ? Theme.color("sidebarRowHover", "#1c1c21") : "transparent"
+
+                    HoverHandler {
+                        id: suggestionHover
+                    }
+
+                    TapHandler {
+                        onTapped: {
+                            composer.flushText();
+                            composer.selectSuggestion(suggestion.index);
+                        }
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        spacing: 8
+
+                        Text {
+                            text: suggestion.modelData.label
+                            color: composer.foreground
+                            font.pixelSize: 13
+                            elide: Text.ElideMiddle
+                            Layout.maximumWidth: parent.width * 0.5
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: suggestion.modelData.description
+                            color: composer.muted
+                            font.pixelSize: 11
+                            elide: Text.ElideMiddle
+                        }
+                    }
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: suggestionList.count === 0
+                    text: composer.ready && composer.model.suggestionsEmptyText ? composer.model.suggestionsEmptyText : ""
+                    color: composer.muted
+                    font.pixelSize: 12
+                }
+            }
+        }
 
         Rectangle {
             Layout.fillWidth: true
