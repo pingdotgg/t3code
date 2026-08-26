@@ -258,11 +258,28 @@ Not yet native: switching branches (the picker's `setThreadBranch` flow
 stops the session and rewrites thread metadata), renaming the thread, and
 the git write actions.
 
+### `settings`
+
+Settings are whole HTML pages, so only their navigation moves: the root
+route mounts `ShellSettingsBridge` when hosted, which publishes
+`ShellSettingsState` on every route change — `active` (on `/settings*`),
+the sections in sidebar order, the active one, and search results for the
+query the shell last sent (the same `searchSettings` catalog the HTML nav
+uses). `DefaultShell` swaps the `Sidebar` brick for `SettingsNav` while
+`active`. Actions: `settings.navigate {to}`, `settings.openResult {to,
+targetId}` (scrolls when already on the page), `settings.search {query}`,
+`settings.back` (history back, else `/`). When hosted, `AppSidebarLayout`
+renders no sidebar on any route.
+
+Bridges tied to a thread route (`workspace`, `composer`, `rightPanel`)
+publish `null` for their key on unmount, so leaving a thread clears the
+native chrome instead of freezing it on the last thread.
+
 ## Splitting chrome out
 
-Order of work: sidebar (done: `Sidebar`), composer (done: `Composer`), right
-panel (done: `RightPanel` + embed route), workspace strip (done: `Workspace`),
-then settings. The timeline and terminal stay HTML. Each split-out piece becomes one
+Every piece of chrome from the original list now has a brick: `Sidebar`,
+`Composer`, `RightPanel` (+ embed route), `Workspace`, `SettingsNav`. The
+timeline and the settings pages stay HTML by design. The timeline and terminal stay HTML. Each split-out piece becomes one
 brick with a documented state/action surface; in the shell the SPA simply does
 not render the parts that moved out. When an HTML brick needs to live somewhere QML decides, it becomes a second
 `WebEngineView` loading an embed route with its own server connection (the
