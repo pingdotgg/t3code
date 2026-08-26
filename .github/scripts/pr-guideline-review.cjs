@@ -62,7 +62,7 @@ function section(markdown, heading) {
       continue;
     }
 
-    const levelTwoHeading = line.match(/^##[ \t]+(.+?)[ \t]*$/);
+    const levelTwoHeading = line.match(/^##[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/);
     if (levelTwoHeading) {
       if (collecting) break;
       collecting = levelTwoHeading[1].toLowerCase() === heading.toLowerCase();
@@ -109,7 +109,8 @@ function isDefiniteUiFile(file) {
 }
 
 function imageCount(markdown) {
-  const markdownImages = markdown.match(/!\[[^\]]*\]\([^\s)]+(?:\s+"[^"]*")?\)/gi) ?? [];
+  const markdownImages =
+    markdown.match(/!\[[^\]]*\]\([^\s)]+(?:\s+(?:"[^"]*"|'[^']*'))?\)/gi) ?? [];
   const htmlImages = (markdown.match(/<img\b[^>]*>/gi) ?? []).filter((tag) =>
     hasNonEmptySrc(tag, "img"),
   );
@@ -121,7 +122,7 @@ function imageCount(markdown) {
 
 function hasNonEmptySrc(markdown, tagName) {
   const tags = markdown.match(new RegExp(`<${tagName}\\b[^>]*>`, "gi")) ?? [];
-  return tags.some((tag) => /\bsrc\s*=\s*(?:"[^"\s][^"]*"|'[^'\s][^']*'|[^\s"'=<>]+)/i.test(tag));
+  return tags.some((tag) => /\ssrc\s*=\s*(?:"[^"\s][^"]*"|'[^'\s][^']*'|[^\s"'=<>]+)/i.test(tag));
 }
 
 function hasVideo(markdown) {
@@ -507,6 +508,25 @@ async function upsertComment(github, context, pullNumber, body) {
   return "created";
 }
 
+async function removeComment(github, context, pullNumber) {
+  const comments = await github.paginate(github.rest.issues.listComments, {
+    ...context.repo,
+    issue_number: pullNumber,
+    per_page: 100,
+  });
+  const existing = comments.find(
+    (comment) =>
+      comment.user?.login === "github-actions[bot]" && comment.body?.includes(COMMENT_MARKER),
+  );
+
+  if (!existing) return "absent";
+  await github.rest.issues.deleteComment({
+    ...context.repo,
+    comment_id: existing.id,
+  });
+  return "removed";
+}
+
 async function reviewPull({
   github,
   context,
@@ -536,8 +556,9 @@ async function reviewPull({
   }
 
   if (pull.draft) {
-    core.info(`Skipping draft PR #${pullNumber}.`);
-    return { published: false, reason: "draft" };
+    const removal = await removeComment(github, context, pullNumber);
+    core.info(`Skipping draft PR #${pullNumber}; prior comment ${removal}.`);
+    return { published: false, reason: "draft", removal };
   }
 
   const files = await github.paginate(github.rest.pulls.listFiles, {
@@ -584,6 +605,7 @@ module.exports = {
   imageCount,
   parseVouchedUsers,
   renderComment,
+  removeComment,
   reviewPull,
   section,
   sectionAny,

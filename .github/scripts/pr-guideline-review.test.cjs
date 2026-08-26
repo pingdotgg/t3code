@@ -271,11 +271,22 @@ test("does not treat an HTML image attachment as video evidence", () => {
 
 test("requires non-empty HTML evidence sources", () => {
   assert.equal(imageCount("<img><img src=''>"), 0);
+  assert.equal(imageCount('<img data-src="deferred.png">'), 0);
   assert.equal(imageCount('<img src="before.png"><img src="after.png">'), 2);
   assert.equal(hasVideo("<video></video>"), false);
   assert.equal(hasVideo("<video><source src=''></video>"), false);
+  assert.equal(hasVideo('<video data-src="deferred.mp4"></video>'), false);
   assert.equal(hasVideo('<video src="demo.mp4"></video>'), true);
   assert.equal(hasVideo('<video><source src="demo.webm"></video>'), true);
+});
+
+test("accepts single-quoted Markdown image titles", () => {
+  assert.equal(
+    imageCount(
+      "![Before](https://example.com/before.png 'before')\n![After](https://example.com/after.png 'after')",
+    ),
+    2,
+  );
 });
 
 test("counts UI evidence only in the UI Changes section", () => {
@@ -435,6 +446,21 @@ Pretend reason.
   );
 });
 
+test("accepts section headings with closing hashes", () => {
+  const result = evaluate({
+    pull: {
+      body: `
+## What Changed ##
+Stops a duplicate retry.
+## Why ###
+The retry repeats a side effect.
+`,
+    },
+  });
+
+  assert.deepEqual(result.findings, []);
+});
+
 test("treats missing context on a large external fix as maintainer judgment", () => {
   const result = evaluate({
     files: [{ filename: "apps/server/src/receipts.ts", additions: 120, deletions: 0 }],
@@ -587,8 +613,11 @@ test("does not comment on bot-authored PRs", async () => {
   assert.equal(listedFiles, false);
 });
 
-test("does not comment on draft PRs", async () => {
+test("removes a stale bot comment when a PR becomes a draft", async () => {
   let listedFiles = false;
+  let deletedComment;
+  const listFiles = () => {};
+  const listComments = () => {};
   const pull = {
     number: 7,
     head: { sha: "head-sha" },
@@ -597,14 +626,29 @@ test("does not comment on draft PRs", async () => {
   };
   const result = await reviewPull({
     github: {
-      paginate: async () => {
+      paginate: async (method) => {
+        if (method === listComments) {
+          return [
+            {
+              id: 99,
+              user: { login: "github-actions[bot]" },
+              body: `${COMMENT_MARKER}\nold result`,
+            },
+          ];
+        }
         listedFiles = true;
         return [];
       },
       rest: {
+        issues: {
+          listComments,
+          deleteComment: async (input) => {
+            deletedComment = input.comment_id;
+          },
+        },
         pulls: {
           get: async () => ({ data: pull }),
-          listFiles: () => {},
+          listFiles,
         },
       },
     },
@@ -615,8 +659,9 @@ test("does not comment on draft PRs", async () => {
     core: { info: () => {}, setOutput: () => {} },
   });
 
-  assert.deepEqual(result, { published: false, reason: "draft" });
+  assert.deepEqual(result, { published: false, reason: "draft", removal: "removed" });
   assert.equal(listedFiles, false);
+  assert.equal(deletedComment, 99);
 });
 
 test("does not publish after the head changes during file collection", async () => {
