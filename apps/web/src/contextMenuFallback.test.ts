@@ -35,6 +35,7 @@ class FakeElement {
   constructor(readonly tagName: string) {}
 
   get isConnected() {
+    // oxlint-disable-next-line typescript/no-this-alias -- test fake DOM needs to walk parent chain from this
     let current: FakeElement | null = this;
     while (current?.parent) {
       current = current.parent;

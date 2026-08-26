@@ -708,6 +708,7 @@ export function PullRequestSummaryTab({
                 <div
                   // Position too: the host decides how many runs share a name, and a repeated
                   // key would be a rendering fault on top of whatever the list already says.
+                  // oxlint-disable-next-line react/no-array-index-key -- index disambiguates duplicate check names from host
                   key={`${index}:${check.name}:${check.url ?? ""}`}
                   className="group flex items-center gap-1 rounded-md pr-1 hover:bg-accent/60"
                 >

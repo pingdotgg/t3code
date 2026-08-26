@@ -1,4 +1,9 @@
-import type { ModelCapabilities, PiSettings, ServerProvider, ServerProviderModel } from "@t3tools/contracts";
+import type {
+  ModelCapabilities,
+  PiSettings,
+  ServerProvider,
+  ServerProviderModel,
+} from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

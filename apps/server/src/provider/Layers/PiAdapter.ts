@@ -7,9 +7,6 @@ import {
   ProviderInstanceId,
   type ThreadId,
   TurnId,
-  type ApprovalRequestId,
-  type ProviderApprovalDecision,
-  type ProviderUserInputAnswers,
   RuntimeRequestId,
   type CanonicalItemType,
 } from "@t3tools/contracts";
@@ -24,7 +21,7 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Semaphore from "effect/Semaphore";
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
-import type { ChildProcess as NodeChildProcess } from "node:child_process";
+import type * as NodeChildProcess from "node:child_process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -49,11 +46,14 @@ interface PiSessionContext {
   readonly threadId: ThreadId;
   session: ProviderSession;
   readonly scope: Scope.CloseableScope;
-  child: NodeChildProcess | undefined;
+  child: NodeChildProcess.ChildProcess | undefined;
   activeTurnId: TurnId | undefined;
   pendingCommands: Map<
     string,
-    Deferred.Deferred<{ success: boolean; data?: unknown; error?: string }, ProviderAdapterRequestError>
+    Deferred.Deferred<
+      { success: boolean; data?: unknown; error?: string },
+      ProviderAdapterRequestError
+    >
   >;
   stopped: boolean;
 }
@@ -64,8 +64,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function toCanonicalItemType(toolName: string): CanonicalItemType {
   const name = toolName.toLowerCase();
-  if (name === "bash" || name === "command_execution" || name.includes("command")) return "command_execution";
-  if (name === "read" || name === "edit" || name === "write" || name === "file_change" || name.includes("file")) return "file_change";
+  if (name === "bash" || name === "command_execution" || name.includes("command"))
+    return "command_execution";
+  if (
+    name === "read" ||
+    name === "edit" ||
+    name === "write" ||
+    name === "file_change" ||
+    name.includes("file")
+  )
+    return "file_change";
   if (name === "mcp_tool_call" || name.startsWith("mcp_")) return "mcp_tool_call";
   if (name === "web_search") return "web_search";
   return "dynamic_tool_call";
@@ -133,7 +141,9 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
     ): Effect.Effect<PiSessionContext, ProviderAdapterSessionNotFoundError> => {
       const ctx = sessions.get(threadId);
       if (!ctx || ctx.stopped) {
-        return Effect.fail(new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId }));
+        return Effect.fail(
+          new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId }),
+        );
       }
       return Effect.succeed(ctx);
     };
@@ -142,7 +152,11 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
       Effect.gen(function* () {
         const updatedAt = yield* nowIso;
         const { activeTurnId: _a, ...ready } = ctx.session as unknown as Record<string, unknown>;
-        ctx.session = { ...(ready as unknown as ProviderSession), status: "ready", updatedAt } as ProviderSession;
+        ctx.session = {
+          ...(ready as unknown as ProviderSession),
+          status: "ready",
+          updatedAt,
+        } as ProviderSession;
         ctx.activeTurnId = undefined;
       });
 
@@ -180,7 +194,10 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
     const writeRpcCommand = (
       ctx: PiSessionContext,
       command: PiRpcCommand,
-    ): Effect.Effect<{ success: boolean; data?: unknown; error?: string }, ProviderAdapterRequestError> =>
+    ): Effect.Effect<
+      { success: boolean; data?: unknown; error?: string },
+      ProviderAdapterRequestError
+    > =>
       Effect.gen(function* () {
         if (!ctx.child || !ctx.child.stdin || ctx.stopped) {
           return yield* new ProviderAdapterRequestError({
@@ -282,7 +299,8 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                   raw: { source: PI_RAW_SOURCE, payload: raw },
                 });
               } else if (deltaType === "toolcall_start") {
-                const toolName = typeof delta.toolName === "string" ? (delta.toolName as string) : "tool";
+                const toolName =
+                  typeof delta.toolName === "string" ? (delta.toolName as string) : "tool";
                 yield* offerRuntimeEvent({
                   type: "item.started",
                   ...stamp,
@@ -375,7 +393,9 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
           default:
             break;
         }
-      }).pipe(Effect.catchCause((cause) => Effect.logWarning("Failed to handle Pi event", { cause })));
+      }).pipe(
+        Effect.catchCause((cause) => Effect.logWarning("Failed to handle Pi event", { cause })),
+      );
 
     const startSession: ProviderAdapterShape<never>["startSession"] = (input) =>
       withThreadLock(
@@ -403,14 +423,16 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
 
           const scope = yield* Scope.make();
           let scopeTransferred = false;
-          yield* Effect.addFinalizer(() => (scopeTransferred ? Effect.void : Scope.close(scope, Effect.void as never)));
+          yield* Effect.addFinalizer(() =>
+            scopeTransferred ? Effect.void : Scope.close(scope, Effect.void as never),
+          );
 
           const launchArgs = piLaunchArgs(piSettings.launchArgs);
           const binaryPath = piSettings.binaryPath || "pi";
           const args = ["--mode", "rpc", ...launchArgs];
-          const env = { ...process.env, ...(options?.environment ?? {}) } as NodeJS.ProcessEnv;
+          const env = { ...process.env, ...options?.environment } as NodeJS.ProcessEnv;
 
-          const nodeChild: NodeChildProcess = yield* Effect.tryPromise({
+          const nodeChild: NodeChildProcess.ChildProcess = yield* Effect.tryPromise({
             try: async () => {
               const { spawn } = await import("node:child_process");
               return spawn(binaryPath, args, {
@@ -468,7 +490,8 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
             const stdoutEffect = Effect.promise(async () => {
               let buffer = "";
               for await (const chunk of stdout as unknown as AsyncIterable<Buffer | string>) {
-                const text = typeof chunk === "string" ? chunk : (chunk as Buffer).toString("utf-8");
+                const text =
+                  typeof chunk === "string" ? chunk : (chunk as Buffer).toString("utf-8");
                 buffer += text;
                 let nl: number;
                 while ((nl = buffer.indexOf("\n")) !== -1) {
@@ -480,13 +503,17 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                   try {
                     parsed = JSON.parse(line);
                   } catch {
-                    await Effect.runPromise(Effect.logWarning("Pi RPC parse error", { line: line.slice(0, 500) }));
+                    await Effect.runPromise(
+                      Effect.logWarning("Pi RPC parse error", { line: line.slice(0, 500) }),
+                    );
                     continue;
                   }
                   await Effect.runPromise(handlePiEvent(ctx, parsed));
                 }
               }
-            }).pipe(Effect.catchCause((cause) => Effect.logWarning("Pi stdout loop failed", { cause })));
+            }).pipe(
+              Effect.catchCause((cause) => Effect.logWarning("Pi stdout loop failed", { cause })),
+            );
             yield* stdoutEffect.pipe(Effect.forkIn(scope));
           }
 
@@ -797,7 +824,9 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
               }),
           ),
         );
-        const messages = ((res.data ?? {}) as Record<string, unknown>).messages as unknown[] | undefined;
+        const messages = ((res.data ?? {}) as Record<string, unknown>).messages as
+          | unknown[]
+          | undefined;
         return {
           threadId,
           turns: [

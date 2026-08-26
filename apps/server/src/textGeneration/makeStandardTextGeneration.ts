@@ -33,7 +33,9 @@ export type RunJson = <S extends Schema.Top>(args: {
  * Every provider was copy-pasting the same `build*Prompt` → `runJson` → `sanitize` dance.
  * One helper replaces 5×40 lines.
  */
-export function makeStandardTextGeneration(runJson: RunJson): TextGeneration.TextGeneration["Service"] {
+export function makeStandardTextGeneration(
+  runJson: RunJson,
+): TextGeneration.TextGeneration["Service"] {
   const generateCommitMessage: TextGeneration.TextGeneration["Service"]["generateCommitMessage"] =
     Effect.fn("TextGeneration.generateCommitMessage")(function* (input) {
       const { prompt, outputSchema } = buildCommitMessagePrompt({

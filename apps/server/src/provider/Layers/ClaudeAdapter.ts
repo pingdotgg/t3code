@@ -3751,6 +3751,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     // Same reason as the approvals above: a request nobody can answer any more
     // must not stay open, or the thread can never be settled.
+    // oxlint-disable-next-line unicorn/no-useless-spread -- snapshot pending cancels before mutation
     for (const pending of [...context.pendingUserInputs.values()]) {
       yield* pending.cancel;
     }

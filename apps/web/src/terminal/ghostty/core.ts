@@ -178,7 +178,7 @@ export function ghosttyCellText(codepointView: DataView, graphemeLength: number)
   let text = "";
   for (let start = 0; start < graphemeLength; start += CHUNK_SIZE) {
     const count = Math.min(CHUNK_SIZE, graphemeLength - start);
-    const codes = new Array<number>(count);
+    const codes = Array.from<number>({ length: count });
     for (let index = 0; index < count; index += 1) {
       codes[index] = codepointView.getUint32((start + index) * 4, true);
     }

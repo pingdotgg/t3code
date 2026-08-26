@@ -27,7 +27,11 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
     outputSchemaJson,
     modelSelection: _modelSelection,
   }: {
-    operation: "generateCommitMessage" | "generatePrContent" | "generateBranchName" | "generateThreadTitle";
+    operation:
+      | "generateCommitMessage"
+      | "generatePrContent"
+      | "generateBranchName"
+      | "generateThreadTitle";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -36,11 +40,23 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
     const binaryPath = piSettings.binaryPath || "pi";
     const launchArgs = tokenizeCliArgs(piSettings.launchArgs?.trim() ?? "");
     const filteredLaunchArgs = launchArgs.filter(
-      (arg) => arg !== "--tools" && arg !== "--extension" && !arg.startsWith("--tools=") && !arg.startsWith("--extension="),
+      (arg) =>
+        arg !== "--tools" &&
+        arg !== "--extension" &&
+        !arg.startsWith("--tools=") &&
+        !arg.startsWith("--extension="),
     );
     const spawnCommand = yield* resolveSpawnCommand(
       binaryPath,
-      ["-p", "--no-session", "--no-context-files", "--no-tools", "--no-extensions", ...filteredLaunchArgs, prompt],
+      [
+        "-p",
+        "--no-session",
+        "--no-context-files",
+        "--no-tools",
+        "--no-extensions",
+        ...filteredLaunchArgs,
+        prompt,
+      ],
       { env: environment },
     ).pipe(
       Effect.mapError(
@@ -98,7 +114,9 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
 
     // Single salvage via shared helper — `extractJsonObject` already handles ```json fences.
     const jsonText = extractJsonObject(stdout) ?? stdout;
-    return yield* Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson as any))(jsonText).pipe(
+    return yield* Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson as any))(
+      jsonText,
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new TextGenerationError({
