@@ -120,7 +120,7 @@ the Settings → Theme editor exports it) plus a shell-only `window` section:
   themes: `data-theme-id` on `<html>` plus inline `--app-theme-<role>`
   variables, re-asserted if the web app's stored preference overwrites them.
   Until the SPA applies shell themes itself, supply the full role set
-  (`examples/theme.json` does) — a missing role has no fallback on this path.
+  (the files under `examples/*/` do) — a missing role has no fallback on this path.
 - QML reads the same roles: `Theme.colors`, `Theme.color("chrome", fallback)`,
   `Theme.appearance`, `Theme.id`.
 - `window.*` is shell-only: `opacity` (whole-window), `transparent` (window and
@@ -291,6 +291,79 @@ renders no sidebar on any route.
 Bridges tied to a thread route (`workspace`, `composer`, `rightPanel`)
 publish `null` for their key on unmount, so leaving a thread clears the
 native chrome instead of freezing it on the last thread.
+
+### `theme` (page → shell)
+
+`ShellThemeBridge` (root route, when hosted) resolves every theme role from
+the page's semantic CSS variables — painting each through a canvas so
+`oklch()`/`color-mix()` become sRGB hex — plus `--radius` and the font lists,
+and republishes on theme, appearance or custom-theme changes. `Theme.color()`
+resolves theme.json first, then this page theme, then the brick's fallback;
+`Theme.radius`, `Theme.fontUi`, `Theme.fontMono` follow the same order (the
+shell-only `radius` / `fonts` keys in theme.json override the page). The
+themed controls (`ShellButton` etc.) take radius, surfaces, borders and fonts
+from `Theme`, so native chrome matches the page by default and follows
+whatever the user picks in Settings.
+
+### `notifications`
+
+`ToastProvider` accepts a `shellMirror` rendered inside it; `ShellToastBridge`
+mirrors the page's stacked toasts (title, description, buttons, update key)
+as `notifications` and runs a toast's button or dismissal on
+`notification.action {id, actionId}` / `notification.dismiss {id}` — the
+same `onClick`/`onClose` the HTML buttons call. Toasts with React-element
+bodies or anchored positioning stay in the page. The `Notifications` brick
+renders the rest.
+
+### `contextMenu`
+
+`localApi.contextMenu.show` routes to the shell when hosted: the items are
+published under `contextMenu` with the surface they belong to (every web
+surface tags its document with `window.t3Shell.surfaceId`; `"shell"` means
+window coordinates from native chrome) and the choice returns as
+`contextMenu.select {requestId, id}`. `ContextMenuHost` lives in each
+`WebSurface` and once at the window level. This makes every context menu in
+the app native; the thread title menu (`workspace.titleMenu {x, y}`) and
+sidebar rows (`thread.menu {key, x, y}`) open the thread action menu through
+it, and `workspace.rename {title}` / `renameRequestId` drive an inline rename
+in the strip via the shared `useRenameThread` hook.
+
+### `git`
+
+`useGitActions` (extracted from `GitActionsControl`) owns the status query,
+the stacked-action runner with its progress/result toasts, the default-branch
+gate and the thread↔branch sync. When hosted the control renders
+`ShellGitBridge` — publishing the quick action, menu items with disabled
+reasons, hints, working-tree files and the pending confirmation — plus the
+publish-repository dialog (still HTML). Actions: `git.quick`, `git.menu
+{id}`, `git.commit {message, filePaths|null, featureBranch}`,
+`git.defaultBranch {choice}`, `git.init`, `git.publish`, `git.refresh`. The
+`GitActions` brick renders the split button, the commit dialog (file
+checklist + message) and the confirmation.
+
+### Composer extras
+
+`composer.attach {files:[{name, mimeType, base64}]}` feeds shell-read image
+files into the composer's drop pipeline (the brick reads dropped or picked
+files through `Shell.readImageFiles`, 10 MB cap, images only).
+`composer.terminalContext.add {…selection}` adds a terminal selection; the
+embed document's terminal forwards its selections with `t3Shell.dispatch`, so
+they land in the primary's draft. Attached images and terminal contexts are
+published as removable chips (`composer.attachment.remove`,
+`composer.terminalContext.remove`).
+
+## Linux and packaging
+
+`QGuiApplication::setDesktopFileName("t3code")` sets the Wayland app id /
+X11 `WM_CLASS`, so compositor rules can target the window — on Hyprland:
+`windowrulev2 = opacity 0.9, class:^(t3code)$` and `decorate:blur` — with
+`window.transparent: true` in theme.json for the compositor to blur through.
+`.github/workflows/desktop-qt.yml` builds Release binaries on Linux and
+macOS with the official Qt 6.9 binaries (`jurplel/install-qt-action`) and
+packages an AppImage (`scripts/package-linux.sh`, linuxdeploy + its Qt
+plugin) and a macOS bundle (`macdeployqt`). The Node desktop host still
+requires a system Node at runtime. The Linux path was written against the
+documented tooling but has only been exercised in CI, not on this machine.
 
 ## Splitting chrome out
 
