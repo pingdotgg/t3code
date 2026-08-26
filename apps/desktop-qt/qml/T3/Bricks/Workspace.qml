@@ -273,6 +273,8 @@ Rectangle {
             onClicked: Shell.dispatch("workspace.openPullRequest")
         }
 
+        GitActions {}
+
         ShellButton {
             id: scriptsButton
             subtle: true

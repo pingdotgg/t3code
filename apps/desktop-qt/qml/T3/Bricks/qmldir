@@ -2,6 +2,7 @@ module T3.Bricks
 Composer 1.0 Composer.qml
 ContextMenuHost 1.0 ContextMenuHost.qml
 DefaultShell 1.0 DefaultShell.qml
+GitActions 1.0 GitActions.qml
 Notifications 1.0 Notifications.qml
 RightPanel 1.0 RightPanel.qml
 SettingsNav 1.0 SettingsNav.qml

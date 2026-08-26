@@ -124,17 +124,30 @@ bool ShellRuntime::loadGeneration(const QUrl& rootUrl, QString* errorOut) {
     engine->addImportPath(userImports);
   }
 
+  // Collect load-time diagnostics into locals, then hand the connection over
+  // to a logger: these lambdas must not outlive the locals they capture.
   QStringList messages;
-  connect(engine, &QQmlEngine::warnings, this, [&messages](const QList<QQmlError>& warnings) {
-    for (const auto& warning : warnings) {
-      messages << warning.toString();
-    }
-  });
+  const auto warningsDuringLoad =
+      connect(engine, &QQmlEngine::warnings, this, [&messages](const QList<QQmlError>& warnings) {
+        for (const auto& warning : warnings) {
+          messages << warning.toString();
+        }
+      });
   bool failed = false;
-  connect(engine, &QQmlApplicationEngine::objectCreationFailed, this,
-          [&failed](const QUrl&) { failed = true; });
+  const auto creationFailed = connect(engine, &QQmlApplicationEngine::objectCreationFailed, this,
+                                      [&failed](const QUrl&) { failed = true; });
 
   engine->load(rootUrl);
+  disconnect(warningsDuringLoad);
+  disconnect(creationFailed);
+  connect(engine, &QQmlEngine::warnings, this, [](const QList<QQmlError>& warnings) {
+    for (const auto& warning : warnings) {
+      qWarning().noquote() << "[qml]" << warning.toString();
+    }
+  });
+  for (const auto& message : messages) {
+    qWarning().noquote() << "[qml]" << message;
+  }
   if (failed || engine->rootObjects().isEmpty()) {
     if (errorOut != nullptr) {
       *errorOut = messages.isEmpty()

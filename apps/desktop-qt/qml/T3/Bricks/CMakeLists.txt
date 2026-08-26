@@ -11,6 +11,7 @@ qt_add_qml_module(t3bricks
     Composer.qml
     ContextMenuHost.qml
     DefaultShell.qml
+    GitActions.qml
     Notifications.qml
     RightPanel.qml
     SettingsNav.qml
