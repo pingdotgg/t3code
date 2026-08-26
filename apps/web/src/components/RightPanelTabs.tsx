@@ -41,6 +41,7 @@ import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanel
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import { CopilotKitIcon } from "./copilotkit/CopilotKitIcon";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -74,12 +75,14 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddCopilotReview: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
+  copilotReviewAvailable: boolean;
   pullRequestStatuses?: Readonly<Record<string, PullRequestTabStatus>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
@@ -101,6 +104,7 @@ const SURFACE_DISABLED_REASONS = {
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   agents: "Agents are only available from a thread.",
+  copilotReview: "CopilotKit Review is only available for Git project threads.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -123,6 +127,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   diff: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
   agents: "Available from a thread.",
+  copilotReview: "Available for Git project threads.",
 } as const;
 
 type TabContextMenuAction =
@@ -252,12 +257,14 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddCopilotReview: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
+  copilotReviewAvailable: boolean;
   liveAgentCount: number;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
@@ -323,6 +330,16 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.agents,
       onClick: props.onAddAgents,
       badgeCount: props.liveAgentCount,
+    },
+    {
+      label: "CopilotKit Review",
+      description: "Review this branch with generative UI.",
+      icon: CopilotKitIcon,
+      shortcut: "C",
+      available: props.copilotReviewAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.copilotReview,
+      onClick: props.onAddCopilotReview,
+      badgeCount: 0,
     },
   ] as const;
 
@@ -508,6 +525,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "agents":
       return "Agents";
+    case "copilot-review":
+      return "CopilotKit Review";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -593,6 +612,8 @@ function SurfaceIcon({
     }
     case "agents":
       return <Bot className="size-3 shrink-0" />;
+    case "copilot-review":
+      return <CopilotKitIcon className="size-3 shrink-0" />;
   }
 }
 
@@ -650,6 +671,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.agentsAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.agents,
       onClick: props.onAddAgents,
+    },
+    {
+      label: "CopilotKit Review",
+      icon: CopilotKitIcon,
+      shortcut: "C",
+      available: props.copilotReviewAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.copilotReview,
+      onClick: props.onAddCopilotReview,
     },
   ] as const;
 
@@ -938,12 +967,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddAgents={props.onAddAgents}
+            onAddCopilotReview={props.onAddCopilotReview}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             agentsAvailable={props.agentsAvailable}
+            copilotReviewAvailable={props.copilotReviewAvailable}
             liveAgentCount={props.liveAgentCount}
           />
         ) : (

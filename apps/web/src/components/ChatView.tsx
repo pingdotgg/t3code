@@ -467,7 +467,7 @@ const PreviewPanel = lazy(() =>
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
-const CopilotReviewAgent = lazy(() => import("./copilotkit/CopilotReviewAgent"));
+const CopilotReviewPanel = lazy(() => import("./copilotkit/CopilotReviewAgent"));
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -2792,6 +2792,8 @@ function ChatViewContent(props: ChatViewProps) {
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const copilotReviewAvailable =
+    isServerThread && isGitRepo && activeProject !== null && activeWorkspaceRoot !== undefined;
   const showComposerContextStrip = shouldShowComposerContextStrip({
     hasActiveProject: activeProject !== null,
     isGitRepo,
@@ -3402,6 +3404,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  const addCopilotReviewSurface = useCallback(() => {
+    if (!activeThreadRef || !copilotReviewAvailable) return;
+    useRightPanelStore.getState().open(activeThreadRef, "copilot-review");
+  }, [activeThreadRef, copilotReviewAvailable]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -6570,6 +6576,25 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
       />
+    ) : activeRightPanelSurface?.kind === "copilot-review" &&
+      copilotReviewAvailable &&
+      activeProject &&
+      activeWorkspaceRoot ? (
+      <Suspense fallback={null}>
+        <CopilotReviewPanel
+          branch={activeThreadBranch}
+          cwd={activeWorkspaceRoot}
+          environmentId={activeThread.environmentId}
+          interactionMode={interactionMode}
+          isWorking={isWorking}
+          modelSelection={activeThread.modelSelection}
+          onOpenFile={openFileSurface}
+          projectName={activeProject.title}
+          runtimeMode={runtimeMode}
+          threadId={activeThread.id}
+          threadTitle={activeThread.title}
+        />
+      </Suspense>
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&
       activeWorkspaceRoot ? (
@@ -7041,12 +7066,14 @@ function ChatViewContent(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddAgents={addAgentsSurface}
+          onAddCopilotReview={addCopilotReviewSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={activeProject !== null}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           agentsAvailable
+          copilotReviewAvailable={copilotReviewAvailable}
           pullRequestStatuses={pullRequestTabStatuses}
           liveAgentCount={agentPanelModel.liveCount}
         >
@@ -7081,36 +7108,20 @@ function ChatViewContent(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddAgents={addAgentsSurface}
+            onAddCopilotReview={addCopilotReviewSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={activeProject !== null}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             agentsAvailable
+            copilotReviewAvailable={copilotReviewAvailable}
             pullRequestStatuses={pullRequestTabStatuses}
             liveAgentCount={agentPanelModel.liveCount}
           >
             {rightPanelContent}
           </RightPanelTabs>
         </RightPanelSheet>
-      ) : null}
-
-      {isServerThread && isGitRepo && activeProject && activeWorkspaceRoot ? (
-        <Suspense fallback={null}>
-          <CopilotReviewAgent
-            branch={activeThreadBranch}
-            cwd={activeWorkspaceRoot}
-            environmentId={activeThread.environmentId}
-            interactionMode={interactionMode}
-            isWorking={isWorking}
-            modelSelection={activeThread.modelSelection}
-            onOpenFile={openFileSurface}
-            projectName={activeProject.title}
-            runtimeMode={runtimeMode}
-            threadId={activeThread.id}
-            threadTitle={activeThread.title}
-          />
-        </Suspense>
       ) : null}
 
       {expandedImage && (

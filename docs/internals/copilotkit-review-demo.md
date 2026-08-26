@@ -23,6 +23,6 @@ with another OpenRouter model slug when needed:
 export COPILOTKIT_REVIEW_MODEL=google/gemini-2.5-flash
 ```
 
-Start the normal development environment, open a server thread backed by a Git repository, then use the CopilotKit button in the lower-right corner. A good first prompt is `Review this branch`.
+Start the normal development environment and open a server thread backed by a Git repository. Open the right panel, choose **CopilotKit Review**, then use `Review this branch` as the first prompt.
 
 The CopilotKit runtime route requires the same authenticated orchestration operate scope as other mutating T3 Code routes. The coding handoff consumes a one-time approval for the exact findings shown to the user.

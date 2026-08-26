@@ -109,6 +109,7 @@ function renderTabs(
       onAddDiff={() => undefined}
       onAddFiles={() => undefined}
       onAddAgents={() => undefined}
+      onAddCopilotReview={() => undefined}
       liveAgentCount={0}
       browserAvailable
       terminalAvailable={false}
@@ -116,6 +117,7 @@ function renderTabs(
       filesAvailable={false}
       pullRequestAvailable={false}
       agentsAvailable={false}
+      copilotReviewAvailable={false}
     >
       <div>content</div>
     </RightPanelTabs>,

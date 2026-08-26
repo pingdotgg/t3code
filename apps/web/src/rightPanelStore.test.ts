@@ -252,6 +252,17 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps CopilotKit Review as a singleton surface", () => {
+    useRightPanelStore.getState().open(refA, "copilot-review");
+    useRightPanelStore.getState().open(refA, "copilot-review");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "copilot-review",
+      surfaces: [{ id: "copilot-review", kind: "copilot-review" }],
+    });
+  });
+
   it("replaces the standalone explorer with peer file surfaces", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
