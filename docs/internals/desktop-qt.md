@@ -158,10 +158,11 @@ QmlLive was evaluated and rejected: unmaintained since 2019, Qt 5 only.
 ## Page-side API
 
 `WebSurface` injects `qwebchannel.js` (bundled from Qt's data dir at build
-time) and `js/shell-connect.js`, which exposes:
+time) and `js/shell-connect.js` at document creation, which exposes:
 
 ```ts
 window.t3Shell: {
+  protocolVersion: number;                           // 1
   ready: Promise<ShellObject>;                       // raw WebChannel proxy
   publish(key: string, value: unknown): Promise<void>;
   onAction(listener: (action: string, payload: unknown) => void): Promise<void>;
@@ -169,12 +170,31 @@ window.t3Shell: {
 ```
 
 `window.t3Shell` is undefined in a browser tab; the web app must keep working
-without it. The channel carries `protocolVersion` (currently `1`).
+without it. `apps/web/src/env.ts` exports `isT3Shell` (module-load-time, like
+`isElectron`). The contract — what gets published under which key and which
+actions exist — lives in `packages/contracts/src/shell.ts`.
+
+### `sidebar`
+
+`apps/web/src/shell/T3ShellBridge.tsx` (mounted from the root route when
+`isT3Shell`) publishes `ShellSidebarState`: project groups, the current scope,
+and the thread list already bucketed (`pinned`/`active`/`snoozed`/`settled`),
+sorted, and annotated with status, status label, unread, branch. It is derived
+with the same code as the HTML sidebar — `partitionSidebarThreads` and
+`useSidebarProjectGroups` are shared — so the two never disagree. `settled` is
+capped at 50 rows with `settledTotal` carrying the real count. When hosted,
+`AppSidebarLayout` renders no thread sidebar (the settings nav stays HTML).
+
+Actions (`Shell.dispatch(name, payload)` in QML → `ShellAction` on the page):
+`thread.open {key}`, `draft.open {draftId}`, `thread.new {projectKey?}`,
+`sidebar.scope {projectKey|null}`, `project.add`, `settings.open`,
+`pullRequests.open`, `usage.open`, `palette.open`. Unknown or malformed
+actions are dropped by the schema guard.
 
 ## Splitting chrome out
 
-Order of work: sidebar first, then composer, right panel, workspace switcher,
-settings. The timeline and terminal stay HTML. Each split-out piece becomes one
+Order of work: sidebar (done: `Sidebar` brick), then composer, right panel,
+workspace switcher, settings. The timeline and terminal stay HTML. Each split-out piece becomes one
 brick with a documented state/action surface; in the shell the SPA simply does
 not render the parts that moved out. When an HTML brick needs to live somewhere
 QML decides (for example the terminal), it becomes a second `WebEngineView`
