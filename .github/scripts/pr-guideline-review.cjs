@@ -350,7 +350,14 @@ function evaluatePull({
 
   const nonProductAreas = new Set(["docs", "GitHub automation"]);
   const onlyNonProductAreas = areas.length > 0 && areas.every((area) => nonProductAreas.has(area));
-  if (!trustedPull && isFeaturePull(pull.title) && !onlyNonProductAreas && !discussionLink) {
+  const onlyTestFiles = files.length > 0 && files.every((file) => isTestFile(file.filename));
+  if (
+    !trustedPull &&
+    isFeaturePull(pull.title) &&
+    !onlyNonProductAreas &&
+    !onlyTestFiles &&
+    !discussionLink
+  ) {
     if (maintainerContext) {
       findings.push(
         finding(
