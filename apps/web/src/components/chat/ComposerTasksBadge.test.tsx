@@ -99,6 +99,7 @@ describe("ComposerTasksBadge", () => {
     expect(markup).not.toContain("data-variant");
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain('aria-label="Collapse tasks. 1 of 3 complete."');
+    expect(markup).toContain('aria-label="Task list. 1 of 3 complete."');
     expect(markup).toContain('role="list"');
     expect(markup).toContain('data-composer-tasks-list="true"');
     expect(markup).toContain('tabindex="0"');

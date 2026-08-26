@@ -203,6 +203,7 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
         </Button>
       </div>
       <div
+        aria-label={`Task list. ${progress.completedSteps} of ${progress.totalSteps} complete.`}
         className="max-h-[min(24rem,40dvh)] space-y-px overflow-y-auto overscroll-contain px-3 pb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 sm:px-4"
         data-composer-tasks-list="true"
         role="list"
