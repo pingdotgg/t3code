@@ -69,6 +69,66 @@ export const ShellSidebarState = Schema.Struct({
 });
 export type ShellSidebarState = typeof ShellSidebarState.Type;
 
+export const ShellComposerModel = Schema.Struct({
+  slug: Schema.String,
+  name: Schema.String,
+  disabledReason: Schema.NullOr(Schema.String),
+});
+export type ShellComposerModel = typeof ShellComposerModel.Type;
+
+export const ShellComposerInstance = Schema.Struct({
+  instanceId: Schema.String,
+  driverKind: Schema.String,
+  displayName: Schema.String,
+  isAvailable: Schema.Boolean,
+  models: Schema.Array(ShellComposerModel),
+});
+export type ShellComposerInstance = typeof ShellComposerInstance.Type;
+
+/** A provider option (reasoning effort, thinking toggles, …) for the selected model. */
+export const ShellComposerOption = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  type: Schema.Literals(["select", "boolean"]),
+  value: Schema.NullOr(Schema.Union([Schema.String, Schema.Boolean])),
+  choices: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
+});
+export type ShellComposerOption = typeof ShellComposerOption.Type;
+
+export const ShellComposerRuntimeMode = Schema.Struct({
+  value: Schema.String,
+  label: Schema.String,
+  description: Schema.String,
+});
+export type ShellComposerRuntimeMode = typeof ShellComposerRuntimeMode.Type;
+
+/** Published under the `composer` key while a thread or draft route is open. */
+export const ShellComposerState = Schema.Struct({
+  /** `<environmentId>:<threadId>` or a draft id; null between routes. */
+  target: Schema.NullOr(Schema.String),
+  routeKind: Schema.Literals(["server", "draft"]),
+  text: Schema.String,
+  placeholder: Schema.String,
+  editorDisabled: Schema.Boolean,
+  canSend: Schema.Boolean,
+  sendDisabledReason: Schema.NullOr(Schema.String),
+  isRunning: Schema.Boolean,
+  isSendBusy: Schema.Boolean,
+  isConnecting: Schema.Boolean,
+  pendingApprovalCount: Schema.Number,
+  pendingUserInputCount: Schema.Number,
+  showPlanFollowUpPrompt: Schema.Boolean,
+  selectedInstanceId: Schema.NullOr(Schema.String),
+  selectedModel: Schema.NullOr(Schema.String),
+  instances: Schema.Array(ShellComposerInstance),
+  options: Schema.Array(ShellComposerOption),
+  runtimeMode: Schema.String,
+  runtimeModes: Schema.Array(ShellComposerRuntimeMode),
+  interactionMode: Schema.Literals(["default", "plan"]),
+  showInteractionModeToggle: Schema.Boolean,
+});
+export type ShellComposerState = typeof ShellComposerState.Type;
+
 /** Actions the shell's chrome dispatches; `type` is the action name on the wire. */
 export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("thread.open"), key: Schema.String }),
@@ -83,6 +143,29 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("pullRequests.open") }),
   Schema.Struct({ type: Schema.Literal("usage.open") }),
   Schema.Struct({ type: Schema.Literal("palette.open") }),
+  Schema.Struct({ type: Schema.Literal("composer.text.set"), text: Schema.String }),
+  // `text` rides along so the send is atomic with the latest edit.
+  Schema.Struct({
+    type: Schema.Literal("composer.submit"),
+    text: Schema.optional(Schema.String),
+    intent: Schema.optional(Schema.Literals(["foreground", "background"])),
+  }),
+  Schema.Struct({ type: Schema.Literal("composer.interrupt") }),
+  Schema.Struct({
+    type: Schema.Literal("composer.model.select"),
+    instanceId: Schema.String,
+    model: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("composer.option.set"),
+    id: Schema.String,
+    value: Schema.Union([Schema.String, Schema.Boolean]),
+  }),
+  Schema.Struct({ type: Schema.Literal("composer.runtimeMode.set"), mode: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal("composer.interactionMode.set"),
+    mode: Schema.Literals(["default", "plan"]),
+  }),
 ]);
 export type ShellAction = typeof ShellAction.Type;
 
@@ -91,5 +174,6 @@ export interface T3Shell {
   readonly protocolVersion: number;
   readonly ready: Promise<unknown>;
   publish(key: string, value: unknown): Promise<void>;
-  onAction(listener: (action: string, payload: unknown) => void): Promise<void>;
+  /** Resolves to an unsubscribe function once the channel is connected. */
+  onAction(listener: (action: string, payload: unknown) => void): Promise<() => void>;
 }
