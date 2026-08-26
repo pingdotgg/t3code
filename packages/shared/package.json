@@ -238,6 +238,10 @@
     "./vibeProxyUsage": {
       "types": "./src/vibeProxyUsage.ts",
       "import": "./src/vibeProxyUsage.ts"
+    },
+    "./claudeCompaction": {
+      "types": "./src/claudeCompaction.ts",
+      "import": "./src/claudeCompaction.ts"
     }
   },
   "scripts": {
