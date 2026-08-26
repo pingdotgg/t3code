@@ -36,6 +36,8 @@ export function formatProviderDisplayName(provider: string | null | undefined): 
       return "Codex";
     case "cursor":
       return "Cursor";
+    case "antigravity":
+      return "Antigravity";
     case "opencode":
       return "OpenCode";
     default: {
