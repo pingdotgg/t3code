@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
-import { isElectron } from "../env";
+import { isElectron, isT3Shell } from "../env";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
@@ -227,6 +227,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         style={sidebarProviderStyle}
       >
         <ProjectProjectionRetention />
+        {isT3Shell && !isOnSettings ? null : (
         <Sidebar
           side="left"
           collapsible="offcanvas"
@@ -254,8 +255,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
+        )}
         {children}
-        <SidebarControl />
+        {isT3Shell && !isOnSettings ? null : <SidebarControl />}
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );
