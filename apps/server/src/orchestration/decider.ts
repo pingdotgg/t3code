@@ -927,6 +927,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.operatorWaitStartedAt !== undefined
             ? { operatorWaitStartedAt: command.operatorWaitStartedAt }
             : {}),
+          ...(command.linkedPullRequest !== undefined
+            ? { linkedPullRequest: command.linkedPullRequest }
+            : {}),
           updatedAt: occurredAt,
         },
       };

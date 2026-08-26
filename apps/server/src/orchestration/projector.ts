@@ -310,6 +310,7 @@ export function projectEvent(
             archivedAt: null,
             settledOverride: null,
             settledAt: null,
+            unsettledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
             usageLimitWait: null,
@@ -372,6 +373,7 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             settledOverride: "settled",
             settledAt: payload.settledAt,
+            unsettledAt: null,
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -379,14 +381,24 @@ export function projectEvent(
 
     case "thread.unsettled":
       return decodeForEvent(ThreadUnsettledPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            settledOverride: payload.reason === "user" ? "active" : null,
-            settledAt: null,
-            updatedAt: payload.updatedAt,
-          }),
-        })),
+        Effect.map((payload) => {
+          const existing = nextBase.threads.find((thread) => thread.id === payload.threadId);
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              settledOverride: payload.reason === "user" ? "active" : null,
+              settledAt: null,
+              // Re-entry stamp for active-list ordering. A thread already
+              // pinned active keeps its stamp: the activity reset that clears
+              // the pin is not a re-entry and must not reorder the list.
+              unsettledAt:
+                existing?.settledOverride === "active"
+                  ? (existing.unsettledAt ?? null)
+                  : payload.updatedAt,
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
       );
 
     case "thread.snoozed":
@@ -472,6 +484,9 @@ export function projectEvent(
               : {}),
             ...(payload.operatorWaitStartedAt !== undefined
               ? { operatorWaitStartedAt: payload.operatorWaitStartedAt }
+              : {}),
+            ...(payload.linkedPullRequest !== undefined
+              ? { linkedPullRequest: payload.linkedPullRequest }
               : {}),
             updatedAt: payload.updatedAt,
           }),
