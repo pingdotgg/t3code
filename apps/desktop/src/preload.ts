@@ -150,6 +150,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return () => {
       active = false;
       ipcRenderer.removeListener(IpcChannels.DEEP_LINK_CHANNEL, wrappedListener);
+      // Tell the main process to drop this renderer from the push registry.
+      // The webContents stays alive across a route unmount or reload, so
+      // without this a link would be pushed to a listener that no longer
+      // exists and lost instead of buffered for the next subscriber.
+      ipcRenderer.invoke(IpcChannels.DEEP_LINK_UNSUBSCRIBE_CHANNEL).catch(() => undefined);
     };
   },
   onQuitShortcut: (listener) => {

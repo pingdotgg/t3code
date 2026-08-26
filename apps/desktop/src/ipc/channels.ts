@@ -8,6 +8,7 @@ export const PROBE_REMOTE_EDITORS_CHANNEL = "desktop:probe-remote-editors";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";
 export const DEEP_LINK_CHANNEL = "desktop:deep-link";
 export const DEEP_LINK_SUBSCRIBE_CHANNEL = "desktop:deep-link:subscribe";
+export const DEEP_LINK_UNSUBSCRIBE_CHANNEL = "desktop:deep-link:unsubscribe";
 export const QUIT_SHORTCUT_CHANNEL = "desktop:quit-shortcut";
 export const GET_WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:get-window-fullscreen-state";
 export const WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:window-fullscreen-state";

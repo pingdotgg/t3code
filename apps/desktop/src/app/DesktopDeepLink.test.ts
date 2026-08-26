@@ -4,7 +4,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
 
-import { DEEP_LINK_CHANNEL, DEEP_LINK_SUBSCRIBE_CHANNEL } from "../ipc/channels.ts";
+import {
+  DEEP_LINK_CHANNEL,
+  DEEP_LINK_SUBSCRIBE_CHANNEL,
+  DEEP_LINK_UNSUBSCRIBE_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -229,6 +233,13 @@ const subscribeAs = (harness: TestHarness, fake: FakeSender) =>
     return yield* handler!(undefined, { sender: fake.sender });
   });
 
+const unsubscribeAs = (harness: TestHarness, fake: FakeSender) =>
+  Effect.gen(function* () {
+    const handler = harness.ipcHandlers.get(DEEP_LINK_UNSUBSCRIBE_CHANNEL);
+    assert.isDefined(handler);
+    return yield* handler!(undefined, { sender: fake.sender });
+  });
+
 // The OS listeners hand delivery to a fiber via runPromise; drain the
 // immediate queue twice so that fiber has finished before asserting.
 const settleDelivery = Effect.promise(
@@ -248,7 +259,10 @@ describe("DesktopDeepLink", () => {
       yield* configureWith(makeServices(harness));
 
       assert.deepEqual([...harness.listeners.keys()], ["open-url", "second-instance"]);
-      assert.deepEqual([...harness.ipcHandlers.keys()], [DEEP_LINK_SUBSCRIBE_CHANNEL]);
+      assert.deepEqual(
+        [...harness.ipcHandlers.keys()],
+        [DEEP_LINK_SUBSCRIBE_CHANNEL, DEEP_LINK_UNSUBSCRIBE_CHANNEL],
+      );
     });
   });
 
@@ -382,6 +396,34 @@ describe("DesktopDeepLink", () => {
       assert.deepEqual(yield* subscribeAs(harness, second), PAYLOAD);
     });
   });
+
+  it.effect(
+    "stops pushing to a renderer that unsubscribed while its webContents stays alive",
+    () => {
+      const harness = makeHarness();
+      // A renderer whose deep-link component unmounts (navigating to /connect
+      // or /pair) tears down its listener and unsubscribes, but its
+      // webContents is not destroyed. It must not swallow the next link.
+      const renderer = makeSender(7);
+      const next = makeSender(9);
+
+      return Effect.gen(function* () {
+        yield* configureWith(makeServices(harness));
+        yield* subscribeAs(harness, renderer);
+        yield* unsubscribeAs(harness, renderer);
+
+        const openUrl = harness.listeners.get("open-url");
+        assert.isDefined(openUrl);
+        openUrl!({ preventDefault: vi.fn() }, `t3code://app/${ENVIRONMENT_ID}/${THREAD_ID}`);
+        yield* settleDelivery;
+
+        // The link was buffered, not pushed into the listener-less renderer.
+        assert.equal(renderer.send.mock.calls.length, 0);
+        assert.deepEqual(harness.revealed, []);
+        assert.deepEqual(yield* subscribeAs(harness, next), PAYLOAD);
+      });
+    },
+  );
 
   it.effect("re-buffers when the subscriber dies between selection and send", () => {
     const harness = makeHarness();

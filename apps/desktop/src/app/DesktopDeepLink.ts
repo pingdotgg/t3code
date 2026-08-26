@@ -10,7 +10,11 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
-import { DEEP_LINK_CHANNEL, DEEP_LINK_SUBSCRIBE_CHANNEL } from "../ipc/channels.ts";
+import {
+  DEEP_LINK_CHANNEL,
+  DEEP_LINK_SUBSCRIBE_CHANNEL,
+  DEEP_LINK_UNSUBSCRIBE_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
@@ -123,8 +127,10 @@ export const make = Effect.gen(function* () {
   // Renderer webContents that completed the subscribe handshake, oldest
   // first. A subscriber has mounted its deep-link listener, so a push cannot
   // race the renderer's startup — and the WSL splash never subscribes, so it
-  // can never swallow a link. Destroyed entries drop on their destroyed
-  // event and are pruned again on use.
+  // can never swallow a link. Entries drop three ways: the renderer explicitly
+  // unsubscribes when its listener tears down (e.g. navigating to /connect or
+  // /pair, which unmounts the deep-link component while the webContents stays
+  // alive), the webContents fires destroyed, or a stale entry is pruned on use.
   const subscribers: DesktopIpc.DesktopIpcSenderWebContents[] = [];
 
   const removeSubscriber = (sender: DesktopIpc.DesktopIpcSenderWebContents) => {
@@ -159,6 +165,18 @@ export const make = Effect.gen(function* () {
       });
       const payload = yield* Ref.getAndSet(pending, Option.none());
       return Option.getOrNull(payload);
+    });
+
+  // The renderer's preload invokes this when its deep-link listener tears
+  // down. Without it a reloaded or route-unmounted renderer would stay in the
+  // registry with a live webContents but no listener, so a link would be
+  // pushed into a void and lost instead of buffered for the next subscriber.
+  const unsubscribe = (sender: DesktopIpc.DesktopIpcSenderWebContents | undefined) =>
+    Effect.sync(() => {
+      if (sender !== undefined) {
+        removeSubscriber(sender);
+      }
+      return null;
     });
 
   return DesktopDeepLink.of({
@@ -214,6 +232,22 @@ export const make = Effect.gen(function* () {
           // Deep links must never block startup.
           Effect.catch((error) =>
             logWarning("deep link subscribe handler registration failed", {
+              message: error.message,
+            }),
+          ),
+        );
+
+      // The preload invokes this as its listener tears down so a renderer that
+      // is still alive but no longer listening (route unmount, reload) stops
+      // being a delivery target and links buffer for the next subscriber.
+      yield* ipc
+        .handle({
+          channel: DEEP_LINK_UNSUBSCRIBE_CHANNEL,
+          handler: (_raw, event) => unsubscribe(event?.sender),
+        })
+        .pipe(
+          Effect.catch((error) =>
+            logWarning("deep link unsubscribe handler registration failed", {
               message: error.message,
             }),
           ),
