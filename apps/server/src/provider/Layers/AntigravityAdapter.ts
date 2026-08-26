@@ -693,37 +693,40 @@ export function makeAntigravityAdapter(
 
     const interruptTurn = (
       threadId: ThreadId,
-      _turnId?: TurnId,
+      turnId?: TurnId,
     ): Effect.Effect<void, ProviderAdapterError> =>
-      withThreadLock(
-        threadId,
-        Effect.gen(function* () {
-          const ctx = sessions.get(threadId);
-          if (!ctx || !ctx.activeHandle) {
-            return;
-          }
+      Effect.gen(function* () {
+        const ctx = sessions.get(threadId);
+        if (!ctx || !ctx.activeHandle) {
+          return;
+        }
 
-          yield* ctx.activeHandle.kill().pipe(Effect.ignore);
-          ctx.activeHandle = undefined;
-          if (ctx.activeScope) {
-            yield* Scope.close(ctx.activeScope, Exit.void).pipe(Effect.ignore);
-            ctx.activeScope = undefined;
-          }
+        if (turnId !== undefined && ctx.activeTurnId !== undefined && ctx.activeTurnId !== turnId) {
+          return;
+        }
 
-          if (ctx.activeTurnId) {
-            yield* emit({
-              type: "turn.completed",
-              provider: PROVIDER,
-              threadId,
-              turnId: ctx.activeTurnId,
-              payload: {
-                state: "interrupted",
-              },
-            });
-            ctx.activeTurnId = undefined;
-          }
-        }),
-      );
+        const targetTurnId = turnId ?? ctx.activeTurnId;
+
+        yield* ctx.activeHandle.kill().pipe(Effect.ignore);
+        ctx.activeHandle = undefined;
+        if (ctx.activeScope) {
+          yield* Scope.close(ctx.activeScope, Exit.void).pipe(Effect.ignore);
+          ctx.activeScope = undefined;
+        }
+
+        if (targetTurnId) {
+          yield* emit({
+            type: "turn.completed",
+            provider: PROVIDER,
+            threadId,
+            turnId: targetTurnId,
+            payload: {
+              state: "interrupted",
+            },
+          });
+          ctx.activeTurnId = undefined;
+        }
+      });
 
     const respondToRequest = (
       _threadId: ThreadId,
