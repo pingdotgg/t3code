@@ -303,6 +303,19 @@ describe("sortThreadsForListV2", () => {
     ]);
     expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
   });
+
+  it("surfaces an un-settled thread at the top via its re-entry stamp", () => {
+    const sorted = sortThreadsForListV2([
+      {
+        id: "old-unsettled",
+        createdAt: "2026-06-01T08:00:00.000Z",
+        unsettledAt: "2026-06-01T13:00:00.000Z",
+      },
+      { id: "newest", createdAt: "2026-06-01T12:00:00.000Z" },
+      { id: "middle", createdAt: "2026-06-01T10:00:00.000Z" },
+    ]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["old-unsettled", "newest", "middle"]);
+  });
 });
 
 describe("buildThreadListV2Items", () => {
