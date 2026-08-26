@@ -215,6 +215,20 @@ export const ShellWorkspaceState = Schema.Struct({
   environments: Schema.Array(Schema.Struct({ environmentId: Schema.String, label: Schema.String })),
   activeEnvironmentId: Schema.String,
   environmentChangeable: Schema.Boolean,
+  /** Ref list for `branchQuery` (first pages), for a native branch picker. */
+  branchQuery: Schema.String,
+  branches: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      isRemote: Schema.Boolean,
+      isDefault: Schema.Boolean,
+      current: Schema.Boolean,
+    }),
+  ),
+  branchesTotal: Schema.Number,
+  branchesLoading: Schema.Boolean,
+  branchSwitchPending: Schema.Boolean,
+  branchChangeable: Schema.Boolean,
 });
 export type ShellWorkspaceState = typeof ShellWorkspaceState.Type;
 
@@ -294,6 +308,9 @@ export const ShellAction = Schema.Union([
     type: Schema.Literal("workspace.environment.set"),
     environmentId: Schema.String,
   }),
+  Schema.Struct({ type: Schema.Literal("workspace.branch.search"), query: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("workspace.branch.select"), name: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("workspace.branch.create"), name: Schema.String }),
   Schema.Struct({ type: Schema.Literal("settings.navigate"), to: Schema.String }),
   Schema.Struct({
     type: Schema.Literal("settings.openResult"),
