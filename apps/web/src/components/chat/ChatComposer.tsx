@@ -60,6 +60,7 @@ import {
   useEffectiveComposerModelState,
 } from "../../composerDraftStore";
 import { announceComposerReady } from "../../composerReadyBus";
+import { COMPOSER_IMAGE_CHIP_SURFACE_CLASS_NAME } from "../composerInlineChip";
 import {
   MAX_STASH_ENTRIES,
   partitionStashAttachments,
@@ -3310,7 +3311,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           <div
                             key={image.id}
                             data-composer-image-id={image.id}
-                            className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+                            className={`relative h-16 w-16 ${COMPOSER_IMAGE_CHIP_SURFACE_CLASS_NAME}`}
                           >
                             {image.previewUrl ? (
                               <button

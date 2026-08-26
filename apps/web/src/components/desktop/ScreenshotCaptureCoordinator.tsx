@@ -10,9 +10,9 @@ import { onComposerReady } from "../../composerReadyBus";
 import {
   buildScreenshotFileName,
   resolveScreenshotNavigationTarget,
-  SCREENSHOT_FLIGHT_ANIMATION_ID,
   SCREENSHOT_FLIGHT_DURATION_MS,
 } from "../../lib/screenshotCapture.logic";
+import { COMPOSER_IMAGE_CHIP_SURFACE_CLASS_NAME } from "../composerInlineChip";
 import { readThreadShells } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useUiStateStore } from "../../uiStateStore";
@@ -150,8 +150,7 @@ export function ScreenshotCaptureCoordinator() {
           if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
 
           const overlay = document.createElement("div");
-          overlay.className =
-            "overflow-hidden rounded-lg border border-border/80 bg-background shadow-xl";
+          overlay.className = `${COMPOSER_IMAGE_CHIP_SURFACE_CLASS_NAME} shadow-xl`;
           overlay.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;z-index:120;pointer-events:none;will-change:transform;`;
           const thumbnail = document.createElement("img");
           thumbnail.src = source;
@@ -183,7 +182,6 @@ export function ScreenshotCaptureCoordinator() {
             ],
             { duration: SCREENSHOT_FLIGHT_DURATION_MS },
           );
-          flight.id = SCREENSHOT_FLIGHT_ANIMATION_ID;
           // Default fill "none": cancel/finish always reverts the chip to its
           // natural opacity, so it can never get stuck hidden.
           const reveal = chip.animate(

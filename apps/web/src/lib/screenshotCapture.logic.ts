@@ -7,7 +7,6 @@ import { toSortableTimestamp } from "./threadSort";
 // thumbnail springing onto the composer chip. The camera flash itself is
 // native — the helper shows it over the captured window.
 export const SCREENSHOT_FLIGHT_DURATION_MS = 520;
-export const SCREENSHOT_FLIGHT_ANIMATION_ID = "t3-screenshot-capture-flight";
 
 export interface ScreenshotTargetThreadShell {
   readonly id: ScopedThreadRef["threadId"];
