@@ -21,6 +21,7 @@ interface FakeReferralState {
   readonly environmentUsers: Set<string>;
   readonly pointEntries: Array<ReferralPointEntry>;
   beforeClaimUpdate?: () => void;
+  pointInsertFailure?: Error;
 }
 
 const hasSelection = (selection: unknown, key: string): boolean =>
@@ -102,6 +103,7 @@ function makeFakeDb(state: FakeReferralState) {
             }
 
             expect(table).toBe(relayReferralPointEntries);
+            if (state.pointInsertFailure) return Effect.fail(state.pointInsertFailure);
             const entry = value as ReferralPointEntry;
             const conflict = state.pointEntries.some(
               (existing) =>
@@ -166,7 +168,24 @@ function makeTestLayer(state: FakeReferralState) {
         Layer.succeed(RelayDb.RelayDb, db),
         Layer.succeed(
           RelayDb.RelayTransactions,
-          RelayDb.RelayTransactions.of({ withTransaction: (effect) => effect }),
+          RelayDb.RelayTransactions.of({
+            withTransaction: (effect) =>
+              Effect.suspend(() => {
+                const accounts = new Map(state.accounts);
+                const pointEntries = [...state.pointEntries];
+                return effect.pipe(
+                  Effect.tapError(() =>
+                    Effect.sync(() => {
+                      state.accounts.clear();
+                      for (const [userId, account] of accounts) {
+                        state.accounts.set(userId, account);
+                      }
+                      state.pointEntries.splice(0, state.pointEntries.length, ...pointEntries);
+                    }),
+                  ),
+                );
+              }),
+          }),
         ),
         Layer.succeed(Crypto.Crypto, crypto),
       ),
@@ -252,6 +271,27 @@ describe("ReferralProgram", () => {
         qualifiedReferrals: 1,
         pendingReferrals: 0,
       });
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("rolls back the claim when its immediate point award cannot be persisted", () => {
+    const state = makeState();
+    state.pointInsertFailure = new Error("point insert failed");
+    return Effect.gen(function* () {
+      const referrals = yield* ReferralProgram.ReferralProgram;
+      const referrer = yield* referrals.getSummary({ userId: "referrer" });
+      state.beforeClaimUpdate = () => state.environmentUsers.add("referred");
+
+      const error = yield* Effect.flip(
+        referrals.claim({
+          userId: "referred",
+          referralCode: referrer.referralCode,
+        }),
+      );
+
+      expect(error._tag).toBe("ReferralProgramPersistenceError");
+      expect(state.accounts.get("referred")?.referrerUserId).toBeNull();
+      expect(state.pointEntries).toHaveLength(0);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 });
