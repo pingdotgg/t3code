@@ -53,11 +53,12 @@ const PI_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 
 export function buildInitialPiProviderSnapshot(
   piSettings: PiSettings,
+  cwd?: string,
 ): Effect.Effect<ServerProviderDraft, never, FileSystem.FileSystem | Path.Path> {
   return Effect.gen(function* () {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = piModelsFromSettings(piSettings.customModels);
-    const skills = yield* discoverPiSkills(process.cwd()).pipe(Effect.orElseSucceed(() => []));
+    const skills = yield* discoverPiSkills(cwd).pipe(Effect.orElseSucceed(() => []));
 
     if (!piSettings.enabled) {
       return buildServerProvider({

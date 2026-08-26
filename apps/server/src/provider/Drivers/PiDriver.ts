@@ -118,7 +118,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          buildInitialPiProviderSnapshot(settings.provider).pipe(
+          buildInitialPiProviderSnapshot(settings.provider, serverConfig.cwd).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),
             Effect.provideService(Path.Path, path),
             Effect.map(stampIdentity),

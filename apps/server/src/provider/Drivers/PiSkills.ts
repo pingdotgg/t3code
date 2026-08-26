@@ -106,12 +106,38 @@ export const discoverPiSkills = Effect.fn("discoverPiSkills")(function* (
 
   const skillsByName = new Map<string, ServerProviderSkill>();
   for (const root of roots) {
-    const entries = yield* fileSystem
-      .readDirectory(root.directory)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const skillPaths: Array<string> = [];
+    const stack: Array<string> = [root.directory];
+    const seenDirs = new Set<string>();
+    while (stack.length > 0) {
+      const current = stack.pop() as string;
+      if (seenDirs.has(current)) {
+        continue;
+      }
+      seenDirs.add(current);
+      const entries = yield* fileSystem
+        .readDirectory(current)
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      for (const entry of [...entries].sort()) {
+        const fullPath = path.join(current, entry);
+        const candidateSkillPath = path.join(fullPath, "SKILL.md");
+        const candidateContents = yield* fileSystem
+          .readFileString(candidateSkillPath)
+          .pipe(Effect.orElseSucceed(() => undefined));
+        if (candidateContents !== undefined) {
+          skillPaths.push(candidateSkillPath);
+        }
+        const subEntries = yield* fileSystem.readDirectory(fullPath).pipe(
+          Effect.map((value): ReadonlyArray<string> | undefined => value),
+          Effect.orElseSucceed((): ReadonlyArray<string> | undefined => undefined),
+        );
+        if (subEntries !== undefined) {
+          stack.push(fullPath);
+        }
+      }
+    }
 
-    for (const entry of [...entries].sort()) {
-      const skillPath = path.join(root.directory, entry, "SKILL.md");
+    for (const skillPath of [...skillPaths].sort()) {
       const contents = yield* fileSystem
         .readFileString(skillPath)
         .pipe(Effect.orElseSucceed(() => undefined));
@@ -122,7 +148,8 @@ export const discoverPiSkills = Effect.fn("discoverPiSkills")(function* (
       if (frontmatter.kind === "malformed") {
         continue;
       }
-      const name = (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? entry.trim();
+      const fallbackName = path.basename(path.dirname(skillPath)).trim();
+      const name = (frontmatter.kind === "parsed" ? frontmatter.name : undefined) ?? fallbackName;
       if (!name) {
         continue;
       }
