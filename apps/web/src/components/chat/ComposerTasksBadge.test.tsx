@@ -101,9 +101,12 @@ describe("ComposerTasksBadge", () => {
     expect(markup).toContain('aria-label="Collapse tasks. 1 of 3 complete."');
     expect(markup).toContain('role="list"');
     expect(markup).toContain('data-composer-tasks-list="true"');
+    expect(markup).toContain('tabindex="0"');
     expect(markup).toContain("max-h-[min(24rem,40dvh)]");
     expect(markup).toContain("overflow-y-auto");
     expect(markup).toContain("overscroll-contain");
+    expect(markup).toContain("focus-visible:ring-2");
+    expect(markup).toContain("focus-visible:ring-inset");
     expect(markup).toContain("Inspect the composer");
     expect(markup).toContain('data-composer-task-duration="true"');
     expect(markup).toContain("ml-auto w-10");
