@@ -102,12 +102,26 @@ export const ShellComposerRuntimeMode = Schema.Struct({
 });
 export type ShellComposerRuntimeMode = typeof ShellComposerRuntimeMode.Type;
 
+export const ShellComposerSuggestion = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literals(["path", "slash-command", "provider-slash-command", "skill"]),
+  label: Schema.String,
+  description: Schema.String,
+});
+export type ShellComposerSuggestion = typeof ShellComposerSuggestion.Type;
+
 /** Published under the `composer` key while a thread or draft route is open. */
 export const ShellComposerState = Schema.Struct({
   /** `<environmentId>:<threadId>` or a draft id; null between routes. */
   target: Schema.NullOr(Schema.String),
   routeKind: Schema.Literals(["server", "draft"]),
   text: Schema.String,
+  /** Caret position in `text` (raw prompt, mentions written out) after the page changed it. */
+  cursor: Schema.Number,
+  /** Active `@`/`$`/`/` trigger at the caret, with what it resolves to. */
+  triggerKind: Schema.NullOr(Schema.Literals(["path", "slash-command", "skill"])),
+  suggestions: Schema.Array(ShellComposerSuggestion),
+  suggestionsEmptyText: Schema.NullOr(Schema.String),
   placeholder: Schema.String,
   editorDisabled: Schema.Boolean,
   canSend: Schema.Boolean,
@@ -265,7 +279,14 @@ export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("pullRequests.open") }),
   Schema.Struct({ type: Schema.Literal("usage.open") }),
   Schema.Struct({ type: Schema.Literal("palette.open") }),
-  Schema.Struct({ type: Schema.Literal("composer.text.set"), text: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal("composer.text.set"),
+    text: Schema.String,
+    /** Caret in `text`; drives @/$// suggestions. */
+    cursor: Schema.optional(Schema.Number),
+  }),
+  Schema.Struct({ type: Schema.Literal("composer.suggest.select"), id: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("composer.suggest.dismiss") }),
   // `text` rides along so the send is atomic with the latest edit.
   Schema.Struct({
     type: Schema.Literal("composer.submit"),
