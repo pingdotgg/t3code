@@ -1037,18 +1037,24 @@ export const make = Effect.gen(function* () {
               chunk,
               (project): Effect.Effect<RepositoryBatch> => {
                 const fetched = rows.get(project.repository.trim().toLowerCase()) ?? [];
-                // GitHub does not index every repository for search — a renamed one answers for
-                // its old name with silence rather than with an error — so a repository the
-                // search said nothing at all about is read on its own, once, before it is
-                // believed. Only on its first slice: after that it has a boundary to carry on
-                // from, and silence past one means the rows are older rather than absent. That
-                // keeps a search-invisible repository from disappearing on a busy host, at the
-                // price of one request per repository with nothing in the first slice — which
-                // run together, and only there.
-                if (fetched.length === 0 && cursorOf(project) === undefined) {
+                const cursorHere = cursorOf(project);
+                // GitHub does not index every repository for search. A renamed repository can
+                // answer with silence rather than an error, so a repository that never appeared
+                // is eventually read on its own before that silence is believed.
+                //
+                // A full cross-repository slice cannot make that claim yet: the repository's
+                // newest row may simply be older than the slice. Reading every absent repository
+                // here turned one fast host search into one CLI call per quiet repository. Carry
+                // all of them to the slice boundary instead, and verify only the repositories
+                // still unseen once the search reaches its end. A truncated page with no decoded
+                // boundary cannot be continued safely, so it keeps the fallback.
+                if (
+                  fetched.length === 0 &&
+                  (cursorHere?.delivered ?? 0) === 0 &&
+                  (!page.truncated || boundary === null)
+                ) {
                   return readRepository(project);
                 }
-                const cursorHere = cursorOf(project);
                 const items =
                   cursorHere === undefined
                     ? fetched

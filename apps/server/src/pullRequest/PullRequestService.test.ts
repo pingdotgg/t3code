@@ -2513,6 +2513,7 @@ it.effect("reads a host's repositories in one search, and files the rows back un
 );
 it.effect("carries every repository of a slice on from the oldest row in it", () =>
   Effect.gen(function* () {
+    const separately: string[] = [];
     const service = yield* makeService({
       projects: [
         project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
@@ -2521,6 +2522,10 @@ it.effect("carries every repository of a slice on from the oldest row in it", ()
       ],
       providers: [
         fakeProvider("github", {
+          listChangeRequests: ({ repository }) => {
+            separately.push(repository);
+            return Effect.succeed({ items: [], truncated: false, continues: true });
+          },
           listChangeRequestsAcross: () =>
             Effect.succeed({
               items: [
@@ -2538,13 +2543,60 @@ it.effect("carries every repository of a slice on from the oldest row in it", ()
 
     // The boundary is the oldest row of the whole slice, not of each repository: `acme/web` has
     // been read past its newest row, so only the rows sent at the boundary are named for it.
-    // `acme/docs`, which the slice holds nothing of, is not believed on silence alone — it is
-    // read on its own, and that read is what says whether it has anything at all.
+    // `acme/docs` has no row in this full slice. That only says its rows are older, so it carries
+    // on from the shared boundary instead of making the first page wait on a separate CLI call.
+    assert.deepStrictEqual(separately, []);
     assert.isTrue(result.truncated);
     assert.deepStrictEqual(result.nextCursors, {
       "github.com pingdotgg/t3code": "2026-07-02T00:00:00Z|1|2",
       "github.com acme/web": "2026-07-02T00:00:00Z|2|3",
+      "github.com acme/docs": "2026-07-02T00:00:00Z|0|",
     });
+  }),
+);
+it.effect("verifies an unseen repository when a batched search reaches its end", () =>
+  Effect.gen(function* () {
+    const separately: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: ({ repository }) => {
+            separately.push(repository);
+            return Effect.succeed({
+              items: repository === "acme/docs" ? [changeRequest(2, "2026-07-01T00:00:00Z")] : [],
+              truncated: false,
+              continues: true,
+            });
+          },
+          listChangeRequestsAcross: (input) =>
+            Effect.succeed(
+              input.cursor === undefined
+                ? {
+                    items: [batchedChangeRequest(1, "acme/web", "2026-07-03T00:00:00Z")],
+                    truncated: true,
+                  }
+                : { items: [], truncated: false },
+            ),
+        }),
+      ],
+    });
+
+    const first = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(separately, []);
+
+    const second = yield* service.list({ state: "open", cursors: first.nextCursors });
+
+    // The first page stays one host request. If the search never produces a row for `acme/docs`,
+    // the final slice still checks it directly so a search-index gap cannot hide its pull request.
+    assert.deepStrictEqual(separately, ["acme/docs"]);
+    assert.deepStrictEqual(
+      second.entries.map((entry) => [entry.repository, entry.number]),
+      [["acme/docs", 2]],
+    );
   }),
 );
 it.effect("carries a slice on without sending the rows it already sent", () =>

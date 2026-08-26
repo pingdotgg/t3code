@@ -157,11 +157,12 @@ const SEARCH_DEBOUNCE_MS = 250;
 /** What `scorePullRequestMatch` gives a row none of whose own fields carry the search text. */
 const MATCHED_ELSEWHERE_SCORE = 10;
 /**
- * One whole page from the host and no more: every provider asks for one row beyond the page as
- * its "is there more" probe, and GitHub serves a hundred per request — so asking for ninety-nine
- * costs one round trip where a hundred costs two.
+ * Enough rows to fill the view without making first paint wait on GitHub's hundred-row worst
+ * case. Providers ask for one extra row as their "is there more" probe, so this reads 31 and lets
+ * the existing scroll pagination fetch the rest. Measured with the listing's GitHub fields: 31
+ * rows took 3.6–4.4s while 100 timed out after 11.1s.
  */
-const PAGE_SIZE = 99;
+const PAGE_SIZE = 30;
 /** The largest page the listing accepts; past it the request is refused outright. */
 const MAX_PAGE_SIZE = 500;
 /** Stable empty map so the memos below do not see a new object on every render. */
@@ -662,15 +663,20 @@ function PullRequestsRouteView() {
   const baselineQuery = usePullRequestList(baselineTargets);
   // The priority groups' own reads. The feed below is paginated by recency, so an older authored
   // or review-requested row can be missing from its first page; partitioned from these
-  // server-filtered reads instead, the priority view is complete up front and a continuation can
-  // only ever append below what is already on screen. A search re-ranks the whole list by match,
+  // server-filtered reads instead, the priority view starts with the host's own matching page and
+  // a continuation can only ever append below what is already on screen. A search re-ranks the
   // so no partitions are read for one. These are the same atoms the Authored and Reviewing tabs
   // ask for, so switching to either is answered from cache.
   const partitionsWanted = search.involvement === "all" && typedQuery.length === 0;
+  // Let the feed arrive before spending two more host searches on its priority groups. Those
+  // reads used to start together, and each may fan out to repositories the host search could not
+  // cover. The page can already group the feed locally until these fuller answers arrive, so the
+  // extra work belongs off the first-row path.
+  const partitionsReady = partitionsWanted && baselineQuery.data !== null;
   // Built together so the two reads share one memo, and in the same field order the feed's own
   // input uses: the atoms are keyed by their input, so the Authored tab then reads this answer.
   const partitionTargets = useMemo(() => {
-    if (!partitionsWanted) return { authored: NO_LIST_TARGETS, reviewing: NO_LIST_TARGETS };
+    if (!partitionsReady) return { authored: NO_LIST_TARGETS, reviewing: NO_LIST_TARGETS };
     const targetsFor = (involvement: PullRequestInvolvement) =>
       environmentQueries.map(({ environmentId, projectIds }) => ({
         environmentId,
@@ -688,7 +694,7 @@ function PullRequestsRouteView() {
   }, [
     menuFiltered,
     menuFilters,
-    partitionsWanted,
+    partitionsReady,
     environmentQueries,
     scopedProjectId,
     search.host,
