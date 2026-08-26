@@ -2561,7 +2561,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread !== null &&
     activeThread !== undefined &&
     activeThread.session !== null &&
-    activeThread.session.status === "ready";
+    (activeThread.session.status === "ready" || activeThread.session.status === "running");
   const codexGoal = useCodexGoal(
     hasActiveCodexGoalSession ? environmentId : null,
     hasActiveCodexGoalSession ? activeThreadId : null,
