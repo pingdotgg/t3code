@@ -35,6 +35,7 @@
   });
   window.t3Shell = Object.freeze({
     protocolVersion: 1,
+    surfaceId: typeof window.__t3ShellSurfaceId === "string" ? window.__t3ShellSurfaceId : "primary",
     ready,
     publish: (key, value) => ready.then((shell) => shell.publish(key, value)),
     onAction: (listener) =>

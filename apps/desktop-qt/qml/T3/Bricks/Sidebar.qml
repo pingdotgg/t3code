@@ -139,6 +139,15 @@ Rectangle {
                         }) : Shell.dispatch("thread.open", {
                             key: entry.modelData.item.key
                         })
+                        onMenuRequested: (windowX, windowY) => {
+                            if (entry.modelData.kind !== "draft") {
+                                Shell.dispatch("thread.menu", {
+                                    key: entry.modelData.item.key,
+                                    x: windowX,
+                                    y: windowY
+                                });
+                            }
+                        }
                     }
                 }
             }

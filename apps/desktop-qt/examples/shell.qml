@@ -78,10 +78,14 @@ Window {
     }
 
     Notifications {
-        anchors.top: parent.top
+        anchors.bottom: parent.bottom
         anchors.right: parent.right
-        anchors.topMargin: 96
+        anchors.bottomMargin: 180
         anchors.rightMargin: 16
+    }
+
+    ContextMenuHost {
+        surfaceId: "shell"
     }
 
     ShellErrorOverlay {

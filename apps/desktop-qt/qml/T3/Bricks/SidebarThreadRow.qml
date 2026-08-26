@@ -10,6 +10,7 @@ Item {
     required property bool active
 
     signal activated
+    signal menuRequested(real windowX, real windowY)
 
     readonly property color textColor: Theme.color("sidebarForeground", "#e4e4e7")
     readonly property color mutedColor: Theme.color("sidebarMutedForeground", "#8b8b93")
@@ -45,7 +46,16 @@ Item {
     }
 
     TapHandler {
+        acceptedButtons: Qt.LeftButton
         onTapped: row.activated()
+    }
+
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: eventPoint => {
+            const p = row.mapToItem(null, eventPoint.position.x, eventPoint.position.y);
+            row.menuRequested(p.x, p.y);
+        }
     }
 
     RowLayout {

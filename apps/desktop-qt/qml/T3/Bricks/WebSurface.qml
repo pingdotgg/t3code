@@ -8,6 +8,10 @@ import T3.Shell
 WebEngineView {
     id: view
 
+    // Names this surface for the page (window.t3Shell.surfaceId), so menus it
+    // opens come back to this view.
+    property string surfaceId: "primary"
+
     backgroundColor: Theme.windowTransparent ? "transparent" : Theme.color("chrome", "#0b0b0d")
 
     profile: WebProfile.instance
@@ -18,6 +22,13 @@ WebEngineView {
 
     Component.onCompleted: {
         channel.registerObject("shell", Shell);
+
+        const tag = WebEngine.script();
+        tag.name = "t3-surface-id";
+        tag.sourceCode = "window.__t3ShellSurfaceId = " + JSON.stringify(view.surfaceId) + ";";
+        tag.injectionPoint = WebEngineScript.DocumentCreation;
+        tag.worldId = WebEngineScript.MainWorld;
+        view.userScripts.insert(tag);
 
         const transport = WebEngine.script();
         transport.name = "t3-webchannel";
@@ -57,5 +68,9 @@ WebEngineView {
                 view.runJavaScript(Theme.injectionScript);
             }
         }
+    }
+
+    ContextMenuHost {
+        surfaceId: view.surfaceId
     }
 }

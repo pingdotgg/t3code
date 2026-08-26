@@ -191,6 +191,7 @@ Rectangle {
             // The document follows thread changes itself (t3Shell.onState), so
             // the URL is only the starting point; rebinding it would reload.
             sourceComponent: WebSurface {
+                surfaceId: "rightPanel"
                 Component.onCompleted: url = panel.embedUrl
             }
         }

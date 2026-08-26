@@ -54,14 +54,74 @@ Rectangle {
             color: strip.muted
         }
 
-        Text {
+        Item {
+            id: titleSlot
+
             Layout.fillWidth: true
             Layout.minimumWidth: 120
-            text: strip.ready ? strip.model.threadTitle : qsTr("No thread")
-            color: strip.foreground
-            font.pixelSize: 13
-            font.bold: true
-            elide: Text.ElideRight
+            implicitHeight: 30
+
+            property bool editing: false
+            property int handledRenameRequest: 0
+
+            Connections {
+                target: strip
+
+                function onModelChanged() {
+                    if (strip.ready && strip.model.renameRequestId !== titleSlot.handledRenameRequest) {
+                        titleSlot.handledRenameRequest = strip.model.renameRequestId;
+                        if (strip.model.renameRequestId > 0) {
+                            titleSlot.editing = true;
+                            titleEditor.text = strip.model.threadTitle;
+                            titleEditor.forceActiveFocus();
+                            titleEditor.selectAll();
+                        }
+                    }
+                }
+            }
+
+            Text {
+                anchors.fill: parent
+                visible: !titleSlot.editing
+                text: strip.ready ? strip.model.threadTitle : qsTr("No thread")
+                color: strip.foreground
+                font.pixelSize: 13
+                font.bold: true
+                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+
+                TapHandler {
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onTapped: eventPoint => {
+                        if (!strip.ready || strip.model.isDraft) {
+                            return;
+                        }
+                        const p = titleSlot.mapToItem(null, eventPoint.position.x, eventPoint.position.y);
+                        Shell.dispatch("workspace.titleMenu", {
+                            x: p.x,
+                            y: p.y
+                        });
+                    }
+                }
+            }
+
+            ShellTextField {
+                id: titleEditor
+
+                anchors.fill: parent
+                visible: titleSlot.editing
+                onAccepted: {
+                    titleSlot.editing = false;
+                    Shell.dispatch("workspace.rename", {
+                        title: text
+                    });
+                }
+                Keys.onEscapePressed: titleSlot.editing = false
+                onActiveFocusChanged: if (!activeFocus && titleSlot.editing) {
+                    titleSlot.editing = false;
+                }
+            }
         }
 
         ShellComboBox {
