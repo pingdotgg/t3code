@@ -20,14 +20,7 @@
  * the card that arrives is the card that stays.
  */
 import type { EnvironmentId, PostHogReport } from "@t3tools/contracts";
-import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  MaximizeIcon,
-  PlusIcon,
-  UserMinusIcon,
-  XIcon,
-} from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EmptyState } from "../../brand/EmptyState";
@@ -45,9 +38,9 @@ import {
   type ReportDecisionHandlers,
 } from "../reports/ReportDecision";
 import { ReportArtefactWarmup, usePostHogViewerLogin } from "../reports/reportWarmup";
-import { deriveReportDecision, splitReportSummary } from "../reports/reportVerdict";
+import { splitReportSummary } from "../reports/reportVerdict";
 import { Button } from "../ui/button";
-import { Kbd } from "../ui/kbd";
+import { KbdHint } from "../ui/kbd";
 import { humanizeReportTitle, sourceProductLabel } from "./inboxList.logic";
 import { useTriageStore } from "./triageStore";
 
@@ -66,8 +59,24 @@ export interface TriagePassControls {
 /** How far ahead of the reader the queue's evidence is fetched. */
 const WARM_AHEAD = 3;
 
-/** The key handler takes either modifier; only the legend has to pick one. */
-const MOD_LABEL = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
+/**
+ * Every key this surface binds, in the words its badges wear. The handler
+ * below takes either modifier; only the badge has to pick one.
+ *
+ * Each of these rides on the control it fires rather than sitting in a legend
+ * under the card. A key learned beside the button is learned while you are
+ * deciding whether to press it, which is the only moment it can be learned.
+ */
+const KEYS = {
+  previous: "k",
+  next: "j",
+  primary: isMacPlatform(navigator.platform) ? "⌘↵" : "ctrl ↵",
+  reply: "r",
+  archive: "e",
+  unassign: "m",
+  open: "↵",
+  exit: "esc",
+} as const;
 
 function isTypingTarget(target: EventTarget | null): boolean {
   return (
@@ -290,23 +299,6 @@ export function TriageFocus({
     });
   }, [artefactView.reviewers, myLogin, onActionError, onHandBack, report, rule, unruleReport]);
 
-  // What this report is asking for, in the legend's words. Derived from the
-  // same function the card's controls are, so the key and the button it fires
-  // can never disagree about what they do.
-  const decision = useMemo(
-    () =>
-      report === undefined
-        ? null
-        : deriveReportDecision(report, { hasExistingPr: Boolean(report.implementation_pr_url) }),
-    [report],
-  );
-  const primaryLabel = decision?.primary?.label ?? null;
-  const canArchive =
-    decision !== null &&
-    (decision.primary?.kind === "archive" ||
-      decision.secondary.some((action) => action.kind === "archive"));
-  const canReply = decision?.primary?.kind === "answer";
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
@@ -399,22 +391,29 @@ export function TriageFocus({
 
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-1.5">
+          {/* The arrows keep their glyphs — direction is the whole message on
+              a button with no label — and carry their keys inboard, so the
+              pair reads the way the two keys sit under a hand. */}
           <Button
-            size="icon-sm"
+            size="sm"
             variant="outline"
+            className="gap-1 px-1.5"
             aria-label="Previous report"
             disabled={position <= 0}
             onClick={goPrevious}
           >
             <ChevronLeftIcon className="size-3.5" />
+            <KbdHint>{KEYS.previous}</KbdHint>
           </Button>
           <Button
-            size="icon-sm"
+            size="sm"
             variant="outline"
+            className="gap-1 px-1.5"
             aria-label="Next report"
             disabled={position >= deck.length - 1}
             onClick={goNext}
           >
+            <KbdHint>{KEYS.next}</KbdHint>
             <ChevronRightIcon className="size-3.5" />
           </Button>
           <span className="ms-1 text-xs tabular-nums text-muted-foreground">
@@ -434,20 +433,23 @@ export function TriageFocus({
             </Button>
           ) : null}
         </div>
+        {/* These labels say what they do on their own, so the icon slot goes
+            to the key instead. The bar is furniture the reader learns to look
+            past; it may not also get denser. */}
         <div className="flex items-center gap-1">
           {canUnassign ? (
             <Button size="sm" variant="outline" onClick={unassignMe}>
-              <UserMinusIcon className="size-3.5" />
               Not mine
+              <KbdHint>{KEYS.unassign}</KbdHint>
             </Button>
           ) : null}
           <Button size="sm" variant="outline" onClick={() => onOpenReport(report)}>
-            <MaximizeIcon className="size-3.5" />
             Open report
+            <KbdHint>{KEYS.open}</KbdHint>
           </Button>
           <Button size="sm" variant="ghost" onClick={onExit}>
-            <XIcon className="size-3.5" />
             Exit
+            <KbdHint>{KEYS.exit}</KbdHint>
           </Button>
         </div>
       </div>
@@ -502,6 +504,11 @@ export function TriageFocus({
                 hasExistingPr={Boolean(report.implementation_pr_url)}
                 busy={busy}
                 handlers={handlers}
+                shortcuts={{
+                  primary: KEYS.primary,
+                  archive: KEYS.archive,
+                  reply: KEYS.reply,
+                }}
               />
             </div>
           </>
@@ -509,40 +516,6 @@ export function TriageFocus({
           <TriageCardPlaceholder />
         )}
       </article>
-
-      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <Kbd>j</Kbd>
-          <Kbd>k</Kbd> move
-        </span>
-        {primaryLabel ? (
-          <span className="flex items-center gap-1">
-            <Kbd>{MOD_LABEL}</Kbd>
-            <Kbd>↵</Kbd> {primaryLabel.toLowerCase()}
-          </span>
-        ) : null}
-        {canReply ? (
-          <span className="flex items-center gap-1">
-            <Kbd>r</Kbd> write a reply
-          </span>
-        ) : null}
-        {canArchive ? (
-          <span className="flex items-center gap-1">
-            <Kbd>e</Kbd> archive
-          </span>
-        ) : null}
-        {canUnassign ? (
-          <span className="flex items-center gap-1">
-            <Kbd>m</Kbd> not mine
-          </span>
-        ) : null}
-        <span className="flex items-center gap-1">
-          <Kbd>↵</Kbd> open the report
-        </span>
-        <span className="flex items-center gap-1">
-          <Kbd>esc</Kbd> exit
-        </span>
-      </div>
     </div>
   );
 }

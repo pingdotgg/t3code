@@ -263,6 +263,9 @@ function LoadedReportDetail({
               repository={view.repoSelection?.repository ?? null}
               className="mt-5"
               handlers={handlers}
+              // This page binds only the reply key; the rest of the card's
+              // shortcuts belong to triage and must not be advertised here.
+              shortcuts={{ reply: "r" }}
             />
 
             <div className="mt-6">

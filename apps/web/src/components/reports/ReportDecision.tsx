@@ -19,6 +19,7 @@ import { useImperativeHandle, useRef, useState, type Ref } from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { KbdHint } from "../ui/kbd";
 import { Textarea } from "../ui/textarea";
 import { ClampedBlock } from "./ClampedBlock";
 import {
@@ -57,6 +58,19 @@ export interface ReportDecisionControls {
   readonly runArchive: () => boolean;
 }
 
+/**
+ * The keys the surface mounting this has actually bound to its controls, so a
+ * control only advertises a shortcut that fires it. Triage owns the whole
+ * screen and binds all three; the report page binds only the reply key.
+ */
+export interface ReportDecisionShortcuts {
+  /** Commits the report's one ask, whatever verb it earned. */
+  readonly primary?: string;
+  readonly archive?: string;
+  /** Puts the caret in the reply field, on the reports that have one. */
+  readonly reply?: string;
+}
+
 export interface ReportDecisionHandlers {
   /** `direction` is whatever the reader typed before committing, if anything. */
   readonly onImplement: (direction: string) => void;
@@ -78,6 +92,7 @@ export function ReportDecision({
   repository = null,
   handlers,
   controls,
+  shortcuts,
 }: {
   readonly report: PostHogReport;
   readonly hasExistingPr: boolean;
@@ -94,6 +109,7 @@ export function ReportDecision({
   readonly handlers: ReportDecisionHandlers;
   /** Lets a surface that owns the keyboard drive these controls. */
   readonly controls?: Ref<ReportDecisionControls | null>;
+  readonly shortcuts?: ReportDecisionShortcuts;
 }) {
   const decision = deriveReportDecision(report, { hasExistingPr });
   const [text, setText] = useState("");
@@ -187,13 +203,20 @@ export function ReportDecision({
           and a field that grabs the caret on arrival turns every shortcut on
           the surface into a letter. The surface offers a key to focus it. */}
       {answering ? (
-        <div ref={fieldRef}>
+        <div ref={fieldRef} className="group relative mt-3">
+          {/* The key that reaches this field, shown only while it is not the
+              thing with the caret — once you are typing, it is a letter. */}
+          {shortcuts?.reply ? (
+            <KbdHint className="pointer-events-none absolute end-2.5 top-2.5 mx-0 bg-muted text-muted-foreground transition-opacity group-focus-within:opacity-0">
+              {shortcuts.reply}
+            </KbdHint>
+          ) : null}
           <Textarea
             value={text}
             rows={3}
             aria-label="Your answer"
             placeholder="Optional: tell the agent what you decided or did…"
-            className="mt-3 bg-background"
+            className="bg-background pe-11"
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -211,6 +234,7 @@ export function ReportDecision({
             <Button size="sm" disabled={busy} onClick={() => run(primary.kind)}>
               {PrimaryIcon ? <PrimaryIcon className="size-3.5" /> : null}
               {primary.label}
+              {shortcuts?.primary ? <KbdHint>{shortcuts.primary}</KbdHint> : null}
             </Button>
           ) : null}
           {secondary.map((action) => {
@@ -225,6 +249,9 @@ export function ReportDecision({
               >
                 {Icon ? <Icon className="size-3.5" /> : null}
                 {action.label}
+                {action.kind === "archive" && shortcuts?.archive ? (
+                  <KbdHint>{shortcuts.archive}</KbdHint>
+                ) : null}
               </Button>
             );
           })}
