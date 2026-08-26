@@ -1,0 +1,76 @@
+name: desktop-qt
+
+on:
+  push:
+    paths:
+      - "apps/desktop-qt/**"
+      - ".github/workflows/desktop-qt.yml"
+  pull_request:
+    paths:
+      - "apps/desktop-qt/**"
+      - ".github/workflows/desktop-qt.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            qt_host: linux
+            qt_arch: linux_gcc_64
+          - os: macos-15
+            qt_host: mac
+            qt_arch: clang_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # Official Qt binaries on every platform so WebEngine is always present
+      # (distro packages often ship without it).
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.9.*"
+          host: ${{ matrix.qt_host }}
+          arch: ${{ matrix.qt_arch }}
+          modules: qtwebengine qtwebchannel qtpositioning
+          cache: true
+
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libfuse2 \
+            libxcb-cursor0 libnss3 libxcomposite1 libxdamage1 libxrandr2 libasound2t64
+
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure
+        run: >
+          cmake -S apps/desktop-qt -B apps/desktop-qt/build/release -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="${{ env.QT_ROOT_DIR }}"
+
+      - name: Build
+        run: cmake --build apps/desktop-qt/build/release
+
+      - name: Package (Linux AppImage)
+        if: runner.os == 'Linux'
+        run: apps/desktop-qt/scripts/package-linux.sh apps/desktop-qt/build/release
+
+      - name: Package (macOS app bundle)
+        if: runner.os == 'macOS'
+        run: |
+          "${QT_ROOT_DIR}/bin/macdeployqt" apps/desktop-qt/build/release/t3code-qt.app -qmldir=apps/desktop-qt/qml
+          ditto -c -k --keepParent apps/desktop-qt/build/release/t3code-qt.app apps/desktop-qt/build/release/t3code-qt-macos.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: t3code-qt-${{ matrix.os }}
+          path: |
+            apps/desktop-qt/build/release/*.AppImage
+            apps/desktop-qt/build/release/*.zip
+          if-no-files-found: error
