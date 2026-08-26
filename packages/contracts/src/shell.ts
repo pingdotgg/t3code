@@ -218,6 +218,25 @@ export const ShellWorkspaceState = Schema.Struct({
 });
 export type ShellWorkspaceState = typeof ShellWorkspaceState.Type;
 
+/** Published under the `settings` key on every route change. */
+export const ShellSettingsState = Schema.Struct({
+  /** True on `/settings*`: the shell shows settings navigation instead of the thread sidebar. */
+  active: Schema.Boolean,
+  sections: Schema.Array(Schema.Struct({ to: Schema.String, label: Schema.String })),
+  activeSection: Schema.NullOr(Schema.String),
+  searchQuery: Schema.String,
+  searchResults: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      title: Schema.String,
+      to: Schema.String,
+      sectionLabel: Schema.String,
+      targetId: Schema.NullOr(Schema.String),
+    }),
+  ),
+});
+export type ShellSettingsState = typeof ShellSettingsState.Type;
+
 /** Actions the shell's chrome dispatches; `type` is the action name on the wire. */
 export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("thread.open"), key: Schema.String }),
@@ -275,6 +294,14 @@ export const ShellAction = Schema.Union([
     type: Schema.Literal("workspace.environment.set"),
     environmentId: Schema.String,
   }),
+  Schema.Struct({ type: Schema.Literal("settings.navigate"), to: Schema.String }),
+  Schema.Struct({
+    type: Schema.Literal("settings.openResult"),
+    to: Schema.String,
+    targetId: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({ type: Schema.Literal("settings.search"), query: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("settings.back") }),
 ]);
 export type ShellAction = typeof ShellAction.Type;
 
