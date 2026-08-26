@@ -3,7 +3,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { RelayReferralClaimResult } from "@t3tools/contracts/relay";
-import { CopyIcon, GiftIcon, TicketCheckIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, GiftIcon, TicketCheckIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import {
@@ -12,6 +12,7 @@ import {
 } from "../../cloud/managedRelayState";
 import { buildReferralLink, normalizeReferralCode } from "../../cloud/referralLinks";
 import { configuredHostedAppUrl } from "../../hostedPairing";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -53,17 +54,21 @@ export function ReferralsUserProfilePage() {
   });
   const [referralCode, setReferralCode] = useState("");
   const [isClaiming, setIsClaiming] = useState(false);
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "referral link",
+    onCopy: () => toastManager.add({ type: "success", title: "Referral link copied" }),
+    onError: (error) =>
+      toastManager.add({
+        type: "error",
+        title: "Could not copy referral link",
+        description: error.message,
+      }),
+  });
   const summary = summaryState.data;
   const referralLink = useMemo(
     () => (summary ? buildReferralLink(configuredHostedAppUrl(), summary.referralCode) : null),
     [summary],
   );
-
-  const copyInviteLink = async () => {
-    if (!referralLink || !navigator.clipboard?.writeText) return;
-    await navigator.clipboard.writeText(referralLink);
-    toastManager.add({ type: "success", title: "Referral link copied" });
-  };
 
   const submitReferralCode = async () => {
     const accountId = summaryState.accountId;
@@ -117,7 +122,11 @@ export function ReferralsUserProfilePage() {
       ) : null}
 
       {isInitialLoad ? (
-        <div className="grid gap-3 border-t py-5 sm:grid-cols-3" aria-label="Loading referrals">
+        <div
+          className="grid gap-3 border-t py-5 sm:grid-cols-3"
+          aria-label="Loading referrals"
+          role="status"
+        >
           <Skeleton className="h-24 rounded-xl" />
           <Skeleton className="h-24 rounded-xl" />
           <Skeleton className="h-24 rounded-xl" />
@@ -153,9 +162,18 @@ export function ReferralsUserProfilePage() {
             </p>
             <div className="mt-3 flex gap-2">
               <Input nativeInput readOnly value={referralLink ?? ""} aria-label="Referral link" />
-              <Button size="sm" variant="outline" onClick={() => void copyInviteLink()}>
-                <CopyIcon className="size-3.5" aria-hidden="true" />
-                Copy
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!referralLink}
+                onClick={() => copyToClipboard(referralLink ?? "")}
+              >
+                {isCopied ? (
+                  <CheckIcon className="size-3.5" aria-hidden="true" />
+                ) : (
+                  <CopyIcon className="size-3.5" aria-hidden="true" />
+                )}
+                {isCopied ? "Copied" : "Copy"}
               </Button>
             </div>
             <p className="mt-2 font-mono text-xs text-muted-foreground">

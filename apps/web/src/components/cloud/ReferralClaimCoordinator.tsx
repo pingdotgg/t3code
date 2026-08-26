@@ -1,4 +1,6 @@
 import { useAuth } from "@clerk/react";
+import { useAtomValue } from "@effect/atom-react";
+import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -83,33 +85,40 @@ function ConfiguredReferralClaimCoordinator() {
   const claimReferral = useAtomCommand(claimManagedRelayReferralCommand, {
     reportFailure: false,
   });
-  const attemptedClaimRef = useRef<string | null>(null);
+  const relayAccountId = useAtomValue(managedRelaySessionAtom)?.accountId ?? null;
+  const activeClaimRef = useRef<string | null>(null);
+  const completedClaimRef = useRef<string | null>(null);
 
   useEffect(() => {
     captureReferralCode();
   }, []);
 
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || !userId) return;
+    if (!isLoaded || !isSignedIn || !userId || relayAccountId !== userId) return;
     const referralCode = readPendingReferralCode();
     if (!referralCode) return;
     const attemptKey = `${userId}:${referralCode}`;
-    if (attemptedClaimRef.current === attemptKey) return;
-    attemptedClaimRef.current = attemptKey;
+    if (activeClaimRef.current === attemptKey || completedClaimRef.current === attemptKey) return;
+    activeClaimRef.current = attemptKey;
 
     void (async () => {
-      const result = await claimReferral({ accountId: userId, referralCode });
-      if (result._tag === "Success") {
-        clearPendingReferralCode();
-        refreshManagedRelayReferralSummary();
-        showClaimResult(result.value.result);
-        return;
+      try {
+        const result = await claimReferral({ accountId: userId, referralCode });
+        if (result._tag === "Success") {
+          completedClaimRef.current = attemptKey;
+          clearPendingReferralCode();
+          refreshManagedRelayReferralSummary();
+          showClaimResult(result.value.result);
+          return;
+        }
+        if (isAtomCommandInterrupted(result)) return;
+        const cause = squashAtomCommandFailure(result);
+        console.error("[t3-cloud] Could not claim captured referral code", { cause });
+      } finally {
+        if (activeClaimRef.current === attemptKey) activeClaimRef.current = null;
       }
-      if (isAtomCommandInterrupted(result)) return;
-      const cause = squashAtomCommandFailure(result);
-      console.error("[t3-cloud] Could not claim captured referral code", { cause });
     })();
-  }, [claimReferral, isLoaded, isSignedIn, userId]);
+  }, [claimReferral, isLoaded, isSignedIn, relayAccountId, userId]);
 
   return null;
 }

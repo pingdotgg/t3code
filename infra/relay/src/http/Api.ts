@@ -572,7 +572,15 @@ export const clientApi = HttpApiBuilder.group(
             yield* appendRelayCredentialResponseHeaders;
             const { userId } = yield* RelayClientPrincipal;
             const result = yield* linker.link({ userId, request: payload });
-            yield* referrals.qualify({ userId });
+            yield* referrals.qualify({ userId }).pipe(
+              Effect.tapError((error) =>
+                Effect.logWarning("referral qualification after environment link failed", {
+                  errorTag: error._tag,
+                  operation: error.operation,
+                }),
+              ),
+              Effect.ignore,
+            );
             return {
               ok: true,
               cloudUserId: userId,

@@ -17,8 +17,10 @@ type ReferralPointEntry = typeof relayReferralPointEntries.$inferSelect;
 
 interface FakeReferralState {
   readonly accounts: Map<string, ReferralAccount>;
+  readonly claimUpdateSql: Array<string>;
   readonly environmentUsers: Set<string>;
   readonly pointEntries: Array<ReferralPointEntry>;
+  beforeClaimUpdate?: () => void;
 }
 
 const hasSelection = (selection: unknown, key: string): boolean =>
@@ -119,13 +121,20 @@ function makeFakeDb(state: FakeReferralState) {
       return {
         set: (values: Partial<ReferralAccount>) => ({
           where: (condition: unknown) => {
-            const userId = String(sqlQuery(condition).params[0]);
+            const query = sqlQuery(condition);
+            const userId = String(query.params[0]);
             const account = state.accounts.get(userId);
 
             if (values.referrerUserId !== undefined) {
+              state.claimUpdateSql.push(query.sql);
               return {
                 returning: () => {
-                  if (!account || account.referrerUserId !== null) return Effect.succeed([]);
+                  const eligible =
+                    account !== undefined &&
+                    account.referrerUserId === null &&
+                    !state.environmentUsers.has(userId);
+                  state.beforeClaimUpdate?.();
+                  if (!eligible || !account) return Effect.succeed([]);
                   state.accounts.set(userId, { ...account, ...values });
                   return Effect.succeed([{ userId }]);
                 },
@@ -168,6 +177,7 @@ function makeTestLayer(state: FakeReferralState) {
 function makeState(): FakeReferralState {
   return {
     accounts: new Map(),
+    claimUpdateSql: [],
     environmentUsers: new Set(),
     pointEntries: [],
   };
@@ -186,6 +196,7 @@ describe("ReferralProgram", () => {
 
       expect(claim.result).toBe("claimed");
       expect((yield* referrals.getSummary({ userId: "referrer" })).pendingReferrals).toBe(1);
+      state.environmentUsers.add("referred");
       expect(yield* referrals.qualify({ userId: "referred" })).toBe(true);
       expect(yield* referrals.qualify({ userId: "referred" })).toBe(false);
 
@@ -218,6 +229,29 @@ describe("ReferralProgram", () => {
           referralCode: referrer.referralCode,
         })).result,
       ).toBe("ineligible");
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("awards a referral when the first link commits during the claim write", () => {
+    const state = makeState();
+    return Effect.gen(function* () {
+      const referrals = yield* ReferralProgram.ReferralProgram;
+      const referrer = yield* referrals.getSummary({ userId: "referrer" });
+      state.beforeClaimUpdate = () => state.environmentUsers.add("referred");
+
+      expect(
+        (yield* referrals.claim({
+          userId: "referred",
+          referralCode: referrer.referralCode,
+        })).result,
+      ).toBe("claimed");
+      expect(state.claimUpdateSql[0]).toContain("not exists");
+      expect(state.claimUpdateSql[0]).toContain('from "relay_environment_links"');
+      expect(yield* referrals.getSummary({ userId: "referrer" })).toMatchObject({
+        points: 67,
+        qualifiedReferrals: 1,
+        pendingReferrals: 0,
+      });
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 });
