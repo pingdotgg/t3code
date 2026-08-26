@@ -367,6 +367,10 @@ describe("CheckpointReactor", () => {
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
+    const captureCheckpoint = (input: CheckpointStore.CaptureCheckpointInput) =>
+      runtime!.runPromise(checkpointStore.captureCheckpoint(input));
+    const dispatch = (command: Parameters<OrchestrationEngineShape["dispatch"]>[0]) =>
+      runtime!.runPromise(engine.dispatch(command));
 
     const createdAt = "2026-01-01T00:00:00.000Z";
     await Effect.runPromise(
@@ -452,7 +456,8 @@ describe("CheckpointReactor", () => {
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       provider,
-      checkpointStore,
+      captureCheckpoint,
+      dispatch,
       cwd,
       drain,
     };
@@ -542,30 +547,24 @@ describe("CheckpointReactor", () => {
     const midTurnAt = "2026-01-01T00:00:10.000Z";
     const completedAt = "2026-01-01T00:00:30.000Z";
 
-    await Effect.runPromise(
-      harness.checkpointStore.captureCheckpoint({
-        cwd: harness.cwd,
-        checkpointRef: checkpointRefForThreadTurn(threadId, 0),
-      }),
-    );
+    await harness.captureCheckpoint({
+      cwd: harness.cwd,
+      checkpointRef: checkpointRefForThreadTurn(threadId, 0),
+    });
     NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "mid-turn\n", "utf8");
-    await Effect.runPromise(
-      harness.checkpointStore.captureCheckpoint({ cwd: harness.cwd, checkpointRef }),
-    );
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.diff.complete",
-        commandId: CommandId.make("cmd-legacy-mid-turn-diff"),
-        threadId,
-        turnId,
-        completedAt: midTurnAt,
-        checkpointRef,
-        status: "ready",
-        files: [{ path: "README.md", kind: "modified", additions: 1, deletions: 1 }],
-        checkpointTurnCount: 1,
-        createdAt: midTurnAt,
-      }),
-    );
+    await harness.captureCheckpoint({ cwd: harness.cwd, checkpointRef });
+    await harness.dispatch({
+      type: "thread.turn.diff.complete",
+      commandId: CommandId.make("cmd-legacy-mid-turn-diff"),
+      threadId,
+      turnId,
+      completedAt: midTurnAt,
+      checkpointRef,
+      status: "ready",
+      files: [{ path: "README.md", kind: "modified", additions: 1, deletions: 1 }],
+      checkpointTurnCount: 1,
+      createdAt: midTurnAt,
+    });
     await harness.drain();
     expect(gitShowFileAtRef(harness.cwd, checkpointRef, "README.md")).toBe("mid-turn\n");
 
