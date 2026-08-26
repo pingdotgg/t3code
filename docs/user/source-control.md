@@ -121,6 +121,12 @@ PR creation from Git actions continue to use the project's environment.
 For Azure DevOps, use the host website to view diffs or change comments. Bitbucket does not support
 reopening a declined pull request.
 
+## Branch mismatches
+
+When a thread's recorded branch differs from its checkout, the composer shows **Branch mismatch**
+before you send. Sending uses the checked-out branch for the thread; local checkouts also offer
+**Restore branch** to switch back instead.
+
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
