@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
@@ -20,6 +21,8 @@ import {
   subscribe,
 } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+
+const isEnvironmentRpcUnavailableError = Schema.is(EnvironmentRpcUnavailableError);
 
 interface EnvironmentAtomOptions<Input, A, E, R> {
   readonly label: string;
@@ -541,7 +544,14 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         switch (connectionState.phase) {
           case "connected":
             return Option.isSome(session)
-              ? runInEnvironment(target.environmentId, options.execute(target.input))
+              ? runInEnvironment(target.environmentId, options.execute(target.input)).pipe(
+                  // Session teardown and this atom's connection signal are
+                  // delivered independently. If the request observes teardown
+                  // first, keep it pending until the signal selects the
+                  // reconnecting or terminal branch instead of flashing a
+                  // transient unavailable failure.
+                  Effect.catchIf(isEnvironmentRpcUnavailableError, () => Effect.never),
+                )
               : Effect.never;
           case "connecting":
           case "backoff":
