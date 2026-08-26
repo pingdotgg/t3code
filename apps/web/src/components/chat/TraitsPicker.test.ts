@@ -16,6 +16,22 @@ function fastModeDescriptor(
   return { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue };
 }
 
+function serviceTierDescriptor(
+  currentValue: "default" | "priority" | "flex",
+): Extract<ProviderOptionDescriptor, { type: "select" }> {
+  return {
+    id: "serviceTier",
+    label: "Service Tier",
+    type: "select",
+    options: [
+      { id: "default", label: "Standard", isDefault: true },
+      { id: "priority", label: "Fast" },
+      { id: "flex", label: "Flex" },
+    ],
+    currentValue,
+  };
+}
+
 const EFFORT = selectDescriptor(
   "reasoningEffort",
   [
@@ -59,23 +75,32 @@ describe("buildTraitsTriggerDisplay", () => {
     });
   });
 
-  it("renders Codex's Standard and Fast service tiers as fast mode", () => {
-    const serviceTier = selectDescriptor(
-      "serviceTier",
-      [
-        { id: "default", label: "Standard", isDefault: true },
-        { id: "priority", label: "Fast" },
-      ],
-      "default",
-    );
-
-    expect(display([EFFORT, serviceTier])).toEqual({
+  it("treats Codex standard and fast service tiers as fast mode states", () => {
+    expect(display([EFFORT, serviceTierDescriptor("default")])).toEqual({
       label: "High",
       showFastModeIcon: false,
     });
-    expect(display([EFFORT, { ...serviceTier, currentValue: "priority" }])).toEqual({
+    expect(display([EFFORT, serviceTierDescriptor("priority")])).toEqual({
       label: "High",
       showFastModeIcon: true,
+    });
+  });
+
+  it("keeps other Codex service tiers in the label", () => {
+    expect(display([EFFORT, serviceTierDescriptor("flex")])).toEqual({
+      label: "High · Flex",
+      showFastModeIcon: false,
+    });
+  });
+
+  it("keeps the Codex service tier readable when it is the only trait", () => {
+    expect(display([serviceTierDescriptor("default")])).toEqual({
+      label: "Standard",
+      showFastModeIcon: false,
+    });
+    expect(display([serviceTierDescriptor("priority")])).toEqual({
+      label: "Fast",
+      showFastModeIcon: false,
     });
   });
 

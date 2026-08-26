@@ -94,6 +94,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         archivedAt: null,
         settledOverride: null,
         settledAt: null,
+        unsettledAt: null,
         snoozedUntil: null,
         snoozedAt: null,
         pinnedAt: null,
@@ -157,6 +158,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         archivedAt: null,
         settledOverride: "settled",
         settledAt: "2026-03-25T00:00:00.000Z",
+        unsettledAt: null,
         snoozedUntil: "2026-03-26T09:00:00.000Z",
         snoozedAt: "2026-03-25T00:00:00.000Z",
         pinnedAt: "2026-03-25T00:00:00.000Z",
@@ -186,6 +188,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         ...row,
         settledOverride: "active",
         settledAt: null,
+        unsettledAt: "2026-03-26T00:00:00.000Z",
         snoozedUntil: null,
         snoozedAt: null,
         pinnedAt: null,
@@ -196,9 +199,62 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       const updated = Option.getOrNull(repersisted);
       assert.strictEqual(updated?.settledOverride, "active");
       assert.strictEqual(updated?.settledAt, null);
+      assert.strictEqual(updated?.unsettledAt, "2026-03-26T00:00:00.000Z");
       assert.strictEqual(updated?.snoozedUntil, null);
       assert.strictEqual(updated?.snoozedAt, null);
       assert.strictEqual(updated?.pinnedAt, null);
+    }),
+  );
+
+  it.effect("round-trips a linked pull request through the thread row", () =>
+    Effect.gen(function* () {
+      const threads = yield* ProjectionThreadRepository;
+      const linkedPullRequest = {
+        projectId: ProjectId.make("project-linked-pr"),
+        repository: "pingdotgg/t3code",
+        number: 42,
+        url: "https://github.com/pingdotgg/t3code/pull/42",
+      };
+
+      yield* threads.upsert({
+        threadId: ThreadId.make("thread-linked-pr"),
+        projectId: ProjectId.make("project-linked-pr"),
+        title: "Linked pull request",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        linkedPullRequest,
+        latestTurnId: null,
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:00:00.000Z",
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        unsettledAt: null,
+        snoozedUntil: null,
+        snoozedAt: null,
+        pinnedAt: null,
+        latestUserMessageAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      const persisted = yield* threads.getById({ threadId: ThreadId.make("thread-linked-pr") });
+      assert.deepStrictEqual(Option.getOrNull(persisted)?.linkedPullRequest, linkedPullRequest);
+
+      const row = Option.getOrNull(persisted);
+      if (row === null) return yield* Effect.die("Expected linked thread row to exist.");
+      yield* threads.upsert({ ...row, linkedPullRequest: null });
+
+      const cleared = yield* threads.getById({ threadId: ThreadId.make("thread-linked-pr") });
+      assert.strictEqual(Option.getOrNull(cleared)?.linkedPullRequest, null);
     }),
   );
 });
