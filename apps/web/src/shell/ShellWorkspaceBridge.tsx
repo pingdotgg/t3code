@@ -87,6 +87,13 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
     if (!shell) return;
     void shell.publish("workspace", state);
   }, [shell, state]);
+  // Leaving the route (settings, no thread) must not leave stale chrome behind.
+  useEffect(() => {
+    if (!shell) return;
+    return () => {
+      void shell.publish("workspace", null);
+    };
+  }, [shell]);
 
   const latest = useRef({ props, openInEditor, setPreferredEditor });
   latest.current = { props, openInEditor, setPreferredEditor };

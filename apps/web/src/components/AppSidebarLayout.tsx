@@ -227,7 +227,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         style={sidebarProviderStyle}
       >
         <ProjectProjectionRetention />
-        {isT3Shell && !isOnSettings ? null : (
+        {isT3Shell ? null : (
         <Sidebar
           side="left"
           collapsible="offcanvas"
@@ -257,7 +257,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         </Sidebar>
         )}
         {children}
-        {isT3Shell && !isOnSettings ? null : <SidebarControl />}
+        {isT3Shell ? null : <SidebarControl />}
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );

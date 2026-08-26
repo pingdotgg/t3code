@@ -133,6 +133,13 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
     if (!shell) return;
     void shell.publish("composer", state);
   }, [shell, state]);
+  // Leaving the route (settings, no thread) must not leave stale chrome behind.
+  useEffect(() => {
+    if (!shell) return;
+    return () => {
+      void shell.publish("composer", null);
+    };
+  }, [shell]);
 
   // One subscription for the component's lifetime; handlers read live props.
   const latest = useRef({ props, optionDescriptors, setProviderModelOptions });

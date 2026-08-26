@@ -61,6 +61,13 @@ export function ShellRightPanelBridge(props: ShellRightPanelBridgeProps) {
     if (!shell) return;
     void shell.publish("rightPanel", state);
   }, [shell, state]);
+  // Leaving the route (settings, no thread) must not leave stale chrome behind.
+  useEffect(() => {
+    if (!shell) return;
+    return () => {
+      void shell.publish("rightPanel", null);
+    };
+  }, [shell]);
 
   const latest = useRef(props);
   latest.current = props;
