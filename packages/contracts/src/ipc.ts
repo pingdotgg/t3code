@@ -1061,6 +1061,11 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   input: PreviewAutomationWaitForInput,
 });
 
+export interface DesktopThreadDeepLinkPayload {
+  readonly environmentId: string;
+  readonly threadId: string;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /**
@@ -1131,6 +1136,12 @@ export interface DesktopBridge {
    */
   probeRemoteEditors?: () => Promise<readonly EditorId[]>;
   onMenuAction: (listener: (action: string) => void) => () => void;
+  /**
+   * Thread deep links (`t3code://app/<environmentId>/<threadId>`) forwarded
+   * from the OS by the main process. Optional: older desktop builds never
+   * emit it.
+   */
+  onDeepLink?: (listener: (payload: DesktopThreadDeepLinkPayload) => void) => () => void;
   /**
    * Hold-to-quit hint pushes: "down" when the quit shortcut is first pressed,
    * "up" when it is released before the hold completes. Optional: older

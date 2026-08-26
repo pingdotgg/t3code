@@ -4,7 +4,22 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-export interface DesktopIpcInvokeEvent {}
+/**
+ * The slice of an Electron WebContents that IPC handlers may touch: enough to
+ * identify the calling renderer, push messages back to it, and notice when it
+ * goes away.
+ */
+export interface DesktopIpcSenderWebContents {
+  readonly id: number;
+  isDestroyed(): boolean;
+  send(channel: string, ...args: ReadonlyArray<unknown>): void;
+  once(event: "destroyed", listener: () => void): unknown;
+}
+
+export interface DesktopIpcInvokeEvent {
+  /** Absent only in tests that fabricate events; Electron always sets it. */
+  readonly sender?: DesktopIpcSenderWebContents;
+}
 
 export interface DesktopIpcSyncEvent {
   returnValue: unknown;
@@ -59,7 +74,7 @@ export const isDesktopIpcError = Schema.is(DesktopIpcError);
 
 export interface DesktopIpcMethod<E, R> {
   readonly channel: string;
-  readonly handler: (raw: unknown) => Effect.Effect<unknown, E, R>;
+  readonly handler: (raw: unknown, event?: DesktopIpcInvokeEvent) => Effect.Effect<unknown, E, R>;
 }
 
 export interface DesktopSyncIpcMethod<E, R> {
@@ -93,11 +108,11 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
         Effect.try({
           try: () => {
             ipcMain.removeHandler(channel);
-            ipcMain.handle(channel, (_event, raw) =>
+            ipcMain.handle(channel, (event, raw) =>
               runPromise(
                 Effect.gen(function* () {
                   yield* Effect.annotateCurrentSpan({ channel });
-                  return yield* handler(raw);
+                  return yield* handler(raw, event);
                 }).pipe(Effect.annotateLogs({ channel }), Effect.withSpan("desktop.ipc.invoke")),
               ),
             );

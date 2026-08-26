@@ -123,6 +123,35 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
     };
   },
+  onDeepLink: (listener) => {
+    let active = true;
+    const deliver = (payload: unknown) => {
+      if (!active) return;
+      if (typeof payload !== "object" || payload === null) return;
+      const { environmentId, threadId } = payload as {
+        environmentId?: unknown;
+        threadId?: unknown;
+      };
+      if (typeof environmentId !== "string" || typeof threadId !== "string") return;
+      listener({ environmentId, threadId });
+    };
+    const wrappedListener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      deliver(payload);
+    };
+
+    ipcRenderer.on(IpcChannels.DEEP_LINK_CHANNEL, wrappedListener);
+    // Handshake: registering tells the main process this renderer is ready
+    // for pushes, and returns the link buffered while no renderer was
+    // (cold start) — or null.
+    ipcRenderer
+      .invoke(IpcChannels.DEEP_LINK_SUBSCRIBE_CHANNEL)
+      .then(deliver)
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      ipcRenderer.removeListener(IpcChannels.DEEP_LINK_CHANNEL, wrappedListener);
+    };
+  },
   onQuitShortcut: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (state !== "down" && state !== "up") return;
