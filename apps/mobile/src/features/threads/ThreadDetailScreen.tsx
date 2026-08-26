@@ -679,19 +679,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         props.onChangeDraftMessage("");
       };
       if (goalCommand.action === "status") {
-        if (props.selectedThread.session.status === "stopped") {
-          Alert.alert(
-            "Wake the Codex thread first",
-            "/goal status does not wake a stopped provider session.",
-          );
-          return null;
-        }
+        const sessionWasStopped = props.selectedThread.session.status === "stopped";
         const result = await getCodexGoal(target);
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result) && stillOnSubmittedThread()) {
             Alert.alert(
-              "Codex Goal operation failed",
-              formatCodexGoalError(squashAtomCommandFailure(result)),
+              sessionWasStopped ? "Wake the Codex thread first" : "Codex Goal operation failed",
+              sessionWasStopped
+                ? "/goal status does not wake a stopped provider session."
+                : formatCodexGoalError(squashAtomCommandFailure(result)),
             );
           }
           return null;

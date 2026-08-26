@@ -6390,24 +6390,19 @@ export default function ChatView(props: ChatViewProps) {
       });
       try {
         if (codexGoalCommand.action === "status") {
-          if (activeThread.session.status === "stopped") {
-            toastManager.add(
-              stackedThreadToast({
-                type: "warning",
-                title: "Wake the Codex thread first",
-                description: "/goal status does not wake a stopped provider session.",
-              }),
-            );
-            return;
-          }
+          const sessionWasStopped = activeThread.session.status === "stopped";
           const result = await getCodexGoal(target);
           if (result._tag === "Failure") {
             if (!isAtomCommandInterrupted(result) && stillOnSubmittedThread()) {
               toastManager.add(
                 stackedThreadToast({
-                  type: "error",
-                  title: "Codex Goal operation failed",
-                  description: formatCodexGoalError(squashAtomCommandFailure(result)),
+                  type: sessionWasStopped ? "warning" : "error",
+                  title: sessionWasStopped
+                    ? "Wake the Codex thread first"
+                    : "Codex Goal operation failed",
+                  description: sessionWasStopped
+                    ? "/goal status does not wake a stopped provider session."
+                    : formatCodexGoalError(squashAtomCommandFailure(result)),
                 }),
               );
             }

@@ -1636,7 +1636,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("serializes concurrent recovery for the same inactive thread", () => {
+  it.effect("serializes recovery with explicit starts for the same inactive thread", () => {
     const originalStartSession = routing.codex.startSession.getMockImplementation();
     if (!originalStartSession) throw new Error("fake Codex adapter has no start implementation");
 
@@ -1667,13 +1667,23 @@ routing.layer("ProviderServiceLive routing", (it) => {
         .pipe(Effect.forkChild);
       yield* Deferred.await(firstRecoveryStarted);
       const second = yield* provider.clearCodexGoal(threadId).pipe(Effect.forkChild);
+      const explicitStart = yield* provider
+        .startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: "/tmp/concurrent-goal-recovery-thread",
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
       yield* Effect.yieldNow;
 
       assert.equal(routing.codex.startSession.mock.calls.length, 1);
       yield* Deferred.succeed(releaseFirstRecovery, undefined);
       yield* Fiber.join(first);
       yield* Fiber.join(second);
-      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      yield* Fiber.join(explicitStart);
+      assert.equal(routing.codex.startSession.mock.calls.length, 2);
       yield* provider.stopSession({ threadId });
       routing.codex.startSession.mockClear();
       routing.codex.stopSession.mockClear();

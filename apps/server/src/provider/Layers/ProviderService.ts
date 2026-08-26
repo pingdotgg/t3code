@@ -1326,6 +1326,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
         return sessionWithInstance;
       }).pipe(
+        (start) => Effect.flatMap(getRecoveryLock(threadId), (lock) => lock.withPermit(start)),
         withMetrics({
           counter: providerSessionsTotal,
           attributes: () =>
