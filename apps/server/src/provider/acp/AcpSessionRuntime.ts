@@ -210,6 +210,8 @@ export class AcpSessionRuntime extends Context.Service<
      * @see https://agentclientprotocol.com/protocol/schema#session/cancel
      */
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
+    /** Queues cancellation across the prompt-start handshake, then sends `session/cancel`. */
+    readonly cancelPendingPrompt: Effect.Effect<void, EffectAcpErrors.AcpError>;
     /** Clears a queued cancel after the caller has observed prompt settlement. */
     readonly clearPendingCancel: Effect.Effect<void>;
     /**
@@ -806,6 +808,19 @@ export const make = (
           }),
         ),
       cancel: getStartedState.pipe(
+        Effect.flatMap((started) =>
+          Effect.gen(function* () {
+            const activePromptFiber = yield* Ref.get(activePromptFiberRef);
+            if (Option.isSome(activePromptFiber)) {
+              yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
+            }
+            yield* acp.agent
+              .cancel({ sessionId: started.sessionId })
+              .pipe(Effect.ignore, Effect.forkIn(runtimeScope));
+          }),
+        ),
+      ),
+      cancelPendingPrompt: getStartedState.pipe(
         Effect.flatMap((started) =>
           Effect.gen(function* () {
             yield* Ref.set(cancelRequestedRef, true);

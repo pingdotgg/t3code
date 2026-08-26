@@ -1122,7 +1122,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
         yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
         if (ctx.promptInFlight) {
           yield* Effect.ignore(
-            ctx.acp.cancel.pipe(
+            ctx.acp.cancelPendingPrompt.pipe(
               Effect.mapError((error) => mapOmpAcpToAdapterError("session/cancel", error)),
             ),
           );
