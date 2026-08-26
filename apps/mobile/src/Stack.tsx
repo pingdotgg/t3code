@@ -11,14 +11,13 @@ import {
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import { useEffect, useRef } from "react";
-import { DynamicColorIOS, Platform, Pressable, ScrollView, StyleSheet } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/AppText";
 import { getCompactBrandHeaderOptions } from "./components/CompactBrandTitle";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
-import { ClerkSettingsSheetDetentProvider } from "./features/cloud/ClerkSettingsSheetDetent";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
@@ -40,6 +39,15 @@ import { AddProjectLocalRoute } from "./features/projects/AddProjectLocalRoute";
 import { AddProjectRepositoryRoute } from "./features/projects/AddProjectRepositoryRoute";
 import { AddProjectSourceRoute } from "./features/projects/AddProjectSourceRoute";
 import { NewTaskDraftRouteScreen } from "./features/threads/NewTaskDraftRouteScreen";
+import {
+  NewTaskBranchPickerRouteScreen,
+  NewTaskEnvironmentPickerRouteScreen,
+} from "./features/threads/NewTaskContextPickerScreens";
+import {
+  ExistingThreadSettingsRouteProvider,
+  ExistingThreadSettingsRouteScreen,
+  NewTaskThreadSettingsRouteScreen,
+} from "./features/threads/ThreadSettingsSheet";
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
@@ -63,16 +71,10 @@ import {
 } from "./features/sharing/incoming-share-presentation";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
+import { FORM_SHEET_PRESENTATION_OPTIONS } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
-
-// Matches --color-sheet in global.css (light/dark). DynamicColorIOS lets the header
-// background stay STATIC config while still adapting to appearance changes.
-const SHEET_BACKGROUND_COLOR =
-  Platform.OS === "ios"
-    ? DynamicColorIOS({ light: "rgba(242, 242, 247, 0.98)", dark: "rgba(14, 14, 14, 0.98)" })
-    : undefined;
 
 type AppScreenOptions = NativeStackNavigationOptions & {
   readonly unstable_navigationItemStyle?: "editor";
@@ -90,11 +92,7 @@ const GLASS_HEADER_OPTIONS: AppScreenOptions = {
   headerLargeTitle: false,
   headerShadowVisible: false,
   headerShown: true,
-  headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED
-    ? { backgroundColor: "transparent" }
-    : SHEET_BACKGROUND_COLOR !== undefined
-      ? { backgroundColor: SHEET_BACKGROUND_COLOR as unknown as string }
-      : undefined,
+  headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED ? { backgroundColor: "transparent" } : undefined,
   headerTitleStyle: { fontSize: 18, fontWeight: "800" },
   headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
   scrollEdgeEffects: NATIVE_LIQUID_GLASS_SUPPORTED ? HEADER_SCROLL_EDGE_EFFECTS : undefined,
@@ -109,12 +107,6 @@ const SOLID_HEADER_OPTIONS: AppScreenOptions = {
   headerLargeTitle: false,
   headerShadowVisible: false,
   headerShown: true,
-  headerStyle:
-    SHEET_BACKGROUND_COLOR !== undefined
-      ? // native-stack types this as `string`, but the native side accepts any
-        // ColorValue including DynamicColorIOS.
-        { backgroundColor: SHEET_BACKGROUND_COLOR as unknown as string }
-      : undefined,
   headerTitleStyle: { fontSize: 18, fontWeight: "800" },
   headerTransparent: false,
   unstable_navigationItemStyle: Platform.OS === "ios" ? "editor" : undefined,
@@ -126,6 +118,14 @@ const SHEET_SOLID_HEADER_OPTIONS: AppScreenOptions = {
   unstable_navigationItemStyle: undefined,
 };
 
+// A native glass header for a sheet screen whose primary child is a scroll
+// view. The centered sheet title stays stable while UIKit supplies scroll-edge
+// fading from that child.
+const SHEET_GLASS_HEADER_OPTIONS: AppScreenOptions = {
+  ...GLASS_HEADER_OPTIONS,
+  unstable_navigationItemStyle: undefined,
+};
+
 const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
   ...SHEET_SOLID_HEADER_OPTIONS,
   headerBackVisible: false,
@@ -134,7 +134,7 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
   presentation: "fullScreenModal",
 };
 
-const SettingsSheetStack = createNativeStackNavigator({
+const SettingsContentStack = createNativeStackNavigator({
   initialRouteName: "Settings",
   screenOptions: {
     ...GLASS_HEADER_OPTIONS,
@@ -198,20 +198,30 @@ const SettingsSheetStack = createNativeStackNavigator({
         title: "Usage",
       },
     }),
+  },
+});
+
+// The outer stack never owns visible chrome. Settings routes render inside a
+// nested stack whose native header remains mounted, while Clerk owns auth chrome.
+// Keeping bar visibility invariant avoids iOS 26's headerless-to-headered jump.
+const SettingsSheetStack = createNativeStackNavigator({
+  initialRouteName: "SettingsContent",
+  screenOptions: {
+    headerShown: false,
+  },
+  screens: {
+    SettingsContent: createNativeStackScreen({
+      screen: SettingsContentStack,
+      linking: "",
+    }),
     SettingsAuth: createNativeStackScreen({
       screen: SettingsAuthRouteScreen,
       linking: "auth",
-      options: {
-        title: "Sign in",
-      },
     }),
     SettingsWaitlist: createNativeStackScreen({
       // Keep the old deep link working after the Connect GA launch.
       screen: SettingsAuthRouteScreen,
       linking: "waitlist",
-      options: {
-        title: "Sign in",
-      },
     }),
   },
 });
@@ -229,9 +239,16 @@ const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
 const NewTaskSheetStack = createNativeStackNavigator({
   initialRouteName: "NewTask",
   screenOptions: {
-    ...GLASS_HEADER_OPTIONS,
-    // Sheets read better with the iOS-default centered title (no editor style).
-    unstable_navigationItemStyle: undefined,
+    ...SHEET_GLASS_HEADER_OPTIONS,
+    // The form-sheet host owns the one opaque adaptive surface. Child screens
+    // and the navigation bar stay transparent over it, avoiding visible color
+    // slabs as view controllers move horizontally.
+    contentStyle: Platform.OS === "ios" ? { backgroundColor: "transparent" } : undefined,
+    // UIKit's default push adds a dimming shadow and independently transitions
+    // the navigation bar. Both read as mismatched sheet backgrounds here.
+    // simple_push retains native push/pop gestures without either artifact.
+    animation: Platform.OS === "ios" ? "simple_push" : undefined,
+    animationDuration: Platform.OS === "ios" ? 350 : undefined,
   },
   screens: {
     NewTask: createNativeStackScreen({
@@ -244,9 +261,39 @@ const NewTaskSheetStack = createNativeStackNavigator({
     NewTaskDraft: createNativeStackScreen({
       screen: NewTaskDraftRouteScreen,
       linking: "draft",
-      // The draft composer has no scroll view for glass to sample; a solid
-      // header also lays the content out below the bar (no manual inset).
-      options: SHEET_SOLID_HEADER_OPTIONS,
+      options: {
+        headerBackVisible: false,
+        title: "",
+      },
+    }),
+    NewTaskEnvironment: createNativeStackScreen({
+      screen: NewTaskEnvironmentPickerRouteScreen,
+      linking: "draft/environment",
+      options: {
+        title: "Environment",
+      },
+    }),
+    NewTaskBranch: createNativeStackScreen({
+      screen: NewTaskBranchPickerRouteScreen,
+      linking: "draft/branch",
+      options: {
+        title: "Branch",
+      },
+    }),
+    ThreadSettings: createNativeStackScreen({
+      screen: NewTaskThreadSettingsRouteScreen,
+      linking: "draft/settings",
+      options: {
+        gestureEnabled: true,
+        headerShown: false,
+        ...(Platform.OS === "android"
+          ? { presentation: "card" as const }
+          : {
+              ...FORM_SHEET_PRESENTATION_OPTIONS,
+              sheetAllowedDetents: [1],
+              sheetGrabberVisible: true,
+            }),
+      },
     }),
     AddProject: createNativeStackScreen({
       screen: AddProjectSourceRoute,
@@ -285,6 +332,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "SettingsLegal",
   "SettingsSheet",
   "ThreadReviewComment",
+  "ThreadSettingsSheet",
 ]);
 
 /**
@@ -347,11 +395,11 @@ function RootStackLayout(props: {
     <HardwareKeyboardCommandProvider pathname={pathname}>
       <ThreadOutboxDrainWorker />
       <ShowcaseCaptureCoordinator pathname={pathname} />
-      <ClerkSettingsSheetDetentProvider initiallyExpanded={false}>
+      <ExistingThreadSettingsRouteProvider>
         <AdaptiveWorkspaceLayout pathname={workspacePathname}>
           {props.children}
         </AdaptiveWorkspaceLayout>
-      </ClerkSettingsSheetDetentProvider>
+      </ExistingThreadSettingsRouteProvider>
     </HardwareKeyboardCommandProvider>
   );
 }
@@ -433,7 +481,9 @@ export const RootStack = createNativeStackNavigator({
       options: {
         // Android cannot host the keyboard-driven comment composer inside a
         // formSheet; use a full-screen modal there instead.
-        presentation: Platform.OS === "android" ? "fullScreenModal" : "formSheet",
+        ...(Platform.OS === "android"
+          ? { presentation: "fullScreenModal" as const }
+          : FORM_SHEET_PRESENTATION_OPTIONS),
         sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.55, 0.92],
         sheetGrabberVisible: Platform.OS !== "android",
       },
@@ -443,10 +493,6 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/files`,
       options: {
         ...GLASS_HEADER_OPTIONS,
-        contentStyle:
-          SHEET_BACKGROUND_COLOR !== undefined
-            ? { backgroundColor: SHEET_BACKGROUND_COLOR }
-            : undefined,
         title: "Files",
       },
     }),
@@ -455,11 +501,25 @@ export const RootStack = createNativeStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/files/:path*`,
       options: SOLID_HEADER_OPTIONS,
     }),
+    ThreadSettingsSheet: createNativeStackScreen({
+      screen: ExistingThreadSettingsRouteScreen,
+      options: {
+        gestureEnabled: true,
+        headerShown: false,
+        ...(Platform.OS === "android"
+          ? { presentation: "card" as const }
+          : {
+              ...FORM_SHEET_PRESENTATION_OPTIONS,
+              sheetAllowedDetents: [1],
+              sheetGrabberVisible: true,
+            }),
+      },
+    }),
     GitOverview: createNativeStackScreen({
       screen: GitOverviewSheet,
       linking: `${THREAD_LINKING_PREFIX}/git`,
       options: {
-        presentation: "formSheet",
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.55, 0.92],
         sheetGrabberVisible: true,
       },
@@ -468,7 +528,7 @@ export const RootStack = createNativeStackNavigator({
       screen: GitCommitSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/commit`,
       options: {
-        presentation: "formSheet",
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.55, 0.92],
         sheetGrabberVisible: true,
       },
@@ -477,7 +537,7 @@ export const RootStack = createNativeStackNavigator({
       screen: GitBranchesSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/branches`,
       options: {
-        presentation: "formSheet",
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.55, 0.92],
         sheetGrabberVisible: true,
       },
@@ -486,7 +546,7 @@ export const RootStack = createNativeStackNavigator({
       screen: GitConfirmSheet,
       linking: `${THREAD_LINKING_PREFIX}/git-confirm`,
       options: {
-        presentation: "formSheet",
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.45, 0.7],
         sheetGrabberVisible: true,
       },
@@ -502,7 +562,7 @@ export const RootStack = createNativeStackNavigator({
         ...(Platform.OS === "android"
           ? { presentation: "card" as const }
           : {
-              presentation: "formSheet" as const,
+              ...FORM_SHEET_PRESENTATION_OPTIONS,
               sheetAllowedDetents: [0.7, 0.92],
               sheetGrabberVisible: true,
             }),
@@ -525,7 +585,7 @@ export const RootStack = createNativeStackNavigator({
         ...(Platform.OS === "android" ? { headerShown: false } : SHEET_SOLID_HEADER_OPTIONS),
         title: "Set up T3 Connect",
         gestureEnabled: true,
-        presentation: "formSheet",
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.6, 0.95],
         sheetGrabberVisible: true,
       },
@@ -540,7 +600,7 @@ export const RootStack = createNativeStackNavigator({
         ...(Platform.OS === "android"
           ? { presentation: "card" as const, headerShown: false }
           : {
-              presentation: "formSheet" as const,
+              ...FORM_SHEET_PRESENTATION_OPTIONS,
               sheetAllowedDetents: [0.55, 0.7],
               sheetGrabberVisible: true,
             }),
@@ -550,7 +610,7 @@ export const RootStack = createNativeStackNavigator({
       screen: ConnectionsNewRouteScreen,
       linking: "connections/new",
       options: {
-        presentation: "formSheet",
+        ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.55, 0.7],
         sheetGrabberVisible: true,
       },
@@ -561,7 +621,11 @@ export const RootStack = createNativeStackNavigator({
       // The whole new-task flow (choose project → draft → add project) shares
       // draft state via NewTaskFlowProvider. The expo-router era mounted it in
       // app/new/_layout.tsx; this layout wrapper is the native-stack equivalent.
-      layout: ({ children }) => <NewTaskFlowProvider>{children}</NewTaskFlowProvider>,
+      layout: ({ children }) => (
+        <NewTaskFlowProvider>
+          <View className="flex-1 bg-sheet-solid">{children}</View>
+        </NewTaskFlowProvider>
+      ),
       options: {
         gestureEnabled: true,
         headerShown: false,
@@ -570,7 +634,7 @@ export const RootStack = createNativeStackNavigator({
         ...(Platform.OS === "android"
           ? { presentation: "card" as const }
           : {
-              presentation: "formSheet" as const,
+              ...FORM_SHEET_PRESENTATION_OPTIONS,
               sheetAllowedDetents: [0.92],
               sheetGrabberVisible: true,
             }),

@@ -106,6 +106,7 @@ const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings =>
   homePath: "",
   customModels: [],
   launchArgs: "",
+  autoCompactWindow: "",
   ...overrides,
 });
 
@@ -220,6 +221,32 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
+    Effect.gen(function* () {
+      // Old settings files can carry both flags with conflicting values.
+      // The explicit false must win so a user's disable is never undone.
+      const staleId = ProviderInstanceId.make("codex_stale");
+      const configMap: ProviderInstanceConfigMap = {
+        [staleId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          config: makeCodexConfig({ enabled: false }),
+        },
+      };
+
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [CodexDriver],
+        configMap,
+      });
+
+      const instance = yield* registry.getInstance(staleId);
+      expect(instance).toBeDefined();
+      expect(instance!.enabled).toBe(false);
+      const snapshot = yield* instance!.snapshot.getSnapshot;
+      expect(snapshot.enabled).toBe(false);
     }).pipe(Effect.provide(testLayer)),
   );
 

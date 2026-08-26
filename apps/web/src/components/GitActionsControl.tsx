@@ -22,6 +22,7 @@ import { flushSync } from "react-dom";
 import {
   CheckIcon,
   ChevronDownIcon,
+  CloudDownloadIcon,
   CloudUploadIcon,
   ExternalLinkIcon,
   GitBranchPlusIcon,
@@ -50,6 +51,7 @@ import {
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
 import { AnimatedHeight } from "./AnimatedHeight";
+import { StartTruncatedPath } from "./StartTruncatedPath";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import {
@@ -357,7 +359,7 @@ function GitQuickActionIcon({
   const iconClassName = "size-3.5";
   if (quickAction.kind === "open_pr") return <SourceControlIcon className={iconClassName} />;
   if (quickAction.kind === "open_publish") return <CloudUploadIcon className={iconClassName} />;
-  if (quickAction.kind === "run_pull") return <InfoIcon className={iconClassName} />;
+  if (quickAction.kind === "run_pull") return <CloudDownloadIcon className={iconClassName} />;
   if (quickAction.kind === "run_action") {
     if (quickAction.action === "commit") return <GitCommitIcon className={iconClassName} />;
     if (quickAction.action === "push" || quickAction.action === "commit_push") {
@@ -366,6 +368,7 @@ function GitQuickActionIcon({
     return <SourceControlIcon className={iconClassName} />;
   }
   if (quickAction.label === "Commit") return <GitCommitIcon className={iconClassName} />;
+  if (quickAction.label === "Push") return <CloudUploadIcon className={iconClassName} />;
   return <InfoIcon className={iconClassName} />;
 }
 
@@ -1921,14 +1924,13 @@ export default function GitActionsControl({
                               )}
                               <button
                                 type="button"
-                                className="flex flex-1 items-center justify-between gap-3 text-left truncate"
+                                className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
                                 onClick={() => openChangedFileInEditor(file.path)}
                               >
-                                <span
-                                  className={`truncate${isExcluded ? " text-muted-foreground" : ""}`}
-                                >
-                                  {file.path}
-                                </span>
+                                <StartTruncatedPath
+                                  path={file.path}
+                                  className={`flex-1${isExcluded ? " text-muted-foreground" : ""}`}
+                                />
                                 <span className="shrink-0">
                                   {isExcluded ? (
                                     <span className="text-muted-foreground">Excluded</span>

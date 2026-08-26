@@ -6,6 +6,8 @@ export type ThreadPr = NonNullable<VcsStatusResult["pr"]>;
 export interface ThreadPrPresentation {
   readonly number: number;
   readonly state: ThreadPr["state"];
+  /** Provider-side last activity, bounding when a terminal state landed. */
+  readonly updatedAt: string | null;
   readonly url: string;
   /** Compact pull request number label, e.g. "3774". */
   readonly label: string;
@@ -28,6 +30,7 @@ export function presentThreadPr(
   return {
     number: pr.number,
     state: pr.state,
+    updatedAt: pr.updatedAt ?? null,
     url: pr.url,
     label: String(pr.number),
     accessibilityLabel: `#${pr.number} ${presentation.longName} ${pr.state}`,

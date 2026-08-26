@@ -2,35 +2,50 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 
 import { ClaudeAI, GrokIcon, type Icon, OpenAI } from "../Icons";
 
-/**
- * Series and table order. The chart layers all providers from a shared zero
- * baseline, so this only fixes the reading order of legends, tables and hover
- * rows; it does not decide which series sits above the other.
- */
-export const PROVIDER_ORDER: readonly UsageProviderKind[] = ["codex", "claude", "grok"];
-
-export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  grok: "Grok",
-};
-
-/** Provider colors used by the web chart and legend. */
-export const PROVIDER_COLOR: Record<UsageProviderKind, string> = {
-  claude: "#d97757",
-  codex: "#e6e6e6",
-  grok: "#8b8b8b",
+type UsageProviderPresentation = {
+  readonly label: string;
+  readonly color: string;
+  readonly mark: Icon;
 };
 
 /**
- * Brand marks, reused from the provider picker.
- *
- * These ship their own fills (`#d97757` for Claude, white on dark for OpenAI),
- * which are the same colours as the chart bands, so swapping a colour dot for a
- * mark keeps the series association intact rather than trading it away.
+ * Exhaustive presentation for providers supported by the usage contract.
+ * Declaration order is reused by every chart and table, so adding a provider
+ * only requires its contract support and one entry here.
  */
-export const PROVIDER_MARK: Record<UsageProviderKind, Icon> = {
-  claude: ClaudeAI,
-  codex: OpenAI,
-  grok: GrokIcon,
-};
+export const PROVIDER_PRESENTATION = {
+  codex: {
+    label: "Codex",
+    color: "var(--contrast-foreground)",
+    mark: OpenAI,
+  },
+  claude: {
+    label: "Claude Code",
+    color: "#d97757",
+    mark: ClaudeAI,
+  },
+  grok: {
+    label: "Grok",
+    color: "#8b8b8b",
+    mark: GrokIcon,
+  },
+} satisfies Record<UsageProviderKind, UsageProviderPresentation>;
+
+/** Stable provider reading order across charts, summaries, tables, and hover rows. */
+export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
+
+/** Providers with real activity, independent of the metric currently displayed. */
+export function providersWithUsage(
+  totals: readonly {
+    readonly provider: UsageProviderKind;
+    readonly costUsd: number;
+    readonly totalTokens: number;
+  }[],
+): readonly UsageProviderKind[] {
+  const active = new Set(
+    totals
+      .filter((entry) => entry.totalTokens > 0 || entry.costUsd > 0)
+      .map((entry) => entry.provider),
+  );
+  return PROVIDER_ORDER.filter((provider) => active.has(provider));
+}

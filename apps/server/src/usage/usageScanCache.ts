@@ -18,9 +18,9 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 
 import type { UsageRecord } from "./usageTranscripts.ts";
 
-// v2: Codex fork-copy suppression changed what a file parses to, so v1
-// entries would keep serving double-counted records forever.
-export const USAGE_SCAN_CACHE_VERSION = 2 as const;
+// v3: aggregate records gained `recordCount`, changing the serialized row
+// shape. Older entries must be rescanned instead of decoded without it.
+export const USAGE_SCAN_CACHE_VERSION = 3 as const;
 
 export interface CachedFile {
   readonly size: number;
