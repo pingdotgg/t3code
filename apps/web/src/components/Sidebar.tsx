@@ -183,7 +183,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
 } from "./Sidebar.logic";
-import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
+import { resolveCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   createSidebarCollisionDetection,
   createSidebarSortingStrategy,
@@ -1170,7 +1170,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
-  const branchMismatch = resolveLocalCheckoutBranchMismatch({
+  const branchMismatch = resolveCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,
     activeThreadBranch: thread.branch,
@@ -2023,7 +2023,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     JSON.stringify([thread.environmentId, gitCwd]),
     gitStatus.data,
   );
-  const branchMismatch = resolveLocalCheckoutBranchMismatch({
+  const branchMismatch = resolveCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
     activeWorktreePath: thread.worktreePath,
     activeThreadBranch: thread.branch,
