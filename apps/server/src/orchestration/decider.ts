@@ -998,13 +998,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
-      // Real activity resets ANY override: it wakes an explicitly settled
-      // thread, and it clears a keep-active pin back to neutral so the
-      // thread can auto-settle again after this burst of work goes stale.
+      // Real activity wakes an explicitly settled thread, but it must not
+      // clear a keep-active pin: the user asked for that thread to stay
+      // active, and an automatic "activity" unsettle is a no-op against a
+      // state that is already unsettled in spirit. Only a settled override
+      // is cleared here; an active override is left alone.
       // A snooze clears the same way — sending a message to a snoozed
       // thread is the user re-engaging, so the return ticket is spent.
       const lifecycleResetEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
-      if (targetThread.settledOverride !== null) {
+      if (targetThread.settledOverride === "settled") {
         lifecycleResetEvents.push({
           ...(yield* withEventBase({
             aggregateKind: "thread",
@@ -1207,8 +1209,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // as snoozed, without spending the return ticket.
       const isSessionActivity =
         command.session.status === "starting" || command.session.status === "running";
-      // Real activity resets ANY override (settled wakes, active unpins).
-      if (thread.settledOverride === null || !isSessionActivity) {
+      // Real activity wakes a settled thread, but never clears an active
+      // pin: that override is the user asking to keep this thread active,
+      // and an automatic "activity" unsettle must not undo it.
+      if (thread.settledOverride !== "settled" || !isSessionActivity) {
         return sessionSetEvent;
       }
       const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {
@@ -1384,8 +1388,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const wakesSettledThread =
         command.activity.kind === "approval.requested" ||
         command.activity.kind === "user-input.requested";
-      // Real activity resets ANY override (settled wakes, active unpins).
-      if (thread.settledOverride === null || !wakesSettledThread) {
+      // Real activity wakes a settled thread, but never clears an active
+      // pin: that override is the user asking to keep this thread active,
+      // and an automatic "activity" unsettle must not undo it.
+      if (thread.settledOverride !== "settled" || !wakesSettledThread) {
         return activityAppendedEvent;
       }
       const unsettledEvent: Omit<OrchestrationEvent, "sequence"> = {

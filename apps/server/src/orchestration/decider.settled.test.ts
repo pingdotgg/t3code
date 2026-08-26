@@ -428,7 +428,7 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
-  it.effect("prepends activity unsets for turn starts and live session updates", () =>
+  it.effect("prepends activity unsets for settled threads and leaves active pins alone", () =>
     Effect.gen(function* () {
       const turnResult = yield* decideOrchestrationCommand({
         command: {
@@ -462,19 +462,16 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
           session: makeSession("running"),
           createdAt: NOW,
         },
-        // A keep-active pin is also an override: real activity clears it
-        // back to neutral so auto-settle can apply again later.
+        // A keep-active pin is a user pin, not an auto-settle guard: real
+        // activity must not clear it back to neutral.
         readModel: makeReadModel("active"),
       });
       const sessionEvents = Array.isArray(sessionResult) ? sessionResult : [sessionResult];
-      expect(sessionEvents.map((event) => event.type)).toEqual([
-        "thread.unsettled",
-        "thread.session-set",
-      ]);
+      expect(sessionEvents.map((event) => event.type)).toEqual(["thread.session-set"]);
     }),
   );
 
-  it.effect("clears a keep-active pin on real activity", () =>
+  it.effect("does not clear a keep-active pin on real activity", () =>
     Effect.gen(function* () {
       const turnResult = yield* decideOrchestrationCommand({
         command: {
@@ -494,10 +491,9 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         readModel: makeReadModel("active"),
       });
       const turnEvents = Array.isArray(turnResult) ? turnResult : [turnResult];
-      // The pin exists to suppress AUTO-settle, not to survive real work:
-      // activity resets it to neutral, restoring the default lifecycle.
+      // The pin is the user asking to keep this thread active: real work
+      // must not silently clear it back to neutral.
       expect(turnEvents.map((event) => event.type)).toEqual([
-        "thread.unsettled",
         "thread.message-sent",
         "thread.turn-start-requested",
       ]);
@@ -521,10 +517,7 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         readModel: makeReadModel("active"),
       });
       const activityEvents = Array.isArray(activityResult) ? activityResult : [activityResult];
-      expect(activityEvents.map((event) => event.type)).toEqual([
-        "thread.unsettled",
-        "thread.activity-appended",
-      ]);
+      expect(activityEvents.map((event) => event.type)).toEqual(["thread.activity-appended"]);
     }),
   );
 
