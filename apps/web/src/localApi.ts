@@ -2,6 +2,8 @@ import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/c
 
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
+import { isT3Shell } from "./env";
+import { closeShellContextMenu, showShellContextMenu } from "./shell/shellContextMenu";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
 
 let cachedApi: LocalApi | undefined;
@@ -49,12 +51,16 @@ function createBrowserLocalApi(): LocalApi {
         if (window.desktopBridge) {
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
+        if (isT3Shell) {
+          return showShellContextMenu(items, position);
+        }
         return showContextMenuFallback(items, position);
       },
       // A native desktop menu blocks keyboard input and closes on outside
       // interaction, so nothing to do there; the DOM fallback needs an explicit
       // dismiss when the state behind it goes away.
       close: async () => {
+        if (isT3Shell) closeShellContextMenu();
         if (!window.desktopBridge) {
           dismissContextMenu();
         }

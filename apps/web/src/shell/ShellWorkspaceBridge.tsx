@@ -14,7 +14,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { EnvMode } from "../components/BranchToolbar.logic";
 import { type DraftId } from "../composerDraftStore";
 import { resolveAndPersistPreferredEditor, usePreferredEditor } from "../editorPreferences";
+import { useRenameThread } from "../hooks/useRenameThread";
 import { useThreadBranchSelection } from "../hooks/useThreadBranchSelection";
+import { subscribeShellRenameRequests } from "./shellRenameRequest";
 import { shellEnvironment } from "../state/shell";
 import { buildShellWorkspaceState } from "./shellWorkspaceState";
 
@@ -52,6 +54,10 @@ export interface ShellWorkspaceBridgeProps {
   readonly onStartFromOriginChange: (enabled: boolean) => void;
   readonly onOpenPullRequest: ((number: number) => void) | undefined;
   readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
+  readonly renameRequestId: number;
+  readonly onTitleMenu: (x: number, y: number) => void;
+  readonly onRenameRequested: () => void;
+  readonly threadTitleForRename: string;
 }
 
 /**
@@ -65,6 +71,19 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
   const [preferredEditorId, setPreferredEditor] = usePreferredEditor(props.availableEditors);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor);
   const [branchQuery, setBranchQuery] = useState("");
+  const renameThread = useRenameThread({
+    environmentId: props.threadRef.environmentId,
+    threadId: props.threadRef.threadId,
+    currentTitle: props.threadTitleForRename,
+  });
+  // A sidebar row's "Rename" navigates here first, then asks for the editor.
+  useEffect(
+    () =>
+      subscribeShellRenameRequests((threadKey) => {
+        if (threadKey === scopedThreadKey(props.threadRef)) props.onRenameRequested();
+      }),
+    [props],
+  );
   const branchSelection = useThreadBranchSelection({
     environmentId: props.threadRef.environmentId,
     threadId: props.threadRef.threadId,
@@ -106,6 +125,7 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         environments: props.environments,
         activeEnvironmentId: props.threadRef.environmentId,
         environmentChangeable: props.environmentChangeable,
+        renameRequestId: props.renameRequestId,
         branchQuery,
         branches: refs,
         branchesTotal: branchRefState.data?.totalCount ?? refs.length,
@@ -139,8 +159,22 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
     };
   }, [shell]);
 
-  const latest = useRef({ props, openInEditor, setPreferredEditor, branchSelection, branchByName });
-  latest.current = { props, openInEditor, setPreferredEditor, branchSelection, branchByName };
+  const latest = useRef({
+    props,
+    openInEditor,
+    setPreferredEditor,
+    branchSelection,
+    branchByName,
+    renameThread,
+  });
+  latest.current = {
+    props,
+    openInEditor,
+    setPreferredEditor,
+    branchSelection,
+    branchByName,
+    renameThread,
+  };
   useEffect(() => {
     if (!shell) return;
     let disposed = false;
@@ -158,6 +192,7 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
           setPreferredEditor: remember,
           branchSelection: branches,
           branchByName: refByName,
+          renameThread: rename,
         } = latest.current;
         switch (candidate.type) {
           case "workspace.newThread":
@@ -193,6 +228,12 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
             if (number !== undefined) current.onOpenPullRequest?.(number);
             return;
           }
+          case "workspace.titleMenu":
+            current.onTitleMenu(candidate.x, candidate.y);
+            return;
+          case "workspace.rename":
+            rename(candidate.title);
+            return;
           case "workspace.branch.search":
             setBranchQuery(candidate.query);
             return;

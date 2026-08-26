@@ -1377,6 +1377,13 @@ function ChatViewContent(props: ChatViewProps) {
   // Hosted by the Qt shell, the right panel's chrome is a native brick and its
   // content is this same view rendered by the embed route.
   const shellHostsChrome = isT3Shell && presentation === "full";
+  const [shellTitleMenuRequest, setShellTitleMenuRequest] = useState<{
+    x: number;
+    y: number;
+    seq: number;
+  } | null>(null);
+  const [shellRenameRequestId, setShellRenameRequestId] = useState(0);
+  const requestShellRename = useCallback(() => setShellRenameRequestId((id) => id + 1), []);
   const {
     environmentId,
     threadId,
@@ -7879,6 +7886,12 @@ function ChatViewContent(props: ChatViewProps) {
           }
           environments={logicalProjectEnvironments}
           environmentChangeable={!envLocked && draftId !== undefined && draftId !== null}
+          renameRequestId={shellRenameRequestId}
+          onTitleMenu={(x, y) =>
+            setShellTitleMenuRequest((prev) => ({ x, y, seq: (prev?.seq ?? 0) + 1 }))
+          }
+          onRenameRequested={requestShellRename}
+          threadTitleForRename={activeThread.title}
           onNewThread={handleNewThreadInActiveProject}
           onRunScript={runProjectScript}
           onEnvModeChange={onEnvModeChange}
@@ -7940,6 +7953,8 @@ function ChatViewContent(props: ChatViewProps) {
           {!shellHostsChrome && !rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
           <ChatHeader
             shellHosted={shellHostsChrome}
+            shellMenuRequest={shellTitleMenuRequest}
+            onShellRenameRequested={requestShellRename}
             {...(!supportsPullRequests || activeProjectRepository === null
               ? {}
               : { onOpenPullRequest: openProjectPullRequest })}

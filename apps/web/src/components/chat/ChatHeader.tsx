@@ -6,10 +6,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
 import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
@@ -25,7 +21,6 @@ import GitActionsControl from "../GitActionsControl";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { toastManager } from "../ui/toast";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
@@ -34,10 +29,9 @@ import { OpenInPicker } from "./OpenInPicker";
 import { useRemoteOpenState, type RemoteOpenMode } from "../../remoteOpen";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
+import { resolveRenameCommit } from "./ChatHeader.logic";
+import { useRenameThread } from "../../hooks/useRenameThread";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
-import { readLocalApi } from "~/localApi";
-import { threadEnvironment } from "../../state/threads";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { observeResponsiveBreakpointFade, usePanelAnimationSettings } from "../../panelAnimations";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
@@ -50,6 +44,9 @@ import { cn } from "~/lib/utils";
 interface ChatHeaderProps {
   /** Hosted by the Qt shell: breadcrumb, scripts and editor live in native chrome; only git stays. */
   shellHosted?: boolean;
+  /** Window-coordinate request from the shell to open the thread's action menu. */
+  shellMenuRequest?: { x: number; y: number; seq: number } | null;
+  onShellRenameRequested?: () => void;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   draftId?: DraftId;
@@ -83,15 +80,6 @@ interface ChatHeaderProps {
  * Rename commit rule shared with the sidebar's inline rename: trim, reject
  * empty (the caller toasts), and skip the mutation when nothing changed.
  */
-export function resolveRenameCommit(input: {
-  readonly title: string;
-  readonly originalTitle: string;
-}): { action: "commit"; title: string } | { action: "reject-empty" } | { action: "noop" } {
-  const trimmed = input.title.trim();
-  if (trimmed.length === 0) return { action: "reject-empty" };
-  if (trimmed === input.originalTitle) return { action: "noop" };
-  return { action: "commit", title: trimmed };
-}
 
 // How long a click on the thread title waits before opening the action menu,
 // so a double-click-to-rename can cancel it first. Only the native desktop
@@ -124,6 +112,8 @@ export function shouldShowOpenInPicker(input: {
 
 export const ChatHeader = memo(function ChatHeader({
   shellHosted = false,
+  shellMenuRequest = null,
+  onShellRenameRequested,
   activeThreadEnvironmentId,
   activeThreadId,
   draftId,
@@ -179,9 +169,6 @@ export const ChatHeader = memo(function ChatHeader({
     () => scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
     [activeThreadEnvironmentId, activeThreadId],
   );
-  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
-    reportFailure: false,
-  });
   // Inline rename, keyed by thread: navigating away drops an in-progress
   // rename instead of committing stale text. Cleared on thread change (not
   // just hidden) so returning to the thread doesn't revive the old draft.
@@ -192,33 +179,24 @@ export const ChatHeader = memo(function ChatHeader({
   const renamingTitle = renaming?.threadId === activeThreadId ? renaming.title : null;
   const renameCommittedRef = useRef(false);
   const startRename = useCallback(() => {
+    if (shellHosted) {
+      onShellRenameRequested?.();
+      return;
+    }
     renameCommittedRef.current = false;
     setRenaming({ threadId: activeThreadId, title: activeThreadTitle });
-  }, [activeThreadId, activeThreadTitle]);
+  }, [activeThreadId, activeThreadTitle, onShellRenameRequested, shellHosted]);
+  const renameThread = useRenameThread({
+    environmentId: activeThreadEnvironmentId,
+    threadId: activeThreadId,
+    currentTitle: activeThreadTitle,
+  });
   const commitRename = useCallback(
     (title: string) => {
       setRenaming(null);
-      const resolution = resolveRenameCommit({ title, originalTitle: activeThreadTitle });
-      if (resolution.action === "reject-empty") {
-        toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
-        return;
-      }
-      if (resolution.action === "noop") return;
-      void updateThreadMetadata({
-        environmentId: activeThreadEnvironmentId,
-        input: { threadId: activeThreadId, title: resolution.title },
-      }).then((result) => {
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add({
-            type: "error",
-            title: "Failed to rename thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          });
-        }
-      });
+      renameThread(title);
     },
-    [activeThreadEnvironmentId, activeThreadId, activeThreadTitle, updateThreadMetadata],
+    [renameThread],
   );
   const { openMenu, closeMenu } = useThreadActionMenu({
     threadRef: isServerThread ? activeThreadRef : null,
@@ -279,6 +257,14 @@ export const ChatHeader = memo(function ChatHeader({
     },
     [cancelPendingTitleMenu, closeMenu, startRename],
   );
+  // Native title clicks arrive as window coordinates; the shell renders the
+  // menu at the window level for the "shell" surface.
+  useEffect(() => {
+    if (!shellHosted || shellMenuRequest === null) return;
+    const position = { x: shellMenuRequest.x, y: shellMenuRequest.y, surface: "shell" };
+    openMenu(position);
+  }, [openMenu, shellHosted, shellMenuRequest]);
+
   const handleHeaderContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       if (renamingTitle !== null) return;
@@ -457,3 +443,5 @@ export const ChatHeader = memo(function ChatHeader({
     </div>
   );
 });
+
+export { resolveRenameCommit };

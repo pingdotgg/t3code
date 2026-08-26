@@ -33,6 +33,7 @@ export interface ShellWorkspaceStateInput {
   readonly environments: ReadonlyArray<{ environmentId: string; label: string }>;
   readonly activeEnvironmentId: string;
   readonly environmentChangeable: boolean;
+  readonly renameRequestId: number;
   readonly branchQuery: string;
   readonly branches: ReadonlyArray<VcsRef>;
   readonly branchesTotal: number;
@@ -89,6 +90,7 @@ export function buildShellWorkspaceState(input: ShellWorkspaceStateInput): Shell
     environments: input.environments,
     activeEnvironmentId: input.activeEnvironmentId,
     environmentChangeable: input.environmentChangeable,
+    renameRequestId: input.renameRequestId,
     branchQuery: input.branchQuery,
     branches: input.branches.map((ref) => ({
       name: ref.name,

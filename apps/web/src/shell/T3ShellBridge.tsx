@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { parseScopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  parseScopedThreadKey,
+  scopeProjectRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 import { ShellAction, type ShellSidebarDraft, type ShellSidebarState } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
@@ -11,6 +15,8 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "../composerD
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
+import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
+import { requestShellRename } from "./shellRenameRequest";
 import { environmentServerConfigsAtom } from "../state/server";
 import { useThreadShells } from "../state/entities";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
@@ -40,6 +46,57 @@ export function T3ShellBridge() {
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
   });
+  const [menuTarget, setMenuTarget] = useState<{
+    key: string;
+    x: number;
+    y: number;
+    seq: number;
+  } | null>(null);
+  const menuThreadRef = menuTarget ? parseScopedThreadKey(menuTarget.key) : null;
+  const menuThreadShell = useMemo(
+    () =>
+      menuThreadRef
+        ? threads.find(
+            (thread) =>
+              thread.environmentId === menuThreadRef.environmentId &&
+              thread.id === menuThreadRef.threadId,
+          )
+        : undefined,
+    [menuThreadRef, threads],
+  );
+  const menuProjectCwd = useMemo(() => {
+    if (!menuThreadShell) return null;
+    for (const group of projectGroups) {
+      const member = group.memberProjects.find(
+        (project) =>
+          project.environmentId === menuThreadShell.environmentId &&
+          project.id === menuThreadShell.projectId,
+      );
+      if (member) return member.workspaceRoot;
+    }
+    return null;
+  }, [menuThreadShell, projectGroups]);
+  const { openMenu: openThreadMenu } = useThreadActionMenu({
+    threadRef: menuThreadRef,
+    projectCwd: menuProjectCwd,
+    onStartRename: () => {
+      if (!menuThreadRef) return;
+      void router.navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(menuThreadRef),
+      });
+      // The workspace bridge for that thread mounts after navigation.
+      window.setTimeout(() => requestShellRename(scopedThreadKey(menuThreadRef)), 150);
+    },
+  });
+  useEffect(() => {
+    if (!menuTarget || !menuThreadRef) return;
+    void Promise.resolve().then(() => {
+      openThreadMenu({ x: menuTarget.x, y: menuTarget.y, surface: "shell" } as never);
+    });
+    // Only re-open for a new request, not for hook identity churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuTarget?.seq]);
   const draftSessions = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const draftContents = useComposerDraftStore((store) => store.draftsByThreadKey);
 
@@ -187,6 +244,14 @@ export function T3ShellBridge() {
           }
           case "sidebar.scope":
             setScopeProjectKey(candidate.projectKey);
+            return;
+          case "thread.menu":
+            setMenuTarget((prev) => ({
+              key: candidate.key,
+              x: candidate.x,
+              y: candidate.y,
+              seq: (prev?.seq ?? 0) + 1,
+            }));
             return;
           case "project.add":
             openCommandPalette({ open: "add-project" });

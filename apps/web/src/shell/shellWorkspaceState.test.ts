@@ -39,6 +39,7 @@ function baseInput() {
     environments: [{ environmentId: "env", label: "Local" }],
     activeEnvironmentId: "env",
     environmentChangeable: false,
+    renameRequestId: 0,
     branchQuery: "",
     branches: [
       { name: "main", isDefault: true, current: false },
