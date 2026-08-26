@@ -39,6 +39,15 @@ function baseInput() {
     environments: [{ environmentId: "env", label: "Local" }],
     activeEnvironmentId: "env",
     environmentChangeable: false,
+    branchQuery: "",
+    branches: [
+      { name: "main", isDefault: true, current: false },
+      { name: "origin/feat/y", isRemote: true },
+    ] as never,
+    branchesTotal: 2,
+    branchesLoading: false,
+    branchSwitchPending: false,
+    branchChangeable: true,
   };
 }
 
@@ -65,6 +74,10 @@ describe("buildShellWorkspaceState", () => {
       { id: "zed", label: "Zed" },
     ]);
     expect(state.scripts).toEqual([{ id: "dev", name: "Dev server", command: "vp run dev" }]);
+    expect(state.branches).toEqual([
+      { name: "main", isRemote: false, isDefault: true, current: false },
+      { name: "origin/feat/y", isRemote: true, isDefault: false, current: false },
+    ]);
   });
 
   it("labels a changeable checkout by mode and drops the PR affordance without a PR", () => {

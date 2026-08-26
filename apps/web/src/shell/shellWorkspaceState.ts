@@ -3,6 +3,7 @@ import {
   type EditorId,
   type ProjectScript,
   type ShellWorkspaceState,
+  type VcsRef,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 
@@ -32,6 +33,12 @@ export interface ShellWorkspaceStateInput {
   readonly environments: ReadonlyArray<{ environmentId: string; label: string }>;
   readonly activeEnvironmentId: string;
   readonly environmentChangeable: boolean;
+  readonly branchQuery: string;
+  readonly branches: ReadonlyArray<VcsRef>;
+  readonly branchesTotal: number;
+  readonly branchesLoading: boolean;
+  readonly branchSwitchPending: boolean;
+  readonly branchChangeable: boolean;
 }
 
 export function buildShellWorkspaceState(input: ShellWorkspaceStateInput): ShellWorkspaceState {
@@ -82,5 +89,16 @@ export function buildShellWorkspaceState(input: ShellWorkspaceStateInput): Shell
     environments: input.environments,
     activeEnvironmentId: input.activeEnvironmentId,
     environmentChangeable: input.environmentChangeable,
+    branchQuery: input.branchQuery,
+    branches: input.branches.map((ref) => ({
+      name: ref.name,
+      isRemote: ref.isRemote === true,
+      isDefault: ref.isDefault === true,
+      current: ref.current === true,
+    })),
+    branchesTotal: input.branchesTotal,
+    branchesLoading: input.branchesLoading,
+    branchSwitchPending: input.branchSwitchPending,
+    branchChangeable: input.branchChangeable,
   };
 }

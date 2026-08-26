@@ -9,10 +9,12 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { EnvMode } from "../components/BranchToolbar.logic";
+import { type DraftId } from "../composerDraftStore";
 import { resolveAndPersistPreferredEditor, usePreferredEditor } from "../editorPreferences";
+import { useThreadBranchSelection } from "../hooks/useThreadBranchSelection";
 import { shellEnvironment } from "../state/shell";
 import { buildShellWorkspaceState } from "./shellWorkspaceState";
 
@@ -21,6 +23,12 @@ const isEditorId = Schema.is(EditorId);
 
 export interface ShellWorkspaceBridgeProps {
   readonly threadRef: ScopedThreadRef;
+  readonly draftId: DraftId | undefined;
+  readonly envLocked: boolean;
+  /** Set while a started server thread may still change its checkout (see ChatView). */
+  readonly effectiveEnvModeOverride: EnvMode | undefined;
+  readonly activeThreadBranchOverride: string | null | undefined;
+  readonly onActiveThreadBranchOverrideChange: ((branch: string | null) => void) | undefined;
   readonly projectTitle: string | null;
   readonly projectRoot: string | null;
   readonly openInCwd: string | null;
@@ -56,6 +64,25 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
   const shell = window.t3Shell;
   const [preferredEditorId, setPreferredEditor] = usePreferredEditor(props.availableEditors);
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor);
+  const [branchQuery, setBranchQuery] = useState("");
+  const branchSelection = useThreadBranchSelection({
+    environmentId: props.threadRef.environmentId,
+    threadId: props.threadRef.threadId,
+    draftId: props.draftId,
+    envLocked: props.envLocked,
+    effectiveEnvModeOverride: props.effectiveEnvModeOverride,
+    activeThreadBranchOverride: props.activeThreadBranchOverride,
+    onActiveThreadBranchOverrideChange: props.onActiveThreadBranchOverrideChange,
+    branchQuery,
+  });
+  const {
+    refs,
+    branchRefState,
+    isInitialBranchesLoadPending,
+    isBranchActionPending,
+    branchByName,
+    branchCwd,
+  } = branchSelection;
 
   const state = useMemo(
     () =>
@@ -79,8 +106,25 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
         environments: props.environments,
         activeEnvironmentId: props.threadRef.environmentId,
         environmentChangeable: props.environmentChangeable,
+        branchQuery,
+        branches: refs,
+        branchesTotal: branchRefState.data?.totalCount ?? refs.length,
+        branchesLoading: isInitialBranchesLoadPending,
+        branchSwitchPending: isBranchActionPending,
+        // Switching stops a live session first (see useThreadBranchSelection),
+        // so a started thread can still change its checkout.
+        branchChangeable: branchCwd !== null,
       }),
-    [preferredEditorId, props],
+    [
+      branchCwd,
+      branchQuery,
+      branchRefState.data?.totalCount,
+      isBranchActionPending,
+      isInitialBranchesLoadPending,
+      preferredEditorId,
+      props,
+      refs,
+    ],
   );
 
   useEffect(() => {
@@ -95,8 +139,8 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
     };
   }, [shell]);
 
-  const latest = useRef({ props, openInEditor, setPreferredEditor });
-  latest.current = { props, openInEditor, setPreferredEditor };
+  const latest = useRef({ props, openInEditor, setPreferredEditor, branchSelection, branchByName });
+  latest.current = { props, openInEditor, setPreferredEditor, branchSelection, branchByName };
   useEffect(() => {
     if (!shell) return;
     let disposed = false;
@@ -108,7 +152,13 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
           type,
         };
         if (!isShellAction(candidate)) return;
-        const { props: current, openInEditor: open, setPreferredEditor: remember } = latest.current;
+        const {
+          props: current,
+          openInEditor: open,
+          setPreferredEditor: remember,
+          branchSelection: branches,
+          branchByName: refByName,
+        } = latest.current;
         switch (candidate.type) {
           case "workspace.newThread":
             current.onNewThread();
@@ -143,6 +193,17 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
             if (number !== undefined) current.onOpenPullRequest?.(number);
             return;
           }
+          case "workspace.branch.search":
+            setBranchQuery(candidate.query);
+            return;
+          case "workspace.branch.select": {
+            const ref = refByName.get(candidate.name);
+            if (ref) branches.selectBranch(ref);
+            return;
+          }
+          case "workspace.branch.create":
+            branches.createRef(candidate.name);
+            return;
           case "workspace.environment.set": {
             const target = current.environments.find(
               (environment) => environment.environmentId === candidate.environmentId,

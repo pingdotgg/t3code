@@ -7851,6 +7851,15 @@ function ChatViewContent(props: ChatViewProps) {
       {shellHostsChrome && activeThreadRef ? (
         <ShellWorkspaceBridge
           threadRef={activeThreadRef}
+          draftId={routeKind === "draft" && draftId ? draftId : undefined}
+          envLocked={envLocked}
+          effectiveEnvModeOverride={canOverrideServerThreadEnvMode ? envMode : undefined}
+          activeThreadBranchOverride={
+            canOverrideServerThreadEnvMode ? activeThreadBranch : undefined
+          }
+          onActiveThreadBranchOverrideChange={
+            canOverrideServerThreadEnvMode ? setPendingServerThreadBranch : undefined
+          }
           projectTitle={activeProject?.title ?? null}
           projectRoot={activeProject?.workspaceRoot ?? null}
           openInCwd={gitCwd}
