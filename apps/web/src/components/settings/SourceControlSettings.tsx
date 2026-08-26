@@ -238,7 +238,13 @@ function itemSummary({
     }
 
     if (auth.status === "unauthenticated") {
-      return <span>{formattedSetupGuidance(item.label, item.executable, item.installHint)}</span>;
+      return (
+        <span>
+          {formattedSetupGuidance(item.label)}{" "}
+          <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code> tool on
+          the server host to enable change request features.
+        </span>
+      );
     }
     const authDetail = optionLabel(auth.detail);
     return (

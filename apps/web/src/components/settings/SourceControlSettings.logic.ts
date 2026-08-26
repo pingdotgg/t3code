@@ -14,13 +14,6 @@ export function formattedAuthSuffix(host: string | null, detail: string | null):
   return text;
 }
 
-export function formattedSetupGuidance(
-  label: string,
-  executable: string | null,
-  installHint: string,
-): string {
-  if (executable !== null) {
-    return `${label} is not authenticated on this server. Run \`${executable} login add\` on the server host to enable change request features.`;
-  }
-  return `${label} is not authenticated on this server. ${installHint}`;
+export function formattedSetupGuidance(label: string): string {
+  return `${label} is not authenticated on this server. Sign in or configure credentials using the`;
 }

@@ -25,17 +25,15 @@ describe("formattedAuthSuffix", () => {
 });
 
 describe("formattedSetupGuidance", () => {
-  it("names tea login add when executable is present", () => {
-    expect(formattedSetupGuidance("Gitea", "tea", "Install tea from https://example.com")).toBe(
-      "Gitea is not authenticated on this server. Run `tea login add` on the server host to enable change request features.",
+  it("returns provider-neutral guidance before the executable chip", () => {
+    expect(formattedSetupGuidance("Gitea")).toBe(
+      "Gitea is not authenticated on this server. Sign in or configure credentials using the",
     );
   });
 
-  it("falls back to installHint when executable is null", () => {
-    expect(
-      formattedSetupGuidance("GitHub", null, "Install the GitHub CLI from https://cli.github.com"),
-    ).toBe(
-      "GitHub is not authenticated on this server. Install the GitHub CLI from https://cli.github.com",
+  it("uses the same neutral guidance for other CLI providers", () => {
+    expect(formattedSetupGuidance("GitHub")).toBe(
+      "GitHub is not authenticated on this server. Sign in or configure credentials using the",
     );
   });
 });
