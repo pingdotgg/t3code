@@ -651,7 +651,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
             let copyActions = ThreadCopyModel.actions(
                 for: thread,
-                projectWorkspaceRoot: context.projectWorkspaceRoot
+                context: context.copyContext
             )
             if !copyActions.isEmpty {
                 titleActions.append(

@@ -840,6 +840,15 @@ struct HomeThreadRowContext: Equatable {
         connectionState: nil
     )
 
+    var copyContext: ThreadCopyContext {
+        ThreadCopyContext(
+            projectName: projectName,
+            projectWorkspaceRoot: projectWorkspaceRoot,
+            environmentName: environmentLabel,
+            environmentID: projectEnvironmentID
+        )
+    }
+
     var providerLooksTerminal: Bool {
         let normalized = [providerDriver, providerID, providerName]
             .joined(separator: " ")
