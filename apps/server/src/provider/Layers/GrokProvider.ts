@@ -198,6 +198,7 @@ const discoverGrokModelsViaAcp = (
       environment,
       childProcessSpawner,
       cwd: process.cwd(),
+      alwaysApprove: false,
       clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
     });
     const started = yield* acp.start();
