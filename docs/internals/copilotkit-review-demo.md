@@ -10,16 +10,17 @@ This demo adds a CopilotKit-powered PR review agent to Git-backed local and bear
 
 ## Run locally
 
-Set an OpenAI API key in the shell that launches T3 Code:
+Set an OpenRouter API key in the shell that launches T3 Code:
 
 ```sh
-export OPENAI_API_KEY=...
+export OPENROUTER_API_KEY=...
 ```
 
-The review agent defaults to `openai/gpt-5-mini`. Override it when needed:
+The review agent sends requests to OpenRouter and defaults to `openai/gpt-5-mini`. Override it
+with another OpenRouter model slug when needed:
 
 ```sh
-export COPILOTKIT_REVIEW_MODEL=openai/gpt-5
+export COPILOTKIT_REVIEW_MODEL=google/gemini-2.5-flash
 ```
 
 Start the normal development environment, open a server thread backed by a Git repository, then use the CopilotKit button in the lower-right corner. A good first prompt is `Review this branch`.

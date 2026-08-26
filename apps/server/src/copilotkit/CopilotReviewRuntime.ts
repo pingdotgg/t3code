@@ -1,3 +1,4 @@
+import { createOpenAI } from "@ai-sdk/openai";
 import {
   BuiltInAgent,
   CopilotRuntime,
@@ -23,12 +24,18 @@ Rules:
 
 Be concise. Prefer the dashboard and tool UI over repeating the same content in prose.`;
 
-const reviewModel = globalThis.process.env.COPILOTKIT_REVIEW_MODEL?.trim() || "openai/gpt-5-mini";
+const reviewModelName =
+  globalThis.process.env.COPILOTKIT_REVIEW_MODEL?.trim() || "openai/gpt-5-mini";
+const openRouter = createOpenAI({
+  apiKey: globalThis.process.env.OPENROUTER_API_KEY?.trim() ?? "",
+  baseURL: globalThis.process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1",
+  name: "openrouter",
+});
 
 const runtime = new CopilotRuntime({
   agents: {
     review: new BuiltInAgent({
-      model: reviewModel,
+      model: openRouter(reviewModelName),
       maxSteps: 10,
       prompt: REVIEW_AGENT_PROMPT,
     }),
