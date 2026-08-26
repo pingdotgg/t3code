@@ -9,6 +9,7 @@ import {
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  type CommandPaletteActionItem,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -136,6 +137,73 @@ describe("enumerateCommandPaletteItems", () => {
       "thread.jump.9",
       undefined,
     ]);
+  });
+});
+
+describe("filterCommandPaletteGroups shortcut enumeration", () => {
+  function makeProjectItem(value: string, title: string): CommandPaletteActionItem {
+    return {
+      kind: "action",
+      value,
+      searchTerms: [title],
+      title,
+      icon: null,
+      run: async () => undefined,
+    };
+  }
+
+  const enumeratedGroup: CommandPaletteGroup = {
+    value: "projects",
+    label: "Projects",
+    enumerateShortcuts: true,
+    items: [
+      makeProjectItem("project-alpha", "Alpha"),
+      makeProjectItem("project-beta", "Beta"),
+      makeProjectItem("project-gamma", "Gamma"),
+      makeProjectItem("project-lol", "Lol"),
+    ],
+  };
+
+  it("assigns positional shortcuts to enumerated groups when the query is empty", () => {
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [enumeratedGroup],
+      query: "",
+      isInSubmenu: true,
+      projectSearchItems: [],
+      threadSearchItems: [],
+    });
+
+    expect(groups[0]?.items.map((item) => item.shortcutCommand)).toEqual([
+      "thread.jump.1",
+      "thread.jump.2",
+      "thread.jump.3",
+      "thread.jump.4",
+    ]);
+  });
+
+  it("renumbers shortcuts to match visible positions after filtering", () => {
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [enumeratedGroup],
+      query: "lol",
+      isInSubmenu: true,
+      projectSearchItems: [],
+      threadSearchItems: [],
+    });
+
+    expect(groups[0]?.items.map((item) => item.value)).toEqual(["project-lol"]);
+    expect(groups[0]?.items[0]?.shortcutCommand).toBe("thread.jump.1");
+  });
+
+  it("leaves groups without enumerateShortcuts untouched", () => {
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [{ ...enumeratedGroup, enumerateShortcuts: false }],
+      query: "lol",
+      isInSubmenu: true,
+      projectSearchItems: [],
+      threadSearchItems: [],
+    });
+
+    expect(groups[0]?.items[0]?.shortcutCommand).toBeUndefined();
   });
 });
 

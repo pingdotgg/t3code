@@ -115,6 +115,7 @@ export interface CommandPaletteSubmenuItem extends CommandPaletteItem {
 export interface CommandPaletteGroup {
   readonly value: string;
   readonly label: string;
+  readonly enumerateShortcuts?: boolean;
   readonly items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
 }
 
@@ -125,8 +126,8 @@ export interface CommandPaletteView {
 }
 
 export function enumerateCommandPaletteItems(
-  items: ReadonlyArray<CommandPaletteActionItem>,
-): CommandPaletteActionItem[] {
+  items: CommandPaletteGroup["items"],
+): Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> {
   return items.map((item, index) => {
     const shortcutCommand = THREAD_JUMP_KEYBINDING_COMMANDS[index];
     if (shortcutCommand) return { ...item, shortcutCommand };
@@ -134,6 +135,11 @@ export function enumerateCommandPaletteItems(
     const { shortcutCommand: _shortcutCommand, ...itemWithoutShortcut } = item;
     return itemWithoutShortcut;
   });
+}
+
+function withEnumeratedShortcuts(group: CommandPaletteGroup): CommandPaletteGroup {
+  if (!group.enumerateShortcuts) return group;
+  return { ...group, items: enumerateCommandPaletteItems(group.items) };
 }
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
@@ -303,7 +309,7 @@ export function filterCommandPaletteGroups(input: {
     if (isActionsFilter) {
       return input.activeGroups.filter((group) => group.value === "actions");
     }
-    return [...input.activeGroups];
+    return input.activeGroups.map(withEnumeratedShortcuts);
   }
 
   let baseGroups = [...input.activeGroups];
@@ -351,7 +357,7 @@ export function filterCommandPaletteGroups(input: {
       return [];
     }
 
-    return [{ value: group.value, label: group.label, items }];
+    return [withEnumeratedShortcuts({ ...group, items })];
   });
 }
 

@@ -117,7 +117,6 @@ import {
   buildProjectActionItems,
   buildRootGroups,
   buildThreadActionItems,
-  enumerateCommandPaletteItems,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
   type CommandPaletteSubmenuItem,
@@ -1023,55 +1022,53 @@ function OpenCommandPaletteDialog(props: {
 
   const projectThreadItems = useMemo(
     () =>
-      enumerateCommandPaletteItems(
-        buildProjectActionItems({
-          projects: pickerProjects,
-          valuePrefix: "new-thread-in",
-          searchTerms: (project) => {
-            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-            const location = projectEnvironmentLocationById.get(project.environmentId);
-            return [
-              ...(group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
-                []),
-              ...(location ? [location.label] : []),
-            ];
-          },
-          renderDescription: (project) => {
-            const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
-              kind: "remote",
-              label: "Remote",
-            };
-            return (
-              <span className="flex min-w-0 items-center gap-1">
-                <span className="inline-flex min-w-0 items-center gap-1">
-                  {location.kind === "remote" ? (
-                    <ServerIcon aria-hidden className={COMMAND_PALETTE_META_ICON_CLASS} />
-                  ) : null}
-                  <span className="truncate">{location.label}</span>
-                </span>
-                <CommandPaletteMetaDot />
-                <span className="truncate">{project.workspaceRoot}</span>
+      buildProjectActionItems({
+        projects: pickerProjects,
+        valuePrefix: "new-thread-in",
+        searchTerms: (project) => {
+          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          const location = projectEnvironmentLocationById.get(project.environmentId);
+          return [
+            ...(group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
+              []),
+            ...(location ? [location.label] : []),
+          ];
+        },
+        renderDescription: (project) => {
+          const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
+            kind: "remote",
+            label: "Remote",
+          };
+          return (
+            <span className="flex min-w-0 items-center gap-1">
+              <span className="inline-flex min-w-0 items-center gap-1">
+                {location.kind === "remote" ? (
+                  <ServerIcon aria-hidden className={COMMAND_PALETTE_META_ICON_CLASS} />
+                ) : null}
+                <span className="truncate">{location.label}</span>
               </span>
+              <CommandPaletteMetaDot />
+              <span className="truncate">{project.workspaceRoot}</span>
+            </span>
+          );
+        },
+        icon: projectFavicon,
+        runProject: async (project) => {
+          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          const contextualRefBelongsToGroup =
+            contextualProjectRef !== null &&
+            group?.memberProjectRefs.some(
+              (projectRef) =>
+                projectRef.environmentId === contextualProjectRef.environmentId &&
+                projectRef.projectId === contextualProjectRef.projectId,
             );
-          },
-          icon: projectFavicon,
-          runProject: async (project) => {
-            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-            const contextualRefBelongsToGroup =
-              contextualProjectRef !== null &&
-              group?.memberProjectRefs.some(
-                (projectRef) =>
-                  projectRef.environmentId === contextualProjectRef.environmentId &&
-                  projectRef.projectId === contextualProjectRef.projectId,
-              );
-            await handleNewThread(
-              contextualRefBelongsToGroup
-                ? contextualProjectRef
-                : scopeProjectRef(project.environmentId, project.id),
-            );
-          },
-        }),
-      ),
+          await handleNewThread(
+            contextualRefBelongsToGroup
+              ? contextualProjectRef
+              : scopeProjectRef(project.environmentId, project.id),
+          );
+        },
+      }),
     [
       contextualProjectRef,
       handleNewThread,
@@ -1470,7 +1467,8 @@ function OpenCommandPaletteDialog(props: {
         {
           value: "projects",
           label: "Projects",
-          items: enumerateCommandPaletteItems(prioritized),
+          enumerateShortcuts: true,
+          items: prioritized,
         },
       ],
     });
@@ -1521,7 +1519,14 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread in...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+      groups: [
+        {
+          value: "projects",
+          label: "Projects",
+          enumerateShortcuts: true,
+          items: projectThreadItems,
+        },
+      ],
     });
   }
 
