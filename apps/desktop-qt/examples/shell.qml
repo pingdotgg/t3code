@@ -46,6 +46,11 @@ Window {
                     Layout.fillWidth: true
                 }
             }
+
+            RightPanel {
+                Layout.fillHeight: true
+                Layout.preferredWidth: implicitWidth
+            }
         }
 
         // Title bar at the bottom instead of the top.

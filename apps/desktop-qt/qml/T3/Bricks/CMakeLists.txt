@@ -10,10 +10,12 @@ qt_add_qml_module(t3bricks
   QML_FILES
     Composer.qml
     DefaultShell.qml
+    RightPanel.qml
     ShellErrorOverlay.qml
     Sidebar.qml
     SidebarThreadRow.qml
     TitleBar.qml
+    WebProfile.qml
     WebSurface.qml
   RESOURCES
     qmldir

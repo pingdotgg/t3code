@@ -55,6 +55,11 @@ Window {
                     Layout.fillWidth: true
                 }
             }
+
+            RightPanel {
+                Layout.fillHeight: true
+                Layout.preferredWidth: implicitWidth
+            }
         }
     }
 

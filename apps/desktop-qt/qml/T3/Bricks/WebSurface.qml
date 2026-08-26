@@ -10,15 +10,7 @@ WebEngineView {
 
     backgroundColor: Theme.windowTransparent ? "transparent" : Theme.color("chrome", "#0b0b0d")
 
-    // Persistent profile: the pairing session lives in cookies/localStorage.
-    profile: persistentProfile.instance()
-
-    WebEngineProfilePrototype {
-        id: persistentProfile
-
-        storageName: "t3code"
-        persistentCookiesPolicy: WebEngineProfile.ForcePersistentCookies
-    }
+    profile: WebProfile.instance
 
     webChannel: WebChannel {
         id: channel

@@ -1,5 +1,6 @@
 #include <QCommandLineParser>
 #include <QDir>
+#include <QJsonDocument>
 #include <QGuiApplication>
 #include <QProcessEnvironment>
 #include <QStandardPaths>
@@ -81,8 +82,13 @@ int main(int argc, char* argv[]) {
       QStringLiteral("screenshot"),
       QStringLiteral("Write a PNG of the window once the page has loaded, then quit."),
       QStringLiteral("file"));
-  parser.addOptions(
-      {urlOption, configDirOption, qmlDirOption, hostEntryOption, nodeOption, screenshotOption});
+  const QCommandLineOption actionOption(
+      QStringLiteral("action"),
+      QStringLiteral("Dispatch a shell action after the page loads, e.g. rightPanel.toggle or "
+                     "composer.text.set={\"text\":\"hi\"}. Repeatable; runs in order."),
+      QStringLiteral("name[=json]"));
+  parser.addOptions({urlOption, configDirOption, qmlDirOption, hostEntryOption, nodeOption,
+                     screenshotOption, actionOption});
   parser.process(app);
 
   const QString configDir = resolveConfigDir(parser.value(configDirOption));
@@ -118,15 +124,42 @@ int main(int argc, char* argv[]) {
     backend.start();
   }
 
-  if (parser.isSet(screenshotOption)) {
+  // Scripted runs: dispatch queued actions once the page is up, then
+  // optionally grab the window and quit. Only the first load triggers this.
+  const QStringList scriptedActions = parser.values(actionOption);
+  const bool screenshotRequested = parser.isSet(screenshotOption);
+  if (!scriptedActions.isEmpty() || screenshotRequested) {
     const QString target = parser.value(screenshotOption);
-    QObject::connect(&bridge, &ShellBridge::pageLoaded, &runtime, [&runtime, &app, target](bool) {
-      // Let the page paint a couple of frames before grabbing.
-      QTimer::singleShot(1500, &runtime, [&runtime, &app, target] {
-        const bool ok = runtime.captureWindow(target);
-        app.exit(ok ? 0 : 2);
-      });
-    });
+    auto* armed = new bool(false);
+    QObject::connect(&bridge, &ShellBridge::pageLoaded, &runtime,
+                     [&runtime, &bridge, &app, target, scriptedActions, screenshotRequested,
+                      armed](bool) {
+                       if (*armed) {
+                         return;
+                       }
+                       *armed = true;
+                       int delay = 1500;
+                       for (const QString& spec : scriptedActions) {
+                         QTimer::singleShot(delay, &bridge, [&bridge, spec] {
+                           const int eq = spec.indexOf(QLatin1Char('='));
+                           const QString name = eq < 0 ? spec : spec.left(eq);
+                           QVariant payload;
+                           if (eq >= 0) {
+                             payload = QJsonDocument::fromJson(spec.mid(eq + 1).toUtf8())
+                                           .toVariant();
+                           }
+                           qInfo().noquote() << "[shell] scripted action" << name;
+                           bridge.dispatch(name, payload);
+                         });
+                         delay += 1500;
+                       }
+                       if (screenshotRequested) {
+                         QTimer::singleShot(delay + 1500, &runtime, [&runtime, &app, target] {
+                           const bool ok = runtime.captureWindow(target);
+                           app.exit(ok ? 0 : 2);
+                         });
+                       }
+                     });
   }
 
   runtime.start();
