@@ -263,6 +263,30 @@ async function readFirstPromptMessage(
   return next.value;
 }
 
+/** Drains the first `count` queued prompts so consecutive turns can be compared. */
+async function readPromptMessages(
+  input:
+    | {
+        readonly prompt: AsyncIterable<SDKUserMessage>;
+      }
+    | undefined,
+  count: number,
+): Promise<Array<SDKUserMessage>> {
+  const iterator = input?.prompt[Symbol.asyncIterator]();
+  if (!iterator) {
+    return [];
+  }
+  const messages: Array<SDKUserMessage> = [];
+  while (messages.length < count) {
+    const next = await iterator.next();
+    if (next.done) {
+      break;
+    }
+    messages.push(next.value);
+  }
+  return messages;
+}
+
 const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
@@ -829,9 +853,85 @@ describe("ClaudeAdapterLive", () => {
       assert.isDefined(promptMessage);
       assert.deepEqual(promptMessage?.message.content, [
         {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "AQIDBA==",
+          },
+        },
+        {
           type: "text",
           text: "What's in this image?",
         },
+      ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  // The Claude CLI reads a streamed user message as a slash-command invocation
+  // only when the final content block is text. Leading with the text block sent
+  // every image-carrying turn down the plain-prompt path, so `/skill args`
+  // reached the agent unexpanded with no error anywhere.
+  it.effect("puts the command text last so attachments do not suppress expansion", () => {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-attachments-"));
+    const harness = makeHarness({
+      cwd: "/tmp/project-claude-command-attachments",
+      baseDir,
+    });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() =>
+          NodeFS.rmSync(baseDir, {
+            recursive: true,
+            force: true,
+          }),
+        ),
+      );
+
+      const adapter = yield* ClaudeAdapter;
+      const { attachmentsDir } = yield* ServerConfig;
+
+      const attachment = {
+        type: "image" as const,
+        id: "thread-claude-attachment-22345678-1234-1234-1234-123456789abc",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+      };
+      const attachmentPath = NodePath.join(attachmentsDir, attachmentRelativePath(attachment));
+      NodeFS.mkdirSync(NodePath.dirname(attachmentPath), { recursive: true });
+      NodeFS.writeFileSync(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "/flow-patterns hello",
+        attachments: [],
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "/flow-patterns hello",
+        attachments: [attachment],
+      });
+
+      const prompts = yield* Effect.promise(() =>
+        readPromptMessages(harness.getLastCreateQueryInput(), 2),
+      );
+      const commandBlock = {
+        type: "text" as const,
+        text: "/flow-patterns hello",
+      };
+
+      assert.deepEqual(prompts[0]?.message.content, [commandBlock]);
+      assert.deepEqual(prompts[1]?.message.content, [
         {
           type: "image",
           source: {
@@ -840,6 +940,7 @@ describe("ClaudeAdapterLive", () => {
             data: "AQIDBA==",
           },
         },
+        commandBlock,
       ]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
