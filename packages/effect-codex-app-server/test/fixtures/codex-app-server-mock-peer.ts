@@ -75,7 +75,7 @@ const handleMethod = (message: Record<string, unknown>) => {
         account: {
           type: "chatgpt",
           email: "mock@example.com",
-          planType: "plus",
+          planType: process.env.CODEX_APP_SERVER_TEST_ACCOUNT_PLAN_TYPE ?? "plus",
         },
         requiresOpenaiAuth: false,
       });

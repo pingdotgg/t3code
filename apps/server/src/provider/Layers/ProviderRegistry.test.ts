@@ -392,6 +392,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      it.effect("classifies current workspace plan values by product family", () =>
+        Effect.gen(function* () {
+          const expectedLabels = [
+            ["team", "ChatGPT Business Subscription"],
+            ["self_serve_business_prolite", "ChatGPT Business Subscription"],
+            ["self_serve_business_usage_based", "ChatGPT Business Subscription"],
+            ["business", "ChatGPT Business Subscription"],
+            ["ent26", "ChatGPT Enterprise Subscription"],
+            ["enterprise_cbp_automation", "ChatGPT Enterprise Subscription"],
+            ["enterprise_cbp_usage_based", "ChatGPT Enterprise Subscription"],
+            ["enterprise", "ChatGPT Enterprise Subscription"],
+            ["edu", "ChatGPT Edu Subscription"],
+            ["edu_plus", "ChatGPT Edu Subscription"],
+            ["edu_pro", "ChatGPT Edu Subscription"],
+          ] as const;
+
+          for (const [planType, expectedLabel] of expectedLabels) {
+            const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+              Effect.succeed(
+                makeCodexProbeSnapshot({
+                  account: {
+                    account: {
+                      type: "chatgpt",
+                      email: "test@example.com",
+                      planType,
+                    },
+                    requiresOpenaiAuth: false,
+                  },
+                }),
+              ),
+            );
+
+            assert.strictEqual(status.auth.label, expectedLabel);
+          }
+        }),
+      );
+
       it.effect("passes configured launch args to the Codex provider probe", () =>
         Effect.gen(function* () {
           let observedLaunchArgs: string | undefined;

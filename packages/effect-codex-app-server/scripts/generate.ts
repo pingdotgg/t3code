@@ -18,6 +18,34 @@ import {
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const UPSTREAM_REF = "678157acaa819d5510adfe359abb5d0392cfe461";
+// Keep account decoding compatible with newer Codex binaries without pulling
+// unrelated protocol changes into the pinned schema snapshot.
+const ACCOUNT_PLAN_TYPES = [
+  "free",
+  "go",
+  "plus",
+  "pro",
+  "prolite",
+  "team",
+  "self_serve_business_prolite",
+  "self_serve_business_usage_based",
+  "business",
+  "ent26",
+  "enterprise_cbp_automation",
+  "enterprise_cbp_usage_based",
+  "enterprise",
+  "edu",
+  "edu_plus",
+  "edu_pro",
+  "unknown",
+] as const;
+const ACCOUNT_PLAN_TYPE_SCHEMA_NAMES = new Set([
+  "ServerNotification__PlanType",
+  "V2AccountRateLimitsUpdatedNotification__PlanType",
+  "V2AccountUpdatedNotification__PlanType",
+  "V2GetAccountRateLimitsResponse__PlanType",
+  "V2GetAccountResponse__PlanType",
+]);
 const USER_AGENT = "effect-codex-app-server-generator";
 const GITHUB_API_BASE =
   "https://api.github.com/repos/openai/codex/contents/codex-rs/app-server-protocol";
@@ -279,6 +307,27 @@ function stripNullDefaults(value: Schema.Json): Schema.Json {
       .filter(([key, child]) => !(key === "default" && child === null))
       .map(([key, child]) => [key, stripNullDefaults(child)]),
   ) as Schema.Json;
+}
+
+function includeNewerPlanTypes(name: string, schema: Schema.Json): Schema.Json {
+  if (
+    !ACCOUNT_PLAN_TYPE_SCHEMA_NAMES.has(name) ||
+    schema === null ||
+    Array.isArray(schema) ||
+    typeof schema !== "object"
+  ) {
+    return schema;
+  }
+
+  const schemaObject = schema as Record<string, Schema.Json>;
+  if (!Array.isArray(schemaObject.enum)) {
+    return schema;
+  }
+
+  return {
+    ...schemaObject,
+    enum: ACCOUNT_PLAN_TYPES,
+  };
 }
 
 function toPascalCaseMethod(method: string) {
@@ -597,7 +646,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   for (const [name, schema] of Object.entries(aggregateSchemas).toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
-    generator.addSchema(name, schema as never);
+    generator.addSchema(name, includeNewerPlanTypes(name, schema) as never);
   }
 
   const generatedEntries = new Map<string, string>();

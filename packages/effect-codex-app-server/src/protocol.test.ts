@@ -26,6 +26,15 @@ const decodeAccountTokenUsageResponse = Schema.decodeUnknownEffect(
 const decodeAccountRateLimitsResponse = Schema.decodeUnknownEffect(
   CodexRpc.CLIENT_REQUEST_RESPONSES["account/rateLimits/read"],
 );
+const decodeAccountResponse = Schema.decodeUnknownEffect(
+  CodexRpc.CLIENT_REQUEST_RESPONSES["account/read"],
+);
+const decodeAccountUpdated = Schema.decodeUnknownEffect(
+  CodexRpc.SERVER_NOTIFICATION_PARAMS["account/updated"],
+);
+const decodeAccountRateLimitsUpdated = Schema.decodeUnknownEffect(
+  CodexRpc.SERVER_NOTIFICATION_PARAMS["account/rateLimits/updated"],
+);
 const decodeConsumeRateLimitResetCreditParams = Schema.decodeUnknownEffect(
   CodexRpc.CLIENT_REQUEST_PARAMS["account/rateLimitResetCredit/consume"],
 );
@@ -34,6 +43,37 @@ const decodeConsumeRateLimitResetCreditResponse = Schema.decodeUnknownEffect(
 );
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
+  it.effect("decodes every current Codex account plan", () =>
+    Effect.gen(function* () {
+      const planTypes = [
+        "self_serve_business_prolite",
+        "ent26",
+        "enterprise_cbp_automation",
+        "edu_plus",
+        "edu_pro",
+      ] as const;
+
+      for (const planType of planTypes) {
+        const account = yield* decodeAccountResponse({
+          account: { type: "chatgpt", email: null, planType },
+          requiresOpenaiAuth: false,
+        });
+        assert.equal(account.account?.type, "chatgpt");
+        if (account.account?.type === "chatgpt") {
+          assert.equal(account.account.planType, planType);
+        }
+
+        assert.deepEqual(yield* decodeAccountRateLimitsResponse({ rateLimits: { planType } }), {
+          rateLimits: { planType },
+        });
+        assert.deepEqual(yield* decodeAccountUpdated({ planType }), { planType });
+        assert.deepEqual(yield* decodeAccountRateLimitsUpdated({ rateLimits: { planType } }), {
+          rateLimits: { planType },
+        });
+      }
+    }),
+  );
+
   it.effect("maps account usage responses to the upstream token usage schema", () =>
     Effect.gen(function* () {
       assert.strictEqual(

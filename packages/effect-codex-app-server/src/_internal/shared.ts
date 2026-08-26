@@ -17,6 +17,90 @@ export const JsonRpcResponseEnvelope = Schema.Struct({
   error: Schema.optional(JsonRpcError),
 });
 
+const PINNED_PLAN_TYPES = new Set<string>([
+  "free",
+  "go",
+  "plus",
+  "pro",
+  "prolite",
+  "team",
+  "self_serve_business_prolite",
+  "self_serve_business_usage_based",
+  "business",
+  "ent26",
+  "enterprise_cbp_automation",
+  "enterprise_cbp_usage_based",
+  "enterprise",
+  "edu",
+  "edu_plus",
+  "edu_pro",
+  "unknown",
+]);
+
+type JsonObject = Record<string, unknown>;
+
+const isObject = (value: unknown): value is JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const normalizePlanTypeField = (value: unknown): unknown => {
+  if (
+    !isObject(value) ||
+    typeof value.planType !== "string" ||
+    PINNED_PLAN_TYPES.has(value.planType)
+  ) {
+    return value;
+  }
+  return { ...value, planType: "unknown" };
+};
+
+const normalizeField = (
+  value: unknown,
+  field: string,
+  normalize: (child: unknown) => unknown,
+): unknown => {
+  if (!isObject(value)) {
+    return value;
+  }
+  const current = value[field];
+  const normalized = normalize(current);
+  return normalized === current ? value : { ...value, [field]: normalized };
+};
+
+const normalizeRateLimitsById = (value: unknown): unknown => {
+  if (!isObject(value)) {
+    return value;
+  }
+
+  let normalized: JsonObject | undefined;
+  for (const [limitId, snapshot] of Object.entries(value)) {
+    const normalizedSnapshot = normalizePlanTypeField(snapshot);
+    if (normalizedSnapshot !== snapshot) {
+      normalized ??= { ...value };
+      normalized[limitId] = normalizedSnapshot;
+    }
+  }
+  return normalized ?? value;
+};
+
+export const normalizeAccountPlanTypes = (method: string, raw: unknown): unknown => {
+  switch (method) {
+    case "account/read":
+      return normalizeField(raw, "account", normalizePlanTypeField);
+    case "account/rateLimits/read":
+      return normalizeField(
+        normalizeField(raw, "rateLimits", normalizePlanTypeField),
+        "rateLimitsByLimitId",
+        normalizeRateLimitsById,
+      );
+    case "account/updated":
+      return normalizePlanTypeField(raw);
+    case "account/rateLimits/updated":
+      return normalizeField(raw, "rateLimits", normalizePlanTypeField);
+    default:
+      return raw;
+  }
+};
+
 export const decodeOptionalPayload = <A, I>(
   method: string,
   schema: Schema.Codec<A, I> | undefined,
@@ -31,7 +115,7 @@ export const decodeOptionalPayload = <A, I>(
     );
   }
 
-  return Schema.decodeUnknownEffect(schema)(raw).pipe(
+  return Schema.decodeUnknownEffect(schema)(normalizeAccountPlanTypes(method, raw)).pipe(
     Effect.mapError((error) =>
       CodexError.CodexAppServerRequestError.invalidPayload(method, "decode-payload", error),
     ),

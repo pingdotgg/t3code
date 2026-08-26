@@ -149,3 +149,59 @@ it.effect("retains the full notification payload decode cause chain", () =>
     assert.isTrue(Schema.isSchemaError(error.cause.cause));
   }),
 );
+
+it("leaves unrelated and opaque planType fields untouched", () => {
+  const opaque = { planType: "application_specific" };
+  const payload = { planType: "custom", arguments: opaque };
+
+  assert.strictEqual(Shared.normalizeAccountPlanTypes("thread/read", payload), payload);
+
+  const normalizedAccount = Shared.normalizeAccountPlanTypes("account/read", {
+    account: { type: "chatgpt", planType: "future_plan", metadata: opaque },
+  });
+  assert.deepEqual(normalizedAccount, {
+    account: { type: "chatgpt", planType: "unknown", metadata: opaque },
+  });
+  assert.strictEqual(
+    (normalizedAccount as { account: { metadata: unknown } }).account.metadata,
+    opaque,
+  );
+});
+
+it("normalizes only plan-bearing rate-limit fields", () => {
+  const opaque = { planType: "application_specific" };
+  const normalized = Shared.normalizeAccountPlanTypes("account/rateLimits/read", {
+    rateLimits: { planType: "future_plan", opaque },
+    rateLimitsByLimitId: {
+      first: { planType: "another_future_plan" },
+      second: { planType: "plus" },
+    },
+  });
+
+  assert.deepEqual(normalized, {
+    rateLimits: { planType: "unknown", opaque },
+    rateLimitsByLimitId: {
+      first: { planType: "unknown" },
+      second: { planType: "plus" },
+    },
+  });
+  assert.strictEqual((normalized as { rateLimits: { opaque: unknown } }).rateLimits.opaque, opaque);
+});
+
+it("normalizes account plan notifications without walking unrelated fields", () => {
+  const opaque = { planType: "application_specific" };
+
+  assert.deepEqual(
+    Shared.normalizeAccountPlanTypes("account/updated", {
+      planType: "future_plan",
+      opaque,
+    }),
+    { planType: "unknown", opaque },
+  );
+  assert.deepEqual(
+    Shared.normalizeAccountPlanTypes("account/rateLimits/updated", {
+      rateLimits: { planType: "future_plan", opaque },
+    }),
+    { rateLimits: { planType: "unknown", opaque } },
+  );
+});

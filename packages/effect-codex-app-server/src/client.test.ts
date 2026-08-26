@@ -11,6 +11,14 @@ import { assert, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
 
+const currentPlanTypes = [
+  "self_serve_business_prolite",
+  "ent26",
+  "enterprise_cbp_automation",
+  "edu_plus",
+  "edu_pro",
+] as const;
+
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
 );
@@ -152,6 +160,50 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       );
 
       assert.equal(initialized.userAgent, "mock-codex-app-server");
+    }),
+  );
+
+  for (const planType of currentPlanTypes) {
+    it.effect(`reads accounts with the ${planType} plan`, () =>
+      Effect.gen(function* () {
+        const handle = yield* makeHandle({
+          CODEX_APP_SERVER_TEST_ACCOUNT_PLAN_TYPE: planType,
+        });
+        const scope = yield* Scope.make();
+        const clientLayer = CodexClient.layerChildProcess(handle);
+        const context = yield* Layer.buildWithScope(clientLayer, scope);
+
+        const account = yield* Effect.gen(function* () {
+          const client = yield* CodexClient.CodexAppServerClient;
+          return yield* client.request("account/read", {});
+        }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
+
+        assert.equal(account.account?.type, "chatgpt");
+        if (account.account?.type === "chatgpt") {
+          assert.equal(account.account.planType, planType);
+        }
+      }),
+    );
+  }
+
+  it.effect("maps future account plans to unknown", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({
+        CODEX_APP_SERVER_TEST_ACCOUNT_PLAN_TYPE: "future_plan",
+      });
+      const scope = yield* Scope.make();
+      const clientLayer = CodexClient.layerChildProcess(handle);
+      const context = yield* Layer.buildWithScope(clientLayer, scope);
+
+      const account = yield* Effect.gen(function* () {
+        const client = yield* CodexClient.CodexAppServerClient;
+        return yield* client.request("account/read", {});
+      }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
+
+      assert.equal(account.account?.type, "chatgpt");
+      if (account.account?.type === "chatgpt") {
+        assert.equal(account.account.planType, "unknown");
+      }
     }),
   );
 });
