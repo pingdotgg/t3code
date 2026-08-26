@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 import UIKit
 @testable import T3Code
@@ -112,6 +113,29 @@ struct HomeThreadSwipeActionTests {
         )
         #expect(archivedActions == [.restore, .delete])
         #expect(!HomeThreadSwipeAction.performsFullSwipe(with: archivedActions))
+    }
+
+    @Test
+    func workingRowsNeverOfferSettlementOrAFullSwipe() {
+        for state in [
+            FeatureThreadState.queued,
+            .working,
+            .monitoring,
+            .waitingForApproval,
+            .waitingForInput,
+        ] {
+            var active = thread(id: "active-\(state.rawValue)")
+            active.state = state
+
+            let actions = HomeThreadSwipeAction.trailingActions(
+                for: active,
+                isArchived: false,
+                at: now
+            )
+
+            #expect(actions == [.archive, .delete])
+            #expect(!HomeThreadSwipeAction.performsFullSwipe(with: actions))
+        }
     }
 
     /// Delete must never reach the edge slot, because the edge slot is what a
@@ -243,12 +267,503 @@ struct HomeThreadSwipeActionTests {
         )
     }
 
+    @Test
+    func settlementLeavesTheActiveShelfBeforeTheServerResponds() async throws {
+        let client = SwipeSettlementClientStub()
+        let active = thread(id: "active")
+        client.snapshot = snapshot(threads: [active])
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        let started = AsyncStream<Void>.makeStream()
+        var response: CheckedContinuation<Void, any Error>?
+        client.beforeSettlementResponse = { _ in
+            try await withCheckedThrowingContinuation { continuation in
+                response = continuation
+                started.continuation.yield()
+            }
+        }
+
+        let settlement = Task { await model.setSettled(active.id, settled: true) }
+        var requests = started.stream.makeAsyncIterator()
+        await requests.next()
+
+        #expect(presentation(for: model).active.isEmpty)
+        #expect(presentation(for: model).settled.map(\.id) == [active.id])
+        #expect(model.snapshot.threads.first?.isSettled == true)
+
+        response?.resume()
+        #expect(await settlement.value)
+
+        #expect(client.settlementRequests == [SettlementRequest(id: active.id, settled: true)])
+    }
+
+    @Test
+    func staleSnapshotsCannotRestoreThreadsWhileSettlementIsPending() async {
+        let client = SwipeSettlementClientStub()
+        let active = thread(id: "active")
+        client.snapshot = snapshot(threads: [active])
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        let started = AsyncStream<Void>.makeStream()
+        var response: CheckedContinuation<Void, any Error>?
+        client.beforeSettlementResponse = { _ in
+            try await withCheckedThrowingContinuation { continuation in
+                response = continuation
+                started.continuation.yield()
+            }
+        }
+
+        let settlement = Task { await model.setSettled(active.id, settled: true) }
+        var requests = started.stream.makeAsyncIterator()
+        await requests.next()
+
+        await model.reload()
+
+        #expect(presentation(for: model).active.isEmpty)
+        #expect(model.snapshot.threads.first?.isSettled == true)
+
+        response?.resume()
+        #expect(await settlement.value)
+    }
+
+    @Test(arguments: PendingSettlementEvent.allCases)
+    func pendingSettlementSurvivesIncomingThreadAndDetailEvents(
+        event: PendingSettlementEvent
+    ) async {
+        let client = SwipeSettlementClientStub()
+        let active = thread(id: "active", pinnedAt: now.addingTimeInterval(-30))
+        client.snapshot = snapshot(threads: [active])
+        let model = testRootModel(client: client)
+
+        let subscribed = AsyncStream<Void>.makeStream()
+        client.onEventsSubscribed = { subscribed.continuation.yield() }
+        let eventLoop = Task { await model.start() }
+        var subscriptions = subscribed.stream.makeAsyncIterator()
+        await subscriptions.next()
+
+        let started = AsyncStream<Void>.makeStream()
+        var response: CheckedContinuation<Void, any Error>?
+        client.beforeSettlementResponse = { _ in
+            try await withCheckedThrowingContinuation { continuation in
+                response = continuation
+                started.continuation.yield()
+            }
+        }
+
+        let settlement = Task { await model.setSettled(active.id, settled: true) }
+        var requests = started.stream.makeAsyncIterator()
+        await requests.next()
+        let settledAt = model.snapshot.threads.first?.settledAt
+
+        var authoritative = active
+        authoritative.title = "Updated on the server"
+        let changed = AsyncStream<Void>.makeStream()
+        withObservationTracking {
+            _ = model.snapshot.threads.first?.title
+        } onChange: {
+            changed.continuation.yield()
+        }
+
+        switch event {
+        case .thread:
+            client.emit(.thread(authoritative))
+        case .detail:
+            client.emit(.detail(FeatureThreadDetail(thread: authoritative)))
+        case .detailDelta:
+            client.emit(.detailDelta(
+                FeatureThreadDetail(thread: authoritative),
+                FeatureDetailDelta(changedMessages: [])
+            ))
+        }
+
+        var changes = changed.stream.makeAsyncIterator()
+        await changes.next()
+
+        let updated = model.snapshot.threads.first
+        #expect(updated?.title == "Updated on the server")
+        #expect(updated?.isSettled == true)
+        #expect(updated?.settledAt == settledAt)
+        #expect(updated?.pinnedAt == nil)
+        #expect(presentation(for: model).active.isEmpty)
+        if let detail = model.details[active.id] {
+            #expect(detail.thread.isSettled)
+            #expect(detail.thread.pinnedAt == nil)
+        }
+
+        response?.resume()
+        #expect(await settlement.value)
+        client.finishEvents()
+        await eventLoop.value
+    }
+
+    @Test
+    func failedSettlementPreservesNewerServerMetadataWhenRestoringItsFields() async {
+        let client = SwipeSettlementClientStub()
+        let pinned = thread(id: "pinned", pinnedAt: now.addingTimeInterval(-30))
+        client.snapshot = snapshot(threads: [pinned])
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        client.beforeSettlementResponse = { _ in
+            var authoritative = pinned
+            authoritative.title = "Updated on the server"
+            client.snapshot = snapshot(threads: [authoritative])
+            await model.reload()
+            throw SwipeSettlementFailure.offline
+        }
+
+        #expect(!(await model.setSettled(pinned.id, settled: true)))
+        let updated = model.snapshot.threads.first
+        #expect(updated?.title == "Updated on the server")
+        #expect(updated?.isSettled == false)
+        #expect(updated?.pinnedAt == pinned.pinnedAt)
+    }
+
+    @Test
+    func settlementRejectedAfterAThreadStartsWorkingReturnsFailure() async {
+        let client = SwipeSettlementClientStub()
+        var working = thread(id: "working")
+        working.state = .working
+        client.snapshot = snapshot(threads: [working])
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        #expect(!(await model.setSettled(working.id, settled: true)))
+        #expect(client.settlementRequests.isEmpty)
+        #expect(model.snapshot.threads == [working])
+    }
+
+    @Test
+    func consecutiveSettlementsLeaveTheInboxWithoutWaitingForEarlierRequests() async throws {
+        let client = SwipeSettlementClientStub()
+        let first = thread(id: "first")
+        let second = thread(id: "second")
+        let remaining = thread(id: "remaining")
+        client.snapshot = snapshot(threads: [first, second, remaining])
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        let started = AsyncStream<String>.makeStream()
+        var responses: [String: CheckedContinuation<Void, any Error>] = [:]
+        client.beforeSettlementResponse = { request in
+            try await withCheckedThrowingContinuation { continuation in
+                responses[request.id] = continuation
+                started.continuation.yield(request.id)
+            }
+        }
+
+        var requests = started.stream.makeAsyncIterator()
+        let firstSettlement = Task { await model.setSettled(first.id, settled: true) }
+        #expect(await requests.next() == first.id)
+        #expect(!presentation(for: model).active.contains { $0.id == first.id })
+
+        let secondSettlement = Task { await model.setSettled(second.id, settled: true) }
+        #expect(await requests.next() == second.id)
+        #expect(presentation(for: model).active.map(\.id) == [remaining.id])
+
+        responses[second.id]?.resume()
+        #expect(await secondSettlement.value)
+        responses[first.id]?.resume()
+        #expect(await firstSettlement.value)
+
+        #expect(Set(presentation(for: model).settled.map(\.id)) == [first.id, second.id])
+    }
+
+    @Test
+    func failedSettlementRestoresTheOriginalPinnedThread() async {
+        let client = SwipeSettlementClientStub()
+        let pinned = thread(id: "pinned", pinnedAt: now.addingTimeInterval(-30))
+        client.snapshot = snapshot(threads: [pinned])
+        client.beforeSettlementResponse = { _ in
+            throw SwipeSettlementFailure.offline
+        }
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        await model.setSettled(pinned.id, settled: true)
+
+        #expect(model.snapshot.threads == [pinned])
+        #expect(presentation(for: model).pinned.map(\.id) == [pinned.id])
+        #expect(presentation(for: model).settled.isEmpty)
+        #expect(model.errorMessage == "The test environment is offline.")
+    }
+
+    @Test
+    func anOlderFailedSettlementCannotUndoANewerReopen() async {
+        let client = SwipeSettlementClientStub()
+        let active = thread(id: "active")
+        client.snapshot = snapshot(threads: [active])
+        let model = testRootModel(client: client)
+        await model.reload()
+
+        let started = AsyncStream<Void>.makeStream()
+        var delayedResponse: CheckedContinuation<Void, any Error>?
+        client.beforeSettlementResponse = { request in
+            guard request.settled else { return }
+            try await withCheckedThrowingContinuation { continuation in
+                delayedResponse = continuation
+                started.continuation.yield()
+            }
+        }
+
+        let settlement = Task { await model.setSettled(active.id, settled: true) }
+        var requests = started.stream.makeAsyncIterator()
+        await requests.next()
+        #expect(model.snapshot.threads.first?.isSettled == true)
+
+        await model.setSettled(active.id, settled: false)
+        #expect(model.snapshot.threads.first?.isSettled == false)
+
+        delayedResponse?.resume(throwing: SwipeSettlementFailure.offline)
+        #expect(!(await settlement.value))
+
+        #expect(model.snapshot.threads.first?.isSettled == false)
+        #expect(model.snapshot.threads.first?.keepsActive == true)
+        #expect(client.settlementRequests == [
+            SettlementRequest(id: active.id, settled: true),
+            SettlementRequest(id: active.id, settled: false),
+        ])
+    }
+
+    @Test
+    func swipeCompletionWaitsUntilTheCollectionHasRemovedTheThread() async {
+        let client = SwipeSettlementClientStub()
+        let first = thread(id: "first")
+        let remaining = thread(id: "remaining")
+        let initial = snapshot(threads: [first, remaining])
+        var requests: [SettlementRequest] = []
+        let initialList = threadList(client: client, snapshot: initial) { thread, settled in
+            requests.append(SettlementRequest(id: thread.id, settled: settled))
+        }
+        let coordinator = initialList.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        defer {
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+
+        let completions = AsyncStream<Bool>.makeStream()
+        var finished = false
+        coordinator.performSwipe(.settle, for: first) { succeeded in
+            finished = true
+            completions.continuation.yield(succeeded)
+        }
+
+        #expect(requests == [SettlementRequest(id: first.id, settled: true)])
+        #expect(!finished)
+
+        var settled = first
+        settled.isSettled = true
+        settled.settledAt = now
+        let updated = threadList(
+            client: client,
+            snapshot: snapshot(threads: [settled, remaining])
+        )
+        coordinator.update(parent: updated, collectionView: collectionView)
+
+        var results = completions.stream.makeAsyncIterator()
+        #expect(await results.next() == true)
+        #expect(finished)
+    }
+
+    @Test
+    func settledSearchRowsFinishTheSwipeWithoutLeavingTheSearchResults() async {
+        let client = SwipeSettlementClientStub()
+        let active = thread(id: "search")
+        let initialList = threadList(
+            client: client,
+            snapshot: snapshot(threads: [active]),
+            query: "Task"
+        )
+        let coordinator = initialList.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        defer {
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+
+        let completions = AsyncStream<Bool>.makeStream()
+        coordinator.performSwipe(.settle, for: active) {
+            completions.continuation.yield($0)
+        }
+
+        var settled = active
+        settled.isSettled = true
+        settled.settledAt = now
+        let updated = threadList(
+            client: client,
+            snapshot: snapshot(threads: [settled]),
+            query: "Task"
+        )
+        coordinator.update(parent: updated, collectionView: collectionView)
+
+        var results = completions.stream.makeAsyncIterator()
+        #expect(await results.next() == true)
+        #expect(collectionView.numberOfItems(inSection: 0) == 1)
+    }
+
+    @Test
+    func failedSettlementClosesTheSwipeWithoutACollectionUpdate() {
+        let client = SwipeSettlementClientStub()
+        let active = thread(id: "active")
+        let initial = threadList(
+            client: client,
+            snapshot: snapshot(threads: [active]),
+            settlementResult: false
+        )
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        defer {
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+
+        var result: Bool?
+        coordinator.performSwipe(.settle, for: active) { result = $0 }
+
+        #expect(result == false)
+    }
+
+    @Test
+    func consecutiveSwipeCompletionsResolveFromTheSameCollectionUpdate() async {
+        let client = SwipeSettlementClientStub()
+        let first = thread(id: "first")
+        let second = thread(id: "second")
+        let remaining = thread(id: "remaining")
+        let initial = threadList(
+            client: client,
+            snapshot: snapshot(threads: [first, second, remaining])
+        )
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        defer {
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+
+        let completions = AsyncStream<String>.makeStream()
+        coordinator.performSwipe(.settle, for: first) { succeeded in
+            if succeeded { completions.continuation.yield(first.id) }
+        }
+        coordinator.performSwipe(.settle, for: second) { succeeded in
+            if succeeded { completions.continuation.yield(second.id) }
+        }
+
+        var settledFirst = first
+        settledFirst.isSettled = true
+        settledFirst.settledAt = now
+        var settledSecond = second
+        settledSecond.isSettled = true
+        settledSecond.settledAt = now
+        let updated = threadList(
+            client: client,
+            snapshot: snapshot(threads: [settledFirst, settledSecond, remaining])
+        )
+        coordinator.update(parent: updated, collectionView: collectionView)
+
+        var results = completions.stream.makeAsyncIterator()
+        let completed = await [results.next(), results.next()].compactMap { $0 }
+        #expect(Set(completed) == [first.id, second.id])
+    }
+
+    @Test
+    func threadCellsClipContentWhileTheirRowsCollapse() throws {
+        let client = SwipeSettlementClientStub()
+        let initial = threadList(
+            client: client,
+            snapshot: snapshot(threads: [thread(id: "visible")])
+        )
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        collectionView.layoutIfNeeded()
+        defer {
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+
+        let cell = try #require(collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
+
+        #expect(cell.clipsToBounds)
+        #expect(cell.contentView.clipsToBounds)
+    }
+
     private func presentation(for model: FeatureRootModel) -> HomePresentation {
         HomePresentation(
             snapshot: model.snapshot,
             query: "",
             projectID: nil,
             now: now
+        )
+    }
+
+    private func snapshot(threads: [FeatureThread]) -> FeatureSnapshot {
+        FeatureSnapshot(
+            projects: [
+                FeatureProject(
+                    id: "project",
+                    environmentID: "environment",
+                    name: "Studio",
+                    path: "/studio"
+                ),
+            ],
+            threads: threads
+        )
+    }
+
+    private func threadList(
+        client: SwipeSettlementClientStub,
+        snapshot: FeatureSnapshot,
+        query: String = "",
+        settlementResult: Bool = true,
+        onSettle: @escaping (FeatureThread, Bool) -> Void = { _, _ in }
+    ) -> HomeThreadCollectionView {
+        HomeThreadCollectionView(
+            presentation: HomePresentation(
+                snapshot: snapshot,
+                query: query,
+                projectID: nil,
+                now: now
+            ),
+            projectFaviconClient: client,
+            query: query,
+            selectedThreadID: nil,
+            forceRichRows: false,
+            hapticsEnabled: false,
+            isSnoozedExpanded: false,
+            isSettledExpanded: false,
+            isArchiveExpanded: false,
+            settledLimit: 12,
+            onOpen: { _ in },
+            onToggleSnoozed: {},
+            onToggleSettled: {},
+            onToggleArchive: {},
+            onShowMoreSettled: {},
+            onRename: { _ in },
+            onRegenerateTitle: { _ in },
+            onArchive: { _, _ in },
+            onSettle: { thread, settled, completion in
+                onSettle(thread, settled)
+                completion(settlementResult)
+            },
+            onSnooze: { _, _ in },
+            onPin: { _, _ in },
+            onDelete: { _ in }
+        )
+    }
+
+    private func testCollectionView() -> UICollectionView {
+        UICollectionView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            collectionViewLayout: UICollectionViewCompositionalLayout.list(
+                using: UICollectionLayoutListConfiguration(appearance: .plain)
+            )
         )
     }
 
@@ -264,9 +779,17 @@ struct HomeThreadSwipeActionTests {
             updatedAt: now.addingTimeInterval(-50),
             state: .idle,
             lastActivityAt: now.addingTimeInterval(-50),
-            pinnedAt: pinnedAt
+            pinnedAt: pinnedAt,
+            supportsSettlement: true,
+            supportsPinning: true
         )
     }
+}
+
+enum PendingSettlementEvent: CaseIterable {
+    case thread
+    case detail
+    case detailDelta
 }
 
 @MainActor
@@ -285,19 +808,52 @@ private struct SettlementRequest: Equatable {
     let settled: Bool
 }
 
+private enum SwipeSettlementFailure: LocalizedError {
+    case offline
+
+    var errorDescription: String? {
+        "The test environment is offline."
+    }
+}
+
 /// Records the settlement requests the feature client actually receives, so the
 /// swipe action's wiring is proved against the real client call rather than a
 /// view-local shortcut.
 @MainActor
 private final class SwipeSettlementClientStub: FeatureClient {
+    private let eventStream: AsyncStream<FeatureEvent>
+    private let eventContinuation: AsyncStream<FeatureEvent>.Continuation
     var snapshot = FeatureSnapshot()
     var settlementRequests: [SettlementRequest] = []
     var pinRequests: [String] = []
+    var beforeSettlementResponse: ((SettlementRequest) async throws -> Void)?
+    var onEventsSubscribed: (() -> Void)?
+
+    init() {
+        let events = AsyncStream<FeatureEvent>.makeStream()
+        eventStream = events.stream
+        eventContinuation = events.continuation
+    }
 
     func initialSnapshot() async throws -> FeatureSnapshot { snapshot }
 
+    func events() -> AsyncStream<FeatureEvent> {
+        onEventsSubscribed?()
+        return eventStream
+    }
+
+    func emit(_ event: FeatureEvent) {
+        eventContinuation.yield(event)
+    }
+
+    func finishEvents() {
+        eventContinuation.finish()
+    }
+
     func setThreadSettled(id: String, settled: Bool) async throws {
-        settlementRequests.append(SettlementRequest(id: id, settled: settled))
+        let request = SettlementRequest(id: id, settled: settled)
+        settlementRequests.append(request)
+        try await beforeSettlementResponse?(request)
     }
 
     func setThreadPinned(id: String, pinned: Bool) async throws {

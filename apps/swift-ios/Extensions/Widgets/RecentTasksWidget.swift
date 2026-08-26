@@ -179,7 +179,7 @@ private struct T3TaskWidgetView: View {
 }
 
 private enum T3WidgetURLs {
-    static let newTask = URL(string: "t3code-swiftui://new-task")!
+    static let newTask = URL(string: "\(T3SharedContainer.urlScheme)://new-task")!
 }
 
 private extension T3AgentActivityPhase {

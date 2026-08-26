@@ -781,8 +781,8 @@ public struct AddProjectView: View {
     }
 
     private func cloneProject(_ environment: FeatureEnvironment) async {
-        let remoteURL = resolvedRepository?.sshUrl
-            ?? repositoryInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let remoteURL = resolvedRepository.map(ProjectCreationPath.defaultCloneURL)
+            ?? ProjectCreationPath.normalizedCloneURL(repositoryInput)
         guard !remoteURL.isEmpty else {
             errorMessage = "Enter a Git remote URL."
             return

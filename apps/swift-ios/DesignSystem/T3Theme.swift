@@ -2,17 +2,16 @@ import SwiftUI
 import UIKit
 
 enum T3Colors {
-    // Keep these values aligned with apps/mobile/global.css. UIKit variants
-    // let recycled collection and terminal surfaces participate in the same
-    // system appearance changes as SwiftUI views.
-    static let uiBackground = adaptive(light: rgb(0xF2F2F7), dark: rgb(0x0A0A0A))
+    // UIKit variants let recycled collection and terminal surfaces participate
+    // in the same system appearance changes as SwiftUI views.
+    static let uiBackground = adaptive(light: rgb(0xF2F2F7), dark: rgb(0x000000))
     static let uiTextPrimary = adaptive(light: rgb(0x262626), dark: rgb(0xF5F5F5))
     static let uiTextSecondary = adaptive(light: rgb(0x525252), dark: rgb(0xA3A3A3))
     static let uiSurfaceRaised = adaptive(light: rgb(0xF5F5F5), dark: rgb(0x1C1C1C))
     static let uiAccent = adaptive(light: rgb(0x007AFF), dark: rgb(0x0A84FF))
 
     static let background = Color(uiColor: uiBackground)
-    static let sheet = color(light: rgb(0xF2F2F7, alpha: 0.98), dark: rgb(0x0E0E0E, alpha: 0.98))
+    static let sheet = color(light: rgb(0xF2F2F7, alpha: 0.98), dark: rgb(0x000000, alpha: 0.98))
     static let surface = color(light: rgb(0xFFFFFF), dark: rgb(0x171717))
     static let surfaceRaised = Color(uiColor: uiSurfaceRaised)
     static let input = color(light: rgb(0xFFFFFF), dark: rgb(0x141414))
@@ -34,7 +33,7 @@ enum T3Colors {
     static let placeholder = color(light: rgb(0xA3A3A3), dark: rgb(0x8E8E93))
 
     static let primaryAction = color(light: rgb(0x262626), dark: rgb(0xF5F5F5))
-    static let primaryActionForeground = color(light: rgb(0xFFFFFF), dark: rgb(0x0A0A0A))
+    static let primaryActionForeground = color(light: rgb(0xFFFFFF), dark: rgb(0x000000))
     static let accent = Color(uiColor: uiAccent)
     static let statusRunning = color(light: rgb(0x0284C7), dark: rgb(0x22D3EE))
     static let statusInput = color(light: rgb(0x4F46E5), dark: rgb(0xA5B4FC))

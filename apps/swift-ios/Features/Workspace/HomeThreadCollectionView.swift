@@ -9,6 +9,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let query: String
     let selectedThreadID: String?
     let forceRichRows: Bool
+    let hapticsEnabled: Bool
     let isSnoozedExpanded: Bool
     let isSettledExpanded: Bool
     let isArchiveExpanded: Bool
@@ -21,7 +22,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onRename: (FeatureThread) -> Void
     let onRegenerateTitle: (FeatureThread) -> Void
     let onArchive: (FeatureThread, Bool) -> Void
-    let onSettle: (FeatureThread, Bool) -> Void
+    let onSettle: (FeatureThread, Bool, @escaping (Bool) -> Void) -> Void
     let onSnooze: (FeatureThread, Date?) -> Void
     let onPin: (FeatureThread, Bool) -> Void
     let onDelete: (FeatureThread) -> Void
@@ -60,6 +61,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
     static func dismantleUIView(_ collectionView: UICollectionView, coordinator: Coordinator) {
         coordinator.invalidateTimer()
+        coordinator.cancelPendingSwipeActions()
         collectionView.delegate = nil
     }
 
@@ -69,15 +71,23 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             case main
         }
 
+        private struct PendingSwipeCompletion {
+            let id: UUID
+            let settled: Bool
+            let finish: (Bool) -> Void
+        }
+
         private var parent: HomeThreadCollectionView
         private var dataSource: UICollectionViewDiffableDataSource<Section, HomeCollectionItem.ID>?
         private var registration: UICollectionView.CellRegistration<HomeCollectionCell, HomeCollectionItem.ID>?
         private var itemsByID: [HomeCollectionItem.ID: HomeCollectionItem] = [:]
+        private var pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
         private var selectedThreadID: String?
         private weak var collectionView: UICollectionView?
         private var timer: Timer?
         private var timerTick = 0
         private var timerInterval: TimeInterval = 0
+        private var pendingSwipeCompletions: [String: PendingSwipeCompletion] = [:]
 
         init(parent: HomeThreadCollectionView) {
             self.parent = parent
@@ -118,6 +128,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 seenIdentifiers.insert(item.id).inserted
             }
             itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+            pullRequestsByThreadID = pullRequestsByThreadID.filter {
+                itemsByID[.thread($0.key)] != nil
+            }
             // After items land: picks 1 Hz when a working thread is present,
             // 60s otherwise, and is a no-op when the interval is unchanged.
             startTimer()
@@ -125,6 +138,19 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             guard let dataSource else { return }
             let currentIdentifiers = dataSource.snapshot().itemIdentifiers
             let newIdentifiers = items.map(\.id)
+            let resolvedSwipeIDs = pendingSwipeCompletions.keys.filter { threadID in
+                guard let pending = pendingSwipeCompletions[threadID] else { return false }
+                guard case let .thread(thread, _, _, _, _) = itemsByID[.thread(threadID)] else {
+                    return true
+                }
+                return thread.isSettled == pending.settled
+            }
+            let resolvedSwipeCompletions = resolvedSwipeIDs.compactMap {
+                pendingSwipeCompletions.removeValue(forKey: $0)
+            }
+            let finishSwipes = {
+                resolvedSwipeCompletions.forEach { $0.finish(true) }
+            }
 
             if currentIdentifiers == newIdentifiers {
                 let changed = newIdentifiers.filter { previousItems[$0] != itemsByID[$0] }
@@ -135,13 +161,26 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 if !identifiers.isEmpty {
                     var snapshot = dataSource.snapshot()
                     snapshot.reconfigureItems(identifiers)
-                    dataSource.apply(snapshot, animatingDifferences: false)
+                    dataSource.apply(
+                        snapshot,
+                        animatingDifferences: false,
+                        completion: finishSwipes
+                    )
+                } else {
+                    finishSwipes()
                 }
             } else {
                 var snapshot = NSDiffableDataSourceSnapshot<Section, HomeCollectionItem.ID>()
                 snapshot.appendSections([.main])
                 snapshot.appendItems(newIdentifiers, toSection: .main)
-                dataSource.apply(snapshot, animatingDifferences: false)
+                let shouldAnimate = !resolvedSwipeCompletions.isEmpty
+                    && !currentIdentifiers.isEmpty
+                    && collectionView.window != nil
+                dataSource.apply(
+                    snapshot,
+                    animatingDifferences: shouldAnimate,
+                    completion: finishSwipes
+                )
             }
 
             synchronizeSelection(in: collectionView)
@@ -150,6 +189,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         func invalidateTimer() {
             timer?.invalidate()
             timer = nil
+        }
+
+        func cancelPendingSwipeActions() {
+            pendingSwipeCompletions.values.forEach { $0.finish(false) }
+            pendingSwipeCompletions.removeAll()
         }
 
         func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
@@ -215,14 +259,45 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 style: action.style,
                 title: action.title
             ) { [weak self] _, _, finish in
-                self?.perform(action.intent, for: thread)
-                finish(true)
+                guard let self else {
+                    finish(false)
+                    return
+                }
+                self.performSwipe(action, for: thread, finish: finish)
             }
             contextualAction.image = UIImage(systemName: action.systemImage)
             if let backgroundColor = action.backgroundColor {
                 contextualAction.backgroundColor = backgroundColor
             }
             return contextualAction
+        }
+
+        func performSwipe(
+            _ action: HomeThreadSwipeAction,
+            for thread: FeatureThread,
+            finish: @escaping (Bool) -> Void
+        ) {
+            if case let .setSettled(settled) = action.intent {
+                pendingSwipeCompletions.removeValue(forKey: thread.id)?.finish(false)
+                let completionID = UUID()
+                pendingSwipeCompletions[thread.id] = PendingSwipeCompletion(
+                    id: completionID,
+                    settled: settled,
+                    finish: finish
+                )
+                PlatformHapticEngine.shared.selection(enabled: parent.hapticsEnabled)
+                parent.onSettle(thread, settled) { [weak self] succeeded in
+                    guard !succeeded,
+                          let self,
+                          self.pendingSwipeCompletions[thread.id]?.id == completionID else {
+                        return
+                    }
+                    self.pendingSwipeCompletions.removeValue(forKey: thread.id)?.finish(false)
+                }
+            } else {
+                perform(action.intent, for: thread)
+                finish(true)
+            }
         }
 
         /// Swipe actions reuse the same closures the context menu does, so a
@@ -236,7 +311,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             case let .setPinned(pinned):
                 parent.onPin(thread, pinned)
             case let .setSettled(settled):
-                parent.onSettle(thread, settled)
+                parent.onSettle(thread, settled) { _ in }
             }
         }
 
@@ -251,7 +326,19 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     item: item,
                     projectFaviconClient: parent.projectFaviconClient,
                     isSelected: identifier.threadID == selectedThreadID,
-                    now: now
+                    now: now,
+                    onPullRequestChange: { [weak self, weak cell] pullRequest in
+                        guard let self,
+                              let cell,
+                              let threadID = identifier.threadID else {
+                            return
+                        }
+                        self.updatePullRequestAccessibility(
+                            pullRequest,
+                            threadID: threadID,
+                            cell: cell
+                        )
+                    }
                 )
             }
             .margins(.all, 0)
@@ -259,20 +346,27 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
             cell.accessories = []
             cell.tintColor = T3Colors.uiTextPrimary
+            cell.clipsToBounds = true
+            cell.contentView.clipsToBounds = true
             cell.contentView.accessibilityElementsHidden = true
             configureAccessibility(cell, item: item)
         }
 
         private func configureAccessibility(_ cell: HomeCollectionCell, item: HomeCollectionItem) {
+            cell.accessibilityCustomActions = nil
             switch item {
-            case let .thread(thread, context, _, _, _):
+            case let .thread(thread, context, _, isArchived, _):
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = selectedThreadID == thread.id
                     ? [.button, .selected]
                     : .button
                 cell.accessibilityLabel = thread.title
                 cell.accessibilityValue = threadAccessibilityValue(thread, context: context)
-                cell.accessibilityHint = "Opens task"
+                cell.accessibilityHint = "Opens thread. More actions are available."
+                cell.accessibilityCustomActions = threadAccessibilityActions(
+                    for: thread,
+                    isArchived: isArchived
+                )
                 cell.onAccessibilityActivate = { [weak self] in
                     guard let self else { return }
                     let previousSelection = self.selectedThreadID
@@ -288,14 +382,14 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             case let .shelfHeader(shelf, count, isExpanded):
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = .button
-                cell.accessibilityLabel = "\(shelf.title), \(count) tasks"
+                cell.accessibilityLabel = "\(shelf.title), \(count) \(count == 1 ? "task" : "tasks")"
                 cell.accessibilityValue = isExpanded ? "Expanded" : "Collapsed"
-                cell.accessibilityHint = nil
+                cell.accessibilityHint = isExpanded ? "Collapses the task list" : "Expands the task list"
                 cell.onAccessibilityActivate = { [weak self] in self?.toggle(shelf) }
             case let .showMoreSettled(remaining):
                 cell.isAccessibilityElement = true
                 cell.accessibilityTraits = .button
-                cell.accessibilityLabel = "Show \(remaining) more settled tasks"
+                cell.accessibilityLabel = "Show \(remaining) more settled \(remaining == 1 ? "task" : "tasks")"
                 cell.accessibilityValue = nil
                 cell.accessibilityHint = nil
                 cell.onAccessibilityActivate = { [weak self] in
@@ -325,15 +419,123 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             _ thread: FeatureThread,
             context: HomeThreadRowContext
         ) -> String {
-            var values = [thread.homeStatusLabel ?? "Ready", "Project \(context.projectName)"]
-            values.append("Harness \(context.providerName)")
+            var status = thread.homeStatusLabel ?? "Ready"
             if let duration = thread.homeWorkingDuration(at: .now) {
-                values.append("for \(duration)")
+                status += " for \(duration)"
             }
+            var values = [status, "Project \(context.projectName)"]
+            if let pullRequest = pullRequestsByThreadID[thread.id] {
+                values.append(pullRequest.accessibilityLabel)
+            }
+            if thread.pinnedAt != nil {
+                values.append("Pinned")
+            }
+            if thread.isArchived {
+                values.append("Archived")
+            } else if thread.isEffectivelySnoozed(at: .now) {
+                values.append("Snoozed")
+            } else if thread.isEffectivelySettled(at: .now) {
+                values.append("Settled")
+            }
+            values.append("Provider \(context.providerName)")
             if let environment = context.environmentLabel {
                 values.append("on \(environment)")
             }
             return values.joined(separator: ". ")
+        }
+
+        private func updatePullRequestAccessibility(
+            _ pullRequest: HomeThreadPullRequestPresentation?,
+            threadID: String,
+            cell: HomeCollectionCell
+        ) {
+            guard case let .thread(thread, context, _, _, _) = itemsByID[.thread(threadID)],
+                  let indexPath = dataSource?.indexPath(for: .thread(threadID)),
+                  collectionView?.cellForItem(at: indexPath) === cell else {
+                return
+            }
+            if let pullRequest {
+                pullRequestsByThreadID[threadID] = pullRequest
+            } else {
+                pullRequestsByThreadID.removeValue(forKey: threadID)
+            }
+            cell.accessibilityValue = threadAccessibilityValue(thread, context: context)
+        }
+
+        private func threadAccessibilityActions(
+            for thread: FeatureThread,
+            isArchived: Bool
+        ) -> [UIAccessibilityCustomAction] {
+            var actions = [accessibilityAction("Rename", systemImage: "pencil") { coordinator in
+                coordinator.parent.onRename(thread)
+            }]
+
+            if thread.supportsTitleRegeneration == true {
+                actions.append(accessibilityAction("Regenerate title", systemImage: "sparkles") { coordinator in
+                    coordinator.parent.onRegenerateTitle(thread)
+                })
+            }
+
+            if !isArchived {
+                if thread.canTogglePin {
+                    let isPinned = thread.pinnedAt != nil
+                    actions.append(accessibilityAction(
+                        isPinned ? "Unpin" : "Pin",
+                        systemImage: isPinned ? "pin.slash" : "pin"
+                    ) { coordinator in
+                        coordinator.parent.onPin(thread, !isPinned)
+                    })
+                }
+
+                if thread.canSettleNow {
+                    let isSettled = thread.isEffectivelySettled(at: .now)
+                    actions.append(accessibilityAction(
+                        isSettled ? "Reopen" : "Settle",
+                        systemImage: isSettled ? "arrow.counterclockwise" : "checkmark"
+                    ) { coordinator in
+                        coordinator.parent.onSettle(thread, !isSettled) { _ in }
+                    })
+                }
+
+                if thread.canToggleSnooze {
+                    if thread.isEffectivelySnoozed(at: .now) {
+                        actions.append(accessibilityAction("Wake", systemImage: "bell") { coordinator in
+                            coordinator.parent.onSnooze(thread, nil)
+                        })
+                    } else if thread.state != .queued,
+                              thread.state != .waitingForApproval,
+                              thread.state != .waitingForInput {
+                        actions.append(contentsOf: DailyUXSnoozePresets.resolve(now: .now).map { preset in
+                            accessibilityAction("Snooze: \(preset.label)", systemImage: "clock") { coordinator in
+                                coordinator.parent.onSnooze(thread, preset.until)
+                            }
+                        })
+                    }
+                }
+            }
+
+            actions.append(accessibilityAction(
+                isArchived ? "Restore" : "Archive",
+                systemImage: isArchived ? "arrow.uturn.backward" : "archivebox"
+            ) { coordinator in
+                coordinator.parent.onArchive(thread, !isArchived)
+            })
+            actions.append(accessibilityAction("Delete thread", systemImage: "trash") { coordinator in
+                coordinator.parent.onDelete(thread)
+            })
+            return actions
+        }
+
+        private func accessibilityAction(
+            _ title: String,
+            systemImage: String,
+            perform: @escaping (Coordinator) -> Void
+        ) -> UIAccessibilityCustomAction {
+            UIAccessibilityCustomAction(name: title, image: UIImage(systemName: systemImage)) { [weak self] _ in
+                guard let self else { return false }
+                perform(self)
+                return true
+            }
         }
 
         private func synchronizeSelection(in collectionView: UICollectionView) {
@@ -379,16 +581,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             let rename = UIAction(title: "Rename", image: UIImage(systemName: "pencil")) { [weak self] _ in
                 self?.parent.onRename(thread)
             }
-            let archive = UIAction(
-                title: isArchived ? "Restore" : "Archive",
-                image: UIImage(systemName: isArchived ? "arrow.uturn.backward" : "archivebox")
-            ) { [weak self] _ in
-                self?.parent.onArchive(thread, !isArchived)
-            }
 
-            var actions: [UIMenuElement] = [rename]
+            var titleActions: [UIMenuElement] = [rename]
             if thread.supportsTitleRegeneration == true {
-                actions.append(
+                titleActions.append(
                     UIAction(
                         title: "Regenerate title",
                         image: UIImage(systemName: "sparkles")
@@ -397,11 +593,12 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     }
                 )
             }
-            actions.append(archive)
+
+            var statusActions: [UIMenuElement] = []
             if !isArchived {
                 if thread.canTogglePin {
                     let isPinned = thread.pinnedAt != nil
-                    actions.append(
+                    statusActions.append(
                         UIAction(
                             title: isPinned ? "Unpin" : "Pin",
                             image: UIImage(systemName: isPinned ? "pin.slash" : "pin")
@@ -410,16 +607,16 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                         }
                     )
                 }
-                if thread.canToggleSettlement {
+                if thread.canSettleNow {
                     let isSettled = thread.isEffectivelySettled(at: .now)
-                    actions.append(
+                    statusActions.append(
                         UIAction(
                             title: isSettled ? "Reopen" : "Settle",
                             image: UIImage(
                                 systemName: isSettled ? "arrow.counterclockwise" : "checkmark"
                             )
                         ) { [weak self] _ in
-                            self?.parent.onSettle(thread, !isSettled)
+                            self?.parent.onSettle(thread, !isSettled) { _ in }
                         }
                     )
                 }
@@ -427,8 +624,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 if thread.canToggleSnooze {
                     let isSnoozed = thread.isEffectivelySnoozed(at: .now)
                     if isSnoozed {
-                        actions.append(
-                            UIAction(title: "Wake thread", image: UIImage(systemName: "bell")) {
+                        statusActions.append(
+                            UIAction(title: "Wake", image: UIImage(systemName: "bell")) {
                                 [weak self] _ in
                                 self?.parent.onSnooze(thread, nil)
                             }
@@ -451,18 +648,32 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                             image: UIImage(systemName: "clock"),
                             children: children
                         )
-                        actions.append(snooze)
+                        statusActions.append(snooze)
                     }
                 }
             }
 
-            actions.append(
-                UIAction(title: "Delete", image: UIImage(systemName: "trash"), attributes: .destructive) {
-                    [weak self] _ in
-                    self?.parent.onDelete(thread)
-                }
-            )
-            return actions
+            let archive = UIAction(
+                title: isArchived ? "Restore" : "Archive",
+                image: UIImage(systemName: isArchived ? "arrow.uturn.backward" : "archivebox")
+            ) { [weak self] _ in
+                self?.parent.onArchive(thread, !isArchived)
+            }
+            let delete = UIAction(
+                title: "Delete thread",
+                image: UIImage(systemName: "trash"),
+                attributes: .destructive
+            ) { [weak self] _ in
+                self?.parent.onDelete(thread)
+            }
+
+            var sections = [UIMenu(options: .displayInline, children: titleActions)]
+            if !statusActions.isEmpty {
+                sections.append(UIMenu(options: .displayInline, children: statusActions))
+            }
+            sections.append(UIMenu(options: .displayInline, children: [archive]))
+            sections.append(UIMenu(options: .displayInline, children: [delete]))
+            return sections
         }
 
         /// Working rows show a live per-second duration, so they need a 1 Hz
@@ -550,11 +761,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             })
         }
 
-        items.append(.shelfHeader(.snoozed, presentation.snoozed.count, isSnoozedExpanded))
-        if isSnoozedExpanded {
-            items.append(contentsOf: presentation.snoozed.isEmpty
-                ? [.empty(.snoozed)]
-                : presentation.snoozed.map {
+        if !presentation.snoozed.isEmpty {
+            items.append(.shelfHeader(.snoozed, presentation.snoozed.count, isSnoozedExpanded))
+            if isSnoozedExpanded {
+                items.append(contentsOf: presentation.snoozed.map {
                     .thread(
                         $0,
                         presentation.rowContexts[$0.id] ?? .fallback,
@@ -563,21 +773,24 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                         forceRichRows
                     )
                 })
+            }
         }
 
-        items.append(.shelfHeader(.settled, presentation.settled.count, isSettledExpanded))
-        if isSettledExpanded {
-            items.append(contentsOf: presentation.settled.prefix(settledLimit).map {
-                .thread(
-                    $0,
-                    presentation.rowContexts[$0.id] ?? .fallback,
-                    forceRichRows ? .rich : .slim,
-                    false,
-                    forceRichRows
-                )
-            })
-            if presentation.settled.count > settledLimit {
-                items.append(.showMoreSettled(presentation.settled.count - settledLimit))
+        if !presentation.settled.isEmpty {
+            items.append(.shelfHeader(.settled, presentation.settled.count, isSettledExpanded))
+            if isSettledExpanded {
+                items.append(contentsOf: presentation.settled.prefix(settledLimit).map {
+                    .thread(
+                        $0,
+                        presentation.rowContexts[$0.id] ?? .fallback,
+                        forceRichRows ? .rich : .slim,
+                        false,
+                        forceRichRows
+                    )
+                })
+                if presentation.settled.count > settledLimit {
+                    items.append(.showMoreSettled(presentation.settled.count - settledLimit))
+                }
             }
         }
 
@@ -636,7 +849,7 @@ enum HomeThreadSwipeAction: Equatable {
     ) -> [HomeThreadSwipeAction] {
         guard !isArchived else { return [.restore, .delete] }
 
-        let settlement: HomeThreadSwipeAction? = thread.canToggleSettlement
+        let settlement: HomeThreadSwipeAction? = thread.canSettleNow
             ? (thread.isEffectivelySettled(at: now) ? .reopen : .settle)
             : nil
         let isPinned = thread.pinnedAt != nil && thread.canTogglePin
@@ -779,6 +992,7 @@ private struct HomeCollectionCellContent: View {
     let projectFaviconClient: any FeatureClient
     let isSelected: Bool
     let now: Date
+    let onPullRequestChange: (HomeThreadPullRequestPresentation?) -> Void
 
     @ViewBuilder
     var body: some View {
@@ -788,6 +1002,7 @@ private struct HomeCollectionCellContent: View {
                 thread: thread,
                 context: context,
                 projectFaviconClient: projectFaviconClient,
+                onPullRequestChange: onPullRequestChange,
                 isSelected: isSelected,
                 style: style,
                 now: now,

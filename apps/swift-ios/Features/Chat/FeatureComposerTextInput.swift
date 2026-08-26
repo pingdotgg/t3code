@@ -37,9 +37,11 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         textView.tintColor = T3Colors.uiAccent
         textView.font = UIFont.preferredFont(forTextStyle: .body)
         textView.adjustsFontForContentSizeCategory = true
-        // Match the metrics of the SwiftUI text field this view replaced so
-        // the swap is invisible: the surrounding paddings stay in SwiftUI.
-        textView.textContainerInset = .zero
+        textView.smartQuotesType = .no
+        textView.smartDashesType = .no
+        // Outer padding belongs to SwiftUI. The bottom inset keeps the final
+        // insertion point above the composer controls.
+        textView.configureComposerViewport()
         textView.textContainer.lineFragmentPadding = 0
         textView.isScrollEnabled = true
         // Deliberately not `keyboardDismissMode = .interactive`: the capped
@@ -75,13 +77,13 @@ struct FeatureComposerTextInput: UIViewRepresentable {
                     ? 0
                     : min(selectedRange.length, text.utf16.count - location)
                 textView.selectedRange = NSRange(location: location, length: length)
-                textView.scrollRangeToVisible(textView.selectedRange)
+                textView.scrollSelectionIntoView()
             }
         }
         if shouldApplySelection, let selectionRequest {
             let location = min(selectionRequest.location, textView.text.utf16.count)
             textView.selectedRange = NSRange(location: location, length: 0)
-            textView.scrollRangeToVisible(textView.selectedRange)
+            textView.scrollSelectionIntoView()
             context.coordinator.lastAppliedSelectionRequestID = selectionRequest.id
         }
         updateAccessibility(textView)
@@ -112,7 +114,8 @@ struct FeatureComposerTextInput: UIViewRepresentable {
             width: width,
             height: FeatureComposerTextInputSizing.height(
                 fittingHeight: fittingSize.height,
-                lineHeight: uiView.font?.lineHeight ?? 22
+                lineHeight: uiView.font?.lineHeight ?? 22,
+                availableHeight: proposal.height
             )
         )
     }
@@ -120,9 +123,9 @@ struct FeatureComposerTextInput: UIViewRepresentable {
     private func updateAccessibility(_ textView: FeatureComposerUITextView) {
         textView.accessibilityLabel = "Message agent"
         textView.accessibilityHint = acceptsImages
-            ? "Enter a message or paste images to attach them."
-            : "Enter a message."
-        textView.accessibilityValue = text.isEmpty ? placeholder : nil
+            ? "Enter a message or paste images"
+            : "Enter a message"
+        textView.accessibilityValue = text.isEmpty ? placeholder : text
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -137,6 +140,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             guard parent.text != textView.text else { return }
             parent.text = textView.text
+            (textView as? FeatureComposerUITextView)?.scrollSelectionIntoView()
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
@@ -158,6 +162,39 @@ struct FeatureComposerTextInput: UIViewRepresentable {
 /// Advertises image support to the paste menu and routes image pastes out to
 /// the attachment pipeline. Text-only pastes fall through to UIKit untouched.
 final class FeatureComposerUITextView: UITextView {
+    private static let bottomEditingInset: CGFloat = 10
+
+    func configureComposerViewport() {
+        clipsToBounds = true
+        textContainerInset = UIEdgeInsets(
+            top: 0,
+            left: 0,
+            bottom: Self.bottomEditingInset,
+            right: 0
+        )
+    }
+
+    func scrollSelectionIntoView() {
+        scrollRangeToVisible(selectedRange)
+        guard let selection = selectedTextRange else { return }
+
+        let caret = caretRect(for: selection.end)
+        let visibleBottom = contentOffset.y + bounds.height - Self.bottomEditingInset
+        guard caret.maxY > visibleBottom else { return }
+
+        let maximumOffset = max(
+            -adjustedContentInset.top,
+            contentSize.height + adjustedContentInset.bottom - bounds.height
+        )
+        let requestedOffset = caret.maxY + Self.bottomEditingInset - bounds.height
+        let pixelScale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 1
+        let alignedOffset = ceil(requestedOffset * pixelScale) / pixelScale
+        setContentOffset(
+            CGPoint(x: contentOffset.x, y: min(maximumOffset, alignedOffset)),
+            animated: false
+        )
+    }
+
     var acceptsImages = false {
         didSet {
             guard oldValue != acceptsImages else { return }
@@ -378,18 +415,23 @@ enum FeatureComposerTextSelectionPolicy {
     }
 }
 
-/// Cap-then-scroll, the way Messages and Slack grow their composers: the
-/// input tracks its content until it reaches a fixed line cap, then holds
-/// that height and scrolls internally. The cap deliberately ignores the
-/// SwiftUI height proposal: proposals here derive from this view's own
-/// previous answer, so scaling by them feeds back and collapses the input.
+/// The editor grows with its content, then scrolls when it reaches the line
+/// cap or the space above the composer controls. A five-line minimum prevents
+/// SwiftUI's repeated height proposals from collapsing the editor.
 enum FeatureComposerTextInputSizing {
     static let maximumLines: CGFloat = 12
+    static let minimumVisibleLines: CGFloat = 5
 
     static func height(
         fittingHeight: CGFloat,
-        lineHeight: CGFloat
+        lineHeight: CGFloat,
+        availableHeight: CGFloat? = nil
     ) -> CGFloat {
-        min(fittingHeight, lineHeight * maximumLines)
+        let maximumHeight = lineHeight * maximumLines
+        guard let availableHeight, availableHeight.isFinite, availableHeight > 0 else {
+            return min(fittingHeight, maximumHeight)
+        }
+        let visibleHeight = max(availableHeight, lineHeight * minimumVisibleLines)
+        return min(fittingHeight, maximumHeight, visibleHeight)
     }
 }

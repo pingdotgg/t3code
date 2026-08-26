@@ -67,19 +67,51 @@ enum NativeWorkspaceMapper {
     }
 
     static func sourceControl(_ status: VCSStatus) -> FeatureSourceControlStatus {
-        FeatureSourceControlStatus(
+        sourceControl(
             isRepository: status.isRepo,
             branch: status.refName,
+            files: status.workingTree.files,
             aheadCount: status.aheadCount,
             behindCount: status.behindCount,
-            files: status.workingTree.files.map {
+            pullRequest: status.pr
+        )
+    }
+
+    static func sourceControl(
+        local: VCSLocalStatus,
+        remote: VCSRemoteStatus?
+    ) -> FeatureSourceControlStatus {
+        sourceControl(
+            isRepository: local.isRepo,
+            branch: local.refName,
+            files: local.workingTree.files,
+            aheadCount: remote?.aheadCount ?? 0,
+            behindCount: remote?.behindCount ?? 0,
+            pullRequest: remote?.pr
+        )
+    }
+
+    private static func sourceControl(
+        isRepository: Bool,
+        branch: String?,
+        files: [VCSWorkingTreeFile],
+        aheadCount: Int,
+        behindCount: Int,
+        pullRequest: VCSChangeRequest?
+    ) -> FeatureSourceControlStatus {
+        FeatureSourceControlStatus(
+            isRepository: isRepository,
+            branch: branch,
+            aheadCount: aheadCount,
+            behindCount: behindCount,
+            files: files.map {
                 FeatureSourceControlFile(
                     path: $0.path,
                     state: .modified,
                     isStaged: false
                 )
             },
-            pullRequest: status.pr.map {
+            pullRequest: pullRequest.map {
                 FeaturePullRequest(
                     number: $0.number,
                     title: $0.title,

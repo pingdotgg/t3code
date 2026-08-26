@@ -1,4 +1,9 @@
-import type { EnvironmentId, LocalApi, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  LocalApi,
+  ScopedThreadRef,
+  ThreadLinkedPullRequest,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { type MouseEvent, useCallback } from "react";
@@ -116,6 +121,39 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     return claim(host, match);
   }
   return null;
+}
+
+/** Match a stored PR without requiring its project to remain available. */
+export function matchesLinkedPullRequestUrl(
+  linkedPullRequest: ThreadLinkedPullRequest,
+  targetUrl: string,
+): boolean {
+  const linked = parseChangeRequestUrl(linkedPullRequest.url);
+  const target = parseChangeRequestUrl(targetUrl);
+  return (
+    linked !== null &&
+    target !== null &&
+    linked.host === target.host &&
+    linked.repository === target.repository &&
+    linked.number === target.number
+  );
+}
+
+/** The repository root behind a recognised change-request URL, without PR-specific state. */
+export function changeRequestRepositoryUrl(targetUrl: string): string | null {
+  const changeRequest = parseChangeRequestUrl(targetUrl);
+  if (changeRequest === null) return null;
+  const url = new URL(targetUrl);
+  const repositoryPath =
+    /^(.*?)\/-\/merge_requests\/\d+(?:\/|$)/iu.exec(url.pathname)?.[1] ??
+    /^(.*?)(?:\/pull\/\d+|\/-\/merge_requests\/\d+|\/pull-requests\/\d+|\/pullrequest\/\d+)(?:\/|$)/iu.exec(
+      url.pathname,
+    )?.[1];
+  if (!repositoryPath) return null;
+  url.pathname = repositoryPath;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {

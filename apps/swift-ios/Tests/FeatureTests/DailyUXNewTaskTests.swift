@@ -910,6 +910,208 @@ struct DailyUXNewTaskTests {
         #expect(sections.others.isEmpty)
     }
 
+    @Test
+    func modelPickerSearchMatchesNamesAcrossSpacesAndPunctuation() {
+        let codex = FeatureProvider(
+            id: "codex",
+            name: "Codex",
+            models: [
+                .init(id: "gpt-5.6-luna", name: "GPT 5.6 Luna"),
+                .init(id: "gpt-5.6-terra", name: "GPT 5.6 Terra"),
+            ]
+        )
+        let openCode = FeatureProvider(
+            id: "opencode",
+            name: "OpenCode",
+            models: [.init(id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna")]
+        )
+
+        let matching = ProviderModelSearch.matching(
+            [codex, openCode],
+            query: "GPT 5.6 Luna"
+        )
+
+        #expect(matching.map(\.id) == ["codex", "opencode"])
+        #expect(matching.flatMap { $0.models.map(\.id) } == [
+            "gpt-5.6-luna",
+            "openai/gpt-5.6-luna",
+        ])
+    }
+
+    @Test
+    func modelPickerDisambiguatesModelsWithTheSameVisibleDetails() {
+        let provider = FeatureProvider(
+            id: "opencode",
+            name: "OpenCode",
+            models: [
+                .init(id: "kilo/openai/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "kilo"),
+                .init(id: "kilo/xai/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "kilo"),
+                .init(id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "openai"),
+            ]
+        )
+        let sections = ProviderModelDisplaySections(
+            catalog: DailyUXModelCatalog(
+                providers: [provider],
+                query: "",
+                favoriteIDs: [],
+                recentIDs: []
+            )
+        )
+
+        #expect(sections.disambiguatedModelIDs == Set([
+            "opencode::kilo/openai/gpt-5.6-luna",
+            "opencode::kilo/xai/gpt-5.6-luna",
+        ]))
+    }
+
+    @Test
+    func modelPickerDisambiguatesProvidersWithTheSameVisibleName() {
+        let providers = [
+            FeatureProvider(
+                id: "opencode-work",
+                name: "OpenCode",
+                models: [
+                    .init(id: "work/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "openai"),
+                ]
+            ),
+            FeatureProvider(
+                id: "opencode-personal",
+                name: "OpenCode",
+                models: [
+                    .init(id: "personal/gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "openai"),
+                ]
+            ),
+        ]
+        let sections = ProviderModelDisplaySections(
+            catalog: DailyUXModelCatalog(
+                providers: providers,
+                query: "",
+                favoriteIDs: [],
+                recentIDs: []
+            )
+        )
+
+        #expect(sections.disambiguatedModelIDs == Set([
+            "opencode-work::work/gpt-5.6-luna",
+            "opencode-personal::personal/gpt-5.6-luna",
+        ]))
+    }
+
+    @Test
+    func projectPickerSearchMatchesNamesPathsAndEnvironmentNames() {
+        let studio = FeatureEnvironment(
+            id: "studio",
+            name: "Studio Mac",
+            endpoint: "http://studio"
+        )
+        let laptop = FeatureEnvironment(
+            id: "laptop",
+            name: "Travel Laptop",
+            endpoint: "http://laptop"
+        )
+        let alpha = rankedProject("ios-app", name: "Alpha", environmentID: studio.id)
+        let beta = rankedProject("web-client", name: "Beta", environmentID: laptop.id)
+        let groups = DailyUXProjectGrouping.groups(projects: [beta, alpha])
+
+        #expect(
+            NewTaskProjectPickerSearch.matching(
+                groups,
+                query: "ALPHA",
+                environments: [studio, laptop]
+            ).map(\.name) == ["Alpha"]
+        )
+        #expect(
+            NewTaskProjectPickerSearch.matching(
+                groups,
+                query: "web-client",
+                environments: [studio, laptop]
+            ).map(\.name) == ["Beta"]
+        )
+        #expect(
+            NewTaskProjectPickerSearch.matching(
+                groups,
+                query: "travel",
+                environments: [studio, laptop]
+            ).map(\.name) == ["Beta"]
+        )
+    }
+
+    @Test
+    func projectPickerSearchTrimsQueriesAndPreservesGroupOrder() {
+        let alpha = rankedProject("alpha", name: "Alpha")
+        let beta = rankedProject("beta", name: "Beta")
+        let groups = DailyUXProjectGrouping.groups(projects: [beta, alpha])
+
+        #expect(
+            NewTaskProjectPickerSearch.matching(
+                groups,
+                query: "  \n ",
+                environments: []
+            ).map(\.id) == groups.map(\.id)
+        )
+        #expect(
+            NewTaskProjectPickerSearch.matching(
+                groups,
+                query: "  BET  ",
+                environments: []
+            ).map(\.name) == ["Beta"]
+        )
+    }
+
+    @Test
+    func projectPickerSearchFindsSecondaryEnvironmentsAndKeepsRecentSections() throws {
+        let studio = FeatureEnvironment(
+            id: "studio",
+            name: "Studio Mac",
+            endpoint: "http://studio"
+        )
+        let laptop = FeatureEnvironment(
+            id: "laptop",
+            name: "Travel Laptop",
+            endpoint: "http://laptop"
+        )
+        let sharedOnStudio = rankedProject(
+            "studio-project",
+            name: "Shared",
+            environmentID: studio.id,
+            repositoryKey: "github.com/example/shared"
+        )
+        let sharedOnLaptop = rankedProject(
+            "laptop-project",
+            name: "Shared",
+            environmentID: laptop.id,
+            repositoryKey: "github.com/example/shared"
+        )
+        let unrelated = rankedProject(
+            "other-project",
+            name: "Other",
+            environmentID: studio.id
+        )
+        let groups = DailyUXProjectGrouping.groups(
+            projects: [unrelated, sharedOnStudio, sharedOnLaptop]
+        )
+        let sharedGroup = try #require(
+            DailyUXProjectGrouping.group(containing: sharedOnStudio.id, in: groups)
+        )
+        let unrelatedGroup = try #require(
+            DailyUXProjectGrouping.group(containing: unrelated.id, in: groups)
+        )
+
+        let filtered = NewTaskProjectPickerSearch.matching(
+            groups,
+            query: "travel",
+            environments: [studio, laptop]
+        )
+        let sections = DailyUXProjectPickerSections(
+            groups: filtered,
+            recentGroupIDs: [unrelatedGroup.id, sharedGroup.id]
+        )
+
+        #expect(filtered.map(\.id) == [sharedGroup.id])
+        #expect(sections.recents.map(\.id) == [sharedGroup.id])
+        #expect(sections.others.isEmpty)
+    }
+
     private func rankedProject(
         _ id: String,
         name: String,

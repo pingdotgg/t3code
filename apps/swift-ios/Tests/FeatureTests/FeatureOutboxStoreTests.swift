@@ -81,7 +81,7 @@ struct FeatureOutboxStoreTests {
     }
 
     @Test
-    func committedCreationAndDeletedThreadAreDiscarded() {
+    func existingThreadDoesNotProveItsFirstMessageWasDelivered() {
         let thread = FeatureThread(
             id: "thread-scoped",
             projectID: "project-1",
@@ -128,7 +128,11 @@ struct FeatureOutboxStoreTests {
             threads: [thread]
         )
 
-        #expect(FeatureOutboxPolicy.decision(for: creation, snapshot: snapshot) == .discard)
+        #expect(FeatureOutboxPolicy.decision(for: creation, snapshot: snapshot) == .send)
+
+        snapshot.environments[0].connectionState = .disconnected
+        #expect(FeatureOutboxPolicy.decision(for: creation, snapshot: snapshot) == .wait)
+        snapshot.environments[0].connectionState = .connected
 
         var followUp = creation
         followUp.creation = nil

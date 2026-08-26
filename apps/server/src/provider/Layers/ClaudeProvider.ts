@@ -862,7 +862,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         status: "error",
         auth: { status: "unknown" },
         message: isCommandMissingCause(error)
-          ? "Claude Agent CLI (`claude`) is not installed or not on PATH."
+          ? "Claude Agent CLI (`claude`) was not found on PATH."
           : "Failed to execute Claude Agent CLI health check.",
       },
     });
@@ -927,7 +927,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
-  const slashCommands = capabilities?.slashCommands ?? [];
+  const slashCommands = [
+    {
+      name: "compact",
+      description: "Summarize the conversation and reduce context usage",
+    },
+    ...(capabilities?.slashCommands ?? []),
+  ];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {

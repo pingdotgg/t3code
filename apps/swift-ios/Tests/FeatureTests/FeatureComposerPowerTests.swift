@@ -39,6 +39,49 @@ struct FeatureComposerPowerTests {
     }
 
     @Test
+    func composerTextInputReservesRoomForControlsInAConstrainedViewport() {
+        #expect(
+            FeatureComposerTextInputSizing.height(
+                fittingHeight: 440,
+                lineHeight: 22,
+                availableHeight: 150
+            ) == 150
+        )
+        #expect(
+            FeatureComposerTextInputSizing.height(
+                fittingHeight: 440,
+                lineHeight: 22,
+                availableHeight: 80
+            ) == 110
+        )
+    }
+
+    @Test
+    @MainActor
+    func longComposerDraftStaysClippedAndScrollsToItsLastLine() {
+        let textView = FeatureComposerUITextView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 110)
+        )
+        textView.configureComposerViewport()
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.text = (1...40).map { "A long pasted draft line \($0)" }
+            .joined(separator: "\n")
+        textView.layoutIfNeeded()
+        textView.selectedRange = NSRange(location: textView.text.utf16.count, length: 0)
+        textView.scrollSelectionIntoView()
+        textView.layoutIfNeeded()
+
+        #expect(textView.clipsToBounds)
+        #expect(textView.contentOverflows)
+        if let selection = textView.selectedTextRange {
+            let caret = textView.caretRect(for: selection.end)
+            #expect(caret.maxY <= textView.contentOffset.y + textView.bounds.height)
+        } else {
+            Issue.record("Expected a visible selection at the end of the pasted draft")
+        }
+    }
+
+    @Test
     func replacementCursorLandsAfterInsertedTextInUTF16() {
         // "🧪 " occupies three characters but four UTF-16 units; the caret
         // location must count the latter or it drifts on emoji-bearing drafts.
@@ -244,6 +287,98 @@ struct FeatureComposerPowerTests {
         )
 
         #expect(items.map(\.label) == ["/model", "/review"])
+    }
+
+    @Test
+    func slashMenuIncludesEnabledSkillsAndSuppressesMatchingCommands() throws {
+        let trigger = try #require(FeatureComposerTriggerParser.detect(in: "/"))
+        let items = FeatureComposerMenuBuilder.items(
+            trigger: trigger,
+            providers: [],
+            currentSelection: nil,
+            threadSelection: nil,
+            powerFeatures: FeatureComposerPowerFeatures(
+                slashCommands: [
+                    FeatureProviderSlashCommand(name: "deploy", description: "Old command"),
+                    FeatureProviderSlashCommand(name: "review", description: "Review changes"),
+                ],
+                skills: [
+                    FeatureProviderSkill(name: "deploy", displayName: "Deploy project"),
+                    FeatureProviderSkill(name: "disabled", isEnabled: false),
+                ]
+            ),
+            pathEntries: []
+        )
+
+        #expect(items.map(\.label) == ["/model", "/review", "Deploy project"])
+    }
+
+    @Test
+    func slashSkillPrefixFiltersSkillsWithoutProviderCommands() throws {
+        let trigger = try #require(FeatureComposerTriggerParser.detect(in: "/skill:fix"))
+        let items = FeatureComposerMenuBuilder.items(
+            trigger: trigger,
+            providers: [],
+            currentSelection: nil,
+            threadSelection: nil,
+            powerFeatures: FeatureComposerPowerFeatures(
+                slashCommands: [FeatureProviderSlashCommand(name: "fix")],
+                skills: [
+                    FeatureProviderSkill(name: "gh-fix-ci", displayName: "Fix CI"),
+                    FeatureProviderSkill(name: "deploy"),
+                ]
+            ),
+            pathEntries: []
+        )
+
+        #expect(items.map(\.label) == ["Fix CI"])
+    }
+
+    @Test
+    func skillSourcesFollowProviderScopeAndPluginPaths() {
+        #expect(FeatureProviderSkill(name: "repo", scope: "repository").source == .repository)
+        #expect(FeatureProviderSkill(name: "local", scope: "workspace").source == .project)
+        #expect(FeatureProviderSkill(name: "mine", scope: "user").source == .personal)
+        #expect(FeatureProviderSkill(name: "built-in", scope: "system").source == .system)
+        #expect(
+            FeatureProviderSkill(
+                name: "plugin",
+                path: "/Users/theo/.codex/plugins/example/SKILL.md",
+                scope: "user"
+            ).source == .app
+        )
+    }
+
+    @Test
+    func appApprovalDecisionsKeepTheServerWireValues() {
+        let decisions: [(FeatureApprovalDecision, String)] = [
+            (.allowOnce, "accept"),
+            (.allowForSession, "acceptForSession"),
+            (.allowAlways, "acceptAlways"),
+            (.deny, "decline"),
+            (.cancel, "cancel"),
+        ]
+
+        for (decision, wireValue) in decisions {
+            #expect(decision.wireValue == wireValue)
+            #expect(FeatureApprovalDecision(wireValue: wireValue) == decision)
+        }
+        #expect(FeatureApprovalDecision(wireValue: "unsupported") == nil)
+    }
+
+    @Test
+    func codexFeedbackCommandParsesOptionalReasonsWithoutMatchingOtherCommands() {
+        #expect(FeatureCodexFeedbackCommand.parse(" /feedback ")?.reason == nil)
+        #expect(
+            FeatureCodexFeedbackCommand.parse("/feedback The agent stopped early.")?.reason
+                == "The agent stopped early."
+        )
+        #expect(
+            FeatureCodexFeedbackCommand.parse("/FEEDBACK  First line\nSecond line")?.reason
+                == "First line\nSecond line"
+        )
+        #expect(FeatureCodexFeedbackCommand.parse("/feedback-status") == nil)
+        #expect(FeatureCodexFeedbackCommand.parse("Please send /feedback") == nil)
     }
 
     @Test

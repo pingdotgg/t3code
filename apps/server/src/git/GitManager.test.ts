@@ -717,6 +717,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-open-pr",
         state: "open",
+        updatedAt: null,
       });
     }),
   );
@@ -756,6 +757,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-trimmed-pr",
         state: "open",
+        updatedAt: null,
       });
     }),
   );
@@ -808,6 +810,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-valid-pr-entry",
         state: "open",
+        updatedAt: null,
       });
     }),
   );
@@ -858,6 +861,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-lowercase-state",
         state: "merged",
+        updatedAt: "2026-01-02T00:00:00.000Z",
       });
     }),
   );
@@ -967,6 +971,75 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(status.refName).toBe("feature/never-pushed");
       expect(status.pr).toBeNull();
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(0);
+    }),
+  );
+
+  it.effect("status finds a merged PR after its remote branch was deleted", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/merged-branch-deleted"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/merged-branch-deleted"]);
+
+      // GitHub commonly deletes a pull request's head branch after merge. Git
+      // removes the remote-tracking ref, but preserves the local branch's
+      // remote and merge configuration as evidence that it was published.
+      yield* runGit(repoDir, ["push", "origin", "--delete", "feature/merged-branch-deleted"]);
+      const configuredRemote = yield* runGit(repoDir, [
+        "config",
+        "--get",
+        "branch.feature/merged-branch-deleted.remote",
+      ]);
+      const configuredMerge = yield* runGit(repoDir, [
+        "config",
+        "--get",
+        "branch.feature/merged-branch-deleted.merge",
+      ]);
+      const trackingRef = yield* runGit(repoDir, [
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/remotes/origin/feature/merged-branch-deleted",
+      ]);
+      expect(configuredRemote.stdout.trim()).toBe("origin");
+      expect(configuredMerge.stdout.trim()).toBe("refs/heads/feature/merged-branch-deleted");
+      expect(trackingRef.stdout.trim()).toBe("");
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 215,
+                title: "Merged branch was deleted",
+                url: "https://github.com/pingdotgg/t3code/pull/215",
+                baseRefName: "main",
+                headRefName: "feature/merged-branch-deleted",
+                state: "MERGED",
+                mergedAt: "2026-04-02T15:00:00Z",
+                updatedAt: "2026-04-02T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.hasUpstream).toBe(false);
+      expect(status.pr).toEqual({
+        number: 215,
+        title: "Merged branch was deleted",
+        url: "https://github.com/pingdotgg/t3code/pull/215",
+        baseRef: "main",
+        headRef: "feature/merged-branch-deleted",
+        state: "merged",
+        updatedAt: "2026-04-02T15:00:00.000Z",
+      });
+      expect(ghCalls.filter((call) => call.startsWith("pr list ")).length).toBeGreaterThan(0);
     }),
   );
 
@@ -1121,6 +1194,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           baseRef: "main",
           headRef: "statemachine",
           state: "open",
+          updatedAt: "2026-03-10T07:00:00.000Z",
         });
         expect(ghCalls).toContain(
           "pr list --head jasonLaster:statemachine --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
@@ -1186,6 +1260,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           baseRef: "main",
           headRef: "main",
           state: "open",
+          updatedAt: "2026-03-10T07:00:00.000Z",
         });
         expect(ghCalls).toContain(
           "pr list --head contributor:main --state all --limit 20 --json number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
@@ -1294,6 +1369,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           baseRef: "main",
           headRef: "effect-atom",
           state: "open",
+          updatedAt: "2026-03-01T10:00:00.000Z",
         });
         expect(ghCalls.some((call) => call.includes("pr list --head upstream/effect-atom "))).toBe(
           false,
@@ -1345,6 +1421,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-merged-pr",
         state: "merged",
+        updatedAt: "2026-01-30T10:00:00.000Z",
       });
     }),
   );
@@ -1461,6 +1538,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRef: "main",
         headRef: "feature/status-open-over-merged",
         state: "open",
+        updatedAt: "2026-01-30T10:00:00.000Z",
       });
     }),
   );
@@ -2390,6 +2468,57 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(
         ghCalls.some((call) =>
           call.includes("pr create --base main --head feature/provider-fallback"),
+        ),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("create_pr targets the remote default branch when it is not main", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      // A repository whose default branch is master, with no main anywhere.
+      yield* runGit(repoDir, ["push", "origin", "HEAD:master"]);
+      yield* runGit(repoDir, ["fetch", "origin"]);
+      yield* runGit(repoDir, ["remote", "set-head", "origin", "master"]);
+
+      yield* runGit(repoDir, ["checkout", "-b", "feature/master-default"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "master-default.txt"), "master default\n");
+      yield* runGit(repoDir, ["add", "master-default.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Master default"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          // Mirrors a provider that cannot report a default branch, as the Azure
+          // DevOps CLI does when it cannot detect the repository.
+          defaultBranch: "",
+          prListSequence: [
+            "[]",
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 505,
+                title: "Master default",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/505",
+                baseRefName: "master",
+                headRefName: "feature/master-default",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(
+        ghCalls.some((call) =>
+          call.includes("pr create --base master --head feature/master-default"),
         ),
       ).toBe(true);
     }),

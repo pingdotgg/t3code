@@ -19,6 +19,11 @@ public protocol FeatureWorkspaceAssetResolving: AnyObject {
     func workspaceAssetURL(threadID: String, path: String) async throws -> URL
 }
 
+@MainActor
+public protocol FeatureFeedbackSubmitting: AnyObject {
+    func submitCodexFeedback(threadID: String, reason: String?) async throws -> String
+}
+
 public enum FeatureFileKind: String, Sendable, Codable {
     case file
     case directory

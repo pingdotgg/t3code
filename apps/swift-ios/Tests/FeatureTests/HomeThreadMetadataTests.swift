@@ -324,4 +324,180 @@ struct HomeThreadMetadataTests {
 
         #expect(context.projectName == "pingdotgg/t3code")
     }
+
+    @Test
+    func pullRequestIndicatorsUseTheCurrentThreadBranchAndPreserveTheirState() {
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "project",
+            title: "Add native PR indicators",
+            branch: "feature/native-pull-requests"
+        )
+
+        for state in ["open", "merged", "closed"] {
+            let status = FeatureSourceControlStatus(
+                branch: "feature/native-pull-requests",
+                pullRequest: FeaturePullRequest(
+                    number: 42,
+                    title: "Add native PR indicators",
+                    state: state
+                )
+            )
+
+            let presentation = HomeThreadPullRequestPresentation.resolve(
+                thread: thread,
+                status: status
+            )
+
+            #expect(presentation?.label == "#42")
+            #expect(presentation?.state.rawValue == state)
+            #expect(presentation?.accessibilityLabel == "Pull request #42, \(state)")
+        }
+    }
+
+    @Test
+    func pullRequestIndicatorsIgnoreOtherBranchesAndUnknownStates() {
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "project",
+            title: "Task",
+            branch: "feature/current"
+        )
+        let otherBranch = FeatureSourceControlStatus(
+            branch: "feature/other",
+            pullRequest: FeaturePullRequest(number: 42, title: "Other work", state: "open")
+        )
+        let unsupportedState = FeatureSourceControlStatus(
+            branch: "feature/current",
+            pullRequest: FeaturePullRequest(number: 42, title: "Current work", state: "draft")
+        )
+        let branchless = FeatureThread(id: "branchless", projectID: "project", title: "Task")
+
+        #expect(HomeThreadPullRequestPresentation.resolve(thread: thread, status: otherBranch) == nil)
+        #expect(HomeThreadPullRequestPresentation.resolve(thread: thread, status: unsupportedState) == nil)
+        #expect(HomeThreadPullRequestPresentation.resolve(thread: branchless, status: otherBranch) == nil)
+    }
+
+    @Test
+    func threadMenuOpensDurablePullRequestsInTheNativeDetailView() throws {
+        let linked = ThreadLinkedPullRequest(
+            projectId: "project-wire",
+            repository: "pingdotgg/t3code",
+            number: 5178,
+            url: "https://github.com/pingdotgg/t3code/pull/5178"
+        )
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "environment:project-wire",
+            environmentID: "studio",
+            environmentName: "Studio",
+            title: "Native client",
+            linkedPullRequest: linked
+        )
+
+        let destination = try #require(ThreadPullRequestDestination.resolve(
+            thread: thread,
+            project: nil,
+            branchPullRequest: nil
+        ))
+
+        #expect(destination.number == 5178)
+        #expect(destination.target?.environmentID == "studio")
+        #expect(destination.target?.environmentName == "Studio")
+        #expect(destination.target?.reference.projectId == "project-wire")
+        #expect(destination.target?.reference.repository == "pingdotgg/t3code")
+    }
+
+    @Test
+    func threadMenuOpensBranchPullRequestsWithoutADurableLink() throws {
+        let project = FeatureProject(
+            id: "scoped-project",
+            wireID: "project-wire",
+            environmentID: "studio",
+            name: "T3 Code",
+            path: "/work/t3code"
+        )
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: project.id,
+            environmentID: "studio",
+            environmentName: "Studio",
+            title: "Native client",
+            branch: "feature/native"
+        )
+        let pullRequest = FeaturePullRequest(
+            number: 42,
+            title: "Native client",
+            state: "open",
+            url: URL(string: "https://github.com/pingdotgg/t3code/pull/42")
+        )
+
+        let destination = try #require(ThreadPullRequestDestination.resolve(
+            thread: thread,
+            project: project,
+            branchPullRequest: pullRequest
+        ))
+
+        #expect(destination.number == 42)
+        #expect(destination.target?.reference.projectId == "project-wire")
+        #expect(destination.target?.reference.repository == "pingdotgg/t3code")
+    }
+
+    @Test
+    func threadMenuFallsBackToBrowserWhenThePullRequestCannotBeRoutedNatively() throws {
+        let url = try #require(URL(string: "https://example.com/reviews/42"))
+        let thread = FeatureThread(id: "thread", projectID: "missing", title: "Task")
+        let pullRequest = FeaturePullRequest(number: 42, title: "Task", state: "open", url: url)
+
+        let destination = try #require(ThreadPullRequestDestination.resolve(
+            thread: thread,
+            project: nil,
+            branchPullRequest: pullRequest
+        ))
+
+        #expect(destination.target == nil)
+        #expect(destination.url == url)
+        #expect(ThreadPullRequestDestination.resolve(
+            thread: thread,
+            project: nil,
+            branchPullRequest: nil
+        ) == nil)
+    }
+
+    @Test
+    func liveSourceControlSnapshotsCarryPullRequestsAndClearMissingRemoteState() {
+        let local = VCSLocalStatus(
+            isRepo: true,
+            sourceControlProvider: nil,
+            hasPrimaryRemote: true,
+            isDefaultRef: false,
+            refName: "feature/native-pull-requests",
+            hasWorkingTreeChanges: false,
+            workingTree: VCSWorkingTree(files: [], insertions: 0, deletions: 0)
+        )
+        let remote = VCSRemoteStatus(
+            hasUpstream: true,
+            aheadCount: 2,
+            behindCount: 1,
+            aheadOfDefaultCount: 2,
+            pr: VCSChangeRequest(
+                number: 42,
+                title: "Add native PR indicators",
+                url: "https://github.com/pingdotgg/t3code/pull/42",
+                baseRef: "main",
+                headRef: "feature/native-pull-requests",
+                state: "open"
+            )
+        )
+
+        let status = NativeWorkspaceMapper.sourceControl(local: local, remote: remote)
+        let withoutRemote = NativeWorkspaceMapper.sourceControl(local: local, remote: nil)
+
+        #expect(status.branch == "feature/native-pull-requests")
+        #expect(status.pullRequest?.number == 42)
+        #expect(status.pullRequest?.state == "open")
+        #expect(status.aheadCount == 2)
+        #expect(status.behindCount == 1)
+        #expect(withoutRemote.pullRequest == nil)
+    }
 }

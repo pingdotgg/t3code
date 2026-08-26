@@ -200,6 +200,138 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testOlderHTTPSnapshotCannotReplaceNewerEnvironmentState() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.initialSnapshot()
+
+        let newer = multiEnvironmentShell(
+            projectID: "project-one",
+            threadID: "thread-one",
+            title: "Newer work"
+        )
+        await fixture.transport.setShell(
+            OrchestrationShellSnapshot(
+                snapshotSequence: 3,
+                projects: newer.projects,
+                threads: newer.threads,
+                updatedAt: newer.updatedAt
+            ),
+            host: "one.example"
+        )
+        _ = try await fixture.client.initialSnapshot()
+
+        let older = multiEnvironmentShell(
+            projectID: "project-one",
+            threadID: "thread-one",
+            title: "Stale work"
+        )
+        await fixture.transport.setShell(
+            OrchestrationShellSnapshot(
+                snapshotSequence: 2,
+                projects: older.projects,
+                threads: older.threads,
+                updatedAt: older.updatedAt
+            ),
+            host: "one.example"
+        )
+
+        let snapshot = try await fixture.client.initialSnapshot()
+
+        XCTAssertEqual(
+            snapshot.threads.first(where: { $0.environmentID == "one" })?.title,
+            "Newer work"
+        )
+        await fixture.client.disconnect()
+    }
+
+    func testThreadCreationCannotReplaceNewerEnvironmentStateWithAnOlderShell() async throws {
+        let fixture = try await makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.initialSnapshot()
+
+        let newer = multiEnvironmentShell(
+            projectID: "project-one",
+            threadID: "thread-one",
+            title: "Newer work"
+        )
+        await fixture.transport.setShell(
+            OrchestrationShellSnapshot(
+                snapshotSequence: 3,
+                projects: newer.projects,
+                threads: newer.threads,
+                updatedAt: newer.updatedAt
+            ),
+            host: "one.example"
+        )
+        let current = try await fixture.client.initialSnapshot()
+        let project = try XCTUnwrap(
+            current.projects.first(where: { $0.environmentID == "one" })
+        )
+
+        let older = multiEnvironmentShell(
+            projectID: "project-one",
+            threadID: "thread-one",
+            title: "Stale work"
+        )
+        await fixture.transport.setShell(
+            OrchestrationShellSnapshot(
+                snapshotSequence: 2,
+                projects: older.projects,
+                threads: older.threads,
+                updatedAt: older.updatedAt
+            ),
+            host: "one.example"
+        )
+
+        _ = try await fixture.client.createThread(
+            projectID: project.id,
+            title: "Another task",
+            selection: nil
+        )
+        let snapshot = try await fixture.client.initialSnapshot()
+
+        XCTAssertEqual(
+            snapshot.threads.first(where: { $0.wireID == "thread-one" })?.title,
+            "Newer work"
+        )
+        await fixture.client.disconnect()
+    }
+
+    func testPullRequestPagesPreserveCursorsAndTargetOnlyTheRequestedEnvironment() async throws {
+        let recorder = PullRequestPageRecorder()
+        let fixture = try await makeFixture(
+            pullRequestsAvailable: true,
+            webSocketConnector: PullRequestPageWebSocketConnector(recorder: recorder),
+            rpcConnectionWaitTimeout: .seconds(2)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let firstPages = try await fixture.client.pullRequestLists(PullRequestListInput())
+
+        XCTAssertEqual(Set(firstPages.map(\.environmentID)), ["one", "two"])
+        XCTAssertTrue(firstPages.allSatisfy { $0.result?.truncated == true })
+        XCTAssertTrue(firstPages.allSatisfy { $0.result?.nextCursors.isEmpty == false })
+        let initialRequests = await recorder.recordedRequests()
+        XCTAssertEqual(initialRequests.count, 2)
+        XCTAssertEqual(Set(initialRequests.map(\.host)), ["one.example", "two.example"])
+
+        let cursor = try XCTUnwrap(
+            firstPages.first(where: { $0.environmentID == "two" })?.result?.nextCursors
+        )
+        let nextPage = try await fixture.client.pullRequestLists(
+            PullRequestListInput(cursors: cursor),
+            environmentID: "two"
+        )
+
+        XCTAssertEqual(nextPage.map(\.environmentID), ["two"])
+        let requests = await recorder.recordedRequests()
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertEqual(requests.last?.host, "two.example")
+        XCTAssertEqual(requests.last?.input.cursors, cursor)
+        await fixture.client.disconnect()
+    }
+
     func testBackgroundSnapshotDoesNotStartAggregateRefreshLoops() async throws {
         let loader = CountingAggregateEnvironmentLoader()
         let fixture = try await makeFixture(
@@ -425,6 +557,9 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     private func makeFixture(
         duplicateIDs: Bool = false,
         repositoryIdentity: RepositoryIdentity? = nil,
+        pullRequestsAvailable: Bool = false,
+        webSocketConnector: any WebSocketConnecting = UnavailableMultiEnvironmentWebSocketConnector(),
+        rpcConnectionWaitTimeout: Duration = .milliseconds(5),
         fallbackPollingInitialDelay: Duration = .seconds(3),
         fallbackPollingInterval: Duration = .seconds(2),
         aggregateRefreshInterval: Duration = .seconds(20),
@@ -439,13 +574,23 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 id: "one",
                 label: "Left Book",
                 httpBaseURL: URL(string: "https://one.example")!,
-                webSocketBaseURL: URL(string: "wss://one.example")!
+                webSocketBaseURL: URL(string: "wss://one.example")!,
+                descriptor: try multiEnvironmentDescriptor(
+                    environmentID: "one",
+                    label: "Left Book",
+                    pullRequestsAvailable: pullRequestsAvailable
+                )
             ),
             Environment(
                 id: "two",
                 label: "Steam Box",
                 httpBaseURL: URL(string: "https://two.example")!,
-                webSocketBaseURL: URL(string: "wss://two.example")!
+                webSocketBaseURL: URL(string: "wss://two.example")!,
+                descriptor: try multiEnvironmentDescriptor(
+                    environmentID: "two",
+                    label: "Steam Box",
+                    pullRequestsAvailable: pullRequestsAvailable
+                )
             ),
         ]
         let store = EnvironmentStore(
@@ -480,8 +625,8 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 ]
             ),
             httpTransport: transport,
-            webSocketConnector: UnavailableMultiEnvironmentWebSocketConnector(),
-            rpcConnectionWaitTimeout: .milliseconds(5)
+            webSocketConnector: webSocketConnector,
+            rpcConnectionWaitTimeout: rpcConnectionWaitTimeout
         )
         let settings = UserDefaults(
             suiteName: "t3-native-multi-\(UUID().uuidString)"
@@ -803,6 +948,112 @@ private struct UnavailableMultiEnvironmentWebSocketConnector: WebSocketConnectin
     func connect(to _: URL) async throws -> any WebSocketConnection {
         throw URLError(.cannotConnectToHost)
     }
+}
+
+private struct PullRequestPageRequest: Sendable {
+    let host: String
+    let input: PullRequestListInput
+}
+
+private actor PullRequestPageRecorder {
+    private var requests: [PullRequestPageRequest] = []
+
+    func record(host: String, input: PullRequestListInput) {
+        requests.append(PullRequestPageRequest(host: host, input: input))
+    }
+
+    func recordedRequests() -> [PullRequestPageRequest] {
+        requests
+    }
+}
+
+private struct PullRequestPageWebSocketConnector: WebSocketConnecting {
+    let recorder: PullRequestPageRecorder
+
+    func connect(to url: URL) -> any WebSocketConnection {
+        PullRequestPageWebSocketConnection(host: url.host ?? "", recorder: recorder)
+    }
+}
+
+private actor PullRequestPageWebSocketConnection: WebSocketConnection {
+    private let host: String
+    private let recorder: PullRequestPageRecorder
+    private var queuedResponses: [Data] = []
+    private var receiveContinuation: CheckedContinuation<Data, Error>?
+
+    init(host: String, recorder: PullRequestPageRecorder) {
+        self.host = host
+        self.recorder = recorder
+    }
+
+    func send(_ data: Data) async throws {
+        let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
+        guard request["tag"]?.stringValue == RPCMethod.pullRequestsList.rawValue,
+              case let .number(requestID)? = request["id"],
+              let payload = request["payload"] else { return }
+
+        let input = try payload.decode(PullRequestListInput.self)
+        await recorder.record(host: host, input: input)
+        let page = PullRequestListResult(
+            viewers: ["github.com": "theo"],
+            providers: [],
+            entries: [],
+            errors: [],
+            truncated: true,
+            nextCursors: ["github.com t3/repo": "cursor-\(host)"]
+        )
+        let response = JSONValue.object([
+            "_tag": .string("Exit"),
+            "requestId": .number(requestID),
+            "exit": .object([
+                "_tag": .string("Success"),
+                "value": try JSONValue.encode(page),
+            ]),
+        ])
+        let responseData = try JSONEncoder.t3.encode(response)
+        if let receiveContinuation {
+            self.receiveContinuation = nil
+            receiveContinuation.resume(returning: responseData)
+        } else {
+            queuedResponses.append(responseData)
+        }
+    }
+
+    func receive() async throws -> Data {
+        if !queuedResponses.isEmpty {
+            return queuedResponses.removeFirst()
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            receiveContinuation = continuation
+        }
+    }
+
+    func close() {
+        receiveContinuation?.resume(throwing: CancellationError())
+        receiveContinuation = nil
+    }
+}
+
+private func multiEnvironmentDescriptor(
+    environmentID: String,
+    label: String,
+    pullRequestsAvailable: Bool
+) throws -> EnvironmentDescriptor? {
+    guard pullRequestsAvailable else { return nil }
+    let value = JSONValue.object([
+        "environmentId": .string(environmentID),
+        "label": .string(label),
+        "platform": .object([
+            "os": .string("darwin"),
+            "arch": .string("arm64"),
+        ]),
+        "serverVersion": .string("0.1.0"),
+        "capabilities": .object([
+            "repositoryIdentity": .bool(true),
+            "pullRequests": .bool(true),
+        ]),
+    ])
+    return try value.decode(EnvironmentDescriptor.self)
 }
 
 private func multiEnvironmentShell(

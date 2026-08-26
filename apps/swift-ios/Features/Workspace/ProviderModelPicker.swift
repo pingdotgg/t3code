@@ -13,6 +13,7 @@ public struct ProviderModelPicker: View {
     let isLoading: Bool
     let threadSelection: FeatureSelection?
     let materializesDefaultSelection: Bool
+    private let onPresentationChange: ((Bool) -> Void)?
 
     @State private var isPresented = false
 
@@ -22,7 +23,8 @@ public struct ProviderModelPicker: View {
         style: Style = .row,
         isLoading: Bool = false,
         threadSelection: FeatureSelection? = nil,
-        materializesDefaultSelection: Bool = true
+        materializesDefaultSelection: Bool = true,
+        onPresentationChange: ((Bool) -> Void)? = nil
     ) {
         self.providers = providers
         normalizedProviders = ProviderModelCatalogNormalizer.normalized(providers)
@@ -31,10 +33,12 @@ public struct ProviderModelPicker: View {
         self.isLoading = isLoading
         self.threadSelection = threadSelection
         self.materializesDefaultSelection = materializesDefaultSelection
+        self.onPresentationChange = onPresentationChange
     }
 
     public var body: some View {
         Button {
+            onPresentationChange?(true)
             isPresented = true
         } label: {
             switch style {
@@ -56,6 +60,7 @@ public struct ProviderModelPicker: View {
                         .font(T3Typography.supportingStrong)
                         .foregroundStyle(T3Colors.textTertiary)
                 }
+                .frame(minHeight: T3Metrics.minimumTapTarget)
                 .contentShape(Rectangle())
             case .compact:
                 HStack(spacing: 5) {
@@ -69,13 +74,16 @@ public struct ProviderModelPicker: View {
                 }
                 .font(T3Typography.supportingStrong)
                 .foregroundStyle(T3Colors.textSecondary)
+                .compositingGroup()
+                .frame(minHeight: T3Metrics.minimumTapTarget)
                 .contentShape(Rectangle())
             }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Choose model")
         .accessibilityValue(selectionLabel)
-        .sheet(isPresented: $isPresented) {
+        .accessibilityIdentifier("model-picker")
+        .sheet(isPresented: $isPresented, onDismiss: { onPresentationChange?(false) }) {
             ModelPickerSheet(
                 providers: normalizedProviders,
                 selection: $selection,
@@ -126,7 +134,7 @@ public struct ProviderModelPicker: View {
 
     private var selectionLabel: String {
         guard let selectedOption else {
-            return "Choose model"
+            return unavailableSelectionLabel
         }
         let base = "\(selectedOption.provider.name) · \(selectedOption.model.name)"
         guard let resolvedSelection,
@@ -141,9 +149,19 @@ public struct ProviderModelPicker: View {
 
     private var compactModelName: String {
         guard let selectedOption else {
-            return "Choose model"
+            return unavailableSelectionLabel
         }
         return selectedOption.model.name
+    }
+
+    private var unavailableSelectionLabel: String {
+        if isLoading { return "Loading models" }
+        if normalizedProviders.isEmpty { return "No providers" }
+        if !normalizedProviders.contains(where: \.isAvailable) { return "Providers offline" }
+        if !normalizedProviders.contains(where: { $0.isAvailable && !$0.models.isEmpty }) {
+            return "No models"
+        }
+        return "Choose model"
     }
 
     @ViewBuilder
@@ -184,7 +202,10 @@ private struct ModelPickerSheet: View {
             Group {
                 if isLoading, availableModelCount == 0 {
                     VStack(spacing: 12) {
-                        ProgressView()
+                        Image(systemName: "cpu")
+                            .font(.title2)
+                            .foregroundStyle(T3Colors.textTertiary)
+                            .accessibilityHidden(true)
                         Text("Loading models")
                             .font(T3Typography.control)
                             .foregroundStyle(T3Colors.textSecondary)
@@ -192,9 +213,9 @@ private struct ModelPickerSheet: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if availableModelCount == 0 {
                     ContentUnavailableView(
-                        "No models available",
-                        systemImage: "cpu",
-                        description: Text("Check the providers enabled on this environment.")
+                        emptyStateTitle,
+                        systemImage: emptyStateSymbol,
+                        description: Text(emptyStateMessage)
                     )
                 } else {
                     modelList
@@ -231,11 +252,12 @@ private struct ModelPickerSheet: View {
     private var modelList: some View {
         let catalog = cachedCatalog
         let sections = ProviderModelDisplaySections(catalog: catalog)
+        let isSearching = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return List {
             if modelChangesAreLocked {
                 Section {
                     Label(
-                        "This provider fixes the model when a task starts.",
+                        "This task cannot change models.",
                         systemImage: "lock"
                     )
                     .font(T3Typography.supporting)
@@ -243,44 +265,69 @@ private struct ModelPickerSheet: View {
                 }
             }
 
-            if !sections.favorites.isEmpty {
-                Section("Favorites") {
-                    ForEach(sections.favorites) { option in
-                        modelRow(option)
-                    }
+            if isSearching {
+                ForEach(catalog.all) { option in
+                    modelRow(
+                        option,
+                        showsProvider: true,
+                        disambiguatesModel: sections.disambiguatedModelIDs.contains(option.id)
+                    )
                 }
-            }
-
-            if !sections.recents.isEmpty {
-                Section("Recent") {
-                    ForEach(sections.recents) { option in
-                        modelRow(option)
-                    }
-                }
-            }
-
-            ForEach(sections.currentProviderGroups, id: \.provider.id) { group in
-                Section(group.provider.name) {
-                    ForEach(group.models) { option in
-                        modelRow(option)
-                    }
-                }
-            }
-
-            if !sections.legacy.isEmpty {
-                Section {
-                    DisclosureGroup(isExpanded: $legacyModelsExpanded) {
-                        ForEach(sections.legacy) { option in
-                            modelRow(option)
+            } else {
+                if !sections.favorites.isEmpty {
+                    Section("Favorites") {
+                        ForEach(sections.favorites) { option in
+                            modelRow(
+                                option,
+                                showsProvider: true,
+                                disambiguatesModel: sections.disambiguatedModelIDs.contains(option.id)
+                            )
                         }
-                    } label: {
-                        HStack {
-                            Text("Legacy models")
-                                .font(T3Typography.control.weight(.semibold))
-                            Spacer()
-                            Text("\(sections.legacy.count)")
-                                .font(T3Typography.supporting.monospacedDigit())
-                                .foregroundStyle(T3Colors.textTertiary)
+                    }
+                }
+
+                if !sections.recents.isEmpty {
+                    Section("Recent") {
+                        ForEach(sections.recents) { option in
+                            modelRow(
+                                option,
+                                showsProvider: true,
+                                disambiguatesModel: sections.disambiguatedModelIDs.contains(option.id)
+                            )
+                        }
+                    }
+                }
+
+                ForEach(sections.currentProviderGroups, id: \.provider.id) { group in
+                    Section(group.provider.name) {
+                        ForEach(group.models) { option in
+                            modelRow(
+                                option,
+                                disambiguatesModel: sections.disambiguatedModelIDs.contains(option.id)
+                            )
+                        }
+                    }
+                }
+
+                if !sections.legacy.isEmpty {
+                    Section {
+                        DisclosureGroup(isExpanded: $legacyModelsExpanded) {
+                            ForEach(sections.legacy) { option in
+                                modelRow(
+                                    option,
+                                    showsProvider: true,
+                                    disambiguatesModel: sections.disambiguatedModelIDs.contains(option.id)
+                                )
+                            }
+                        } label: {
+                            HStack {
+                                Text("Legacy models")
+                                    .font(T3Typography.control.weight(.semibold))
+                                Spacer()
+                                Text("\(sections.legacy.count)")
+                                    .font(T3Typography.supporting.monospacedDigit())
+                                    .foregroundStyle(T3Colors.textTertiary)
+                            }
                         }
                     }
                 }
@@ -293,12 +340,28 @@ private struct ModelPickerSheet: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .scrollDismissesKeyboard(.interactively)
         .background(T3Colors.background)
-        .onChange(of: query) { _, value in
-            if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                legacyModelsExpanded = true
-            }
+    }
+
+    private var emptyStateTitle: String {
+        if providers.isEmpty { return "No providers" }
+        if !providers.contains(where: \.isAvailable) { return "Providers offline" }
+        return "No models available"
+    }
+
+    private var emptyStateSymbol: String {
+        providers.isEmpty || !providers.contains(where: \.isAvailable)
+            ? "wifi.slash"
+            : "cpu"
+    }
+
+    private var emptyStateMessage: String {
+        if providers.isEmpty { return "Connect an environment to see its models." }
+        if !providers.contains(where: \.isAvailable) {
+            return "Reconnect this environment to choose a model."
         }
+        return "This environment has no available models."
     }
 
     private var availableModelCount: Int {
@@ -309,39 +372,62 @@ private struct ModelPickerSheet: View {
             }
     }
 
-    private func modelRow(_ option: DailyUXModelOption) -> some View {
-        HStack(spacing: 10) {
+    private func modelRow(
+        _ option: DailyUXModelOption,
+        showsProvider: Bool = false,
+        disambiguatesModel: Bool = false
+    ) -> some View {
+        let isSelected = resolvedSelection?.providerID == option.provider.id
+            && resolvedSelection?.modelID == option.model.id
+        let isFavorite = favoriteIDs.contains(option.id)
+        return HStack(spacing: 10) {
             Button {
                 select(option)
             } label: {
                 ModelOptionLabel(
                     option: option,
-                    isSelected: resolvedSelection?.providerID == option.provider.id
-                        && resolvedSelection?.modelID == option.model.id
+                    isSelected: isSelected,
+                    showsProvider: showsProvider,
+                    disambiguatesModel: disambiguatesModel
                 )
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(isLocked(option))
+            .opacity(isLocked(option) ? 0.36 : 1)
+            .accessibilityLabel(option.model.name)
+            .accessibilityValue(
+                disambiguatesModel
+                    ? "\(option.provider.name), \(option.model.id)"
+                    : option.provider.name
+            )
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+            .accessibilityHint(
+                isLocked(option)
+                    ? "This task cannot change models."
+                    : option.model.options.isEmpty
+                        ? "Use this model."
+                        : "Configure and use this model."
+            )
 
             Button {
                 toggleFavorite(option.id)
             } label: {
-                Image(systemName: favoriteIDs.contains(option.id) ? "star.fill" : "star")
+                Image(systemName: isFavorite ? "star.fill" : "star")
                     .font(.system(size: 15))
                     .foregroundStyle(
-                        favoriteIDs.contains(option.id)
-                            ? T3Colors.warning
-                            : T3Colors.textTertiary
+                        isFavorite ? T3Colors.warning : T3Colors.textTertiary
                     )
-                    .frame(width: 34, height: 34)
+                    .frame(
+                        width: T3Metrics.minimumTapTarget,
+                        height: T3Metrics.minimumTapTarget
+                    )
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
-            .accessibilityLabel(
-                favoriteIDs.contains(option.id) ? "Remove favorite" : "Add favorite"
-            )
+            .accessibilityLabel(isFavorite ? "Remove from favorites" : "Add to favorites")
+            .accessibilityValue(option.model.name)
         }
-        .disabled(isLocked(option))
-        .opacity(isLocked(option) ? 0.36 : 1)
         .listRowBackground(T3Colors.background)
     }
 
@@ -459,14 +545,39 @@ private final class ModelPickerCatalogCache {
         if self.key == key, let value { return value }
 
         let value = DailyUXModelCatalog(
-            providers: providers,
-            query: query,
+            providers: ProviderModelSearch.matching(providers, query: query),
+            query: "",
             favoriteIDs: Set(favoriteStorage.split(separator: "\n").map(String.init)),
             recentIDs: recentStorage.split(separator: "\n").map(String.init)
         )
         self.key = key
         self.value = value
         return value
+    }
+}
+
+enum ProviderModelSearch {
+    static func matching(_ providers: [FeatureProvider], query: String) -> [FeatureProvider] {
+        let terms = query.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        guard !terms.isEmpty else { return providers }
+
+        return providers.compactMap { provider in
+            var matchingProvider = provider
+            matchingProvider.models = provider.models.filter { model in
+                let searchableFields = [
+                    provider.name,
+                    provider.id,
+                    model.name,
+                    model.id,
+                    model.detail ?? "",
+                    model.supportsImages ? "images vision" : "",
+                ]
+                return terms.allSatisfy { term in
+                    searchableFields.contains { $0.localizedCaseInsensitiveContains(term) }
+                }
+            }
+            return matchingProvider.models.isEmpty ? nil : matchingProvider
+        }
     }
 }
 
@@ -627,6 +738,7 @@ struct ProviderModelDisplaySections {
         models: [DailyUXModelOption]
     )]
     let legacy: [DailyUXModelOption]
+    let disambiguatedModelIDs: Set<String>
 
     init(catalog: DailyUXModelCatalog) {
         let currentIDs = Set(catalog.all.compactMap { option in
@@ -636,7 +748,10 @@ struct ProviderModelDisplaySections {
             ) ? option.id : nil
         })
         favorites = catalog.favorites.filter { currentIDs.contains($0.id) }
-        recents = catalog.recents.filter { currentIDs.contains($0.id) }
+        var seenRecentIDs = Set<String>()
+        recents = catalog.recents.filter {
+            currentIDs.contains($0.id) && seenRecentIDs.insert($0.id).inserted
+        }
         let promoted = Set((favorites + recents).map(\.id))
         currentProviderGroups = catalog.providerGroups.compactMap { group in
             let models = group.models.filter {
@@ -645,6 +760,25 @@ struct ProviderModelDisplaySections {
             return models.isEmpty ? nil : (group.provider, models)
         }
         legacy = catalog.all.filter { !currentIDs.contains($0.id) }
+
+        let matchingLabels = Dictionary(grouping: catalog.all) { option in
+            ModelPresentationKey(
+                providerName: option.provider.name,
+                name: option.model.name,
+                detail: option.model.detail ?? option.model.id
+            )
+        }
+        disambiguatedModelIDs = Set(
+            matchingLabels.values
+                .filter { $0.count > 1 }
+                .flatMap { $0.map(\.id) }
+        )
+    }
+
+    private struct ModelPresentationKey: Hashable {
+        let providerName: String
+        let name: String
+        let detail: String
     }
 }
 
@@ -797,6 +931,8 @@ enum ProviderModelConfiguration {
 private struct ModelOptionLabel: View {
     let option: DailyUXModelOption
     let isSelected: Bool
+    var showsProvider = false
+    var disambiguatesModel = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -811,7 +947,7 @@ private struct ModelOptionLabel: View {
                         capability("Images", icon: "photo")
                     }
                 }
-                Text(option.model.detail ?? option.model.id)
+                Text(modelDetail)
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.textSecondary)
                     .lineLimit(1)
@@ -825,6 +961,13 @@ private struct ModelOptionLabel: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
+    }
+
+    private var modelDetail: String {
+        let detail = disambiguatesModel
+            ? option.model.id
+            : option.model.detail ?? option.model.id
+        return showsProvider ? "\(option.provider.name) · \(detail)" : detail
     }
 
     private var providerMark: some View {

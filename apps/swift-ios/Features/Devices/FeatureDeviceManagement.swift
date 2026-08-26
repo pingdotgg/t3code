@@ -107,9 +107,14 @@ public struct FeatureDeviceSession: Identifiable, Sendable, Equatable, Codable {
 /// for environments that do not grant the access:read/access:write scopes.
 @MainActor
 public protocol FeatureDeviceManaging: AnyObject {
+    var managesServerSessions: Bool { get }
     func loadDeviceSessions() async throws -> [FeatureDeviceSession]
     func revokeDeviceSession(id: String) async throws
     func revokeOtherDeviceSessions() async throws
+}
+
+extension FeatureDeviceManaging {
+    var managesServerSessions: Bool { true }
 }
 
 @MainActor
