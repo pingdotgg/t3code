@@ -281,6 +281,25 @@ export const ShellThemeState = Schema.Struct({
 });
 export type ShellThemeState = typeof ShellThemeState.Type;
 
+export const ShellNotification = Schema.Struct({
+  id: Schema.String,
+  type: Schema.Literals(["error", "info", "loading", "success", "warning"]),
+  title: Schema.String,
+  description: Schema.NullOr(Schema.String),
+  /** Bumped when the page updates the toast in place. */
+  updateKey: Schema.Number,
+  actions: Schema.Array(
+    Schema.Struct({ id: Schema.String, label: Schema.String, primary: Schema.Boolean }),
+  ),
+});
+export type ShellNotification = typeof ShellNotification.Type;
+
+/** Published under the `notifications` key: the page's stacked toasts, newest first. */
+export const ShellNotificationsState = Schema.Struct({
+  items: Schema.Array(ShellNotification),
+});
+export type ShellNotificationsState = typeof ShellNotificationsState.Type;
+
 /** Actions the shell's chrome dispatches; `type` is the action name on the wire. */
 export const ShellAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("thread.open"), key: Schema.String }),
@@ -356,6 +375,12 @@ export const ShellAction = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("settings.search"), query: Schema.String }),
   Schema.Struct({ type: Schema.Literal("settings.back") }),
+  Schema.Struct({
+    type: Schema.Literal("notification.action"),
+    id: Schema.String,
+    actionId: Schema.String,
+  }),
+  Schema.Struct({ type: Schema.Literal("notification.dismiss"), id: Schema.String }),
 ]);
 export type ShellAction = typeof ShellAction.Type;
 
