@@ -1,0 +1,5 @@
+module T3.Bricks
+DefaultShell 1.0 DefaultShell.qml
+ShellErrorOverlay 1.0 ShellErrorOverlay.qml
+TitleBar 1.0 TitleBar.qml
+WebSurface 1.0 WebSurface.qml

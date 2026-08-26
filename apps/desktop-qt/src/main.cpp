@@ -1,0 +1,134 @@
+#include <QCommandLineParser>
+#include <QDir>
+#include <QGuiApplication>
+#include <QProcessEnvironment>
+#include <QStandardPaths>
+#include <QTimer>
+#include <QtLogging>
+#include <QtWebEngineQuick/qtwebenginequickglobal.h>
+
+#include "BackendProcess.h"
+#include "ShellBridge.h"
+#include "ShellRuntime.h"
+#include "ThemeStore.h"
+
+namespace {
+
+// One dotfile location on every platform: ricers carry ~/.config across
+// machines and expect the app to follow.
+QString resolveConfigDir(const QString& override) {
+  if (!override.isEmpty()) {
+    return QDir(override).absolutePath();
+  }
+  const auto env = QProcessEnvironment::systemEnvironment();
+  const QString fromEnv = env.value(QStringLiteral("T3CODE_CONFIG_DIR"));
+  if (!fromEnv.isEmpty()) {
+    return QDir(fromEnv).absolutePath();
+  }
+  const QString xdg = env.value(QStringLiteral("XDG_CONFIG_HOME"));
+  const QString base = xdg.isEmpty() ? QDir::home().filePath(QStringLiteral(".config")) : xdg;
+  return QDir(base).filePath(QStringLiteral("t3code"));
+}
+
+QString resolveQmlSourceDir(const QString& override) {
+  if (!override.isNull()) {
+    return override;
+  }
+  const QString fromEnv =
+      QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_QML_DIR"));
+  if (!fromEnv.isEmpty()) {
+    return fromEnv;
+  }
+  return QStringLiteral(T3_QML_SOURCE_DIR);
+}
+
+}  // namespace
+
+int main(int argc, char* argv[]) {
+  QCoreApplication::setOrganizationName(QStringLiteral("T3 Tools"));
+  QCoreApplication::setOrganizationDomain(QStringLiteral("t3.codes"));
+  QCoreApplication::setApplicationName(QStringLiteral("t3code"));
+  QCoreApplication::setApplicationVersion(QStringLiteral(T3_APP_VERSION));
+  // Stable app id so compositor rules (blur, opacity, workspace) can target it.
+  QGuiApplication::setDesktopFileName(QStringLiteral("t3code"));
+
+  QtWebEngineQuick::initialize();
+  QGuiApplication app(argc, argv);
+
+  QCommandLineParser parser;
+  parser.setApplicationDescription(QStringLiteral("T3 Code Qt shell"));
+  parser.addHelpOption();
+  parser.addVersionOption();
+  const QCommandLineOption urlOption(
+      QStringLiteral("url"),
+      QStringLiteral("Load this URL instead of spawning the desktop host (dev attach mode)."),
+      QStringLiteral("url"));
+  const QCommandLineOption configDirOption(
+      QStringLiteral("config-dir"),
+      QStringLiteral("Directory holding shell.qml, theme.json and qml/ (default ~/.config/t3code)."),
+      QStringLiteral("dir"));
+  const QCommandLineOption qmlDirOption(
+      QStringLiteral("qml-dir"),
+      QStringLiteral("Load the built-in bricks from this directory instead of the binary."),
+      QStringLiteral("dir"));
+  const QCommandLineOption hostEntryOption(
+      QStringLiteral("host-entry"), QStringLiteral("Path to the Node desktop host entry."),
+      QStringLiteral("file"), QStringLiteral(T3_HOST_ENTRY));
+  const QCommandLineOption nodeOption(
+      QStringLiteral("node"), QStringLiteral("Node executable used to run the desktop host."),
+      QStringLiteral("path"));
+  const QCommandLineOption screenshotOption(
+      QStringLiteral("screenshot"),
+      QStringLiteral("Write a PNG of the window once the page has loaded, then quit."),
+      QStringLiteral("file"));
+  parser.addOptions(
+      {urlOption, configDirOption, qmlDirOption, hostEntryOption, nodeOption, screenshotOption});
+  parser.process(app);
+
+  const QString configDir = resolveConfigDir(parser.value(configDirOption));
+  const QString qmlSourceDir =
+      resolveQmlSourceDir(parser.isSet(qmlDirOption) ? parser.value(qmlDirOption) : QString());
+  qInfo().noquote() << "[shell] config dir:" << configDir;
+  if (!qmlSourceDir.isEmpty()) {
+    qInfo().noquote() << "[shell] bricks from disk:" << qmlSourceDir;
+  }
+
+  ShellBridge bridge;
+  ThemeStore theme(configDir);
+  ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
+
+  BackendProcess::Options backendOptions;
+  const auto env = QProcessEnvironment::systemEnvironment();
+  backendOptions.nodeExecutable = parser.isSet(nodeOption)
+                                      ? parser.value(nodeOption)
+                                      : env.value(QStringLiteral("T3CODE_NODE"), QStringLiteral("node"));
+  backendOptions.hostEntry = parser.value(hostEntryOption);
+  backendOptions.hostArguments = parser.positionalArguments();
+  BackendProcess backend(backendOptions);
+  QObject::connect(&backend, &BackendProcess::ready, &bridge, &ShellBridge::setPageUrl);
+  QObject::connect(&backend, &BackendProcess::failed, &bridge, [&bridge](const QString& message) {
+    qCritical().noquote() << "[shell]" << message;
+    bridge.publish(QStringLiteral("backendError"), message);
+  });
+  QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &BackendProcess::stop);
+
+  if (parser.isSet(urlOption)) {
+    bridge.setPageUrl(QUrl::fromUserInput(parser.value(urlOption)));
+  } else {
+    backend.start();
+  }
+
+  if (parser.isSet(screenshotOption)) {
+    const QString target = parser.value(screenshotOption);
+    QObject::connect(&bridge, &ShellBridge::pageLoaded, &runtime, [&runtime, &app, target](bool) {
+      // Let the page paint a couple of frames before grabbing.
+      QTimer::singleShot(1500, &runtime, [&runtime, &app, target] {
+        const bool ok = runtime.captureWindow(target);
+        app.exit(ok ? 0 : 2);
+      });
+    });
+  }
+
+  runtime.start();
+  return app.exec();
+}
