@@ -156,6 +156,24 @@ function RootRouteView() {
     );
   }
 
+  // The shell's embed documents skip the app chrome but keep the providers
+  // the panel content relies on (toasts, confirms, appearance sync, events).
+  if (pathname.startsWith("/embed/")) {
+    return (
+      <ToastProvider>
+        <AnchoredToastProvider>
+          <DocumentTitleSync />
+          <ContrastAppearanceSync />
+          <GlassAppearanceSync />
+          <FontAppearanceSync />
+          <ConfirmDialogHost />
+          {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+          <Outlet />
+        </AnchoredToastProvider>
+      </ToastProvider>
+    );
+  }
+
   const appShell = (
     <CommandPalette>
       <AppSidebarLayout>
