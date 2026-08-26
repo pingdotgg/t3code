@@ -29,7 +29,6 @@ import {
 
 const PI_PRESENTATION = {
   displayName: "Pi",
-  badgeLabel: null,
   showInteractionModeToggle: false,
   requiresNewThreadForModelChange: false,
 } as const;

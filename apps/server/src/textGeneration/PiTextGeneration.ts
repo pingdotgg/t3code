@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -60,16 +61,16 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       { env: environment },
     ).pipe(
       Effect.mapError(
-        (cause) =>
+        (cause: unknown) =>
           new TextGenerationError({
             operation,
-            detail: cause.message,
+            detail: (cause as { message?: string })?.message ?? String(cause),
             cause,
           }),
       ),
     );
 
-    const result = yield* spawnAndCollect(
+    const resultOption = yield* spawnAndCollect(
       binaryPath,
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: environment,
@@ -77,23 +78,35 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         shell: spawnCommand.shell,
       }),
     ).pipe(
-      Effect.timeoutFail({
-        duration: PI_TIMEOUT_MS,
-        onTimeout: () =>
+      Effect.mapError((cause: unknown) => {
+        if (isTextGenerationError(cause)) return cause as TextGenerationError;
+        return new TextGenerationError({
+          operation,
+          detail: (cause as { message?: string })?.message ?? String(cause),
+          cause,
+        });
+      }),
+      Effect.timeoutOption(PI_TIMEOUT_MS),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+    const result = yield* Option.match(resultOption, {
+      onNone: () =>
+        Effect.fail(
           new TextGenerationError({
             operation,
             detail: `Pi text generation timed out after ${PI_TIMEOUT_MS}ms`,
           }),
-      }),
-      Effect.mapError((cause) => {
-        if (isTextGenerationError(cause)) return cause;
+        ),
+      onSome: (value) => Effect.succeed(value),
+    }).pipe(
+      Effect.mapError((cause: unknown) => {
+        if (isTextGenerationError(cause)) return cause as TextGenerationError;
         return new TextGenerationError({
           operation,
           detail: cause instanceof Error ? cause.message : String(cause),
           cause,
         });
       }),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
     if (result.code !== 0) {
