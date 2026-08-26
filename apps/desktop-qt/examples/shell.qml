@@ -31,10 +31,20 @@ Window {
                 Layout.preferredWidth: 260
             }
 
-            WebSurface {
+            ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                url: Shell.pageUrl
+                spacing: 0
+
+                WebSurface {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    url: Shell.pageUrl
+                }
+
+                Composer {
+                    Layout.fillWidth: true
+                }
             }
         }
 

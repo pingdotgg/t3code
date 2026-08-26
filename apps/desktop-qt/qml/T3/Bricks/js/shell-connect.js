@@ -37,6 +37,10 @@
     protocolVersion: 1,
     ready,
     publish: (key, value) => ready.then((shell) => shell.publish(key, value)),
-    onAction: (listener) => ready.then((shell) => shell.actionRequested.connect(listener)),
+    onAction: (listener) =>
+      ready.then((shell) => {
+        shell.actionRequested.connect(listener);
+        return () => shell.actionRequested.disconnect(listener);
+      }),
   });
 })();

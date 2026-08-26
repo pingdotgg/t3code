@@ -1,4 +1,5 @@
 module T3.Bricks
+Composer 1.0 Composer.qml
 DefaultShell 1.0 DefaultShell.qml
 ShellErrorOverlay 1.0 ShellErrorOverlay.qml
 Sidebar 1.0 Sidebar.qml
