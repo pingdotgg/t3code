@@ -3,7 +3,6 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
@@ -22,7 +21,13 @@ import {
 } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 
-const isEnvironmentRpcUnavailableError = Schema.is(EnvironmentRpcUnavailableError);
+// `catchTags` preserves unmatched errors at runtime; this signature keeps that
+// generic remainder while removing the one known connection-handoff error.
+const waitForEnvironmentConnectionSignal = Effect.catchTags({
+  EnvironmentRpcUnavailableError: () => Effect.never,
+}) as <A, E, R>(
+  effect: Effect.Effect<A, E | EnvironmentRpcUnavailableError, R>,
+) => Effect.Effect<A, E, R>;
 
 interface EnvironmentAtomOptions<Input, A, E, R> {
   readonly label: string;
@@ -550,7 +555,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
                   // first, keep it pending until the signal selects the
                   // reconnecting or terminal branch instead of flashing a
                   // transient unavailable failure.
-                  Effect.catchIf(isEnvironmentRpcUnavailableError, () => Effect.never),
+                  waitForEnvironmentConnectionSignal,
                 )
               : Effect.never;
           case "connecting":
