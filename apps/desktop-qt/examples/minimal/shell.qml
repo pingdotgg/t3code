@@ -3,7 +3,7 @@ import QtQuick.Layouts
 import T3.Shell
 import T3.Bricks
 
-// Copy to ~/.config/t3code/shell.qml and edit; the app reloads on save.
+// Copy to ~/.t3/shell/shell.qml and edit; the app reloads on save.
 // Bricks come from T3.Bricks, data from the T3.Shell singletons
 // (Shell.state, Shell.dispatch, Theme.*, Runtime.*).
 Window {

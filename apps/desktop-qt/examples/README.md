@@ -6,7 +6,7 @@ shell-only `window`, `radius` and `fonts` keys). Copy one into your config dir
 and the app reloads on save:
 
 ```sh
-cp examples/glass/*.* ~/.config/t3code/
+cp examples/glass/*.* ~/.t3/shell/
 ```
 
 | Example     | Idea                                                                |

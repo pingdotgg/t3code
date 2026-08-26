@@ -3,7 +3,7 @@ import QtQuick.Layouts
 import T3.Shell
 import T3.Bricks
 
-// Built-in layout. A user's ~/.config/t3code/shell.qml replaces this file
+// Built-in layout. A user's ~/.t3/shell/shell.qml replaces this file
 // wholesale; it is also the fallback when that file fails to load.
 Window {
     id: root

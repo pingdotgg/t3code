@@ -4,7 +4,7 @@
 compiled Qt 6 / QML binary (`t3code-qt`) that hosts the web app in a
 `WebEngineView` and makes everything around the web view - window, chrome,
 layout, colours - a set of QML "bricks" a user can rearrange and restyle from
-`~/.config/t3code/`. It coexists with `apps/desktop`; nothing in `apps/web` or
+`~/.t3/shell/`. It coexists with `apps/desktop`; nothing in `apps/web` or
 `apps/server` may become Qt-specific.
 
 ## Process model
@@ -84,12 +84,13 @@ CLI: `--url`, `--config-dir`, `--qml-dir`, `--host-entry`, `--node`, `--screensh
 (grab the window after the page loads, then quit — PR evidence without a
 screen-recording permission), `--action name[=json]` (repeatable; dispatch shell
 actions after the page loads, e.g. `--action rightPanel.toggle`); env
-`T3CODE_CONFIG_DIR`, `T3CODE_QML_DIR`, `T3CODE_NODE`, `T3CODE_SERVER_ENTRY`.
+`T3CODE_HOME`, `T3CODE_QML_DIR`, `T3CODE_NODE`, `T3CODE_SERVER_ENTRY`.
 
 ## Ricing contract
 
-Config dir: `~/.config/t3code/` on every platform (`$XDG_CONFIG_HOME/t3code`,
-or `T3CODE_CONFIG_DIR`). Dotfiles should be portable, so no per-OS paths.
+Config dir: `$T3CODE_HOME/shell/`, so `~/.t3/shell/` by default on every
+platform and `<worktree>/.t3/shell/` for a sandboxed dev run; `--config-dir`
+overrides it.
 
 ### `theme.json`
 
@@ -133,7 +134,7 @@ the Settings → Theme editor exports it) plus a shell-only `window` section:
 
 ### `shell.qml`
 
-If `~/.config/t3code/shell.qml` exists it is loaded as the root instead of the
+If `~/.t3/shell/shell.qml` exists it is loaded as the root instead of the
 built-in `DefaultShell.qml`. It composes bricks from `T3.Bricks` and reads the
 `T3.Shell` singletons:
 
@@ -143,7 +144,7 @@ built-in `DefaultShell.qml`. It composes bricks from `T3.Bricks` and reads the
 - `Runtime.configDir`, `Runtime.userShellPath`, `Runtime.usingUserShell`,
   `Runtime.lastError`, `Runtime.reload()`.
 
-Extra QML modules can live under `~/.config/t3code/qml/` (it is on the import
+Extra QML modules can live under `~/.t3/shell/qml/` (it is on the import
 path). If `shell.qml` fails to load, the default shell takes over with
 `ShellErrorOverlay` showing the error; a broken rice never locks the app.
 

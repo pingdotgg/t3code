@@ -15,20 +15,15 @@
 
 namespace {
 
-// One dotfile location on every platform: ricers carry ~/.config across
-// machines and expect the app to follow.
+// The rice lives inside T3 home next to the rest of the app's state, so a
+// sandboxed T3CODE_HOME brings its own shell config too.
 QString resolveConfigDir(const QString& override) {
   if (!override.isEmpty()) {
     return QDir(override).absolutePath();
   }
-  const auto env = QProcessEnvironment::systemEnvironment();
-  const QString fromEnv = env.value(QStringLiteral("T3CODE_CONFIG_DIR"));
-  if (!fromEnv.isEmpty()) {
-    return QDir(fromEnv).absolutePath();
-  }
-  const QString xdg = env.value(QStringLiteral("XDG_CONFIG_HOME"));
-  const QString base = xdg.isEmpty() ? QDir::home().filePath(QStringLiteral(".config")) : xdg;
-  return QDir(base).filePath(QStringLiteral("t3code"));
+  const QString home = QProcessEnvironment::systemEnvironment().value(QStringLiteral("T3CODE_HOME"));
+  const QString base = home.isEmpty() ? QDir::home().filePath(QStringLiteral(".t3")) : home;
+  return QDir(base).absoluteFilePath(QStringLiteral("shell"));
 }
 
 QString resolveQmlSourceDir(const QString& override) {
@@ -71,7 +66,7 @@ int main(int argc, char* argv[]) {
       QStringLiteral("url"));
   const QCommandLineOption configDirOption(
       QStringLiteral("config-dir"),
-      QStringLiteral("Directory holding shell.qml, theme.json and qml/ (default ~/.config/t3code)."),
+      QStringLiteral("Directory holding shell.qml, theme.json and qml/ (default $T3CODE_HOME/shell, i.e. ~/.t3/shell)."),
       QStringLiteral("dir"));
   const QCommandLineOption qmlDirOption(
       QStringLiteral("qml-dir"),
