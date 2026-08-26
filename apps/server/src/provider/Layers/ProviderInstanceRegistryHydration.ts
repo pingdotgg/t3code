@@ -118,18 +118,24 @@ const SettingsWatcherLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const mutator = yield* ProviderInstanceRegistryMutator;
     const serverSettings = yield* ServerSettingsService;
-    yield* serverSettings.streamChanges.pipe(
-      Stream.runForEach((next) =>
-        mutator
-          .reconcile(deriveProviderInstanceConfigMap(next))
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
-            ),
+    // Acquire the subscription synchronously before forking the consumer
+    // so a settings publish between layer build and stream start is not
+    // dropped. Mirrors the fix in ProviderRegistryLive where
+    // `instanceRegistry.subscribeChanges` is acquired before forking
+    // `syncLiveSources` — `Stream.fromPubSub` defers subscribe to stream
+    // start and `forkScoped` only schedules the fiber, so a rapid
+    // `updateSettings` publish would otherwise be lost and a binaryPath
+    // change would never trigger a re-probe.
+    const changes = yield* serverSettings.subscribeChanges;
+    yield* Stream.runForEach(changes, (next) =>
+      mutator
+        .reconcile(deriveProviderInstanceConfigMap(next))
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
           ),
-      ),
-      Effect.forkScoped,
-    );
+        ),
+    ).pipe(Effect.forkScoped);
   }),
 );
 

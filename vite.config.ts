@@ -16,6 +16,8 @@ export default defineConfig({
       "**/dist/**",
       "**/dist-electron/**",
       "**/.{idea,git,cache,output,temp}/**",
+      "**/.github/**",
+      "**/*.cjs",
     ],
     hookTimeout: 60_000,
     testTimeout: 60_000,
