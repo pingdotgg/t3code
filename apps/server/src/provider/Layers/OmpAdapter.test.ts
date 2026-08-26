@@ -718,11 +718,27 @@ ompAdapterTestLayer("OmpAdapterLive", (it) => {
         cwd: process.cwd(),
         runtimeMode: "full-access",
       });
+      const failedTurnFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "turn.completed" &&
+            event.threadId === threadId &&
+            event.payload.state === "failed",
+        ),
+        Stream.take(1),
+        Stream.runHead,
+        Effect.forkChild,
+      );
 
       const result = yield* adapter
         .sendTurn({ threadId, input: "fail", attachments: [] })
         .pipe(Effect.result);
       assert.equal(result._tag, "Failure");
+      const failedTurn = yield* Fiber.join(failedTurnFiber);
+      assert.equal(failedTurn._tag, "Some");
+      if (failedTurn._tag === "Some" && failedTurn.value.type === "turn.completed") {
+        assert.equal(failedTurn.value.payload.errorMessage, "Oh My Pi ACP prompt failed.");
+      }
       const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
       assert.equal(session?.status, "ready");
       assert.equal(session?.activeTurnId, undefined);

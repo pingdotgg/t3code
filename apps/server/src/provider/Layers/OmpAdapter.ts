@@ -778,13 +778,16 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
                 ),
               ),
               Effect.catchCause((cause) =>
-                withThreadLock(
-                  ctx.threadId,
-                  handleUnexpectedExit(
-                    ctx,
-                    `Failed to observe OMP ACP process exit: ${Cause.pretty(cause)}`,
-                  ),
-                ),
+                Effect.gen(function* () {
+                  yield* Effect.logError("Failed to observe OMP ACP process exit.", {
+                    cause: Cause.pretty(cause),
+                    threadId: ctx.threadId,
+                  });
+                  yield* withThreadLock(
+                    ctx.threadId,
+                    handleUnexpectedExit(ctx, "Failed to observe OMP ACP process exit."),
+                  );
+                }),
               ),
               Effect.catchCause((cause) =>
                 Effect.logError("Failed to settle an exited OMP ACP process.", {
@@ -922,6 +925,10 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
             if (ctx.stopped) {
               return yield* Effect.interrupt;
             }
+            yield* Effect.logError("Oh My Pi ACP prompt failed.", {
+              cause: Cause.pretty(promptExit.cause),
+              threadId: input.threadId,
+            });
             const ownsActiveTurn =
               ctx.activeTurnId === turnId && ctx.session.activeTurnId === turnId && !ctx.stopped;
             if (ownsActiveTurn) {
@@ -940,7 +947,7 @@ export function makeOmpAdapter(ompSettings: OmpSettings, options?: OmpAdapterLiv
                 turnId,
                 payload: {
                   state: "failed",
-                  errorMessage: Cause.pretty(promptExit.cause),
+                  errorMessage: "Oh My Pi ACP prompt failed.",
                 },
               });
             }
