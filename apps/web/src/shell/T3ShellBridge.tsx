@@ -143,68 +143,79 @@ export function T3ShellBridge() {
   latest.current = { projectGroups, router, handleNewThread };
   useEffect(() => {
     if (!shell) return;
-    void shell.onAction((type, payload) => {
-      const candidate = {
-        ...(typeof payload === "object" && payload !== null ? payload : {}),
-        type,
-      };
-      if (!isShellAction(candidate)) return;
-      const {
-        projectGroups: groups,
-        router: currentRouter,
-        handleNewThread: newThread,
-      } = latest.current;
-      switch (candidate.type) {
-        case "thread.open": {
-          const threadRef = parseScopedThreadKey(candidate.key);
-          if (threadRef === null) return;
-          void currentRouter.navigate({
-            to: "/$environmentId/$threadId",
-            params: buildThreadRouteParams(threadRef),
-          });
-          return;
-        }
-        case "draft.open":
-          void currentRouter.navigate({
-            to: "/draft/$draftId",
-            params: { draftId: candidate.draftId as never },
-          });
-          return;
-        case "thread.new": {
-          const group =
-            (candidate.projectKey === undefined
-              ? groups[0]
-              : groups.find((item) => item.projectKey === candidate.projectKey)) ?? groups[0];
-          if (group === undefined) {
-            openCommandPalette({ open: "add-project" });
+    let disposed = false;
+    let unsubscribe: (() => void) | null = null;
+    void shell
+      .onAction((type, payload) => {
+        const candidate = {
+          ...(typeof payload === "object" && payload !== null ? payload : {}),
+          type,
+        };
+        if (!isShellAction(candidate)) return;
+        const {
+          projectGroups: groups,
+          router: currentRouter,
+          handleNewThread: newThread,
+        } = latest.current;
+        switch (candidate.type) {
+          case "thread.open": {
+            const threadRef = parseScopedThreadKey(candidate.key);
+            if (threadRef === null) return;
+            void currentRouter.navigate({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(threadRef),
+            });
             return;
           }
-          void newThread(scopeProjectRef(group.environmentId, group.id));
-          return;
+          case "draft.open":
+            void currentRouter.navigate({
+              to: "/draft/$draftId",
+              params: { draftId: candidate.draftId as never },
+            });
+            return;
+          case "thread.new": {
+            const group =
+              (candidate.projectKey === undefined
+                ? groups[0]
+                : groups.find((item) => item.projectKey === candidate.projectKey)) ?? groups[0];
+            if (group === undefined) {
+              openCommandPalette({ open: "add-project" });
+              return;
+            }
+            void newThread(scopeProjectRef(group.environmentId, group.id));
+            return;
+          }
+          case "sidebar.scope":
+            setScopeProjectKey(candidate.projectKey);
+            return;
+          case "project.add":
+            openCommandPalette({ open: "add-project" });
+            return;
+          case "palette.open":
+            openCommandPalette({});
+            return;
+          case "settings.open":
+            void currentRouter.navigate({ to: "/settings" });
+            return;
+          case "pullRequests.open":
+            void currentRouter.navigate({
+              to: "/pull-requests",
+              search: { involvement: "all", state: "open" },
+            });
+            return;
+          case "usage.open":
+            void currentRouter.navigate({ to: "/usage" });
+            return;
         }
-        case "sidebar.scope":
-          setScopeProjectKey(candidate.projectKey);
-          return;
-        case "project.add":
-          openCommandPalette({ open: "add-project" });
-          return;
-        case "palette.open":
-          openCommandPalette({});
-          return;
-        case "settings.open":
-          void currentRouter.navigate({ to: "/settings" });
-          return;
-        case "pullRequests.open":
-          void currentRouter.navigate({
-            to: "/pull-requests",
-            search: { involvement: "all", state: "open" },
-          });
-          return;
-        case "usage.open":
-          void currentRouter.navigate({ to: "/usage" });
-          return;
-      }
-    });
+      })
+      .then((dispose) => {
+        if (disposed) dispose();
+        else unsubscribe = dispose;
+      });
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
   }, [shell]);
 
   return null;

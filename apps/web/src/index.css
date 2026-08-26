@@ -56,7 +56,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-new(t3-mobil
   }
 }
 
-html[data-mobile-composer-route-transition="true"]::view-transition-group(t3-mobile-draft-headline) {
+html[data-mobile-composer-route-transition="true"]::view-transition-group(
+    t3-mobile-draft-headline
+  ) {
   animation-duration: 130ms;
 }
 
@@ -813,6 +815,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     outline: none;
   }
 
+  /* Hosted by the Qt shell with nothing left to show, the composer frame
+     collapses so only the branch strip below it remains. */
+  [data-chat-composer-shell-empty="true"] {
+    display: none;
+  }
   .settings-slider {
     --settings-slider-progress: 0%;
     --settings-slider-fill-offset: 0.5rem;

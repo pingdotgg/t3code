@@ -796,6 +796,8 @@ import {
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { hasProviderSetup } from "./ProviderStatusBanner";
+import { isT3Shell } from "../../env";
+import { ShellComposerBridge } from "../../shell/ShellComposerBridge";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -856,6 +858,11 @@ const runtimeModeConfig: Record<
 };
 
 const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
+const shellRuntimeModes = runtimeModeOptions.map((mode) => ({
+  value: mode,
+  label: runtimeModeConfig[mode].label,
+  description: runtimeModeConfig[mode].description,
+}));
 const extendReplacementRangeForTrailingSpace = (
   text: string,
   rangeEnd: number,
@@ -4700,6 +4707,40 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   // Render
   // ------------------------------------------------------------------
+  const composerPlaceholder = isComposerApprovalState
+    ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
+    : activePendingProgress
+      ? "Type your own answer, or leave this blank to use the selected option"
+      : showPlanFollowUpPrompt && activeProposedPlan
+        ? "Add feedback to refine the plan, or leave this blank to implement it"
+        : projectSelectionRequired
+          ? "Choose a project above to start a thread"
+          : noProviderAvailable
+            ? "Enable a provider in Settings to send a message"
+            : phase === "disconnected"
+              ? DISCONNECTED_COMPOSER_PLACEHOLDER
+              : "Ask anything, @tag files/folders, $use skills, or / for commands";
+  // Hosted by the Qt shell, the prompt editor and footer are native bricks
+  // (ShellComposerBridge feeds them). The editor stays for approval and
+  // user-input flows, which type their answers through it.
+  const shellHosted = isT3Shell;
+  const hideEditorForShell =
+    shellHosted && !isComposerApprovalState && pendingUserInputs.length === 0;
+  // With the editor and footer native, the frame only earns its space when a
+  // banner, attachment, context or validation message is visible.
+  const shellFrameEmpty =
+    hideEditorForShell &&
+    composerImages.length === 0 &&
+    composerTerminalContexts.length === 0 &&
+    composerElementContexts.length === 0 &&
+    composerPreviewAnnotations.length === 0 &&
+    composerReviewComments.length === 0 &&
+    pendingApprovals.length === 0 &&
+    !showPlanFollowUpPrompt &&
+    activeTasksProgress === null &&
+    providerInputSubmissionError === null &&
+    composerSubmissionError === null;
+
   return (
     <form
       ref={composerFormRef}
@@ -4765,6 +4806,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }}
       className="mx-auto w-full min-w-0 max-w-3xl"
       data-chat-composer-form="true"
+      data-chat-composer-shell-empty={shellFrameEmpty ? "true" : undefined}
     >
       {composerControlsInStrip && restingControlsHost
         ? createPortal(
@@ -5382,6 +5424,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </div>
                 )}
 
+              {hideEditorForShell ? null : (
               <div
                 className={cn(
                   "relative",
@@ -5484,14 +5527,56 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </div>
                 ) : null}
               </div>
+              )}
             </div>
 
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
+            {shellHosted ? (
+              <ShellComposerBridge
+                target={composerDraftTarget}
+                routeKind={routeKind}
+                prompt={prompt}
+                promptRef={promptRef}
+                setPrompt={setPrompt}
+                placeholder={composerPlaceholder}
+                editorDisabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                hasSendableContent={composerSendState.hasSendableContent}
+                sendDisabledReason={sendDisabledReason}
+                phase={phase}
+                isSendBusy={isSendBusy}
+                isConnecting={isConnecting}
+                environmentUnavailable={environmentUnavailable !== null}
+                noProviderAvailable={noProviderAvailable}
+                projectSelectionRequired={projectSelectionRequired}
+                pendingApprovalCount={pendingApprovals.length}
+                pendingUserInputCount={pendingUserInputs.length}
+                showPlanFollowUpPrompt={showPlanFollowUpPrompt}
+                selectedInstanceId={selectedInstanceId}
+                selectedProvider={selectedProvider}
+                selectedModel={selectedModel}
+                selectedProviderModels={selectedProviderModels}
+                instanceEntries={providerInstanceEntries}
+                modelOptionsByInstance={modelOptionsByInstance}
+                modelOptions={composerModelOptions?.[selectedInstanceId]}
+                planModeEnabled={settings.planModeEnabled}
+                getModelDisabledReason={getModelDisabledReason}
+                onProviderModelSelect={onProviderModelSelect}
+                runtimeMode={runtimeMode}
+                runtimeModes={shellRuntimeModes}
+                interactionMode={interactionMode}
+                showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                onRuntimeModeChange={handleRuntimeModeChange}
+                onInteractionModeChange={handleInteractionModeChange}
+                onSend={onSend}
+                onInterrupt={onInterrupt}
+              />
+            ) : null}
+
             {/* Bottom toolbar */}
-            {isComposerCollapsedMobile || isComposerApprovalState ? null : (
+            {isComposerCollapsedMobile || isComposerApprovalState || shellHosted ? null : (
               <div
                 data-chat-composer-footer="true"
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
