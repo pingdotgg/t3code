@@ -17,6 +17,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
   type ProviderInstanceConfig,
+  ProviderInstanceConfig as ProviderInstanceConfigSchema,
   type ProviderInstanceEnvironmentVariable,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -292,6 +293,74 @@ function restoreUsedProviders(
   };
 }
 
+const decodeLenientJsonValueExit = Schema.decodeUnknownExit(fromLenientJson(Schema.Unknown));
+const decodeServerSettingsExit = Schema.decodeUnknownExit(ServerSettings);
+const decodeProviderInstanceConfigExit = Schema.decodeUnknownExit(ProviderInstanceConfigSchema);
+const decodeProviderInstanceIdExit = Schema.decodeUnknownExit(ProviderInstanceId);
+
+/**
+ * Drop the `providerInstances` entries that cannot decode, keeping the rest of
+ * the document.
+ *
+ * `providerInstances` is a `Schema.Record(ProviderInstanceId, ...)`, so one
+ * malformed key or a missing `driver` fails the *whole* settings decode — and a
+ * whole-document failure means every unrelated setting silently reverts to
+ * defaults. Hand-editing this map is a documented way to configure a second
+ * provider instance, so a typo there must not cost the user their keybindings,
+ * projects, and provider paths.
+ *
+ * Returns `undefined` when there is nothing to prune, so the caller does not
+ * retry a decode that is failing for some other reason.
+ */
+function pruneUndecodableProviderInstances(
+  document: unknown,
+): { readonly document: unknown; readonly droppedKeys: ReadonlyArray<string> } | undefined {
+  if (typeof document !== "object" || document === null) return undefined;
+  const record = document as Record<string, unknown>;
+  const instances = record["providerInstances"];
+  if (typeof instances !== "object" || instances === null) return undefined;
+
+  const kept: Record<string, unknown> = {};
+  const droppedKeys: string[] = [];
+  for (const [key, value] of Object.entries(instances as Record<string, unknown>)) {
+    // Decode rather than `Schema.is`: `ProviderInstanceId` trims on decode, so
+    // a key like `"  codex_work  "` is accepted by the Record but rejected by
+    // a type check on the raw string. Getting that wrong would drop a valid
+    // instance during salvage — the exact loss this function exists to prevent.
+    if (
+      decodeProviderInstanceIdExit(key)._tag === "Success" &&
+      decodeProviderInstanceConfigExit(value)._tag === "Success"
+    ) {
+      kept[key] = value;
+    } else {
+      droppedKeys.push(key);
+    }
+  }
+
+  if (droppedKeys.length === 0) return undefined;
+  return { document: { ...record, providerInstances: kept }, droppedKeys };
+}
+
+/**
+ * Re-decode a settings document after dropping the `providerInstances` entries
+ * that cannot decode. Returns `undefined` when there was nothing to drop, or
+ * when the document still fails for some other reason.
+ */
+function salvageSettingsWithoutMalformedInstances(
+  raw: string,
+): { readonly settings: ServerSettings; readonly droppedKeys: ReadonlyArray<string> } | undefined {
+  const parsed = decodeLenientJsonValueExit(raw);
+  if (parsed._tag !== "Success") return undefined;
+
+  const pruned = pruneUndecodableProviderInstances(parsed.value);
+  if (!pruned) return undefined;
+
+  const salvaged = decodeServerSettingsExit(pruned.document);
+  if (salvaged._tag !== "Success") return undefined;
+
+  return { settings: salvaged.value, droppedKeys: pruned.droppedKeys };
+}
+
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
   return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
     ? settings
@@ -410,6 +479,44 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  // Sibling of settings.json rather than a timestamped file: reloads happen on
+  // every watcher tick while the file is broken, and one recoverable copy is
+  // the useful outcome — not a directory full of them.
+  const quarantinePath = `${settingsPath}.invalid`;
+
+  /**
+   * Preserve a settings file the server could not read.
+   *
+   * A failed decode leaves the in-memory settings holding defaults (or a
+   * salvaged subset), and the next `updateSettings` writes that back over
+   * settings.json. Without this copy the user's real configuration is gone with
+   * only a log line to show for it. Failures here are logged and swallowed: a
+   * settings file we cannot back up is still a settings file the server has to
+   * boot with.
+   */
+  // True once this episode of unreadable settings has been preserved. Reset when
+  // the file decodes again, so a later, unrelated breakage still gets a copy.
+  let quarantinedThisEpisode = false;
+
+  const quarantineUnreadableSettings = (raw: string) =>
+    Effect.suspend(() => {
+      // Keep the *first* copy of each episode. Reloads fire on every watcher
+      // tick while the file is broken, and a half-saved buffer landing a second
+      // later must not overwrite the last good configuration.
+      if (quarantinedThisEpisode) return Effect.void;
+      quarantinedThisEpisode = true;
+      return writeFileStringAtomically({ filePath: quarantinePath, contents: raw });
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, pathService),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("could not quarantine unreadable settings.json", {
+          path: quarantinePath,
+          cause,
+        }),
+      ),
+    );
+
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = DEFAULT_SERVER_SETTINGS;
     let persisted: typeof PersistedOptionalProviderSettings.Type = {};
@@ -423,15 +530,36 @@ const make = Effect.gen(function* () {
       }
       if (decoded._tag === "Failure" || persistedSettings._tag === "Failure") {
         const failure = decoded._tag === "Failure" ? decoded : persistedSettings;
-        if (failure._tag === "Failure") {
+
+        // Whatever happens next, the in-memory settings no longer match the
+        // file, and the next settings change rewrites the file from that
+        // in-memory copy. Keep a copy first so a typo is never the reason a
+        // configuration is destroyed.
+        yield* quarantineUnreadableSettings(raw);
+
+        const salvaged = salvageSettingsWithoutMalformedInstances(raw);
+        if (salvaged) {
+          settings = salvaged.settings;
+          yield* Effect.logWarning(
+            "dropped malformed provider instances from settings.json, kept every other setting",
+            {
+              path: settingsPath,
+              droppedInstanceIds: salvaged.droppedKeys,
+              quarantinePath,
+              ...(failure._tag === "Failure" ? { issues: Cause.pretty(failure.cause) } : {}),
+            },
+          );
+        } else if (failure._tag === "Failure") {
           yield* Effect.logWarning("failed to parse settings.json, using defaults", {
             path: settingsPath,
+            quarantinePath,
             issues: Cause.pretty(failure.cause),
             cause: failure.cause,
           });
         }
       } else {
         settings = decoded.value;
+        quarantinedThisEpisode = false;
       }
     }
 

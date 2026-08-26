@@ -985,6 +985,68 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  // `providerInstances` is a Record schema, so one bad key fails the whole
+  // settings decode. Reverting every unrelated setting because of a typo in a
+  // hand-added second provider is not an acceptable blast radius.
+  it.effect("keeps unrelated settings when one provider instance is malformed", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        // Leading digit on the second key fails the instance-id slug pattern.
+        '{"providers":{"claudeAgent":{"binaryPath":"/tmp/claude"}},' +
+          '"providerInstances":{"claudeAgent_work":{"driver":"claudeAgent",' +
+          '"config":{"homePath":"/tmp/work"}},"2claude_broken":{"driver":"claudeAgent"}}}',
+      );
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.strictEqual(settings.providers.claudeAgent.binaryPath, "/tmp/claude");
+      assert.deepEqual(Object.keys(settings.providerInstances), ["claudeAgent_work"]);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  // The in-memory settings are what the next write persists, so a file we could
+  // not read has to survive somewhere before that write lands.
+  it.effect("quarantines a settings file it cannot read", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const original = '{"providers":{"claudeAgent":{"binaryPath":42}}}';
+
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, original);
+
+      const settings = yield* serverSettings.getSettings;
+      assert.strictEqual(settings.providers.claudeAgent.binaryPath, "claude");
+
+      const quarantined = yield* fileSystem.readFileString(`${serverConfig.settingsPath}.invalid`);
+      assert.strictEqual(quarantined, original);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  // The Record schema trims instance-id keys on decode, so a key with stray
+  // whitespace is valid. Salvage must not classify it as malformed and drop it.
+  it.effect("keeps an instance whose key has surrounding whitespace", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"providerInstances":{"  claudeAgent_work  ":{"driver":"claudeAgent"},' +
+          '"2claude_broken":{"driver":"claudeAgent"}}}',
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      assert.deepEqual(Object.keys(settings.providerInstances), ["claudeAgent_work"]);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
