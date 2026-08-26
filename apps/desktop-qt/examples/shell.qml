@@ -77,6 +77,13 @@ Window {
         }
     }
 
+    Notifications {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: 96
+        anchors.rightMargin: 16
+    }
+
     ShellErrorOverlay {
         anchors.fill: parent
     }

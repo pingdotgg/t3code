@@ -10,6 +10,7 @@ qt_add_qml_module(t3bricks
   QML_FILES
     Composer.qml
     DefaultShell.qml
+    Notifications.qml
     RightPanel.qml
     SettingsNav.qml
     ShellErrorOverlay.qml

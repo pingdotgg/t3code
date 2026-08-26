@@ -1,6 +1,7 @@
 module T3.Bricks
 Composer 1.0 Composer.qml
 DefaultShell 1.0 DefaultShell.qml
+Notifications 1.0 Notifications.qml
 RightPanel 1.0 RightPanel.qml
 SettingsNav 1.0 SettingsNav.qml
 ShellErrorOverlay 1.0 ShellErrorOverlay.qml
