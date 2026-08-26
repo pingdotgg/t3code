@@ -7,7 +7,11 @@ import type {
   RuntimeMode,
   ServerProviderModel,
 } from "@t3tools/contracts";
-import type { ShellComposerOption, ShellComposerState } from "@t3tools/contracts";
+import type {
+  ShellComposerOption,
+  ShellComposerState,
+  ShellComposerSuggestion,
+} from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -21,6 +25,10 @@ export interface ShellComposerStateInput {
   readonly target: string | null;
   readonly routeKind: "server" | "draft";
   readonly text: string;
+  readonly cursor: number;
+  readonly triggerKind: ShellComposerState["triggerKind"];
+  readonly suggestions: ReadonlyArray<ShellComposerSuggestion>;
+  readonly suggestionsEmptyText: string | null;
   readonly placeholder: string;
   readonly editorDisabled: boolean;
   readonly hasSendableContent: boolean;
@@ -111,6 +119,10 @@ export function buildShellComposerState(input: ShellComposerStateInput): ShellCo
     target: input.target,
     routeKind: input.routeKind,
     text: input.text,
+    cursor: input.cursor,
+    triggerKind: input.triggerKind,
+    suggestions: input.suggestions,
+    suggestionsEmptyText: input.suggestionsEmptyText,
     placeholder: input.placeholder,
     editorDisabled: input.editorDisabled,
     canSend: !blocked && (input.hasSendableContent || input.showPlanFollowUpPrompt),

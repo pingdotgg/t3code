@@ -13,6 +13,8 @@ import {
 import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useRef } from "react";
 
+import type { ComposerCommandItem } from "../components/chat/ComposerCommandMenu";
+import { expandCollapsedComposerCursor } from "../composer-logic";
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import type { AppModelOption } from "../modelSelection";
 import type { ProviderInstanceEntry } from "../providerInstances";
@@ -32,6 +34,15 @@ export interface ShellComposerBridgeProps {
   readonly prompt: string;
   readonly promptRef: React.RefObject<string>;
   readonly setPrompt: (prompt: string) => void;
+  /** Collapsed caret ChatComposer tracks; published expanded for the raw-text editor. */
+  readonly composerCursor: number;
+  readonly triggerKind: "path" | "slash-command" | "skill" | null;
+  readonly suggestions: ReadonlyArray<ComposerCommandItem>;
+  readonly suggestionsEmptyText: string | null;
+  /** Expanded caret from the shell's editor; re-detects the trigger. */
+  readonly onCursorChange: (expandedCursor: number) => void;
+  readonly onSelectSuggestion: (item: ComposerCommandItem) => void;
+  readonly onDismissSuggestions: () => void;
   readonly placeholder: string;
   readonly editorDisabled: boolean;
   readonly hasSendableContent: boolean;
@@ -102,6 +113,15 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
         target: typeof props.target === "string" ? props.target : scopedThreadKey(props.target),
         routeKind: props.routeKind,
         text: props.prompt,
+        cursor: expandCollapsedComposerCursor(props.prompt, props.composerCursor),
+        triggerKind: props.triggerKind,
+        suggestions: props.suggestions.map((item) => ({
+          id: item.id,
+          kind: item.type,
+          label: item.label,
+          description: item.description,
+        })),
+        suggestionsEmptyText: props.suggestionsEmptyText,
         placeholder: props.placeholder,
         editorDisabled: props.editorDisabled,
         hasSendableContent: props.hasSendableContent,
@@ -164,6 +184,17 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
           case "composer.text.set":
             current.setPrompt(candidate.text);
             current.promptRef.current = candidate.text;
+            if (candidate.cursor !== undefined) {
+              current.onCursorChange(candidate.cursor);
+            }
+            return;
+          case "composer.suggest.select": {
+            const item = current.suggestions.find((entry) => entry.id === candidate.id);
+            if (item) current.onSelectSuggestion(item);
+            return;
+          }
+          case "composer.suggest.dismiss":
+            current.onDismissSuggestions();
             return;
           case "composer.submit":
             if (candidate.text !== undefined) {

@@ -4726,6 +4726,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const shellHosted = isT3Shell;
   const hideEditorForShell =
     shellHosted && !isComposerApprovalState && pendingUserInputs.length === 0;
+  // The shell's editor works on the raw prompt (mentions written out), so its
+  // caret is an expanded cursor; ChatComposer tracks the collapsed one.
+  const onShellCursorChange = useCallback(
+    (expandedCursor: number) => {
+      const text = promptRef.current;
+      setComposerCursor(collapseExpandedComposerCursor(text, expandedCursor));
+      setComposerTrigger(detectComposerTrigger(text, expandedCursor));
+    },
+    [promptRef],
+  );
+  const dismissComposerTrigger = useCallback(() => {
+    setComposerTrigger(null);
+  }, []);
   // With the editor and footer native, the frame only earns its space when a
   // banner, attachment, context or validation message is visible.
   const shellFrameEmpty =
@@ -5541,6 +5554,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 prompt={prompt}
                 promptRef={promptRef}
                 setPrompt={setPrompt}
+                composerCursor={composerCursor}
+                triggerKind={composerTrigger?.kind ?? null}
+                suggestions={composerMenuItems}
+                suggestionsEmptyText={composerTrigger ? composerMenuEmptyState : null}
+                onCursorChange={onShellCursorChange}
+                onSelectSuggestion={onSelectComposerItem}
+                onDismissSuggestions={dismissComposerTrigger}
                 placeholder={composerPlaceholder}
                 editorDisabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
                 hasSendableContent={composerSendState.hasSendableContent}
