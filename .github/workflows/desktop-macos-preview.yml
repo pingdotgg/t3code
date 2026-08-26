@@ -19,7 +19,7 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'preview:mac') &&
       (github.event.action != 'labeled' || github.event.label.name == 'preview:mac')
-    runs-on: blacksmith-12vcpu-macos-26
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - name: Checkout
