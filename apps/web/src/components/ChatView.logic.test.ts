@@ -71,8 +71,46 @@ describe("interaction mode provider selection", () => {
         ],
         candidates: [ompInstanceId, codexInstanceId],
         lockedProvider: null,
+        requestedDriverKind: ProviderDriverKind.make("omp"),
       }),
     ).toEqual({ instanceId: codexInstanceId });
+  });
+  it("prefers a selectable instance from the composer's requested driver", () => {
+    const staleOmpInstanceId = ProviderInstanceId.make("omp");
+    const customOmpInstanceId = ProviderInstanceId.make("omp_personal");
+    const codexInstanceId = ProviderInstanceId.make("codex");
+    const input = {
+      providers: [
+        {
+          instanceId: codexInstanceId,
+          status: "ready" as const,
+          driverKind: ProviderDriverKind.make("codex"),
+          enabled: true,
+          isAvailable: true,
+        },
+        {
+          instanceId: staleOmpInstanceId,
+          status: "ready" as const,
+          driverKind: ProviderDriverKind.make("omp"),
+          enabled: false,
+          isAvailable: true,
+        },
+        {
+          instanceId: customOmpInstanceId,
+          status: "ready" as const,
+          driverKind: ProviderDriverKind.make("omp"),
+          enabled: true,
+          isAvailable: true,
+        },
+      ],
+      candidates: [staleOmpInstanceId],
+      lockedProvider: null,
+      requestedDriverKind: ProviderDriverKind.make("omp"),
+    };
+
+    expect(resolveInteractionModeProviderSelection(input)).toEqual({
+      instanceId: customOmpInstanceId,
+    });
   });
 });
 
@@ -101,6 +139,7 @@ describe("interaction mode fallback readiness", () => {
         ],
         candidates: [],
         lockedProvider: null,
+        requestedDriverKind: ProviderDriverKind.make("omp"),
       }),
     ).toEqual({ instanceId: codexInstanceId });
   });

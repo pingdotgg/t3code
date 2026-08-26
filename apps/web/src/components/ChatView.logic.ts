@@ -40,6 +40,7 @@ export function resolveInteractionModeProviderSelection(input: {
   readonly providers: ReadonlyArray<InteractionModeProviderSnapshot>;
   readonly candidates: ReadonlyArray<string | null | undefined>;
   readonly lockedProvider: ProviderDriverKind | null;
+  readonly requestedDriverKind: ProviderDriverKind;
 }): { readonly instanceId: InteractionModeProviderSnapshot["instanceId"] } | null {
   const selectableProviders = input.providers.filter(
     (provider) =>
@@ -52,7 +53,12 @@ export function resolveInteractionModeProviderSelection(input: {
     const provider = selectableProviders.find((entry) => entry.instanceId === candidate);
     if (provider) return { instanceId: provider.instanceId };
   }
+  const requestedDriverProviders = selectableProviders.filter(
+    (provider) => provider.driverKind === input.requestedDriverKind,
+  );
   const fallback =
+    requestedDriverProviders.find((provider) => provider.status === "ready") ??
+    requestedDriverProviders.find((provider) => provider.status !== "error") ??
     selectableProviders.find((provider) => provider.status === "ready") ??
     selectableProviders.find((provider) => provider.status !== "error");
   return fallback ? { instanceId: fallback.instanceId } : null;
