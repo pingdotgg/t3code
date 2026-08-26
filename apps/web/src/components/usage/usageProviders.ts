@@ -26,7 +26,7 @@ export const PROVIDER_PRESENTATION = {
   },
   grok: {
     label: "Grok",
-    color: "#8b8b8b",
+    color: "var(--contrast-muted-foreground)",
     mark: GrokIcon,
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
