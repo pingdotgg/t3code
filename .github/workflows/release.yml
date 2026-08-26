@@ -26,10 +26,13 @@ on:
 # Serialize nightlies (scheduled and manual) so overlapping runs cannot build
 # the same commit twice or publish out of order. Stable tag releases get their
 # own group so a nightly never blocks them. Running publishers are never
-# canceled; only a not-yet-started run waiting in the same group is replaced.
+# canceled, and queue: max keeps every pending run instead of the default
+# newest-wins single slot, so a queued stable tag can never be silently
+# dropped. Queued nightlies with no new commits skip via check_changes.
 concurrency:
   group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly') && 'nightly' || 'stable' }}
   cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
