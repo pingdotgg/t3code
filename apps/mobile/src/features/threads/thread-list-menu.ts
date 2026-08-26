@@ -9,16 +9,13 @@ export function buildThreadListMenuActions(input: {
   readonly thread: Pick<EnvironmentThreadShell, "branch" | "id" | "titleRegeneration">;
   readonly lifecycleActions: ReadonlyArray<MenuAction>;
   readonly titleRegenerationSupported: boolean;
-  /** Set when the lifecycle slot is taken by settle/wake/unsettle, so
-      Archive doesn't appear twice on rows whose fallback is already
-      archive (legacy servers, compact list). */
-  readonly showArchiveAction?: boolean;
   /** Archive rejects a thread with an active turn, so disable it here
       rather than let the action fail. Same computation as web:
       session.status === "running" && activeTurnId != null. */
   readonly isRunning?: boolean;
 }): MenuAction[] {
   const regeneratingTitle = input.thread.titleRegeneration != null;
+  const hasLifecycleArchive = input.lifecycleActions.some((action) => action.id === "archive");
   return [
     ...(input.thread.branch
       ? [
@@ -78,7 +75,7 @@ export function buildThreadListMenuActions(input: {
       title: "",
       displayInline: true,
       subactions: [
-        ...(input.showArchiveAction === false
+        ...(hasLifecycleArchive
           ? []
           : [
               {

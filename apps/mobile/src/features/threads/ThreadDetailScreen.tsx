@@ -655,7 +655,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useFocusEffect(
     useCallback(() => {
-      markThreadVisited();
+      const markVisitedIfActive = () => {
+        if (AppState.currentState === "active") markThreadVisited();
+      };
+      markVisitedIfActive();
+      const subscription = AppState.addEventListener("change", (state) => {
+        if (state === "active") markThreadVisited();
+      });
+      return () => subscription.remove();
     }, [markThreadVisited]),
   );
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);

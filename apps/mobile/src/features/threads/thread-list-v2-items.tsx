@@ -515,9 +515,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       })),
     [snoozePresets],
   );
-  // Pinned cards keep the full lifecycle menu; only the pin item flips to
-  // Unpin. (Settling a pinned thread clears the pin server-side; snoozing
-  // hides the card until wake with the pin intact.)
+  // Pin actions stay available in every lifecycle state. Settling clears a
+  // pin server-side, while snoozing hides the card with its pin intact.
   const arrangementMenuItems = useMemo<MenuAction[]>(
     () => [
       ...(variant === "card" && props.reorderSupported === true
@@ -583,6 +582,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => [...arrangementMenuItems, ...LEGACY_MENU_ACTIONS],
     [arrangementMenuItems],
   );
+  const snoozedMenuActions = useMemo<MenuAction[]>(
+    () => [...pinMenuItem, ...SNOOZED_MENU_ACTIONS],
+    [pinMenuItem],
+  );
+  const slimMenuActions = useMemo<MenuAction[]>(
+    () => [...pinMenuItem, ...SLIM_MENU_ACTIONS],
+    [pinMenuItem],
+  );
+  const legacyMenuActions = useMemo<MenuAction[]>(
+    () => [...pinMenuItem, ...LEGACY_MENU_ACTIONS],
+    [pinMenuItem],
+  );
   const lifecycleMenuActions = snoozedRow
     ? snoozedMenuActions
     : !props.settlementSupported
@@ -598,11 +609,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         thread,
         lifecycleActions: lifecycleMenuActions,
         titleRegenerationSupported: props.titleRegenerationSupported,
-        // Legacy rows already carry Archive as their lifecycle fallback.
-        showArchiveAction: props.settlementSupported,
         isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
       }),
-    [lifecycleMenuActions, props.settlementSupported, props.titleRegenerationSupported, thread],
+    [lifecycleMenuActions, props.titleRegenerationSupported, thread],
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {

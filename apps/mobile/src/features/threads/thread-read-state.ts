@@ -1,10 +1,21 @@
 export type ThreadLastVisitedAtById = Readonly<Record<string, string>>;
 
 export function hasUnseenThreadCompletion(
-  thread: { readonly latestTurn?: { readonly completedAt?: string | null } | null },
+  thread: {
+    readonly latestTurn?: {
+      readonly state?: string;
+      readonly completedAt?: string | null;
+    } | null;
+  },
   lastVisitedAt: string | undefined,
 ): boolean {
-  if (!thread.latestTurn?.completedAt || lastVisitedAt === undefined) return false;
+  if (
+    thread.latestTurn?.state === "running" ||
+    !thread.latestTurn?.completedAt ||
+    lastVisitedAt === undefined
+  ) {
+    return false;
+  }
   const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;
   const visitedAt = Date.parse(lastVisitedAt);

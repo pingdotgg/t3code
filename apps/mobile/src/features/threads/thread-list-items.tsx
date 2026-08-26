@@ -555,8 +555,6 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         thread,
         lifecycleActions: [{ id: "archive", title: "Archive thread", image: "archivebox" }],
         titleRegenerationSupported: props.titleRegenerationSupported,
-        // Archive is this row's lifecycle action already.
-        showArchiveAction: false,
         isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
       }),
     [props.titleRegenerationSupported, thread],

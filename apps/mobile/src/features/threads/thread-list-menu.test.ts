@@ -55,11 +55,21 @@ describe("buildThreadListMenuActions", () => {
       lifecycleActions: [{ id: "archive", title: "Archive thread", image: "archivebox" }],
       titleRegenerationSupported: true,
       isRunning: true,
-      showArchiveAction: false,
     });
     expect(compact.find((action) => action.id === "archive")?.attributes?.disabled).toBe(true);
 
     expect(compact.filter((action) => action.id === "archive")).toHaveLength(1);
+
+    const snoozed = buildThreadListMenuActions({
+      thread: { branch: null, id: ThreadId.make("thread-1"), titleRegeneration: null },
+      lifecycleActions: [{ id: "unsnooze", title: "Wake thread", image: "clock" }],
+      titleRegenerationSupported: true,
+    });
+    expect(
+      snoozed
+        .find((action) => action.id === "thread-delete-actions")
+        ?.subactions?.some((action) => action.id === "archive"),
+    ).toBe(true);
   });
 
   it("gates title regeneration, the branch action, and disables regeneration while in flight", () => {

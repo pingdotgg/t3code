@@ -32,6 +32,16 @@ describe("thread read state", () => {
     ).toBe(false);
   });
 
+  it("ignores checkpoint timestamps while the latest turn is still running", () => {
+    const lastVisitedAt = "2026-08-09T09:00:00.000Z";
+    expect(
+      hasUnseenThreadCompletion({ latestTurn: { state: "running", completedAt } }, lastVisitedAt),
+    ).toBe(false);
+    expect(
+      hasUnseenThreadCompletion({ latestTurn: { state: "completed", completedAt } }, lastVisitedAt),
+    ).toBe(true);
+  });
+
   it("never moves a visit marker backwards", () => {
     const current = { "environment:thread": completedAt };
     expect(setThreadVisitedAt(current, "environment:thread", "2026-08-09T09:00:00.000Z")).toBe(
