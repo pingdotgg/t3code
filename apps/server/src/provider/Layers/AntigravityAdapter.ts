@@ -375,10 +375,6 @@ export function makeAntigravityAdapter(
         Effect.gen(function* () {
           const ctx = yield* requireSession(input.threadId);
 
-          const turnId = TurnId.make(yield* randomUUIDv4);
-          ctx.activeTurnId = turnId;
-          ctx.turnSettled = false;
-
           const promptText = typeof input.input === "string" ? input.input : "";
           if (!promptText.trim()) {
             return yield* new ProviderAdapterValidationError({
@@ -387,6 +383,10 @@ export function makeAntigravityAdapter(
               issue: "Turn prompt text cannot be empty.",
             });
           }
+
+          const turnId = TurnId.make(yield* randomUUIDv4);
+          ctx.activeTurnId = turnId;
+          ctx.turnSettled = false;
 
           const model = input.modelSelection?.model;
 
