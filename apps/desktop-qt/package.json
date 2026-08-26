@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:qt": "node scripts/dev-qt.mjs --configure-only",
+    "build:qt:release": "node scripts/dev-qt.mjs --configure-only --release",
+    "dev": "node scripts/dev-qt.mjs",
     "test": "vp test run --passWithNoTests",
     "typecheck": "tsgo --noEmit"
   },
