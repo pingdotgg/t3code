@@ -61,6 +61,7 @@ import {
   SettingsPageContainer,
   SettingsSection,
 } from "./settingsLayout";
+import { formattedAuthSuffix, formattedSetupGuidance } from "./SourceControlSettings.logic";
 import { searchableSetting } from "./settingsSearch";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
@@ -217,6 +218,7 @@ function itemSummary({
 
   if (auth) {
     if (auth.status === "authenticated") {
+      const suffix = formattedAuthSuffix(optionLabel(auth.host), optionLabel(auth.detail));
       return (
         <>
           <span>Authenticated</span>
@@ -226,6 +228,7 @@ function itemSummary({
               <RedactedAccount account={authAccount} />
             </>
           ) : null}
+          {suffix ? <span>{suffix}</span> : null}
         </>
       );
     }
@@ -235,13 +238,7 @@ function itemSummary({
     }
 
     if (auth.status === "unauthenticated") {
-      return (
-        <span>
-          {item.label} is not authenticated on this server. Sign in or configure credentials using
-          the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
-          tool on the server host to enable change request features.
-        </span>
-      );
+      return <span>{formattedSetupGuidance(item.label, item.executable, item.installHint)}</span>;
     }
     const authDetail = optionLabel(auth.detail);
     return (
