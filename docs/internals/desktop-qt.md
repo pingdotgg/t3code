@@ -254,9 +254,17 @@ rendered. Actions: `workspace.newThread`, `workspace.openInEditor
 `workspace.startFromOrigin.set {enabled}`, `workspace.openPullRequest`,
 `workspace.environment.set {environmentId}`.
 
-Not yet native: switching branches (the picker's `setThreadBranch` flow
-stops the session and rewrites thread metadata), renaming the thread, and
-the git write actions.
+Branch switching is native too: the selector's brain moved into
+`hooks/useThreadBranchSelection.ts` (thread/draft resolution, paginated ref
+list for a query, optimistic active branch, `selectBranch`/`createRef` which
+stop a live session and rewrite the thread's checkout), and both the HTML
+`BranchToolbarBranchSelector` and the bridge consume it. The state carries
+`branches` for the current `branchQuery` plus `branchesTotal`,
+`branchesLoading`, `branchSwitchPending`; actions `workspace.branch.search
+{query}`, `workspace.branch.select {name}`, `workspace.branch.create {name}`.
+
+Not yet native: renaming the thread and the git write actions (commit / push
+/ PR creation carry their own dialogs).
 
 ### `settings`
 
