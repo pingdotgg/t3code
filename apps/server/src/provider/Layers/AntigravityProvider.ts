@@ -276,9 +276,12 @@ export const checkAntigravityProviderStatus = Effect.fn("checkAntigravityProvide
       probe: {
         installed: true,
         version: version ?? null,
-        status: versionOutput.code === 0 ? "ready" : "warning",
-        auth: { status: "authenticated" },
-        message: versionOutput.code === 0 ? "Antigravity is ready." : "Antigravity is available.",
+        status: versionOutput.code === 0 ? "ready" : "error",
+        auth: { status: versionOutput.code === 0 ? "authenticated" : "unknown" },
+        message:
+          versionOutput.code === 0
+            ? "Antigravity is ready."
+            : "Antigravity CLI is installed but failed to run.",
       },
     });
   },

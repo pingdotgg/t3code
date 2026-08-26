@@ -95,7 +95,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
             ? cause
             : new TextGenerationError({
                 operation,
-                detail: `Antigravity CLI execution failed: ${String(cause)}`,
+                detail: "Antigravity CLI execution failed.",
                 cause,
               }),
         ),

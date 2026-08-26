@@ -165,6 +165,9 @@ function resolveToolDetails(
 
 const parseJsonValue = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);
+const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
+const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
+const isProviderAdapterSessionNotFoundError = Schema.is(ProviderAdapterSessionNotFoundError);
 
 export function makeAntigravityAdapter(
   antigravitySettings: AntigravitySettings,
@@ -293,37 +296,34 @@ export function makeAntigravityAdapter(
       );
 
     const stopSession = (threadId: ThreadId): Effect.Effect<void, ProviderAdapterError> =>
-      withThreadLock(
-        threadId,
-        Effect.gen(function* () {
-          const ctx = sessions.get(threadId);
-          if (!ctx) {
-            return;
-          }
+      Effect.gen(function* () {
+        const ctx = sessions.get(threadId);
+        if (!ctx) {
+          return;
+        }
 
-          ctx.stopped = true;
-          if (ctx.activeHandle) {
-            yield* ctx.activeHandle.kill().pipe(Effect.ignore);
-            ctx.activeHandle = undefined;
-          }
-          if (ctx.activeScope) {
-            yield* Scope.close(ctx.activeScope, Exit.void);
-            ctx.activeScope = undefined;
-          }
+        ctx.stopped = true;
+        if (ctx.activeHandle) {
+          yield* ctx.activeHandle.kill().pipe(Effect.ignore);
+          ctx.activeHandle = undefined;
+        }
+        if (ctx.activeScope) {
+          yield* Scope.close(ctx.activeScope, Exit.void).pipe(Effect.ignore);
+          ctx.activeScope = undefined;
+        }
 
-          sessions.delete(threadId);
+        sessions.delete(threadId);
 
-          yield* emit({
-            type: "session.exited",
-            provider: PROVIDER,
-            threadId,
-            payload: {
-              exitKind: "graceful",
-              reason: "Session stopped by user.",
-            },
-          });
-        }),
-      );
+        yield* emit({
+          type: "session.exited",
+          provider: PROVIDER,
+          threadId,
+          payload: {
+            exitKind: "graceful",
+            reason: "Session stopped by user.",
+          },
+        });
+      });
 
     const hasSession = (threadId: ThreadId): Effect.Effect<boolean> =>
       Effect.sync(() => {
@@ -398,8 +398,10 @@ export function makeAntigravityAdapter(
           );
 
           const startedItemIds = new Set<string>();
+          const lastEmittedThoughtLengthByItem = new Map<string, number>();
           let conversationId: string | null = resumeData?.conversationId ?? null;
           let finalStatus: "completed" | "failed" = "completed";
+          let turnCompleted = false;
 
           const turnScope = yield* Scope.make("sequential");
           ctx.activeScope = turnScope;
@@ -420,7 +422,7 @@ export function makeAntigravityAdapter(
                     new ProviderAdapterProcessError({
                       provider: PROVIDER,
                       threadId: input.threadId,
-                      detail: `Failed to spawn Antigravity CLI process: ${String(cause)}`,
+                      detail: "Failed to spawn Antigravity CLI process.",
                       cause,
                     }),
                 ),
@@ -468,20 +470,25 @@ export function makeAntigravityAdapter(
                       }
 
                       if (typeof step.thought === "string" || typeof step.thinking === "string") {
-                        const thoughtDelta = (
+                        const fullThought = (
                           typeof step.thought === "string" ? step.thought : step.thinking
                         ) as string;
-                        yield* emit({
-                          type: "content.delta",
-                          provider: PROVIDER,
-                          threadId: input.threadId,
-                          turnId,
-                          itemId: RuntimeItemId.make(itemId),
-                          payload: {
-                            streamKind: "reasoning_text",
-                            delta: thoughtDelta,
-                          },
-                        });
+                        const lastLen = lastEmittedThoughtLengthByItem.get(itemId) ?? 0;
+                        if (fullThought.length > lastLen) {
+                          const delta = fullThought.slice(lastLen);
+                          lastEmittedThoughtLengthByItem.set(itemId, fullThought.length);
+                          yield* emit({
+                            type: "content.delta",
+                            provider: PROVIDER,
+                            threadId: input.threadId,
+                            turnId,
+                            itemId: RuntimeItemId.make(itemId),
+                            payload: {
+                              streamKind: "reasoning_text",
+                              delta,
+                            },
+                          });
+                        }
                       }
 
                       if (typeof step.text_delta === "string" && step.text_delta) {
@@ -559,28 +566,28 @@ export function makeAntigravityAdapter(
                         (typeof step.stdout === "string" && step.stdout) ||
                         undefined;
 
-                      if (outputText) {
-                        const streamKind =
-                          toolMapping.itemType === "command_execution"
-                            ? "command_output"
-                            : toolMapping.itemType === "file_change"
-                              ? "file_change_output"
-                              : "assistant_text";
-
-                        yield* emit({
-                          type: "content.delta",
-                          provider: PROVIDER,
-                          threadId: input.threadId,
-                          turnId,
-                          itemId: RuntimeItemId.make(itemId),
-                          payload: {
-                            streamKind,
-                            delta: outputText,
-                          },
-                        });
-                      }
-
                       if (step.state === "DONE") {
+                        if (outputText) {
+                          const streamKind =
+                            toolMapping.itemType === "command_execution"
+                              ? "command_output"
+                              : toolMapping.itemType === "file_change"
+                                ? "file_change_output"
+                                : "assistant_text";
+
+                          yield* emit({
+                            type: "content.delta",
+                            provider: PROVIDER,
+                            threadId: input.threadId,
+                            turnId,
+                            itemId: RuntimeItemId.make(itemId),
+                            payload: {
+                              streamKind,
+                              delta: outputText,
+                            },
+                          });
+                        }
+
                         const isError = step.status === "ERROR" || step.error !== undefined;
                         yield* emit({
                           type: "item.completed",
@@ -616,41 +623,66 @@ export function makeAntigravityAdapter(
           });
 
           yield* runProcess.pipe(
-            Effect.catch((cause: unknown) =>
-              isProviderAdapterProcessError(cause)
-                ? Effect.fail(cause)
-                : Effect.fail(
-                    new ProviderAdapterProcessError({
-                      provider: PROVIDER,
-                      threadId: input.threadId,
-                      detail: String(cause),
-                      cause,
-                    }),
-                  ),
+            Effect.catch((cause: unknown) => {
+              if (
+                isProviderAdapterProcessError(cause) ||
+                isProviderAdapterRequestError(cause) ||
+                isProviderAdapterValidationError(cause) ||
+                isProviderAdapterSessionNotFoundError(cause)
+              ) {
+                return Effect.fail(cause);
+              }
+              return Effect.fail(
+                new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  detail: "Antigravity CLI execution failed.",
+                  cause,
+                }),
+              );
+            }),
+            Effect.ensuring(
+              Effect.gen(function* () {
+                if (ctx.activeHandle) {
+                  yield* ctx.activeHandle.kill().pipe(Effect.ignore);
+                  ctx.activeHandle = undefined;
+                }
+                if (ctx.activeScope) {
+                  yield* Scope.close(ctx.activeScope, Exit.void).pipe(Effect.ignore);
+                  ctx.activeScope = undefined;
+                }
+                if (!turnCompleted) {
+                  turnCompleted = true;
+                  yield* emit({
+                    type: "turn.completed",
+                    provider: PROVIDER,
+                    threadId: input.threadId,
+                    turnId,
+                    payload: {
+                      state: finalStatus,
+                    },
+                  }).pipe(Effect.ignore);
+                }
+                ctx.activeTurnId = undefined;
+              }),
             ),
           );
 
-          yield* Scope.close(turnScope, Exit.void);
-          ctx.activeScope = undefined;
-
           if (conversationId) {
+            const now = yield* nowIso;
             ctx.resume = {
               version: ANTIGRAVITY_RESUME_VERSION,
               conversationId,
             };
+            ctx.session = {
+              ...ctx.session,
+              resumeCursor: {
+                version: ANTIGRAVITY_RESUME_VERSION,
+                conversationId,
+              },
+              updatedAt: now,
+            };
           }
-
-          yield* emit({
-            type: "turn.completed",
-            provider: PROVIDER,
-            threadId: input.threadId,
-            turnId,
-            payload: {
-              state: finalStatus,
-            },
-          });
-
-          ctx.activeTurnId = undefined;
 
           return {
             threadId: input.threadId,
@@ -674,7 +706,7 @@ export function makeAntigravityAdapter(
           yield* ctx.activeHandle.kill().pipe(Effect.ignore);
           ctx.activeHandle = undefined;
           if (ctx.activeScope) {
-            yield* Scope.close(ctx.activeScope, Exit.void);
+            yield* Scope.close(ctx.activeScope, Exit.void).pipe(Effect.ignore);
             ctx.activeScope = undefined;
           }
 
@@ -730,7 +762,7 @@ export function makeAntigravityAdapter(
             ctx.activeHandle = undefined;
           }
           if (ctx.activeScope) {
-            yield* Scope.close(ctx.activeScope, Exit.void);
+            yield* Scope.close(ctx.activeScope, Exit.void).pipe(Effect.ignore);
             ctx.activeScope = undefined;
           }
           ctx.stopped = true;
