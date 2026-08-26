@@ -102,6 +102,14 @@ int main(int argc, char* argv[]) {
   ShellBridge bridge;
   ThemeStore theme(configDir);
   ShellRuntime runtime({configDir, qmlSourceDir}, &bridge, &theme);
+  // The page publishes its resolved theme; without a theme.json it is the
+  // shell's palette.
+  QObject::connect(&bridge, &ShellBridge::stateEntryChanged, &theme,
+                   [&theme](const QString& key, const QVariant& value) {
+                     if (key == QStringLiteral("theme")) {
+                       theme.applyPageTheme(value);
+                     }
+                   });
 
   BackendProcess::Options backendOptions;
   const auto env = QProcessEnvironment::systemEnvironment();

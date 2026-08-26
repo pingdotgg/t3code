@@ -25,7 +25,8 @@ Rectangle {
             Layout.margins: 8
             spacing: 6
 
-            ToolButton {
+            ShellButton {
+                subtle: true
                 text: "←"
                 Accessible.name: qsTr("Back")
                 onClicked: Shell.dispatch("settings.back")
@@ -39,7 +40,7 @@ Rectangle {
             }
         }
 
-        TextField {
+        ShellTextField {
             id: search
 
             Layout.fillWidth: true

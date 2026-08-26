@@ -39,7 +39,8 @@ Rectangle {
         anchors.rightMargin: 12
         spacing: 8
 
-        ToolButton {
+        ShellButton {
+            subtle: true
             visible: strip.ready && strip.model.projectTitle !== null
             text: strip.ready ? (strip.model.projectTitle ?? "") : ""
             font.pixelSize: 13
@@ -55,6 +56,7 @@ Rectangle {
 
         Text {
             Layout.fillWidth: true
+            Layout.minimumWidth: 120
             text: strip.ready ? strip.model.threadTitle : qsTr("No thread")
             color: strip.foreground
             font.pixelSize: 13
@@ -62,7 +64,7 @@ Rectangle {
             elide: Text.ElideRight
         }
 
-        ComboBox {
+        ShellComboBox {
             visible: strip.ready && strip.model.envModeChangeable
             Layout.preferredWidth: 170
             model: [qsTr("Current checkout"), qsTr("New worktree")]
@@ -79,12 +81,14 @@ Rectangle {
             font.pixelSize: 12
         }
 
-        ToolButton {
+        ShellButton {
             id: branchButton
+            subtle: true
 
             visible: strip.ready && (strip.model.branch !== null || strip.model.branchChangeable)
             enabled: strip.ready && strip.model.branchChangeable && !strip.model.branchSwitchPending
             text: strip.ready ? "⎇ " + (strip.model.branch ?? qsTr("Pick branch")) + (strip.gitSummary.length > 0 ? "  " + strip.gitSummary : "") : ""
+            Layout.maximumWidth: 260
             font.pixelSize: 12
             Accessible.name: qsTr("Switch branch")
             onClicked: branchPicker.open()
@@ -114,7 +118,7 @@ Rectangle {
                     anchors.fill: parent
                     spacing: 6
 
-                    TextField {
+                    ShellTextField {
                         id: branchSearch
 
                         Layout.fillWidth: true
@@ -200,7 +204,8 @@ Rectangle {
             }
         }
 
-        ToolButton {
+        ShellButton {
+            subtle: true
             visible: strip.ready && strip.model.canOpenPullRequest
             text: strip.ready && strip.model.git && strip.model.git.pullRequest ? "#" + strip.model.git.pullRequest.number : ""
             font.pixelSize: 12
@@ -208,14 +213,15 @@ Rectangle {
             onClicked: Shell.dispatch("workspace.openPullRequest")
         }
 
-        ToolButton {
+        ShellButton {
             id: scriptsButton
+            subtle: true
 
             visible: strip.ready && strip.model.scripts.length > 0
             text: qsTr("Run")
             onClicked: scriptsMenu.open()
 
-            Menu {
+            ShellMenu {
                 id: scriptsMenu
 
                 y: parent.height
@@ -223,7 +229,7 @@ Rectangle {
                 Repeater {
                     model: strip.ready ? strip.model.scripts : []
 
-                    MenuItem {
+                    ShellMenuItem {
                         required property var modelData
 
                         text: modelData.name
@@ -235,21 +241,23 @@ Rectangle {
             }
         }
 
-        ToolButton {
+        ShellButton {
             id: openButton
+            subtle: true
 
             visible: strip.ready && strip.model.editors.length > 0
             text: qsTr("Open")
             onClicked: Shell.dispatch("workspace.openInEditor", {})
         }
 
-        ToolButton {
+        ShellButton {
+            subtle: true
             visible: openButton.visible
             text: "▾"
             Accessible.name: qsTr("Choose editor")
             onClicked: editorsMenu.open()
 
-            Menu {
+            ShellMenu {
                 id: editorsMenu
 
                 y: parent.height
@@ -257,7 +265,7 @@ Rectangle {
                 Repeater {
                     model: strip.ready ? strip.model.editors : []
 
-                    MenuItem {
+                    ShellMenuItem {
                         required property var modelData
 
                         text: modelData.label + (strip.ready && modelData.id === strip.model.preferredEditorId ? " ✓" : "")

@@ -61,7 +61,7 @@ Rectangle {
             Layout.margins: 8
             spacing: 6
 
-            ComboBox {
+            ShellComboBox {
                 id: scope
 
                 Layout.fillWidth: true
@@ -78,7 +78,8 @@ Rectangle {
                     })
             }
 
-            ToolButton {
+            ShellButton {
+                subtle: true
                 text: "+"
                 font.pixelSize: 16
                 Accessible.name: qsTr("New thread")
@@ -179,7 +180,8 @@ Rectangle {
         }
     }
 
-    component FooterButton: ToolButton {
+    component FooterButton: ShellButton {
+        subtle: true
         Layout.fillWidth: true
         font.pixelSize: 12
     }

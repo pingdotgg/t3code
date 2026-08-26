@@ -95,6 +95,9 @@ void ThemeStore::applyDefaults() {
   m_name.clear();
   m_appearance.clear();
   m_colors.clear();
+  m_radius.clear();
+  m_fontUi.clear();
+  m_fontMono.clear();
   m_windowOpacity = 1.0;
   m_windowTransparent = false;
   m_windowBlur = false;
@@ -143,6 +146,11 @@ void ThemeStore::reload() {
 
   mergeColors(m_colors, root.value(QStringLiteral("colors")).toObject());
   mergeColors(m_colors, root.value(QStringLiteral("variants")).toObject().value(m_appearance).toObject());
+  // Shell-only extras; the page keeps its own font and radius preferences.
+  m_radius = root.value(QStringLiteral("radius")).toString();
+  const QJsonObject fonts = root.value(QStringLiteral("fonts")).toObject();
+  m_fontUi = fonts.value(QStringLiteral("ui")).toString();
+  m_fontMono = fonts.value(QStringLiteral("mono")).toString();
 
   const QJsonObject window = root.value(QStringLiteral("window")).toObject();
   m_windowOpacity = qBound(0.1, window.value(QStringLiteral("opacity")).toDouble(1.0), 1.0);
@@ -195,11 +203,102 @@ QString ThemeStore::injectionScript() const {
       .arg(jsLiteral(theme));
 }
 
-QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
-  const auto value = m_colors.value(role).toString();
-  if (value.isEmpty()) {
-    return fallback;
+namespace {
+
+// CSS hex colours put alpha last (#rrggbbaa); Qt puts it first (#aarrggbb).
+QColor parseCssColor(const QString& value) {
+  const QString trimmed = value.trimmed();
+  if (trimmed.startsWith(QLatin1Char('#'))) {
+    if (trimmed.size() == 9) {
+      return QColor(QStringLiteral("#") + trimmed.mid(7, 2) + trimmed.mid(1, 6));
+    }
+    if (trimmed.size() == 5) {
+      const QString r = trimmed.mid(1, 1), g = trimmed.mid(2, 1), b = trimmed.mid(3, 1),
+                    a = trimmed.mid(4, 1);
+      return QColor(QStringLiteral("#") + a + a + r + r + g + g + b + b);
+    }
   }
-  const QColor parsed(value);
-  return parsed.isValid() ? parsed : fallback;
+  return QColor(trimmed);
+}
+
+}  // namespace
+
+QColor ThemeStore::color(const QString& role, const QColor& fallback) const {
+  for (const QVariantMap* source : {&m_colors, &m_pageColors}) {
+    const auto value = source->value(role).toString();
+    if (value.isEmpty()) {
+      continue;
+    }
+    const QColor parsed = parseCssColor(value);
+    if (parsed.isValid()) {
+      return parsed;
+    }
+  }
+  return fallback;
+}
+
+namespace {
+
+// The page publishes CSS font-family lists; QML wants one family and falls
+// back on its own, so take the first non-generic entry.
+QString firstFontFamily(const QString& list) {
+  for (QString family : list.split(QLatin1Char(','))) {
+    family = family.trimmed();
+    if (family.startsWith(QLatin1Char('"')) || family.startsWith(QLatin1Char('\''))) {
+      family = family.mid(1);
+    }
+    if (family.endsWith(QLatin1Char('"')) || family.endsWith(QLatin1Char('\''))) {
+      family.chop(1);
+    }
+    static const QStringList generic{QStringLiteral("system-ui"), QStringLiteral("sans-serif"),
+                                     QStringLiteral("serif"),     QStringLiteral("monospace"),
+                                     QStringLiteral("ui-sans-serif"), QStringLiteral("ui-monospace"),
+                                     QStringLiteral("-apple-system"), QStringLiteral("BlinkMacSystemFont")};
+    if (!family.isEmpty() && !generic.contains(family)) {
+      return family;
+    }
+  }
+  return QString();
+}
+
+}  // namespace
+
+qreal ThemeStore::radius() const {
+  if (!m_radius.isEmpty()) {
+    // Accept "8", "8px" or "0.5rem" (16px root).
+    QString value = m_radius.trimmed();
+    if (value.endsWith(QStringLiteral("rem"))) {
+      return value.chopped(3).toDouble() * 16.0;
+    }
+    if (value.endsWith(QStringLiteral("px"))) {
+      value.chop(2);
+    }
+    bool ok = false;
+    const qreal parsed = value.toDouble(&ok);
+    if (ok) {
+      return parsed;
+    }
+  }
+  return m_pageRadius;
+}
+
+QString ThemeStore::fontUi() const {
+  return m_fontUi.isEmpty() ? firstFontFamily(m_pageFontUi) : firstFontFamily(m_fontUi);
+}
+
+QString ThemeStore::fontMono() const {
+  return m_fontMono.isEmpty() ? firstFontFamily(m_pageFontMono) : firstFontFamily(m_fontMono);
+}
+
+void ThemeStore::applyPageTheme(const QVariant& theme) {
+  const QVariantMap map = theme.toMap();
+  if (map.isEmpty()) {
+    return;
+  }
+  m_pageColors = map.value(QStringLiteral("colors")).toMap();
+  m_pageAppearance = map.value(QStringLiteral("appearance")).toString();
+  m_pageRadius = map.value(QStringLiteral("radius"), 8).toDouble();
+  m_pageFontUi = map.value(QStringLiteral("fontUi")).toString();
+  m_pageFontMono = map.value(QStringLiteral("fontMono")).toString();
+  emit themeChanged();
 }

@@ -13,6 +13,11 @@ qt_add_qml_module(t3bricks
     RightPanel.qml
     SettingsNav.qml
     ShellErrorOverlay.qml
+    ShellButton.qml
+    ShellComboBox.qml
+    ShellMenu.qml
+    ShellMenuItem.qml
+    ShellTextField.qml
     Sidebar.qml
     SidebarThreadRow.qml
     TitleBar.qml

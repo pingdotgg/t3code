@@ -190,9 +190,9 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: Math.min(Math.max(input.implicitHeight + 20, 64), 220)
-            radius: 10
-            color: composer.surface
-            border.color: input.activeFocus ? composer.accent : composer.border
+            radius: Theme.radius
+            color: Theme.color("input", "#141416")
+            border.color: input.activeFocus ? Theme.color("focus", "#3b82f6") : composer.border
             border.width: 1
 
             ScrollView {
@@ -210,6 +210,7 @@ Rectangle {
                     selectByMouse: true
                     background: null
                     font.pixelSize: 14
+                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                     Accessible.name: qsTr("Message")
                     onTextChanged: {
                         if (text !== composer.lastSentText) {
@@ -234,7 +235,7 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 6
 
-            ComboBox {
+            ShellComboBox {
                 id: modelPicker
 
                 Layout.preferredWidth: 220
@@ -253,7 +254,7 @@ Rectangle {
                 }
             }
 
-            ComboBox {
+            ShellComboBox {
                 Layout.preferredWidth: 130
                 visible: composer.effortOption !== null
                 model: composer.effortOption ? composer.effortOption.choices.map(choice => choice.label) : []
@@ -265,7 +266,7 @@ Rectangle {
                     })
             }
 
-            ComboBox {
+            ShellComboBox {
                 Layout.preferredWidth: 160
                 enabled: composer.ready
                 model: composer.ready ? composer.model.runtimeModes.map(mode => mode.label) : []
@@ -275,7 +276,7 @@ Rectangle {
                     })
             }
 
-            Button {
+            ShellButton {
                 visible: composer.ready && composer.model.showInteractionModeToggle
                 checkable: true
                 checked: composer.ready && composer.model.interactionMode === "plan"
@@ -296,13 +297,13 @@ Rectangle {
                 font.pixelSize: 12
             }
 
-            Button {
+            ShellButton {
                 id: primaryAction
 
                 readonly property bool stopMode: composer.ready && composer.model.isRunning && input.text.trim().length === 0
 
                 enabled: composer.ready && (stopMode || composer.model.canSend)
-                highlighted: !stopMode
+                primary: !stopMode
                 text: stopMode ? qsTr("Stop") : composer.ready && composer.model.showPlanFollowUpPrompt && input.text.trim().length === 0 ? qsTr("Implement") : qsTr("Send")
                 onClicked: stopMode ? Shell.dispatch("composer.interrupt") : composer.submit("foreground")
             }

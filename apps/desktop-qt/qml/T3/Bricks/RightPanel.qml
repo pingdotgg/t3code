@@ -42,8 +42,9 @@ Rectangle {
             Layout.minimumHeight: 36
             Layout.maximumHeight: 36
 
-            ToolButton {
+            ShellButton {
                 id: toggleButton
+                subtle: true
 
                 anchors.left: parent.left
                 anchors.top: parent.top
@@ -120,8 +121,9 @@ Rectangle {
                 }
             }
 
-            ToolButton {
+            ShellButton {
                 id: addButton
+                subtle: true
 
                 anchors.right: parent.right
                 anchors.top: parent.top
@@ -131,12 +133,12 @@ Rectangle {
                 visible: panel.open
                 onClicked: addMenu.open()
 
-                Menu {
+                ShellMenu {
                     id: addMenu
 
                     y: parent.height
 
-                    MenuItem {
+                    ShellMenuItem {
                         text: qsTr("Diff")
                         enabled: panel.open && panel.model.canAdd.diff
                         onTriggered: Shell.dispatch("rightPanel.add", {
@@ -144,7 +146,7 @@ Rectangle {
                         })
                     }
 
-                    MenuItem {
+                    ShellMenuItem {
                         text: qsTr("Files")
                         enabled: panel.open && panel.model.canAdd.files
                         onTriggered: Shell.dispatch("rightPanel.add", {
@@ -152,7 +154,7 @@ Rectangle {
                         })
                     }
 
-                    MenuItem {
+                    ShellMenuItem {
                         text: qsTr("Terminal")
                         enabled: panel.open && panel.model.canAdd.terminal
                         onTriggered: Shell.dispatch("rightPanel.add", {
@@ -160,7 +162,7 @@ Rectangle {
                         })
                     }
 
-                    MenuItem {
+                    ShellMenuItem {
                         text: qsTr("Pull request")
                         enabled: panel.open && panel.model.canAdd.pullRequest
                         onTriggered: Shell.dispatch("rightPanel.add", {
@@ -168,7 +170,7 @@ Rectangle {
                         })
                     }
 
-                    MenuItem {
+                    ShellMenuItem {
                         text: qsTr("Agents")
                         enabled: panel.open && panel.model.canAdd.agents
                         onTriggered: Shell.dispatch("rightPanel.add", {

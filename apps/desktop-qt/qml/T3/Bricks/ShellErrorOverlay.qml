@@ -56,7 +56,7 @@ Item {
                     color: Theme.color("textMuted", "#a1a1aa")
                 }
 
-                Button {
+                ShellButton {
                     text: qsTr("Reload")
                     onClicked: Runtime.reload()
                 }

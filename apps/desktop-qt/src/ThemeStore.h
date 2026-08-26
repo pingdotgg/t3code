@@ -21,6 +21,10 @@ class ThemeStore : public QObject {
   Q_PROPERTY(QString name READ name NOTIFY themeChanged)
   Q_PROPERTY(QString appearance READ appearance NOTIFY themeChanged)
   Q_PROPERTY(QVariantMap colors READ colors NOTIFY themeChanged)
+  Q_PROPERTY(qreal radius READ radius NOTIFY themeChanged)
+  Q_PROPERTY(QString fontUi READ fontUi NOTIFY themeChanged)
+  Q_PROPERTY(QString fontMono READ fontMono NOTIFY themeChanged)
+  Q_PROPERTY(bool pageThemeLoaded READ pageThemeLoaded NOTIFY themeChanged)
   Q_PROPERTY(qreal windowOpacity READ windowOpacity NOTIFY themeChanged)
   Q_PROPERTY(bool windowTransparent READ windowTransparent NOTIFY themeChanged)
   Q_PROPERTY(bool windowBlur READ windowBlur NOTIFY themeChanged)
@@ -35,8 +39,12 @@ public:
   QString path() const { return m_path; }
   QString id() const { return m_id; }
   QString name() const { return m_name; }
-  QString appearance() const { return m_appearance; }
+  QString appearance() const { return m_loaded ? m_appearance : m_pageAppearance; }
   QVariantMap colors() const { return m_colors; }
+  qreal radius() const;
+  QString fontUi() const;
+  QString fontMono() const;
+  bool pageThemeLoaded() const { return !m_pageColors.isEmpty(); }
   qreal windowOpacity() const { return m_windowOpacity; }
   bool windowTransparent() const { return m_windowTransparent; }
   bool windowBlur() const { return m_windowBlur; }
@@ -44,9 +52,14 @@ public:
   QString injectionScript() const;
   QString lastError() const { return m_lastError; }
 
-  // Resolved colour for a role (`canvas`, `text`, ...), or `fallback`.
+  // Resolved colour for a role (`canvas`, `text`, ...): theme.json first, then
+  // the page's published theme, then `fallback`.
   Q_INVOKABLE QColor color(const QString& role, const QColor& fallback) const;
   Q_INVOKABLE void reload();
+
+public slots:
+  // The page's resolved theme (ShellThemeState) published under `theme`.
+  void applyPageTheme(const QVariant& theme);
 
 signals:
   void themeChanged();
@@ -67,6 +80,14 @@ private:
   QString m_name;
   QString m_appearance;
   QVariantMap m_colors;
+  QString m_radius;
+  QString m_fontUi;
+  QString m_fontMono;
+  QVariantMap m_pageColors;
+  QString m_pageAppearance;
+  qreal m_pageRadius = 8;
+  QString m_pageFontUi;
+  QString m_pageFontMono;
   qreal m_windowOpacity = 1.0;
   bool m_windowTransparent = false;
   bool m_windowBlur = false;
