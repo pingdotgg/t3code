@@ -239,11 +239,30 @@ is unavailable under the shell; "add to composer" from a terminal selection in
 the embed document has no composer to reach yet; the embed view reloads when
 the thread changes.
 
+### `workspace`
+
+`ShellWorkspaceBridge` (mounted by `ChatView` when hosted) publishes
+`ShellWorkspaceState`: project and thread titles, checkout mode (and whether
+it can still change), branch and worktree, a git summary (dirty, ahead/behind,
+linked PR), the environments the logical project spans, available editors
+with the preferred one, and project scripts. `ChatHeader` keeps only the git
+control (`shellHosted`), since commit/push/PR flows carry dialogs and progress
+UI that live with that control; the branch toolbar under the composer is not
+rendered. Actions: `workspace.newThread`, `workspace.openInEditor
+{editorId?}` (same command and preference as the HTML picker),
+`workspace.runScript {scriptId}`, `workspace.envMode.set {mode}`,
+`workspace.startFromOrigin.set {enabled}`, `workspace.openPullRequest`,
+`workspace.environment.set {environmentId}`.
+
+Not yet native: switching branches (the picker's `setThreadBranch` flow
+stops the session and rewrites thread metadata), renaming the thread, and
+the git write actions.
+
 ## Splitting chrome out
 
 Order of work: sidebar (done: `Sidebar`), composer (done: `Composer`), right
-panel (done: `RightPanel` + embed route), then the workspace strip and
-settings. The timeline and terminal stay HTML. Each split-out piece becomes one
+panel (done: `RightPanel` + embed route), workspace strip (done: `Workspace`),
+then settings. The timeline and terminal stay HTML. Each split-out piece becomes one
 brick with a documented state/action surface; in the shell the SPA simply does
 not render the parts that moved out. When an HTML brick needs to live somewhere QML decides, it becomes a second
 `WebEngineView` loading an embed route with its own server connection (the
