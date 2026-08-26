@@ -205,11 +205,20 @@ plan/build toggle. `ChatComposer` hides its editor and footer when hosted;
 the editor comes back for approval and user-input flows, which type answers
 through it.
 
-Actions: `composer.text.set {text}` (debounced from the QML editor),
-`composer.submit {text?, intent?}` (text rides along so the send is atomic
-with the last edit), `composer.interrupt`, `composer.model.select
+Actions: `composer.text.set {text, cursor?}` (debounced from the QML
+editor), `composer.submit {text?, intent?}` (text rides along so the send is
+atomic with the last edit), `composer.interrupt`, `composer.model.select
 {instanceId, model}`, `composer.option.set {id, value}`,
-`composer.runtimeMode.set {mode}`, `composer.interactionMode.set {mode}`.
+`composer.runtimeMode.set {mode}`, `composer.interactionMode.set {mode}`,
+`composer.suggest.select {id}`, `composer.suggest.dismiss`.
+
+`@file`, `$skill` and `/command` suggestions reuse `ChatComposer`'s own
+trigger detection and menu: the QML editor edits the raw prompt (mentions
+written out as `[label](path)`), so it sends an _expanded_ caret with each
+edit; `ChatComposer` collapses it, re-detects the trigger and publishes
+`triggerKind`, `suggestions` and `suggestionsEmptyText`. Selecting sends the
+item id back and the page applies the same replacement the HTML menu would,
+then publishes the new `text` and `cursor` for the editor to adopt.
 
 ### `rightPanel`
 
