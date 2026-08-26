@@ -7,7 +7,9 @@ import type {
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -26,6 +28,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
+import { discoverPiSkills } from "../Drivers/PiSkills.ts";
 
 const PI_PRESENTATION = {
   displayName: "Pi",
@@ -50,10 +53,11 @@ const PI_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 
 export function buildInitialPiProviderSnapshot(
   piSettings: PiSettings,
-): Effect.Effect<ServerProviderDraft> {
+): Effect.Effect<ServerProviderDraft, never, FileSystem.FileSystem | Path.Path> {
   return Effect.gen(function* () {
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = piModelsFromSettings(piSettings.customModels);
+    const skills = yield* discoverPiSkills(process.cwd()).pipe(Effect.orElseSucceed(() => []));
 
     if (!piSettings.enabled) {
       return buildServerProvider({
@@ -61,6 +65,7 @@ export function buildInitialPiProviderSnapshot(
         enabled: false,
         checkedAt,
         models,
+        skills,
         probe: {
           installed: false,
           version: null,
@@ -76,6 +81,7 @@ export function buildInitialPiProviderSnapshot(
       enabled: true,
       checkedAt,
       models,
+      skills,
       probe: {
         installed: true,
         version: null,
@@ -115,9 +121,15 @@ const runPiVersionCommand = (
 export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
-): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
+  cwd: string = process.cwd(),
+): Effect.fn.Return<
+  ServerProviderDraft,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = piModelsFromSettings(piSettings.customModels);
+  const skills = yield* discoverPiSkills(cwd, environment).pipe(Effect.orElseSucceed(() => []));
 
   if (!piSettings.enabled) {
     return buildServerProvider({
@@ -125,6 +137,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       enabled: false,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: false,
         version: null,
@@ -150,6 +163,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       enabled: piSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: !isCommandMissingCause(error),
         version: null,
@@ -168,6 +182,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       enabled: piSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: true,
         version: null,
@@ -191,6 +206,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       enabled: piSettings.enabled,
       checkedAt,
       models: fallbackModels,
+      skills,
       probe: {
         installed: true,
         version,
@@ -206,6 +222,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     enabled: piSettings.enabled,
     checkedAt,
     models: fallbackModels,
+    skills,
     probe: {
       installed: true,
       version,

@@ -73,6 +73,9 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const processEnv = mergeProviderInstanceEnvironment(environment);
@@ -101,11 +104,13 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
 
       const checkProvider = Effect.flatMap(snapshotSettings.getSettings, (settings) =>
-        checkPiProviderStatus(settings.provider, processEnv),
+        checkPiProviderStatus(settings.provider, processEnv, serverConfig.cwd),
       ).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       );
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<PiSettings>>({
         maintenanceCapabilities,
@@ -113,7 +118,11 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          buildInitialPiProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
+          buildInitialPiProviderSnapshot(settings.provider).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.map(stampIdentity),
+          ),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           enrichPiSnapshot({
