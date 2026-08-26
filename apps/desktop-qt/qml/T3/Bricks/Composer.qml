@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import T3.Shell
 
@@ -68,6 +69,16 @@ Rectangle {
         });
     }
 
+    function attach(urls) {
+        const files = Shell.readImageFiles(urls);
+        if (files.length === 0) {
+            return;
+        }
+        Shell.dispatch("composer.attach", {
+            files: files
+        });
+    }
+
     function submit(intent) {
         if (!composer.ready || !composer.model.canSend) {
             return;
@@ -108,6 +119,41 @@ Rectangle {
         anchors.fill: parent
         anchors.margins: 12
         spacing: 8
+
+        // Attached images and terminal selections living on the draft.
+        Flow {
+            Layout.fillWidth: true
+            visible: composer.ready && (composer.model.attachments.length > 0 || composer.model.terminalContexts.length > 0)
+            spacing: 6
+
+            Repeater {
+                model: composer.ready ? composer.model.attachments : []
+
+                delegate: ShellButton {
+                    required property var modelData
+
+                    text: "🖼 " + modelData.name + "  ✕"
+                    font.pixelSize: 12
+                    onClicked: Shell.dispatch("composer.attachment.remove", {
+                        id: modelData.id
+                    })
+                }
+            }
+
+            Repeater {
+                model: composer.ready ? composer.model.terminalContexts : []
+
+                delegate: ShellButton {
+                    required property var modelData
+
+                    text: "▤ " + modelData.label + " " + modelData.lineStart + "–" + modelData.lineEnd + "  ✕"
+                    font.pixelSize: 12
+                    onClicked: Shell.dispatch("composer.terminalContext.remove", {
+                        id: modelData.id
+                    })
+                }
+            }
+        }
 
         // @file, $skill and /command suggestions, computed by the page for the
         // caret it was last told about.
@@ -190,6 +236,17 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: Math.min(Math.max(input.implicitHeight + 20, 64), 220)
+
+            DropArea {
+                anchors.fill: parent
+                keys: ["text/uri-list"]
+                onDropped: drop => {
+                    if (drop.hasUrls) {
+                        composer.attach(drop.urls);
+                        drop.accept(Qt.CopyAction);
+                    }
+                }
+            }
             radius: Theme.radius
             color: Theme.color("input", "#141416")
             border.color: input.activeFocus ? Theme.color("focus", "#3b82f6") : composer.border
@@ -234,6 +291,23 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
+
+            ShellButton {
+                subtle: true
+                text: "📎"
+                enabled: composer.ready && !composer.model.editorDisabled
+                Accessible.name: qsTr("Attach image")
+                onClicked: imagePicker.open()
+
+                FileDialog {
+                    id: imagePicker
+
+                    title: qsTr("Attach images")
+                    fileMode: FileDialog.OpenFiles
+                    nameFilters: [qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp *.heic *.heif)")]
+                    onAccepted: composer.attach(selectedFiles)
+                }
+            }
 
             ShellComboBox {
                 id: modelPicker

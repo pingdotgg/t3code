@@ -35,6 +35,9 @@ public:
 
   // Called by QML bricks; delivered to the web app as `actionRequested`.
   Q_INVOKABLE void dispatch(const QString& action, const QVariant& payload = QVariant());
+  // Reads image files for the composer: [{name, mimeType, base64}], skipping
+  // anything that is not an image or is over the page's size limit.
+  Q_INVOKABLE QVariantList readImageFiles(const QList<QUrl>& urls) const;
   // Called by WebSurface when a top-level navigation finishes.
   Q_INVOKABLE void notifyPageLoaded(bool ok, const QUrl& url);
 

@@ -45,6 +45,7 @@
       }),
     // Everything any document published, keyed as published; secondary
     // documents (embed routes) read the primary's view models from here.
+    dispatch: (action, payload) => ready.then((shell) => shell.dispatch(action, payload ?? null)),
     getState: () => ready.then((shell) => shell.state),
     onState: (listener) =>
       ready.then((shell) => {

@@ -53,6 +53,11 @@ int main(int argc, char* argv[]) {
   // Stable app id so compositor rules (blur, opacity, workspace) can target it.
   QGuiApplication::setDesktopFileName(QStringLiteral("t3code"));
 
+  // Chromium's classic scrollbars paint a thumb in the page's scrollbar
+  // gutters; overlay scrollbars match what the app expects from browsers.
+  if (!qEnvironmentVariableIsSet("QTWEBENGINE_CHROMIUM_FLAGS")) {
+    qputenv("QTWEBENGINE_CHROMIUM_FLAGS", "--enable-features=OverlayScrollbar");
+  }
   QtWebEngineQuick::initialize();
   QGuiApplication app(argc, argv);
 

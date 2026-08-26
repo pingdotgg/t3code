@@ -1,6 +1,10 @@
 #include "ShellBridge.h"
 
 #include <QDesktopServices>
+#include <QFile>
+#include <QFileInfo>
+#include <QMimeDatabase>
+#include <QtLogging>
 
 ShellBridge::ShellBridge(QObject* parent) : QObject(parent) {}
 
@@ -49,4 +53,32 @@ void ShellBridge::dispatch(const QString& action, const QVariant& payload) {
 
 void ShellBridge::notifyPageLoaded(bool ok, const QUrl& url) {
   emit pageLoaded(ok, url);
+}
+
+QVariantList ShellBridge::readImageFiles(const QList<QUrl>& urls) const {
+  constexpr qint64 kMaxBytes = 10 * 1024 * 1024;
+  QMimeDatabase mimeDatabase;
+  QVariantList result;
+  for (const QUrl& url : urls) {
+    if (!url.isLocalFile()) {
+      continue;
+    }
+    const QString path = url.toLocalFile();
+    const QMimeType mime = mimeDatabase.mimeTypeForFile(path);
+    if (!mime.name().startsWith(QStringLiteral("image/"))) {
+      qInfo().noquote() << "[shell] skipping non-image attachment" << path;
+      continue;
+    }
+    QFile file(path);
+    if (file.size() > kMaxBytes || !file.open(QIODevice::ReadOnly)) {
+      qInfo().noquote() << "[shell] skipping attachment (too large or unreadable)" << path;
+      continue;
+    }
+    result.append(QVariantMap{
+        {QStringLiteral("name"), QFileInfo(path).fileName()},
+        {QStringLiteral("mimeType"), mime.name()},
+        {QStringLiteral("base64"), QString::fromLatin1(file.readAll().toBase64())},
+    });
+  }
+  return result;
 }
