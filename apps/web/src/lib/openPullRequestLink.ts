@@ -115,18 +115,8 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     const match = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
   }
-  // Gitea, self-hosted included: /{owner}/{repo}/pulls/{n}. Like GitLab, the hostname is not asked
-  // about, because a Gitea install is named whatever its admin chose. The plural `pulls` is what
-  // makes this safe to read on any host: GitHub's equivalent is the singular `pull`, and the
-  // GitHub-ish hosts above have already returned by the time this runs.
-  //
-  // Public hosts whose own URL shapes could collide must be excluded: github.com uses `/pull/`
-  // (singular) and bitbucket.org uses `/pull-requests/`, so a `/pulls/` path on either is
-  // unrecognisable as their native format and must not fall through to the Gitea rule.
-  if (isHostOf(host, "github.com")) return null;
-  if (isHostOf(host, "bitbucket.org")) return null;
-  const gitea = /^\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
-  if (gitea) return claim(host, gitea);
+  // Gitea's `/pulls/{n}` shape is intentionally not claimed here. The in-app pull-request
+  // registry does not have a Gitea reader yet, so those links must remain ordinary external links.
   return null;
 }
 

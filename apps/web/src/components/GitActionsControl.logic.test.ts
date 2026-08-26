@@ -7,10 +7,31 @@ import {
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
+  resolvePublishHost,
   resolveQuickAction,
   resolveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
 } from "./GitActionsControl.logic";
+
+describe("resolvePublishHost", () => {
+  it("uses the discovered host when one is available", () => {
+    assert.equal(
+      resolvePublishHost({ discoveredHost: "git.example.com", fallbackHost: null }),
+      "git.example.com",
+    );
+  });
+
+  it("keeps the provider fallback for providers with a canonical host", () => {
+    assert.equal(
+      resolvePublishHost({ discoveredHost: null, fallbackHost: "github.com" }),
+      "github.com",
+    );
+  });
+
+  it("does not invent a Gitea hostname when discovery has no host", () => {
+    assert.equal(resolvePublishHost({ discoveredHost: null, fallbackHost: null }), null);
+  });
+});
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {

@@ -49,6 +49,7 @@ import {
   resolveLiveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
   resolveQuickAction,
+  resolvePublishHost,
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
 import { AnimatedHeight } from "./AnimatedHeight";
@@ -201,7 +202,7 @@ const PUBLISH_PROVIDER_OPTIONS = [
     // A self-hosted Gitea has no canonical host, so the real one is read from discovery below.
     label: "Gitea",
     description: "Your authenticated instance",
-    host: "gitea",
+    host: null,
     pathPlaceholder: "owner/repository",
     Icon: GitPullRequestIcon,
   },
@@ -209,7 +210,7 @@ const PUBLISH_PROVIDER_OPTIONS = [
   readonly value: PublishProviderKind;
   readonly label: string;
   readonly description: string;
-  readonly host: string;
+  readonly host: string | null;
   readonly pathPlaceholder: string;
   readonly Icon: typeof GitHubIcon;
 }>;
@@ -486,10 +487,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     : "";
   const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
   const currentPublishProvider = publishProviderOption(publishProvider);
-  const publishHost =
-    publishProvider === "gitea"
-      ? (publishHostByProvider.gitea ?? currentPublishProvider.host)
-      : currentPublishProvider.host;
+  const publishHost = resolvePublishHost({
+    discoveredHost: publishHostByProvider[publishProvider],
+    fallbackHost: currentPublishProvider.host,
+  });
   const publishPathPlaceholder = currentPublishProvider.pathPlaceholder;
   const publishProviderLabel = currentPublishProvider.label;
   const publishWizardSteps = ["Provider", "Repository", "Summary"] as const;
@@ -725,9 +726,14 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     Repository
                   </label>
                   <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background focus-within:outline-2 focus-within:-outline-offset-1 focus-within:outline-ring">
-                    <span className="flex shrink-0 items-center gap-1.5 border-r border-input bg-muted/50 px-2.5 font-mono text-xs text-muted-foreground">
+                    <span
+                      className={cn(
+                        "flex shrink-0 items-center gap-1.5 border-r border-input bg-muted/50 px-2.5 font-mono text-xs text-muted-foreground",
+                        publishHost === null && "border-r-0",
+                      )}
+                    >
                       <currentPublishProvider.Icon className="size-3.5" />
-                      {publishHost}/
+                      {publishHost === null ? currentPublishProvider.label : `${publishHost}/`}
                     </span>
                     <input
                       id="publish-repository-path"

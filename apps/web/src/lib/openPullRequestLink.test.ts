@@ -229,23 +229,10 @@ describe("findProjectForChangeRequest", () => {
   });
 });
 
-describe("Gitea change request links", () => {
-  it("reads a Gitea PR URL on an arbitrary self-hosted host", () => {
-    expect(parseChangeRequestUrl("https://git.example.com/owner/repo/pulls/42")).toEqual({
-      host: "git.example.com",
-      repository: "owner/repo",
-      number: 42,
-    });
-    expect(parseChangeRequestUrl("https://gitea.com/foo/bar/pulls/1")).toEqual({
-      host: "gitea.com",
-      repository: "foo/bar",
-      number: 1,
-    });
-    expect(parseChangeRequestUrl("https://code.home.internal/team/project/pulls/999")).toEqual({
-      host: "code.home.internal",
-      repository: "team/project",
-      number: 999,
-    });
+describe("unsupported Gitea change request links", () => {
+  it("leaves Gitea PR URLs for the system browser until an in-app reader exists", () => {
+    expect(parseChangeRequestUrl("https://git.example.com/owner/repo/pulls/42")).toBeNull();
+    expect(parseChangeRequestUrl("https://gitea.com/foo/bar/pulls/1")).toBeNull();
   });
 
   it("does not read a Gitea PR list or a non-numeric index", () => {
@@ -254,8 +241,6 @@ describe("Gitea change request links", () => {
     expect(parseChangeRequestUrl("https://git.example.com/owner/repo/issues/42")).toBeNull();
   });
 
-  // GitHub is checked first and returns early, so its singular /pull/ shape is unaffected by the
-  // plural rule that follows it.
   it("leaves GitHub URLs on the GitHub rule", () => {
     expect(parseChangeRequestUrl("https://github.com/owner/repo/pull/42")).toEqual({
       host: "github.com",
@@ -268,27 +253,6 @@ describe("Gitea change request links", () => {
   it("does not treat public GitHub or Bitbucket /pulls/ paths as change requests", () => {
     expect(parseChangeRequestUrl("https://github.com/owner/repo/pulls/42")).toBeNull();
     expect(parseChangeRequestUrl("https://bitbucket.org/owner/repo/pulls/42")).toBeNull();
-  });
-
-  it("recognizes generic Gitea /pulls/ URLs on self-hosted hostnames", () => {
-    expect(parseChangeRequestUrl("https://git.example.com/owner/repo/pulls/42")).toEqual({
-      host: "git.example.com",
-      repository: "owner/repo",
-      number: 42,
-    });
-  });
-
-  it("falls through to Gitea parser for self-hosted lookalike hosts with unmatched native paths", () => {
-    expect(parseChangeRequestUrl("https://github.internal/owner/repo/pulls/42")).toEqual({
-      host: "github.internal",
-      repository: "owner/repo",
-      number: 42,
-    });
-    expect(parseChangeRequestUrl("https://bitbucket.internal/owner/repo/pulls/42")).toEqual({
-      host: "bitbucket.internal",
-      repository: "owner/repo",
-      number: 42,
-    });
   });
 
   it("still matches native paths on self-hosted lookalike hosts", () => {
@@ -304,11 +268,5 @@ describe("Gitea change request links", () => {
       repository: "workspace/repo",
       number: 5,
     });
-  });
-
-  it("finds the repository root behind a Gitea PR URL", () => {
-    expect(changeRequestRepositoryUrl("https://git.example.com/owner/repo/pulls/42")).toBe(
-      "https://git.example.com/owner/repo",
-    );
   });
 });
