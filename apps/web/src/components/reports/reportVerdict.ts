@@ -127,23 +127,56 @@ export interface ReportSummarySplit {
   readonly sections: ReadonlyArray<{ readonly title: string; readonly body: string }>;
 }
 
+const HASH_HEADING = /^##\s+(.+?)\s*$/;
+/** A line that is nothing but a bold run — `**Evidence**` — used as a heading. */
+const BOLD_HEADING = /^\*\*([^*\n]+?)\*\*:?\s*$/;
+/**
+ * A bold heading glued onto the end of a sentence: `...find Inbox. **Evidence**`.
+ * Markdown reads the line break after it as a space, so the heading lands
+ * inline with the prose it was meant to close.
+ */
+const TRAILING_BOLD_HEADING = /^(.*[.!?)])\s+\*\*([^*\n.!?:]+?)\*\*\s*$/;
+const LIST_ITEM = /^\s*(?:[-*+]|\d+\.)\s+/;
+
+function headingTitle(line: string): string | null {
+  return HASH_HEADING.exec(line)?.[1] ?? BOLD_HEADING.exec(line)?.[1] ?? null;
+}
+
 /**
  * Split a summary into its labeled slots (Problem, Impact, Solution, ...) so
- * the reader jumps to the one they need. Nothing is cut. Summaries without
- * `##` headings return no sections, and callers render them whole.
+ * the reader jumps to the one they need. Nothing is cut. Headings are `##`
+ * lines or bold-only lines, and a bold heading the agent tacked onto the end
+ * of a sentence right before a list is peeled onto its own line first.
+ * Summaries without headings return no sections, and callers render them whole.
  */
 export function splitReportSummary(summary: string | null | undefined): ReportSummarySplit {
   if (typeof summary !== "string" || summary.trim().length === 0) {
     return { lede: "", sections: [] };
   }
+  const raw = summary.split(/\r?\n/);
+  const lines: Array<string> = [];
+  for (const [index, line] of raw.entries()) {
+    const glued = TRAILING_BOLD_HEADING.exec(line);
+    const next = raw[index + 1];
+    if (
+      glued?.[1] !== undefined &&
+      glued[2] !== undefined &&
+      next !== undefined &&
+      LIST_ITEM.test(next)
+    ) {
+      lines.push(glued[1], `**${glued[2]}**`);
+    } else {
+      lines.push(line);
+    }
+  }
   const sections: Array<{ title: string; body: string }> = [];
   const lede: Array<string> = [];
   let current: { title: string; body: Array<string> } | null = null;
-  for (const line of summary.split(/\r?\n/)) {
-    const heading = /^##\s+(.+?)\s*$/.exec(line);
-    if (heading?.[1] !== undefined) {
+  for (const line of lines) {
+    const title = headingTitle(line);
+    if (title !== null) {
       if (current) sections.push({ title: current.title, body: current.body.join("\n").trim() });
-      current = { title: heading[1], body: [] };
+      current = { title, body: [] };
     } else if (current) {
       current.body.push(line);
     } else {

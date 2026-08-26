@@ -1,7 +1,7 @@
 import type { PostHogReport } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveReportDecision } from "./reportVerdict";
+import { deriveReportDecision, splitReportSummary } from "./reportVerdict";
 
 function report(overrides: Partial<Omit<PostHogReport, "id">> & { id: string }): PostHogReport {
   return {
@@ -64,5 +64,41 @@ describe("report decisions", () => {
     const decision = deriveReportDecision(report({ id: "unjudged" }), noPr);
     expect(decision.verdict.title).toBe("Not classified yet");
     expect(decision.verdict.tone).toBe("info");
+  });
+});
+
+describe("splitReportSummary", () => {
+  it("splits on ## headings", () => {
+    expect(splitReportSummary("Gist.\n\n## Problem\nBroken.\n\n## Solution\nFix it.")).toEqual({
+      lede: "Gist.",
+      sections: [
+        { title: "Problem", body: "Broken." },
+        { title: "Solution", body: "Fix it." },
+      ],
+    });
+  });
+
+  it("treats a bold-only line as a heading", () => {
+    expect(splitReportSummary("Gist.\n\n**Recommended next step**\n- Do the thing.")).toEqual({
+      lede: "Gist.",
+      sections: [{ title: "Recommended next step", body: "- Do the thing." }],
+    });
+  });
+
+  it("peels a bold heading glued onto the end of the lede ahead of a list", () => {
+    const summary =
+      "New users cannot find Loops and Inbox. **Evidence**\n- Thread `1` says so.\n- Slack: https://example.com\n\n**Recommended next step**\n- Define the journey.";
+    expect(splitReportSummary(summary)).toEqual({
+      lede: "New users cannot find Loops and Inbox.",
+      sections: [
+        { title: "Evidence", body: "- Thread `1` says so.\n- Slack: https://example.com" },
+        { title: "Recommended next step", body: "- Define the journey." },
+      ],
+    });
+  });
+
+  it("leaves bold emphasis inside prose alone", () => {
+    const summary = "This is **important** and stays.\nThe fix is **urgent**\nMore prose here.";
+    expect(splitReportSummary(summary)).toEqual({ lede: summary, sections: [] });
   });
 });
