@@ -426,6 +426,33 @@ type ToastPosition =
 
 interface ToastProviderProps extends Toast.Provider.Props {
   position?: ToastPosition;
+  /**
+   * Hosted by a native shell: rendered inside the provider so it can read the
+   * live toast list; plain toasts then render natively and only rich ones
+   * (React-element bodies) stay in this viewport.
+   */
+  shellMirror?: ReactNode;
+}
+
+/** A toast the shell can render from strings alone. */
+export function isShellMirrorableToast(toast: {
+  title?: ReactNode;
+  description?: ReactNode;
+  positionerProps?: { anchor?: unknown } | undefined;
+  data?: ThreadToastData | undefined;
+}): boolean {
+  if (toast.positionerProps?.anchor) return false;
+  if (toast.data?.expandableContent) return false;
+  if (typeof toast.title !== "string") return false;
+  return (
+    toast.description === undefined ||
+    toast.description === null ||
+    typeof toast.description === "string"
+  );
+}
+
+export function dismissToast(toastId: ToastId, onClose: (() => void) | undefined): void {
+  handleToastDismissClick(toastManager, toastId, onClose);
 }
 
 function useActiveThreadRefFromRoute(): ScopedThreadRef | null {
@@ -529,21 +556,29 @@ function ThreadToastVisibleAutoDismiss({
   return null;
 }
 
-function ToastProvider({ children, position = "top-right", ...props }: ToastProviderProps) {
+function ToastProvider({
+  children,
+  position = "top-right",
+  shellMirror,
+  ...props
+}: ToastProviderProps) {
   return (
     <Toast.Provider toastManager={toastManager} {...props}>
       {children}
-      <Toasts position={position} />
+      {shellMirror}
+      <Toasts position={position} onlyRich={shellMirror !== undefined} />
     </Toast.Provider>
   );
 }
 
-function Toasts({ position }: { position: ToastPosition }) {
+function Toasts({ position, onlyRich = false }: { position: ToastPosition; onlyRich?: boolean }) {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
   const isTop = position.startsWith("top");
-  const visibleToasts = toasts.filter((toast) =>
-    shouldRenderThreadScopedToast(toast.data, activeThreadRef),
+  const visibleToasts = toasts.filter(
+    (toast) =>
+      shouldRenderThreadScopedToast(toast.data, activeThreadRef) &&
+      (!onlyRich || !isShellMirrorableToast(toast)),
   );
   const visibleToastLayout = buildVisibleToastLayout(visibleToasts);
 
@@ -809,4 +844,5 @@ export {
   toastManager,
   AnchoredToastProvider,
   anchoredToastManager,
+  useActiveThreadRefFromRoute,
 };
