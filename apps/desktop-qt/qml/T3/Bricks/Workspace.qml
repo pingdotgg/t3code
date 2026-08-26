@@ -79,13 +79,125 @@ Rectangle {
             font.pixelSize: 12
         }
 
-        Text {
-            visible: strip.ready && strip.model.branch !== null
-            text: strip.ready ? "⎇ " + (strip.model.branch ?? "") + (strip.gitSummary.length > 0 ? "  " + strip.gitSummary : "") : ""
-            color: strip.muted
+        ToolButton {
+            id: branchButton
+
+            visible: strip.ready && (strip.model.branch !== null || strip.model.branchChangeable)
+            enabled: strip.ready && strip.model.branchChangeable && !strip.model.branchSwitchPending
+            text: strip.ready ? "⎇ " + (strip.model.branch ?? qsTr("Pick branch")) + (strip.gitSummary.length > 0 ? "  " + strip.gitSummary : "") : ""
             font.pixelSize: 12
-            elide: Text.ElideMiddle
-            Layout.maximumWidth: 260
+            Accessible.name: qsTr("Switch branch")
+            onClicked: branchPicker.open()
+
+            Popup {
+                id: branchPicker
+
+                y: parent.height
+                width: 320
+                height: 360
+                padding: 8
+                onOpened: {
+                    branchSearch.text = "";
+                    branchSearch.forceActiveFocus();
+                }
+                onClosed: Shell.dispatch("workspace.branch.search", {
+                    query: ""
+                })
+
+                background: Rectangle {
+                    color: Theme.color("surfaceOverlay", "#18181b")
+                    border.color: Theme.color("border", "#27272a")
+                    radius: 8
+                }
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 6
+
+                    TextField {
+                        id: branchSearch
+
+                        Layout.fillWidth: true
+                        placeholderText: qsTr("Search or create a branch")
+                        onTextEdited: Shell.dispatch("workspace.branch.search", {
+                            query: text
+                        })
+                        Keys.onReturnPressed: {
+                            const name = text.trim();
+                            if (name.length === 0) {
+                                return;
+                            }
+                            const exact = strip.model.branches.find(ref => ref.name === name);
+                            Shell.dispatch(exact ? "workspace.branch.select" : "workspace.branch.create", {
+                                name: name
+                            });
+                            branchPicker.close();
+                        }
+                    }
+
+                    ListView {
+                        id: branchList
+
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        model: strip.ready ? strip.model.branches : []
+
+                        delegate: Rectangle {
+                            id: branchRow
+
+                            required property var modelData
+
+                            width: ListView.view.width
+                            height: 30
+                            radius: 6
+                            color: rowHover.hovered ? Theme.color("sidebarRowHover", "#1c1c21") : "transparent"
+
+                            HoverHandler {
+                                id: rowHover
+                            }
+
+                            TapHandler {
+                                onTapped: {
+                                    Shell.dispatch("workspace.branch.select", {
+                                        name: branchRow.modelData.name
+                                    });
+                                    branchPicker.close();
+                                }
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.left: parent.left
+                                anchors.leftMargin: 8
+                                anchors.right: parent.right
+                                anchors.rightMargin: 8
+                                text: (branchRow.modelData.current ? "● " : "") + branchRow.modelData.name + (branchRow.modelData.isDefault ? "  " + qsTr("default") : "")
+                                color: branchRow.modelData.isRemote ? strip.muted : strip.foreground
+                                font.pixelSize: 12
+                                elide: Text.ElideMiddle
+                            }
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            visible: branchList.count === 0
+                            text: strip.ready && strip.model.branchesLoading ? qsTr("Loading refs…") : qsTr("No matching refs — Enter creates one")
+                            color: strip.muted
+                            font.pixelSize: 12
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: strip.ready && strip.model.branchesTotal > strip.model.branches.length
+                        text: strip.ready ? qsTr("Showing %1 of %2 refs — type to narrow").arg(strip.model.branches.length).arg(strip.model.branchesTotal) : ""
+                        color: strip.muted
+                        font.pixelSize: 11
+                    }
+                }
+            }
         }
 
         ToolButton {
