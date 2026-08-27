@@ -9,4 +9,4 @@ are already looking at T3 Code. Threads that were already finished when the app 
 notify.
 
 To turn these notifications off, use Windows' per-app notification settings under
-**System Settings** → **Notifications**.
+**Start** → **Settings** → **System** → **Notifications**.
