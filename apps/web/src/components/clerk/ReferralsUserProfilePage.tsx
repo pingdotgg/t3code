@@ -19,7 +19,11 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
-import { ClerkUserProfilePage, ClerkUserProfileRefreshButton } from "./ClerkUserProfilePage";
+import {
+  ClerkUserProfileIcon,
+  ClerkUserProfilePage,
+  ClerkUserProfileRefreshButton,
+} from "./ClerkUserProfilePage";
 
 function claimResultMessage(result: RelayReferralClaimResult): {
   readonly type: "success" | "warning" | "info";
@@ -72,12 +76,7 @@ function ReferralSectionHeading({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <div
-        aria-hidden="true"
-        className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-muted/32 text-muted-foreground"
-      >
-        {icon}
-      </div>
+      <ClerkUserProfileIcon>{icon}</ClerkUserProfileIcon>
       <div className="min-w-0 pt-0.5">
         <h3 className="text-sm font-semibold">{title}</h3>
         <p className="mt-0.5 max-w-[30rem] text-xs leading-5 text-muted-foreground">
@@ -227,7 +226,7 @@ export function ReferralsUserProfilePage() {
               description="They need to claim your link before linking their first T3 Code environment."
             />
             <div className="mt-4 space-y-2 sm:ml-11">
-              <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <div className="min-w-0 flex-1 rounded-lg border bg-muted/24 px-3 py-2.5">
                   <div className="flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
                     <LinkIcon className="size-3" aria-hidden="true" />

@@ -61,6 +61,17 @@ export function ClerkUserProfileRefreshButton({
   );
 }
 
+export function ClerkUserProfileIcon({ children }: { readonly children: ReactNode }) {
+  return (
+    <div
+      aria-hidden="true"
+      className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-muted/32 text-muted-foreground"
+    >
+      {children}
+    </div>
+  );
+}
+
 export function ClerkUserProfileRow({
   children,
   className,
@@ -73,12 +84,7 @@ export function ClerkUserProfileRow({
   return (
     <li className={cn("border-t py-4 first:border-t-0", className)}>
       <div className="flex items-start gap-3">
-        <div
-          aria-hidden="true"
-          className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-muted/32 text-muted-foreground"
-        >
-          {icon}
-        </div>
+        <ClerkUserProfileIcon>{icon}</ClerkUserProfileIcon>
         <div className="min-w-0 flex-1">{children}</div>
       </div>
     </li>
