@@ -481,9 +481,12 @@ function useActiveThreadRefFromRoute(): ScopedThreadRef | null {
 function ThreadToastVisibleAutoDismiss({
   toastId,
   dismissAfterVisibleMs,
+  ignoreFocus = false,
 }: {
   toastId: ToastId;
   dismissAfterVisibleMs: number | undefined;
+  /** Shell-mirrored toasts show in native chrome, so page focus is irrelevant. */
+  ignoreFocus?: boolean;
 }) {
   useEffect(() => {
     if (!dismissAfterVisibleMs || dismissAfterVisibleMs <= 0) return;
@@ -531,7 +534,8 @@ function ThreadToastVisibleAutoDismiss({
     };
 
     const syncTimer = () => {
-      const shouldRun = document.visibilityState === "visible" && document.hasFocus();
+      const shouldRun =
+        document.visibilityState === "visible" && (ignoreFocus || document.hasFocus());
       if (shouldRun) {
         start();
         return;
@@ -551,7 +555,7 @@ function ThreadToastVisibleAutoDismiss({
       pause();
       clearTimer();
     };
-  }, [dismissAfterVisibleMs, toastId]);
+  }, [dismissAfterVisibleMs, ignoreFocus, toastId]);
 
   return null;
 }
@@ -615,7 +619,13 @@ function Toasts({ position, onlyRich = false }: { position: ToastPosition; onlyR
         }
       >
         {mirroredToasts.map((toast) => (
-          <Toast.Root key={toast.id} toast={toast} className="hidden" data-shell-mirrored="" />
+          <Toast.Root key={toast.id} toast={toast} className="hidden" data-shell-mirrored="">
+            <ThreadToastVisibleAutoDismiss
+              dismissAfterVisibleMs={toast.data?.dismissAfterVisibleMs}
+              ignoreFocus
+              toastId={toast.id}
+            />
+          </Toast.Root>
         ))}
         {visibleToastLayout.items.map(({ toast, visibleIndex, offsetY }) => {
           const hideCollapsedContent = shouldHideCollapsedToastContent(
