@@ -2616,11 +2616,16 @@ export const ServerNotification__SpendControlLimitSnapshot = Schema.Struct({
   used: Schema.String,
 });
 
-export type ServerNotification__SubAgentActivityKind = "started" | "interacted" | "interrupted";
+export type ServerNotification__SubAgentActivityKind =
+  | "started"
+  | "interacted"
+  | "interrupted"
+  | "completed";
 export const ServerNotification__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type ServerNotification__TerminalInteractionNotification = {
@@ -4710,11 +4715,13 @@ export const V2ItemCompletedNotification__ReasoningEffort = Schema.String.annota
 export type V2ItemCompletedNotification__SubAgentActivityKind =
   | "started"
   | "interacted"
-  | "interrupted";
+  | "interrupted"
+  | "completed";
 export const V2ItemCompletedNotification__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ItemCompletedNotification__TextElement = {
@@ -5115,11 +5122,13 @@ export const V2ItemStartedNotification__ReasoningEffort = Schema.String.annotate
 export type V2ItemStartedNotification__SubAgentActivityKind =
   | "started"
   | "interacted"
-  | "interrupted";
+  | "interrupted"
+  | "completed";
 export const V2ItemStartedNotification__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ItemStartedNotification__TextElement = {
@@ -6284,11 +6293,16 @@ export const V2ReviewStartResponse__ReasoningEffort = Schema.String.annotate({
   description: "A non-empty reasoning effort value advertised by the model.",
 }).check(Schema.isMinLength(1));
 
-export type V2ReviewStartResponse__SubAgentActivityKind = "started" | "interacted" | "interrupted";
+export type V2ReviewStartResponse__SubAgentActivityKind =
+  | "started"
+  | "interacted"
+  | "interrupted"
+  | "completed";
 export const V2ReviewStartResponse__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ReviewStartResponse__TextElement = {
@@ -6720,11 +6734,16 @@ export const V2ThreadForkResponse__ReasoningEffort = Schema.String.annotate({
   description: "A non-empty reasoning effort value advertised by the model.",
 }).check(Schema.isMinLength(1));
 
-export type V2ThreadForkResponse__SubAgentActivityKind = "started" | "interacted" | "interrupted";
+export type V2ThreadForkResponse__SubAgentActivityKind =
+  | "started"
+  | "interacted"
+  | "interrupted"
+  | "completed";
 export const V2ThreadForkResponse__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ThreadForkResponse__TextElement = {
@@ -7119,11 +7138,16 @@ export const V2ThreadListResponse__ReasoningEffort = Schema.String.annotate({
   description: "A non-empty reasoning effort value advertised by the model.",
 }).check(Schema.isMinLength(1));
 
-export type V2ThreadListResponse__SubAgentActivityKind = "started" | "interacted" | "interrupted";
+export type V2ThreadListResponse__SubAgentActivityKind =
+  | "started"
+  | "interacted"
+  | "interrupted"
+  | "completed";
 export const V2ThreadListResponse__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ThreadListResponse__TextElement = {
@@ -7463,11 +7487,13 @@ export const V2ThreadMetadataUpdateResponse__ReasoningEffort = Schema.String.ann
 export type V2ThreadMetadataUpdateResponse__SubAgentActivityKind =
   | "started"
   | "interacted"
-  | "interrupted";
+  | "interrupted"
+  | "completed";
 export const V2ThreadMetadataUpdateResponse__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ThreadMetadataUpdateResponse__TextElement = {
@@ -7760,11 +7786,16 @@ export const V2ThreadReadResponse__ReasoningEffort = Schema.String.annotate({
   description: "A non-empty reasoning effort value advertised by the model.",
 }).check(Schema.isMinLength(1));
 
-export type V2ThreadReadResponse__SubAgentActivityKind = "started" | "interacted" | "interrupted";
+export type V2ThreadReadResponse__SubAgentActivityKind =
+  | "started"
+  | "interacted"
+  | "interrupted"
+  | "completed";
 export const V2ThreadReadResponse__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ThreadReadResponse__TextElement = {
@@ -8342,11 +8373,16 @@ export const V2ThreadResumeResponse__ReasoningEffort = Schema.String.annotate({
   description: "A non-empty reasoning effort value advertised by the model.",
 }).check(Schema.isMinLength(1));
 
-export type V2ThreadResumeResponse__SubAgentActivityKind = "started" | "interacted" | "interrupted";
+export type V2ThreadResumeResponse__SubAgentActivityKind =
+  | "started"
+  | "interacted"
+  | "interrupted"
+  | "completed";
 export const V2ThreadResumeResponse__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ThreadResumeResponse__TextElement = {
@@ -8643,11 +8679,13 @@ export const V2ThreadRollbackResponse__ReasoningEffort = Schema.String.annotate(
 export type V2ThreadRollbackResponse__SubAgentActivityKind =
   | "started"
   | "interacted"
-  | "interrupted";
+  | "interrupted"
+  | "completed";
 export const V2ThreadRollbackResponse__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ThreadRollbackResponse__TextElement = {
@@ -9051,11 +9089,13 @@ export const V2ThreadStartedNotification__ReasoningEffort = Schema.String.annota
 export type V2ThreadStartedNotification__SubAgentActivityKind =
   | "started"
   | "interacted"
-  | "interrupted";
+  | "interrupted"
+  | "completed";
 export const V2ThreadStartedNotification__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ThreadStartedNotification__TextElement = {
@@ -9458,11 +9498,16 @@ export const V2ThreadStartResponse__ReasoningEffort = Schema.String.annotate({
   description: "A non-empty reasoning effort value advertised by the model.",
 }).check(Schema.isMinLength(1));
 
-export type V2ThreadStartResponse__SubAgentActivityKind = "started" | "interacted" | "interrupted";
+export type V2ThreadStartResponse__SubAgentActivityKind =
+  | "started"
+  | "interacted"
+  | "interrupted"
+  | "completed";
 export const V2ThreadStartResponse__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ThreadStartResponse__TextElement = {
@@ -9791,11 +9836,13 @@ export const V2ThreadUnarchiveResponse__ReasoningEffort = Schema.String.annotate
 export type V2ThreadUnarchiveResponse__SubAgentActivityKind =
   | "started"
   | "interacted"
-  | "interrupted";
+  | "interrupted"
+  | "completed";
 export const V2ThreadUnarchiveResponse__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2ThreadUnarchiveResponse__TextElement = {
@@ -10095,11 +10142,13 @@ export const V2TurnCompletedNotification__ReasoningEffort = Schema.String.annota
 export type V2TurnCompletedNotification__SubAgentActivityKind =
   | "started"
   | "interacted"
-  | "interrupted";
+  | "interrupted"
+  | "completed";
 export const V2TurnCompletedNotification__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2TurnCompletedNotification__TextElement = {
@@ -10385,11 +10434,13 @@ export const V2TurnStartedNotification__ReasoningEffort = Schema.String.annotate
 export type V2TurnStartedNotification__SubAgentActivityKind =
   | "started"
   | "interacted"
-  | "interrupted";
+  | "interrupted"
+  | "completed";
 export const V2TurnStartedNotification__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2TurnStartedNotification__TextElement = {
@@ -10761,11 +10812,16 @@ export const V2TurnStartResponse__ReasoningEffort = Schema.String.annotate({
   description: "A non-empty reasoning effort value advertised by the model.",
 }).check(Schema.isMinLength(1));
 
-export type V2TurnStartResponse__SubAgentActivityKind = "started" | "interacted" | "interrupted";
+export type V2TurnStartResponse__SubAgentActivityKind =
+  | "started"
+  | "interacted"
+  | "interrupted"
+  | "completed";
 export const V2TurnStartResponse__SubAgentActivityKind = Schema.Literals([
   "started",
   "interacted",
   "interrupted",
+  "completed",
 ]);
 
 export type V2TurnStartResponse__TextElement = {
@@ -20357,8 +20413,17 @@ export type ServerNotification__ThreadItem =
       readonly reasoningEffort?: ServerNotification__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -20580,7 +20645,7 @@ export const ServerNotification__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -20589,6 +20654,10 @@ export const ServerNotification__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -21440,8 +21509,17 @@ export type V2ItemCompletedNotification__ThreadItem =
       readonly reasoningEffort?: V2ItemCompletedNotification__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -21668,7 +21746,7 @@ export const V2ItemCompletedNotification__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -21677,6 +21755,10 @@ export const V2ItemCompletedNotification__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -21891,8 +21973,17 @@ export type V2ItemStartedNotification__ThreadItem =
       readonly reasoningEffort?: V2ItemStartedNotification__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -22119,7 +22210,7 @@ export const V2ItemStartedNotification__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -22128,6 +22219,10 @@ export const V2ItemStartedNotification__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -22514,8 +22609,17 @@ export type V2ReviewStartResponse__ThreadItem =
       readonly reasoningEffort?: V2ReviewStartResponse__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -22739,7 +22843,7 @@ export const V2ReviewStartResponse__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -22748,6 +22852,10 @@ export const V2ReviewStartResponse__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -22950,8 +23058,17 @@ export type V2ThreadForkResponse__ThreadItem =
       readonly reasoningEffort?: V2ThreadForkResponse__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -23175,7 +23292,7 @@ export const V2ThreadForkResponse__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -23184,6 +23301,10 @@ export const V2ThreadForkResponse__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -23355,8 +23476,17 @@ export type V2ThreadListResponse__ThreadItem =
       readonly reasoningEffort?: V2ThreadListResponse__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -23580,7 +23710,7 @@ export const V2ThreadListResponse__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -23589,6 +23719,10 @@ export const V2ThreadListResponse__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -23762,8 +23896,17 @@ export type V2ThreadMetadataUpdateResponse__ThreadItem =
       readonly reasoningEffort?: V2ThreadMetadataUpdateResponse__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -23990,7 +24133,7 @@ export const V2ThreadMetadataUpdateResponse__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -23999,6 +24142,10 @@ export const V2ThreadMetadataUpdateResponse__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -24170,8 +24317,17 @@ export type V2ThreadReadResponse__ThreadItem =
       readonly reasoningEffort?: V2ThreadReadResponse__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -24395,7 +24551,7 @@ export const V2ThreadReadResponse__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -24404,6 +24560,10 @@ export const V2ThreadReadResponse__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -24583,8 +24743,17 @@ export type V2ThreadResumeResponse__ThreadItem =
       readonly reasoningEffort?: V2ThreadResumeResponse__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -24808,7 +24977,7 @@ export const V2ThreadResumeResponse__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -24817,6 +24986,10 @@ export const V2ThreadResumeResponse__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -24988,8 +25161,17 @@ export type V2ThreadRollbackResponse__ThreadItem =
       readonly reasoningEffort?: V2ThreadRollbackResponse__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -25216,7 +25398,7 @@ export const V2ThreadRollbackResponse__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -25225,6 +25407,10 @@ export const V2ThreadRollbackResponse__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -25407,8 +25593,17 @@ export type V2ThreadStartedNotification__ThreadItem =
       readonly reasoningEffort?: V2ThreadStartedNotification__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -25635,7 +25830,7 @@ export const V2ThreadStartedNotification__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -25644,6 +25839,10 @@ export const V2ThreadStartedNotification__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -25815,8 +26014,17 @@ export type V2ThreadStartResponse__ThreadItem =
       readonly reasoningEffort?: V2ThreadStartResponse__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -26040,7 +26248,7 @@ export const V2ThreadStartResponse__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -26049,6 +26257,10 @@ export const V2ThreadStartResponse__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -26220,8 +26432,17 @@ export type V2ThreadUnarchiveResponse__ThreadItem =
       readonly reasoningEffort?: V2ThreadUnarchiveResponse__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -26448,7 +26669,7 @@ export const V2ThreadUnarchiveResponse__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -26457,6 +26678,10 @@ export const V2ThreadUnarchiveResponse__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -26630,8 +26855,17 @@ export type V2TurnCompletedNotification__ThreadItem =
       readonly reasoningEffort?: V2TurnCompletedNotification__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -26858,7 +27092,7 @@ export const V2TurnCompletedNotification__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -26867,6 +27101,10 @@ export const V2TurnCompletedNotification__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -27038,8 +27276,17 @@ export type V2TurnStartedNotification__ThreadItem =
       readonly reasoningEffort?: V2TurnStartedNotification__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -27266,7 +27513,7 @@ export const V2TurnStartedNotification__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -27275,6 +27522,10 @@ export const V2TurnStartedNotification__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -27446,8 +27697,17 @@ export type V2TurnStartResponse__ThreadItem =
       readonly reasoningEffort?: V2TurnStartResponse__ReasoningEffort | null;
       readonly receiverThreadIds: ReadonlyArray<string>;
       readonly senderThreadId: string;
-      readonly status: "inProgress" | "completed" | "failed";
-      readonly tool: "spawnAgent" | "sendInput" | "resumeAgent" | "wait" | "closeAgent";
+      readonly status: "inProgress" | "completed" | "failed" | "interrupted";
+      readonly tool:
+        | "spawnAgent"
+        | "sendInput"
+        | "resumeAgent"
+        | "wait"
+        | "closeAgent"
+        | "sendMessage"
+        | "followupTask"
+        | "interruptAgent"
+        | "listAgents";
       readonly type: "collabAgentToolCall";
     }
   | {
@@ -27669,7 +27929,7 @@ export const V2TurnStartResponse__ThreadItem = Schema.Union(
       senderThreadId: Schema.String.annotate({
         description: "Thread ID of the agent issuing the collab request.",
       }),
-      status: Schema.Literals(["inProgress", "completed", "failed"]).annotate({
+      status: Schema.Literals(["inProgress", "completed", "failed", "interrupted"]).annotate({
         description: "Current status of the collab tool call.",
       }),
       tool: Schema.Literals([
@@ -27678,6 +27938,10 @@ export const V2TurnStartResponse__ThreadItem = Schema.Union(
         "resumeAgent",
         "wait",
         "closeAgent",
+        "sendMessage",
+        "followupTask",
+        "interruptAgent",
+        "listAgents",
       ]).annotate({ description: "Name of the collab tool that was invoked." }),
       type: Schema.Literal("collabAgentToolCall").annotate({
         title: "CollabAgentToolCallThreadItemType",
@@ -35971,20 +36235,33 @@ export type ServerNotification__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const ServerNotification__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
-export type ServerNotification__CollabAgentToolCallStatus = "inProgress" | "completed" | "failed";
+export type ServerNotification__CollabAgentToolCallStatus =
+  | "inProgress"
+  | "completed"
+  | "failed"
+  | "interrupted";
 export const ServerNotification__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type ServerNotification__CommandExecOutputStream = "stdout" | "stderr";
@@ -38046,23 +38323,33 @@ export type V2ItemCompletedNotification__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ItemCompletedNotification__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
 export type V2ItemCompletedNotification__CollabAgentToolCallStatus =
   | "inProgress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted";
 export const V2ItemCompletedNotification__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ItemCompletedNotification__CommandExecutionSource =
@@ -38183,23 +38470,33 @@ export type V2ItemStartedNotification__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ItemStartedNotification__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
 export type V2ItemStartedNotification__CollabAgentToolCallStatus =
   | "inProgress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted";
 export const V2ItemStartedNotification__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ItemStartedNotification__CommandExecutionSource =
@@ -39200,23 +39497,33 @@ export type V2ReviewStartResponse__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ReviewStartResponse__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
 export type V2ReviewStartResponse__CollabAgentToolCallStatus =
   | "inProgress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted";
 export const V2ReviewStartResponse__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ReviewStartResponse__CommandExecutionSource =
@@ -39598,20 +39905,33 @@ export type V2ThreadForkResponse__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ThreadForkResponse__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
-export type V2ThreadForkResponse__CollabAgentToolCallStatus = "inProgress" | "completed" | "failed";
+export type V2ThreadForkResponse__CollabAgentToolCallStatus =
+  | "inProgress"
+  | "completed"
+  | "failed"
+  | "interrupted";
 export const V2ThreadForkResponse__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ThreadForkResponse__CommandExecutionSource =
@@ -39955,20 +40275,33 @@ export type V2ThreadListResponse__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ThreadListResponse__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
-export type V2ThreadListResponse__CollabAgentToolCallStatus = "inProgress" | "completed" | "failed";
+export type V2ThreadListResponse__CollabAgentToolCallStatus =
+  | "inProgress"
+  | "completed"
+  | "failed"
+  | "interrupted";
 export const V2ThreadListResponse__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ThreadListResponse__CommandExecutionSource =
@@ -40131,23 +40464,33 @@ export type V2ThreadMetadataUpdateResponse__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ThreadMetadataUpdateResponse__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
 export type V2ThreadMetadataUpdateResponse__CollabAgentToolCallStatus =
   | "inProgress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted";
 export const V2ThreadMetadataUpdateResponse__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ThreadMetadataUpdateResponse__CommandExecutionSource =
@@ -40265,20 +40608,33 @@ export type V2ThreadReadResponse__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ThreadReadResponse__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
-export type V2ThreadReadResponse__CollabAgentToolCallStatus = "inProgress" | "completed" | "failed";
+export type V2ThreadReadResponse__CollabAgentToolCallStatus =
+  | "inProgress"
+  | "completed"
+  | "failed"
+  | "interrupted";
 export const V2ThreadReadResponse__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ThreadReadResponse__CommandExecutionSource =
@@ -40964,23 +41320,33 @@ export type V2ThreadResumeResponse__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ThreadResumeResponse__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
 export type V2ThreadResumeResponse__CollabAgentToolCallStatus =
   | "inProgress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted";
 export const V2ThreadResumeResponse__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ThreadResumeResponse__CommandExecutionSource =
@@ -41334,23 +41700,33 @@ export type V2ThreadRollbackResponse__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ThreadRollbackResponse__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
 export type V2ThreadRollbackResponse__CollabAgentToolCallStatus =
   | "inProgress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted";
 export const V2ThreadRollbackResponse__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ThreadRollbackResponse__CommandExecutionSource =
@@ -41673,23 +42049,33 @@ export type V2ThreadStartedNotification__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ThreadStartedNotification__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
 export type V2ThreadStartedNotification__CollabAgentToolCallStatus =
   | "inProgress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted";
 export const V2ThreadStartedNotification__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ThreadStartedNotification__CommandExecutionSource =
@@ -42075,23 +42461,33 @@ export type V2ThreadStartResponse__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ThreadStartResponse__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
 export type V2ThreadStartResponse__CollabAgentToolCallStatus =
   | "inProgress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted";
 export const V2ThreadStartResponse__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ThreadStartResponse__CommandExecutionSource =
@@ -42278,23 +42674,33 @@ export type V2ThreadUnarchiveResponse__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2ThreadUnarchiveResponse__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
 export type V2ThreadUnarchiveResponse__CollabAgentToolCallStatus =
   | "inProgress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted";
 export const V2ThreadUnarchiveResponse__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2ThreadUnarchiveResponse__CommandExecutionSource =
@@ -42412,23 +42818,33 @@ export type V2TurnCompletedNotification__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2TurnCompletedNotification__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
 export type V2TurnCompletedNotification__CollabAgentToolCallStatus =
   | "inProgress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted";
 export const V2TurnCompletedNotification__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2TurnCompletedNotification__CommandExecutionSource =
@@ -42524,23 +42940,33 @@ export type V2TurnStartedNotification__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2TurnStartedNotification__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
 export type V2TurnStartedNotification__CollabAgentToolCallStatus =
   | "inProgress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "interrupted";
 export const V2TurnStartedNotification__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2TurnStartedNotification__CommandExecutionSource =
@@ -42728,20 +43154,33 @@ export type V2TurnStartResponse__CollabAgentTool =
   | "sendInput"
   | "resumeAgent"
   | "wait"
-  | "closeAgent";
+  | "closeAgent"
+  | "sendMessage"
+  | "followupTask"
+  | "interruptAgent"
+  | "listAgents";
 export const V2TurnStartResponse__CollabAgentTool = Schema.Literals([
   "spawnAgent",
   "sendInput",
   "resumeAgent",
   "wait",
   "closeAgent",
+  "sendMessage",
+  "followupTask",
+  "interruptAgent",
+  "listAgents",
 ]);
 
-export type V2TurnStartResponse__CollabAgentToolCallStatus = "inProgress" | "completed" | "failed";
+export type V2TurnStartResponse__CollabAgentToolCallStatus =
+  | "inProgress"
+  | "completed"
+  | "failed"
+  | "interrupted";
 export const V2TurnStartResponse__CollabAgentToolCallStatus = Schema.Literals([
   "inProgress",
   "completed",
   "failed",
+  "interrupted",
 ]);
 
 export type V2TurnStartResponse__CommandExecutionSource =
