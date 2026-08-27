@@ -152,7 +152,31 @@ function resolveHomeDir() {
   if (worktreeHome !== undefined) return worktreeHome;
   const fromEnv = process.env.T3CODE_HOME ?? "";
   if (fromEnv.trim().length > 0) return NodePath.resolve(expandHome(fromEnv));
-  return NodePath.join(NodeOS.homedir(), ".t3");
+  const shared = NodePath.join(NodeOS.homedir(), ".t3");
+  refuseLiveInstall(shared);
+  return shared;
+}
+
+/**
+ * `pair --base-dir ~/.t3` probes `userdata` (the installed app's database)
+ * before `dev` (what a plain-checkout `vp run dev` serves). Pairing must never
+ * mint a token into the live install, so bail out while that app is running.
+ */
+function refuseLiveInstall(sharedHome) {
+  const userdata = NodePath.join(sharedHome, "userdata");
+  let pid;
+  try {
+    pid = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(userdata, "server-runtime.json"), "utf8"),
+    ).pid;
+    if (typeof pid !== "number") return;
+    process.kill(pid, 0);
+  } catch {
+    return;
+  }
+  fail(
+    `the installed T3 Code app is running against ${userdata}; pairing here would target it instead of your dev server. Pass --url <pairing url from vp run dev>, or run from a worktree / with --home-dir.`,
+  );
 }
 
 function build() {
