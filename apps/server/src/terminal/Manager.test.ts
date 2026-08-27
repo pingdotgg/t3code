@@ -1090,6 +1090,25 @@ it.layer(
     }),
   );
 
+  it.effect("caps incrementally appended history without losing partial or empty lines", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(3);
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("line1\n");
+      process.emitData("\n");
+      process.emitData("line3");
+      process.emitData("-continued\nline4");
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      expect(reopened.history).toBe("\nline3-continued\nline4");
+    }),
+  );
+
   it.effect("strips replay-unsafe terminal query and reply sequences from persisted history", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
