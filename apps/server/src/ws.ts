@@ -106,6 +106,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import { parseRemoteRefWithRemoteNames } from "./git/remoteRefs.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -1039,7 +1040,10 @@ const makeWsRpcLayer = (
                   yield* gitWorkflow.fetchRemoteTrackingBranch({
                     cwd: originBase.cwd,
                     remoteName: originBase.fallbackRemoteName,
-                    remoteBranch: originBase.refName,
+                    remoteBranch:
+                      parseRemoteRefWithRemoteNames(originBase.refName, [
+                        originBase.fallbackRemoteName,
+                      ])?.branchName ?? originBase.refName,
                   });
                 }
                 const resolvedRemoteBase = Option.isSome(existingOriginCommit)

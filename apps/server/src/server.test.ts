@@ -7970,129 +7970,141 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("fetches only the requested origin branch when the local origin ref is missing", () =>
-    Effect.gen(function* () {
-      const dispatchedCommands: Array<OrchestrationCommand> = [];
-      const fetchedOriginCommit = "0123456789abcdef0123456789abcdef01234567";
-      let originRefAvailable = false;
-      const fetchRemote = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"]>[0]) =>
-          Effect.fail(
-            new GitCommandError({
-              operation: "GitVcsDriver.fetchRemote",
-              command: "git fetch --quiet origin",
-              cwd: "/tmp/project",
-              detail: "Git command timed out.",
+  it.effect.each([
+    { baseBranch: "main", remoteBranch: "main" },
+    { baseBranch: "origin/release", remoteBranch: "release" },
+    { baseBranch: "feature/foo", remoteBranch: "feature/foo" },
+  ] as const)(
+    "fetches only the requested origin branch when the local origin ref is missing ($baseBranch)",
+    ({ baseBranch, remoteBranch }) =>
+      Effect.gen(function* () {
+        const dispatchedCommands: Array<OrchestrationCommand> = [];
+        const fetchedOriginCommit = "0123456789abcdef0123456789abcdef01234567";
+        let originRefAvailable = false;
+        const fetchRemote = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"]>[0]) =>
+            Effect.fail(
+              new GitCommandError({
+                operation: "GitVcsDriver.fetchRemote",
+                command: "git fetch --quiet origin",
+                cwd: "/tmp/project",
+                detail: "Git command timed out.",
+              }),
+            ),
+        );
+        const fetchRemoteTrackingBranch = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
+            Effect.sync(() => {
+              originRefAvailable = true;
+            }),
+        );
+        const resolveRemoteTrackingCommit = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]>[0]) =>
+            originRefAvailable
+              ? Effect.succeed({
+                  commitSha: fetchedOriginCommit,
+                  remoteRefName: `origin/${remoteBranch}`,
+                })
+              : Effect.fail(
+                  new GitCommandError({
+                    operation: "GitVcsDriver.resolveRemoteTrackingCommit",
+                    command: `git rev-parse --verify refs/remotes/origin/${remoteBranch}^{commit}`,
+                    cwd: "/tmp/project",
+                    detail: "Needed a single revision",
+                  }),
+                ),
+        );
+        const createWorktree = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+            Effect.succeed({
+              worktree: {
+                refName: "t3code/bootstrap-refName",
+                path: "/tmp/bootstrap-worktree",
+              },
+            }),
+        );
+
+        yield* buildAppUnderTest({
+          layers: {
+            gitVcsDriver: {
+              remoteExists: () => Effect.succeed(true),
+              fetchRemote,
+              fetchRemoteTrackingBranch,
+              resolveRemoteTrackingCommit,
+              createWorktree,
+            },
+            orchestrationEngine: {
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  dispatchedCommands.push(command);
+                  return { sequence: dispatchedCommands.length };
+                }),
+              readEvents: () => Stream.empty,
+            },
+          },
+        });
+
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.turn.start",
+              commandId: CommandId.make(
+                `cmd-bootstrap-turn-start-narrow-fetch-${baseBranch.replaceAll("/", "-")}`,
+              ),
+              threadId: ThreadId.make(
+                `thread-bootstrap-narrow-fetch-${baseBranch.replaceAll("/", "-")}`,
+              ),
+              message: {
+                messageId: MessageId.make(
+                  `msg-bootstrap-narrow-fetch-${baseBranch.replaceAll("/", "-")}`,
+                ),
+                role: "user",
+                text: "hello",
+                attachments: [],
+              },
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              bootstrap: {
+                createThread: {
+                  projectId: defaultProjectId,
+                  title: "Bootstrap Thread",
+                  modelSelection: defaultModelSelection,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  branch: baseBranch,
+                  worktreePath: null,
+                  createdAt,
+                },
+                prepareWorktree: {
+                  projectCwd: "/tmp/project",
+                  baseBranch,
+                  branch: "t3code/bootstrap-refName",
+                  startFromOrigin: true,
+                },
+              },
+              createdAt,
             }),
           ),
-      );
-      const fetchRemoteTrackingBranch = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"]>[0]) =>
-          Effect.sync(() => {
-            originRefAvailable = true;
-          }),
-      );
-      const resolveRemoteTrackingCommit = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["resolveRemoteTrackingCommit"]>[0]) =>
-          originRefAvailable
-            ? Effect.succeed({
-                commitSha: fetchedOriginCommit,
-                remoteRefName: "origin/main",
-              })
-            : Effect.fail(
-                new GitCommandError({
-                  operation: "GitVcsDriver.resolveRemoteTrackingCommit",
-                  command: "git rev-parse --verify refs/remotes/origin/main^{commit}",
-                  cwd: "/tmp/project",
-                  detail: "Needed a single revision",
-                }),
-              ),
-      );
-      const createWorktree = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
-          Effect.succeed({
-            worktree: {
-              refName: "t3code/bootstrap-refName",
-              path: "/tmp/bootstrap-worktree",
-            },
-          }),
-      );
+        );
 
-      yield* buildAppUnderTest({
-        layers: {
-          gitVcsDriver: {
-            remoteExists: () => Effect.succeed(true),
-            fetchRemote,
-            fetchRemoteTrackingBranch,
-            resolveRemoteTrackingCommit,
-            createWorktree,
-          },
-          orchestrationEngine: {
-            dispatch: (command) =>
-              Effect.sync(() => {
-                dispatchedCommands.push(command);
-                return { sequence: dispatchedCommands.length };
-              }),
-            readEvents: () => Stream.empty,
-          },
-        },
-      });
-
-      const createdAt = "2026-01-01T00:00:00.000Z";
-      const wsUrl = yield* getWsServerUrl("/ws");
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-            type: "thread.turn.start",
-            commandId: CommandId.make("cmd-bootstrap-turn-start-narrow-fetch"),
-            threadId: ThreadId.make("thread-bootstrap-narrow-fetch"),
-            message: {
-              messageId: MessageId.make("msg-bootstrap-narrow-fetch"),
-              role: "user",
-              text: "hello",
-              attachments: [],
-            },
-            modelSelection: defaultModelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            bootstrap: {
-              createThread: {
-                projectId: defaultProjectId,
-                title: "Bootstrap Thread",
-                modelSelection: defaultModelSelection,
-                runtimeMode: "full-access",
-                interactionMode: "default",
-                branch: "main",
-                worktreePath: null,
-                createdAt,
-              },
-              prepareWorktree: {
-                projectCwd: "/tmp/project",
-                baseBranch: "main",
-                branch: "t3code/bootstrap-refName",
-                startFromOrigin: true,
-              },
-            },
-            createdAt,
-          }),
-        ),
-      );
-
-      assert.deepEqual(fetchRemoteTrackingBranch.mock.calls[0]?.[0], {
-        cwd: "/tmp/project",
-        remoteName: "origin",
-        remoteBranch: "main",
-      });
-      assert.equal(fetchRemote.mock.calls.length, 0);
-      assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
-        cwd: "/tmp/project",
-        refName: fetchedOriginCommit,
-        newRefName: "t3code/bootstrap-refName",
-        baseRefName: "main",
-        path: null,
-      });
-      assertTrue(dispatchedCommands.every((command) => command.type !== "thread.delete"));
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        assert.deepEqual(fetchRemoteTrackingBranch.mock.calls[0]?.[0], {
+          cwd: "/tmp/project",
+          remoteName: "origin",
+          remoteBranch,
+        });
+        assert.equal(fetchRemote.mock.calls.length, 0);
+        assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
+          cwd: "/tmp/project",
+          refName: fetchedOriginCommit,
+          newRefName: "t3code/bootstrap-refName",
+          baseRefName: baseBranch,
+          path: null,
+        });
+        assertTrue(dispatchedCommands.every((command) => command.type !== "thread.delete"));
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect(
