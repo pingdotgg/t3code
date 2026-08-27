@@ -241,13 +241,11 @@ struct FeatureToolStateTests {
 
         #expect(replaced.aheadCount == 0)
         #expect(replaced.isRemoteKnown == false)
-        // The latch holds even though this event alone would not set it:
-        // without it the stream would report a spurious protocol violation.
-        #expect(accumulator.isComplete)
+        #expect(accumulator.isComplete == false)
     }
 
-    @Test("Completion never regresses across a long mixed sequence")
-    func completionLatchesAcrossMixedSequence() {
+    @Test("A fresh snapshot can return a reused monitor to pending")
+    func completionTracksTheCurrentSequence() {
         var accumulator = NativeSourceControlStatusAccumulator()
         let events: [VCSStatusEvent] = [
             .snapshot(local: Self.vcsLocal(refName: "feature/seq"), remote: nil),
@@ -255,24 +253,40 @@ struct FeatureToolStateTests {
             .remoteUpdated(Self.vcsRemote(aheadCount: 1)),
             .localUpdated(Self.vcsLocal(refName: "feature/seq", files: ["a.swift", "b.swift"])),
             .remoteUpdated(nil),
-            // Drives the latch: on its own this snapshot leaves the remote half
-            // unresolved again, so completion would regress without it.
+            // A reused monitor can begin a fresh cached-local-first sequence.
             .snapshot(local: Self.vcsLocal(refName: "feature/seq"), remote: nil),
             .localUpdated(Self.vcsLocal(refName: "feature/seq")),
         ]
 
-        var completedAt: Int?
-        for (index, event) in events.enumerated() {
+        var completionStates: [Bool] = []
+        for event in events {
             _ = accumulator.consume(event)
-            if accumulator.isComplete, completedAt == nil {
-                completedAt = index
-            }
-            if completedAt != nil {
-                #expect(accumulator.isComplete)
-            }
+            completionStates.append(accumulator.isComplete)
         }
 
-        #expect(completedAt == 2)
+        #expect(completionStates == [false, false, true, true, true, false, false])
+    }
+
+    @Test("Changing branches discards the prior branch remote status")
+    func branchChangeReturnsRemoteStatusToPending() throws {
+        var accumulator = NativeSourceControlStatusAccumulator()
+        _ = accumulator.consume(
+            .snapshot(
+                local: Self.vcsLocal(refName: "feature/one"),
+                remote: Self.vcsRemote(aheadCount: 4)
+            )
+        )
+
+        let consumed = accumulator.consume(
+            .localUpdated(Self.vcsLocal(refName: "feature/two"))
+        )
+        let changedBranch = try #require(consumed)
+
+        #expect(changedBranch.branch == "feature/two")
+        #expect(changedBranch.aheadCount == 0)
+        #expect(changedBranch.pullRequest == nil)
+        #expect(changedBranch.isRemoteKnown == false)
+        #expect(accumulator.isComplete == false)
     }
 
     @Test("A completed stream ends without error")

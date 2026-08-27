@@ -76,12 +76,16 @@ public struct DevicesView: View {
             ),
             presenting: revokeTarget
         ) { device in
-            Button("Remove access", role: .destructive) {
+            Button(manager.managesServerSessions ? "Remove access" : "Remove device", role: .destructive) {
                 Task { await revoke(device) }
             }
             Button("Cancel", role: .cancel) {}
         } message: { device in
-            Text("\(device.displayName) will need a new pairing code to reconnect.")
+            Text(
+                manager.managesServerSessions
+                    ? "\(device.displayName) will need a new pairing code to reconnect."
+                    : "\(device.displayName) will stop receiving T3 Connect notifications."
+            )
         }
         .confirmationDialog(
             "Remove all other devices?",
@@ -93,7 +97,11 @@ public struct DevicesView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Every other phone, tablet, browser, and desktop will be signed out.")
+            Text(
+                manager.managesServerSessions
+                    ? "Every other phone, tablet, browser, and desktop will be signed out."
+                    : "Other registered devices will stop receiving T3 Connect notifications."
+            )
         }
     }
 

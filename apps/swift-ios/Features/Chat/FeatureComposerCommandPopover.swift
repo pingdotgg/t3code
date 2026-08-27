@@ -24,9 +24,10 @@ struct FeatureComposerCommandPopover: View {
                             Button {
                                 onSelect(item)
                             } label: {
-                                FeatureComposerCommandRow(item: item)
+                                FeatureComposerCommandRow(item: item, triggerKind: triggerKind)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel(accessibilityLabel(for: item))
                             .accessibilityIdentifier("composer-suggestion-\(item.id)")
 
                             if index < items.count - 1 {
@@ -42,9 +43,9 @@ struct FeatureComposerCommandPopover: View {
         }
         .frame(height: menuHeight, alignment: .top)
         .background(T3Colors.surfaceRaised.opacity(0.98))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(T3Colors.border, lineWidth: 1)
         }
         .accessibilityLabel(groupLabel)
@@ -64,23 +65,34 @@ struct FeatureComposerCommandPopover: View {
         if isLoading { return "Searching files…" }
         if let errorMessage, !errorMessage.isEmpty { return errorMessage }
         switch triggerKind {
-        case .slashCommand: return "No matching commands."
-        case .model: return "No matching models."
-        case .skill: return "No matching skills."
-        case .path where !pathSearchAvailable: return "File search is unavailable."
-        case .path: return "Type a file name to search."
+        case .slashCommand: return "No matching commands"
+        case .model: return "No matching models"
+        case .skill: return "No matching skills"
+        case .path where !pathSearchAvailable: return "File search unavailable"
+        case .path: return "Type a file name"
         }
     }
 
+    private func accessibilityLabel(for item: FeatureComposerMenuItem) -> String {
+        item.description.isEmpty ? item.label : "\(item.label), \(item.description)"
+    }
+
     private var menuHeight: CGFloat {
-        guard !items.isEmpty else { return 48 }
+        Self.height(forItemCount: items.count)
+    }
+
+    /// The menu's height is deterministic so the composer can position the
+    /// menu fully above its own surface without measuring it.
+    static func height(forItemCount count: Int) -> CGFloat {
+        guard count > 0 else { return 48 }
         let rowHeight: CGFloat = 47
-        return min(CGFloat(items.count) * rowHeight, 188)
+        return min(CGFloat(count) * rowHeight, 188)
     }
 }
 
 private struct FeatureComposerCommandRow: View {
     let item: FeatureComposerMenuItem
+    let triggerKind: FeatureComposerTriggerKind
 
     var body: some View {
         HStack(spacing: 10) {
@@ -89,10 +101,11 @@ private struct FeatureComposerCommandRow: View {
                 .foregroundStyle(T3Colors.textTertiary)
                 .frame(width: 17)
 
-            Text(item.label)
+            Text(displayLabel)
                 .font(T3Typography.control)
                 .foregroundStyle(T3Colors.textPrimary)
                 .lineLimit(1)
+                .layoutPriority(1)
 
             if !item.description.isEmpty {
                 Text(item.description)
@@ -111,10 +124,17 @@ private struct FeatureComposerCommandRow: View {
 
     private var iconName: String {
         switch item {
-        case .modelCommand, .providerCommand: return "terminal"
-        case .model: return "cpu"
-        case .skill: return "shippingbox"
+        case .modelCommand, .model: return "cpu"
+        case .providerCommand: return "terminal"
+        case let .skill(skill): return skill.source.systemImage
         case let .path(entry): return entry.kind == .directory ? "folder" : "doc"
         }
+    }
+
+    private var displayLabel: String {
+        if triggerKind == .slashCommand, case let .skill(skill) = item {
+            return "/skill:\(skill.displayName ?? skill.name)"
+        }
+        return item.label
     }
 }

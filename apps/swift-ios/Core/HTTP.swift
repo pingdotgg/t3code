@@ -185,6 +185,47 @@ public actor EnvironmentAPI {
         )
     }
 
+    public func pullRequestDiff(
+        _ input: PullRequestDiffInput,
+        environment: Environment
+    ) async throws -> PullRequestDiffResult {
+        try await authorized(
+            environment: environment,
+            path: "/api/pull-requests/diff",
+            method: "POST",
+            body: JSONEncoder.t3.encode(input),
+            timeoutInterval: 60,
+            as: PullRequestDiffResult.self
+        )
+    }
+
+    /// Upload URLs carry their own short-lived signature and do not need the
+    /// environment's bearer token or DPoP authorization headers.
+    public func uploadAttachment(
+        _ data: Data,
+        mimeType: String,
+        to url: URL
+    ) async throws {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = data
+        request.setValue(mimeType, forHTTPHeaderField: "Content-Type")
+        request.setValue(String(data.count), forHTTPHeaderField: "Content-Length")
+
+        let (responseData, response) = try await transport.data(
+            for: HTTPRequestPolicy.prepare(request)
+        )
+        guard (200...299).contains(response.statusCode) else {
+            let detail = String(data: responseData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw HTTPError.status(
+                response.statusCode,
+                message: detail.flatMap { $0.isEmpty ? nil : $0 } ?? "Image upload failed.",
+                traceID: nil
+            )
+        }
+    }
+
     public func webSocketTicket(for environment: Environment) async throws -> WebSocketTicket {
         try await authorized(
             environment: environment,
@@ -380,7 +421,20 @@ public actor EnvironmentAPI {
               refreshed.proofKeyThumbprint?.isEmpty == false else {
             throw HTTPError.incompatibleCredential
         }
-        try await credentials.setCredential(refreshed, for: environment.id)
+        guard try await credentials.replaceCredential(
+            refreshed,
+            ifMatching: credential,
+            for: environment.id
+        ) else {
+            if let current = try await newestUsableManagedCredential(
+                replacing: credential,
+                environment: environment,
+                using: managedAuthorization
+            ) {
+                return current
+            }
+            throw HTTPError.missingCredential
+        }
         return refreshed
     }
 

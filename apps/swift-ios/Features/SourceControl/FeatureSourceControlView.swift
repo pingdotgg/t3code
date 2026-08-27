@@ -23,6 +23,7 @@ public struct FeatureSourceControlView: View {
     @State private var isLoading = true
     @State private var isRunningAction = false
     @State private var errorMessage: String?
+    @State private var actionErrorMessage: String?
     @State private var commitMessage = ""
     @State private var pendingCommitAction: FeatureSourceControlAction?
     /// Owns the loading indicator; only a newer load supersedes it.
@@ -86,6 +87,14 @@ public struct FeatureSourceControlView: View {
                 pendingCommitAction = nil
             }
             .disabled(commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .alert("Source control failed", isPresented: Binding(
+            get: { actionErrorMessage != nil },
+            set: { if !$0 { actionErrorMessage = nil } }
+        )) {
+            Button("OK") { actionErrorMessage = nil }
+        } message: {
+            Text(actionErrorMessage ?? "The source control action could not be completed.")
         }
         .task { await load() }
     }
@@ -208,6 +217,7 @@ public struct FeatureSourceControlView: View {
     /// streaming path is cache-first, so without this a reload would only
     /// replay what the server already had.
     private func reload() async {
+        guard !isRunningAction else { return }
         await load(force: true)
     }
 
@@ -241,8 +251,23 @@ public struct FeatureSourceControlView: View {
         } catch is CancellationError {
             return
         } catch {
-            guard statusID == statusGeneration, clearsError else { return }
-            errorMessage = error.localizedDescription
+            guard statusID == statusGeneration else { return }
+            if clearsError { errorMessage = error.localizedDescription }
+            guard !force, status?.isRemoteKnown == false else { return }
+
+            // The bounded presentation stream reports that remote data is
+            // unavailable after 30 seconds, but the shared monitor keeps
+            // listening. Stop the spinner and accept a later remote result so
+            // a slow `gh` lookup does not leave this screen stale forever.
+            if loadID == loadGeneration { isLoading = false }
+            for await recoveredStatus in client.sourceControlStatusEvents(threadID: threadID) {
+                guard statusID == statusGeneration else { return }
+                status = recoveredStatus
+                if recoveredStatus.isRemoteKnown {
+                    errorMessage = nil
+                    return
+                }
+            }
         }
     }
 
@@ -251,7 +276,9 @@ public struct FeatureSourceControlView: View {
         // from before this action, so a late event would fold that stale half
         // into a status that overwrites this action's result — and a late
         // stream error would mask this action's failure message.
+        loadGeneration += 1
         statusGeneration += 1
+        isLoading = false
         let statusID = statusGeneration
         let actionResult = await runFeatureSourceControlAction(
             setRunning: { isRunningAction = $0 }
@@ -270,9 +297,10 @@ public struct FeatureSourceControlView: View {
             guard statusID == statusGeneration else { return }
             status = result
             errorMessage = nil
+            actionErrorMessage = nil
         case let .failure(error):
             guard statusID == statusGeneration else { return }
-            errorMessage = error.localizedDescription
+            actionErrorMessage = error.localizedDescription
             // This action superseded an in-flight stream, so the remote half it
             // was still waiting on would otherwise never arrive: the screen
             // would keep withholding the pull-request actions until the user

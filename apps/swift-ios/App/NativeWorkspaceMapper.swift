@@ -67,13 +67,60 @@ enum NativeWorkspaceMapper {
     }
 
     static func sourceControl(_ status: VCSStatus) -> FeatureSourceControlStatus {
-        FeatureSourceControlStatus(
+        sourceControl(
             isRepository: status.isRepo,
             branch: status.refName,
+            files: status.workingTree.files,
             aheadCount: status.aheadCount,
             behindCount: status.behindCount,
-            files: sourceControlFiles(status.workingTree),
-            pullRequest: pullRequest(status.pr)
+            pullRequest: status.pr
+        )
+    }
+
+    static func sourceControl(
+        local: VCSLocalStatus,
+        remote: VCSRemoteStatus?
+    ) -> FeatureSourceControlStatus {
+        sourceControl(
+            isRepository: local.isRepo,
+            branch: local.refName,
+            files: local.workingTree.files,
+            aheadCount: remote?.aheadCount ?? 0,
+            behindCount: remote?.behindCount ?? 0,
+            pullRequest: remote?.pr
+        )
+    }
+
+    private static func sourceControl(
+        isRepository: Bool,
+        branch: String?,
+        files: [VCSWorkingTreeFile],
+        aheadCount: Int,
+        behindCount: Int,
+        pullRequest: VCSChangeRequest?,
+        isRemoteKnown: Bool = true
+    ) -> FeatureSourceControlStatus {
+        FeatureSourceControlStatus(
+            isRepository: isRepository,
+            branch: branch,
+            aheadCount: aheadCount,
+            behindCount: behindCount,
+            isRemoteKnown: isRemoteKnown,
+            files: files.map {
+                FeatureSourceControlFile(
+                    path: $0.path,
+                    state: .modified,
+                    isStaged: false
+                )
+            },
+            pullRequest: pullRequest.map {
+                FeaturePullRequest(
+                    number: $0.number,
+                    title: $0.title,
+                    state: $0.state,
+                    url: URL(string: $0.url)
+                )
+            }
         )
     }
 
@@ -84,36 +131,15 @@ enum NativeWorkspaceMapper {
         remote: VCSRemoteStatus?,
         isRemoteKnown: Bool
     ) -> FeatureSourceControlStatus {
-        FeatureSourceControlStatus(
+        sourceControl(
             isRepository: local.isRepo,
             branch: local.refName,
+            files: local.workingTree.files,
             aheadCount: remote?.aheadCount ?? 0,
             behindCount: remote?.behindCount ?? 0,
-            isRemoteKnown: isRemoteKnown,
-            files: sourceControlFiles(local.workingTree),
-            pullRequest: pullRequest(remote?.pr)
+            pullRequest: remote?.pr,
+            isRemoteKnown: isRemoteKnown
         )
-    }
-
-    private static func sourceControlFiles(
-        _ workingTree: VCSWorkingTree
-    ) -> [FeatureSourceControlFile] {
-        // The RPC carries only path/insertions/deletions, so there is no staged
-        // or added/deleted information to preserve here.
-        workingTree.files.map {
-            FeatureSourceControlFile(path: $0.path, state: .modified, isStaged: false)
-        }
-    }
-
-    private static func pullRequest(_ request: VCSChangeRequest?) -> FeaturePullRequest? {
-        request.map {
-            FeaturePullRequest(
-                number: $0.number,
-                title: $0.title,
-                state: $0.state,
-                url: URL(string: $0.url)
-            )
-        }
     }
 
     static func gitAction(_ action: FeatureSourceControlAction) -> GitStackedAction {
@@ -371,9 +397,9 @@ enum NativeWorkspaceMapper {
 
 /// Folds `vcs.subscribeStatus` events into successive UI statuses. Modelled on
 /// `applyGitStatusStreamEvent` in packages/shared — a snapshot replaces both
-/// halves, while the last known remote half is carried across local-only
-/// updates instead of being dropped — but with an explicit pending state, which
-/// the reference has no need for because it never reports a partial status.
+/// halves, while the last known remote half is carried across same-branch local
+/// updates and discarded when the branch changes. The explicit pending state is
+/// needed because this client presents partial status.
 struct NativeSourceControlStatusAccumulator {
     private var local: VCSLocalStatus?
     private var remote: VCSRemoteStatus?
@@ -389,6 +415,10 @@ struct NativeSourceControlStatusAccumulator {
             remote = nextRemote
             isRemoteResolved = nextRemote != nil
         case let .localUpdated(nextLocal):
+            if let previousLocal = local, previousLocal.refName != nextLocal.refName {
+                remote = nil
+                isRemoteResolved = false
+            }
             local = nextLocal
         case let .remoteUpdated(nextRemote):
             remote = nextRemote
@@ -399,11 +429,7 @@ struct NativeSourceControlStatusAccumulator {
         // A workspace with no repository or no primary remote never receives a
         // remote half, so nothing is pending in those cases.
         let isRemoteKnown = isRemoteResolved || !local.isRepo || !local.hasPrimaryRemote
-        // Latches: a later local-only update must not reopen a stream whose
-        // remote half already arrived.
-        if isRemoteKnown {
-            isComplete = true
-        }
+        isComplete = isRemoteKnown
         return NativeWorkspaceMapper.sourceControl(
             local: local,
             remote: remote,

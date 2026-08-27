@@ -1,5 +1,26 @@
 import Foundation
 
+enum MobileClientMetadata {
+    static var osMajorVersion: Int {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+    }
+
+    static var deviceModel: String {
+        if let simulatedModel = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"],
+           !simulatedModel.isEmpty {
+            return simulatedModel
+        }
+        var system = utsname()
+        uname(&system)
+        let machineSize = MemoryLayout.size(ofValue: system.machine)
+        return withUnsafePointer(to: &system.machine) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: machineSize) {
+                String(cString: $0)
+            }
+        }
+    }
+}
+
 public actor T3Client {
     public let environment: Environment
     private let api: EnvironmentAPI
@@ -33,8 +54,29 @@ public actor T3Client {
                 components.path = "/ws"
             }
             var query = components.queryItems ?? []
-            query.removeAll { $0.name == "wsTicket" }
+            query.removeAll {
+                $0.name == "wsTicket"
+                    || $0.name == "clientSurface"
+                    || $0.name == "clientAppVersion"
+                    || $0.name == "clientOs"
+                    || $0.name == "clientOsMajorVersion"
+                    || $0.name == "clientDeviceModel"
+            }
             query.append(URLQueryItem(name: "wsTicket", value: ticket.ticket))
+            query.append(URLQueryItem(name: "clientSurface", value: "mobile"))
+            query.append(URLQueryItem(name: "clientOs", value: "iOS"))
+            query.append(URLQueryItem(
+                name: "clientOsMajorVersion",
+                value: String(MobileClientMetadata.osMajorVersion)
+            ))
+            let deviceModel = MobileClientMetadata.deviceModel
+            if !deviceModel.isEmpty {
+                query.append(URLQueryItem(name: "clientDeviceModel", value: deviceModel))
+            }
+            if let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+               !appVersion.isEmpty {
+                query.append(URLQueryItem(name: "clientAppVersion", value: appVersion))
+            }
             components.queryItems = query
             guard let url = components.url else { throw PairingURLError.invalidURL }
             return url
@@ -98,6 +140,182 @@ public actor T3Client {
             RPCMethod.serverGetUsageSummary.rawValue,
             payload: try JSONValue.encode(input),
             as: UsageSummary.self
+        )
+    }
+
+    public func pullRequests(_ input: PullRequestListInput) async throws -> PullRequestListResult {
+        try await rpc.request(
+            RPCMethod.pullRequestsList.rawValue,
+            payload: try JSONValue.encode(input),
+            as: PullRequestListResult.self
+        )
+    }
+
+    public func pullRequestDetail(_ reference: PullRequestRef) async throws -> PullRequestDetail {
+        try await rpc.request(
+            RPCMethod.pullRequestsDetail.rawValue,
+            payload: try JSONValue.encode(reference),
+            as: PullRequestDetail.self
+        )
+    }
+
+    public func pullRequestActivity(_ reference: PullRequestRef) async throws
+        -> PullRequestActivity
+    {
+        try await rpc.request(
+            RPCMethod.pullRequestsActivity.rawValue,
+            payload: try JSONValue.encode(reference),
+            as: PullRequestActivity.self
+        )
+    }
+
+    public func pullRequestDiff(_ input: PullRequestDiffInput) async throws
+        -> PullRequestDiffResult
+    {
+        try await api.pullRequestDiff(input, environment: environment)
+    }
+
+    public func runPullRequestAction(
+        _ reference: PullRequestRef,
+        action: PullRequestAction,
+        mergeMethod: PullRequestMergeMethod? = nil,
+        updateMethod: PullRequestUpdateMethod? = nil
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["action"] = .string(action.rawValue)
+        if let mergeMethod { payload["mergeMethod"] = .string(mergeMethod.rawValue) }
+        if let updateMethod { payload["updateMethod"] = .string(updateMethod.rawValue) }
+        try await rpc.request(
+            RPCMethod.pullRequestsRunAction.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func updatePullRequest(
+        _ reference: PullRequestRef,
+        title: String? = nil,
+        body: String? = nil
+    ) async throws {
+        var payload = try reference.jsonObject
+        if let title { payload["title"] = .string(title) }
+        if let body { payload["body"] = .string(body) }
+        try await rpc.request(RPCMethod.pullRequestsUpdate.rawValue, payload: .object(payload))
+    }
+
+    public func commentOnPullRequest(_ reference: PullRequestRef, body: String) async throws {
+        var payload = try reference.jsonObject
+        payload["body"] = .string(body)
+        try await rpc.request(RPCMethod.pullRequestsComment.rawValue, payload: .object(payload))
+    }
+
+    public func updatePullRequestComment(
+        _ reference: PullRequestRef,
+        commentID: String,
+        kind: PullRequestCommentKind,
+        body: String
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["commentId"] = .string(commentID)
+        payload["kind"] = .string(kind.rawValue)
+        payload["body"] = .string(body)
+        try await rpc.request(
+            RPCMethod.pullRequestsUpdateComment.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func submitPullRequestReview(
+        _ reference: PullRequestRef,
+        verdict: PullRequestReviewVerdict,
+        body: String,
+        comments: [PullRequestReviewCommentDraft]
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["verdict"] = .string(verdict.rawValue)
+        payload["body"] = .string(body)
+        payload["comments"] = try .encode(comments)
+        try await rpc.request(
+            RPCMethod.pullRequestsSubmitReview.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func replyToPullRequestThread(
+        _ reference: PullRequestRef,
+        threadID: String,
+        body: String
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["threadId"] = .string(threadID)
+        payload["body"] = .string(body)
+        try await rpc.request(
+            RPCMethod.pullRequestsReplyToThread.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func setPullRequestThreadResolved(
+        _ reference: PullRequestRef,
+        threadID: String,
+        resolved: Bool
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["threadId"] = .string(threadID)
+        payload["resolved"] = .bool(resolved)
+        try await rpc.request(
+            RPCMethod.pullRequestsSetThreadResolution.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func setPullRequestReaction(
+        _ reference: PullRequestRef,
+        subjectID: String?,
+        content: PullRequestReactionContent,
+        reacted: Bool
+    ) async throws {
+        var payload = try reference.jsonObject
+        if let subjectID { payload["subjectId"] = .string(subjectID) }
+        payload["content"] = .string(content.rawValue)
+        payload["reacted"] = .bool(reacted)
+        try await rpc.request(
+            RPCMethod.pullRequestsSetReaction.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func pullRequestReviewerCandidates(_ reference: PullRequestRef) async throws
+        -> PullRequestReviewerCandidateList
+    {
+        try await rpc.request(
+            RPCMethod.pullRequestsReviewerCandidates.rawValue,
+            payload: try JSONValue.encode(reference),
+            as: PullRequestReviewerCandidateList.self
+        )
+    }
+
+    public func requestPullRequestReviewers(
+        _ reference: PullRequestRef,
+        reviewers: [PullRequestReviewerCandidate],
+        requested: Bool
+    ) async throws {
+        var payload = try reference.jsonObject
+        payload["reviewers"] = .array(reviewers.map {
+            .object(["id": .string($0.id), "kind": .string($0.kind)])
+        })
+        payload["requested"] = .bool(requested)
+        try await rpc.request(
+            RPCMethod.pullRequestsRequestReviewers.rawValue,
+            payload: .object(payload)
+        )
+    }
+
+    public func invalidatePullRequests(_ reference: PullRequestRef? = nil) async throws {
+        var payload: [String: JSONValue] = [:]
+        if let reference { payload["reference"] = try JSONValue.encode(reference) }
+        try await rpc.request(
+            RPCMethod.pullRequestsInvalidate.rawValue,
+            payload: .object(payload)
         )
     }
 
@@ -213,7 +431,8 @@ public actor T3Client {
         messageID: String = UUID().uuidString,
         createdAt: String = OrchestrationCommands.now()
     ) async throws -> DispatchResult {
-        try await dispatch(
+        let uploadedAttachments = try await prepareTurnAttachments(attachments)
+        return try await dispatch(
             try OrchestrationCommands.sendTurn(
                 threadID: threadID,
                 text: text,
@@ -221,6 +440,7 @@ public actor T3Client {
                 interactionMode: interactionMode,
                 model: model,
                 attachments: attachments,
+                uploadedAttachments: uploadedAttachments,
                 commandID: commandID,
                 messageID: messageID,
                 createdAt: createdAt
@@ -272,7 +492,8 @@ public actor T3Client {
         messageID: String = UUID().uuidString,
         createdAt: String = OrchestrationCommands.now()
     ) async throws -> DispatchResult {
-        try await dispatchOverWebSocket(
+        let uploadedAttachments = try await prepareTurnAttachments(attachments)
+        return try await dispatchOverWebSocket(
             try OrchestrationCommands.createThreadAndSend(
                 threadID: threadID,
                 projectID: projectID,
@@ -285,6 +506,7 @@ public actor T3Client {
                 worktreePath: worktreePath,
                 worktreePreparation: worktreePreparation,
                 attachments: attachments,
+                uploadedAttachments: uploadedAttachments,
                 commandID: commandID,
                 messageID: messageID,
                 createdAt: createdAt
@@ -490,6 +712,81 @@ public actor T3Client {
             payload: .object(["resource": resource.jsonValue]),
             as: AssetCreateURLResult.self
         )
+    }
+
+    public func createAttachmentUploadURL(
+        name: String,
+        mimeType: String,
+        sizeBytes: Int
+    ) async throws -> AttachmentCreateUploadURLResult {
+        try await rpc.request(
+            RPCMethod.attachmentsCreateUploadURL.rawValue,
+            payload: .object([
+                "name": .string(name),
+                "mimeType": .string(mimeType),
+                "sizeBytes": .number(Double(sizeBytes)),
+            ]),
+            as: AttachmentCreateUploadURLResult.self
+        )
+    }
+
+    public func deleteAttachment(id: String) async throws {
+        try await rpc.request(
+            RPCMethod.attachmentsDelete.rawValue,
+            payload: .object(["attachmentId": .string(id)])
+        )
+    }
+
+    public func uploadFeedback(
+        threadID: String,
+        reason: String? = nil
+    ) async throws -> ProviderUploadFeedbackResult {
+        var payload: [String: JSONValue] = ["threadId": .string(threadID)]
+        if let reason {
+            payload["reason"] = .string(reason)
+        }
+        return try await rpc.request(
+            RPCMethod.providerUploadFeedback.rawValue,
+            payload: .object(payload),
+            as: ProviderUploadFeedbackResult.self
+        )
+    }
+
+    private func prepareTurnAttachments(
+        _ attachments: [UploadChatImageAttachment]
+    ) async throws -> [JSONValue]? {
+        guard !attachments.isEmpty,
+              environment.descriptor?.capabilities.attachmentUploads == true else {
+            return nil
+        }
+
+        var prepared: [JSONValue] = []
+        var pendingIDs: [String] = []
+        do {
+            for attachment in attachments {
+                let upload = try await createAttachmentUploadURL(
+                    name: attachment.name,
+                    mimeType: attachment.mimeType,
+                    sizeBytes: attachment.sizeBytes
+                )
+                pendingIDs.append(upload.attachmentId)
+                guard let url = URL(
+                    string: upload.relativeUrl,
+                    relativeTo: environment.httpBaseURL
+                )?.absoluteURL,
+                      let data = attachment.imageData else {
+                    throw RPCError.protocolViolation("The image upload URL or image data is invalid.")
+                }
+                try await api.uploadAttachment(data, mimeType: attachment.mimeType, to: url)
+                prepared.append(attachment.uploadedJSONValue(id: upload.attachmentId))
+            }
+        } catch {
+            for attachmentID in pendingIDs {
+                try? await deleteAttachment(id: attachmentID)
+            }
+            throw error
+        }
+        return prepared
     }
 
     public func resolvedAssetURL(resource: AssetResource) async throws -> URL {
@@ -1097,8 +1394,10 @@ public actor EnvironmentRuntime {
         let previousEnvironment = try await environmentStore.load()
             .first(where: { $0.id == environment.id })
         let previousActiveID = try await environmentStore.activeEnvironmentID()
-        let previousCredential = try await credentialStore.credential(for: environment.id)
-        try await credentialStore.setCredential(credential, for: environment.id)
+        let previousCredential = try await credentialStore.swapCredential(
+            credential,
+            for: environment.id
+        )
         do {
             try await environmentStore.upsert(environment)
             try await environmentStore.setActiveEnvironment(id: environment.id)
@@ -1107,12 +1406,16 @@ public actor EnvironmentRuntime {
             var rollbackErrors: [String] = []
             do {
                 if let previousCredential {
-                    try await credentialStore.setCredential(
+                    _ = try await credentialStore.replaceCredential(
                         previousCredential,
+                        ifMatching: credential,
                         for: environment.id
                     )
                 } else {
-                    try await credentialStore.removeCredential(for: environment.id)
+                    _ = try await credentialStore.removeCredential(
+                        ifMatching: credential,
+                        for: environment.id
+                    )
                 }
             } catch {
                 rollbackErrors.append("credential: \(error.localizedDescription)")
@@ -1248,6 +1551,20 @@ public enum RPCMethod: String, Sendable {
     case serverProbe = "server.probe"
     case serverGetConfig = "server.getConfig"
     case serverGetUsageSummary = "server.getUsageSummary"
+    case pullRequestsList = "pullRequests.list"
+    case pullRequestsDetail = "pullRequests.detail"
+    case pullRequestsActivity = "pullRequests.activity"
+    case pullRequestsRunAction = "pullRequests.runAction"
+    case pullRequestsUpdate = "pullRequests.update"
+    case pullRequestsComment = "pullRequests.comment"
+    case pullRequestsUpdateComment = "pullRequests.updateComment"
+    case pullRequestsSubmitReview = "pullRequests.submitReview"
+    case pullRequestsReplyToThread = "pullRequests.replyToThread"
+    case pullRequestsSetThreadResolution = "pullRequests.setThreadResolution"
+    case pullRequestsSetReaction = "pullRequests.setReaction"
+    case pullRequestsInvalidate = "pullRequests.invalidate"
+    case pullRequestsReviewerCandidates = "pullRequests.reviewerCandidates"
+    case pullRequestsRequestReviewers = "pullRequests.requestReviewers"
     case dispatchCommand = "orchestration.dispatchCommand"
     case getArchivedShellSnapshot = "orchestration.getArchivedShellSnapshot"
     case subscribeShell = "orchestration.subscribeShell"
@@ -1258,6 +1575,9 @@ public enum RPCMethod: String, Sendable {
     case projectsWriteFile = "projects.writeFile"
     case filesystemBrowse = "filesystem.browse"
     case assetsCreateURL = "assets.createUrl"
+    case attachmentsCreateUploadURL = "attachments.createUploadUrl"
+    case attachmentsDelete = "attachments.delete"
+    case providerUploadFeedback = "provider.uploadFeedback"
     case subscribeServerConfig
     case serverDiscoverSourceControl = "server.discoverSourceControl"
     case subscribeVCSStatus = "subscribeVcsStatus"
@@ -1347,6 +1667,7 @@ public enum OrchestrationCommands {
         interactionMode: InteractionMode = .default,
         model: ModelSelection? = nil,
         attachments: [UploadChatImageAttachment] = [],
+        uploadedAttachments: [JSONValue]? = nil,
         commandID: String = UUID().uuidString,
         messageID: String = UUID().uuidString,
         createdAt: String = now()
@@ -1359,7 +1680,7 @@ public enum OrchestrationCommands {
                 "messageId": .string(messageID),
                 "role": .string("user"),
                 "text": .string(text),
-                "attachments": .array(attachments.map(\.jsonValue)),
+                "attachments": .array(uploadedAttachments ?? attachments.map(\.jsonValue)),
             ]),
             "runtimeMode": .string(runtimeMode.rawValue),
             "interactionMode": .string(interactionMode.rawValue),
@@ -1383,6 +1704,7 @@ public enum OrchestrationCommands {
         worktreePath: String? = nil,
         worktreePreparation: ThreadWorktreePreparation? = nil,
         attachments: [UploadChatImageAttachment] = [],
+        uploadedAttachments: [JSONValue]? = nil,
         commandID: String = UUID().uuidString,
         messageID: String = UUID().uuidString,
         createdAt: String = now()
@@ -1419,7 +1741,7 @@ public enum OrchestrationCommands {
                 "messageId": .string(messageID),
                 "role": .string("user"),
                 "text": .string(text),
-                "attachments": .array(attachments.map(\.jsonValue)),
+                "attachments": .array(uploadedAttachments ?? attachments.map(\.jsonValue)),
             ]),
             "modelSelection": try .encode(model),
             "titleSeed": .string(title),
@@ -1551,7 +1873,7 @@ public enum OrchestrationCommands {
                 "type": .string("thread.snooze"),
                 "commandId": .string(commandID),
                 "threadId": .string(threadID),
-                "snoozedUntil": .string(iso8601.string(from: until)),
+                "snoozedUntil": .string(iso8601.format(until)),
             ])
         }
         return .object([
@@ -1613,10 +1935,9 @@ public enum OrchestrationCommands {
     }
 
     public static func now() -> String {
-        iso8601.string(from: Date())
+        iso8601.format(Date())
     }
 
-    /// ISO8601DateFormatter is expensive to construct and thread-safe to use;
-    /// `now()` runs as the default argument of nearly every outbound command.
-    static let iso8601 = ISO8601DateFormatter()
+    /// Commands are built on several actors, so their shared formatter must be Sendable.
+    private static let iso8601 = Date.ISO8601FormatStyle()
 }

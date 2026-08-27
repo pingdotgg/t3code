@@ -26,6 +26,16 @@ struct PlatformRootView: View {
                 navigationRequest = nil
             }
         )
+        .environment(\.openURL, OpenURLAction { url in
+            // Links tapped inside the app (message Markdown above all) would
+            // otherwise leave for Safari or be rejected by an unregistered
+            // scheme, so keep the ones this device can already show.
+            guard let route = PlatformInAppLinkRouter.route(for: url, in: model.snapshot) else {
+                return .systemAction
+            }
+            handle(route)
+            return .handled
+        })
         .onOpenURL { url in
             handle(url: url, letOnboardingConfirmConnection: true)
         }
@@ -37,6 +47,22 @@ struct PlatformRootView: View {
             guard let route = note.userInfo?["route"] as? PlatformRoute else { return }
             _ = PlatformRouteMailbox.shared.take()
             handle(route)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .t3ConnectSessionChanged)) { note in
+            guard let capability = model.client as? any T3ConnectCapable,
+                  let controller = note.object as? T3ConnectController,
+                  controller === capability.t3ConnectController else { return }
+            let previousAccountID = note.userInfo?["previousAccountID"] as? String
+            let accountID = note.userInfo?["accountID"] as? String
+            guard Self.shouldRemoveManagedEnvironments(
+                previousAccountID: previousAccountID,
+                accountID: accountID,
+                isSigningOut: model.isSigningOutT3Connect
+            ) else { return }
+            Task { @MainActor in
+                guard !model.isSigningOutT3Connect else { return }
+                await model.removeManagedEnvironmentsAfterAccountChange()
+            }
         }
         .onChange(of: model.isLoading, initial: true) { _, isLoading in
             guard !isLoading else { return }
@@ -91,6 +117,15 @@ struct PlatformRootView: View {
         } message: {
             Text("Your share is saved. Connect an environment and create a project to finish importing it.")
         }
+    }
+
+    static func shouldRemoveManagedEnvironments(
+        previousAccountID: String?,
+        accountID: String?,
+        isSigningOut: Bool
+    ) -> Bool {
+        guard !isSigningOut, let previousAccountID else { return false }
+        return previousAccountID != accountID
     }
 
     private var incomingShareProjects: [FeatureProject] {
@@ -205,7 +240,13 @@ struct PlatformRootView: View {
         importedShareProjectID = project.id
         Task { @MainActor in
             do {
-                try await incomingShareCoordinator.importPending(into: project)
+                try await incomingShareCoordinator.importPending(
+                    into: project,
+                    draftKey: FeatureComposerDraftStore.newTaskKey(
+                        project: project,
+                        in: model.snapshot
+                    )
+                )
             } catch {
                 importedShareProjectID = nil
                 model.errorMessage = error.localizedDescription

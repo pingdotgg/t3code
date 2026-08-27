@@ -2,7 +2,7 @@ import SwiftUI
 
 private enum TerminalFontSize {
     static let minimum = 6.0
-    static let maximum = 14.0
+    static let maximum = 32.0
     static let step = 0.5
     static let defaultValue = 10.5
 
@@ -89,13 +89,15 @@ public struct FeatureTerminalView: View {
                 isRunning: isRunning,
                 focusRequest: focusRequest,
                 onInput: { data in
-                    Task { await write(data) }
+                    let terminalID = activeTerminalID
+                    Task { await write(data, terminalID: terminalID) }
                 },
                 onResize: { nextColumns, nextRows in
                     updateGrid(columns: nextColumns, rows: nextRows)
                 },
                 onClear: {
-                    Task { await clear() }
+                    let terminalID = activeTerminalID
+                    Task { await clear(terminalID: terminalID) }
                 },
                 onFontSizeStep: { direction in
                     stepFontSize(direction)
@@ -267,7 +269,8 @@ public struct FeatureTerminalView: View {
                 }
 
                 Button {
-                    Task { await clear() }
+                    let terminalID = activeTerminalID
+                    Task { await clear(terminalID: terminalID) }
                 } label: {
                     Label("Clear", systemImage: "eraser")
                 }
@@ -372,16 +375,19 @@ public struct FeatureTerminalView: View {
         columns = nextColumns
         rows = nextRows
         guard isRunning else { return }
+        let terminalID = activeTerminalID
         Task {
             do {
                 try await client.resizeTerminal(
                     threadID: threadID,
-                    terminalID: activeTerminalID,
+                    terminalID: terminalID,
                     columns: nextColumns,
                     rows: nextRows
                 )
             } catch {
-                errorMessage = error.localizedDescription
+                if terminalID == activeTerminalID {
+                    errorMessage = error.localizedDescription
+                }
             }
         }
     }
@@ -455,36 +461,45 @@ public struct FeatureTerminalView: View {
         }
     }
 
-    private func clear() async {
+    private func clear(terminalID: String) async {
+        let wasRunning = isRunning
         do {
-            terminal?.buffer = ""
-            surfaceGeneration += 1
+            if terminalID == activeTerminalID {
+                terminal?.buffer = ""
+                surfaceGeneration += 1
+            }
             try await client.clearTerminal(
                 threadID: threadID,
-                terminalID: activeTerminalID
+                terminalID: terminalID
             )
-            if isRunning {
+            if wasRunning {
                 try await client.writeTerminal(
                     threadID: threadID,
-                    terminalID: activeTerminalID,
+                    terminalID: terminalID,
                     data: "\u{0C}"
                 )
             }
-            errorMessage = nil
+            if terminalID == activeTerminalID {
+                errorMessage = nil
+            }
         } catch {
-            errorMessage = error.localizedDescription
+            if terminalID == activeTerminalID {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
-    private func write(_ data: String) async {
+    private func write(_ data: String, terminalID: String) async {
         do {
             try await client.writeTerminal(
                 threadID: threadID,
-                terminalID: activeTerminalID,
+                terminalID: terminalID,
                 data: data
             )
         } catch {
-            errorMessage = error.localizedDescription
+            if terminalID == activeTerminalID {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 }

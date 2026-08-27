@@ -5,15 +5,31 @@ import UIKit
 public struct FeatureFilesView: View {
     let client: any FeatureClient
     let threadID: String
+    let initialPath: String?
 
-    public init(client: any FeatureClient, threadID: String) {
+    public init(client: any FeatureClient, threadID: String, initialPath: String? = nil) {
         self.client = client
         self.threadID = threadID
+        self.initialPath = initialPath
     }
 
     public var body: some View {
-        FeatureFileDirectoryView(client: client, threadID: threadID, path: nil, title: "Files")
-            .background(T3Colors.background)
+        Group {
+            if let initialPath {
+                FeatureFilePreviewView(
+                    client: client,
+                    threadID: threadID,
+                    entry: FeatureFileEntry(
+                        path: initialPath,
+                        name: URL(fileURLWithPath: initialPath).lastPathComponent,
+                        kind: .file
+                    )
+                )
+            } else {
+                FeatureFileDirectoryView(client: client, threadID: threadID, path: nil, title: "Files")
+            }
+        }
+        .background(T3Colors.background)
     }
 }
 

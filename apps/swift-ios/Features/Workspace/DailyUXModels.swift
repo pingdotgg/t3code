@@ -327,6 +327,39 @@ struct DailyUXRecentProject: Equatable {
     let project: FeatureProject
 }
 
+/// The project picker leads with the projects the account actually worked in
+/// most recently and keeps every remaining project below in the usual
+/// alphabetical order. A group appears in exactly one section so the list never
+/// repeats itself on the small project counts this picker normally shows.
+struct DailyUXProjectPickerSections: Equatable {
+    static let recentLimit = 3
+
+    let recents: [DailyUXProjectGroup]
+    let others: [DailyUXProjectGroup]
+
+    init(
+        groups: [DailyUXProjectGroup],
+        recentGroupIDs: [String],
+        limit: Int = DailyUXProjectPickerSections.recentLimit
+    ) {
+        let groupsByID = groups.reduce(into: [String: DailyUXProjectGroup]()) {
+            $0[$1.id] = $0[$1.id] ?? $1
+        }
+        var seenGroupIDs = Set<String>()
+        var ranked: [DailyUXProjectGroup] = []
+        for groupID in recentGroupIDs where ranked.count < max(0, limit) {
+            guard let group = groupsByID[groupID],
+                  seenGroupIDs.insert(group.id).inserted else {
+                continue
+            }
+            ranked.append(group)
+        }
+
+        recents = ranked
+        others = groups.filter { !seenGroupIDs.contains($0.id) }
+    }
+}
+
 struct DailyUXProjectGroup: Identifiable, Equatable {
     let id: String
     let name: String
@@ -551,11 +584,17 @@ struct DailyUXSidebarIndex {
         let available = visible.filter { !$0.isEffectivelySnoozed(at: now) }
 
         pinned = available
-            .filter { $0.pinnedAt != nil }
+            .filter {
+                $0.pinnedAt != nil
+                    && !($0.canToggleSettlement && $0.isEffectivelySettled(at: now))
+            }
             .sorted(by: Self.creationOrder)
 
         active = available
-            .filter { $0.pinnedAt == nil && !$0.isEffectivelySettled(at: now) }
+            .filter {
+                $0.pinnedAt == nil
+                    && !($0.canToggleSettlement && $0.isEffectivelySettled(at: now))
+            }
             .sorted(by: Self.creationOrder)
 
         snoozed = visible
@@ -570,7 +609,10 @@ struct DailyUXSidebarIndex {
             }
 
         settled = available
-            .filter { $0.pinnedAt == nil && $0.isEffectivelySettled(at: now) }
+            .filter {
+                $0.canToggleSettlement
+                    && $0.isEffectivelySettled(at: now)
+            }
             .sorted { lhs, rhs in
                 if lhs.settledSortDate != rhs.settledSortDate {
                     return lhs.settledSortDate > rhs.settledSortDate

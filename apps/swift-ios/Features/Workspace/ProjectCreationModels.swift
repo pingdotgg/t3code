@@ -112,6 +112,20 @@ enum ProjectRemoteSourceOptions {
 }
 
 enum ProjectCreationPath {
+    static func normalizedCloneURL(_ input: String) -> String {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pattern = #"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]+(?:\.git)?$"#
+        guard trimmed.range(of: pattern, options: .regularExpression) != nil else {
+            return trimmed
+        }
+        let repository = trimmed.hasSuffix(".git") ? trimmed : "\(trimmed).git"
+        return "https://github.com/\(repository)"
+    }
+
+    static func defaultCloneURL(for repository: SourceControlRepositoryInfo) -> String {
+        repository.provider == .github ? repository.url : repository.sshUrl
+    }
+
     static func validated(_ rawValue: String) -> Result<String, ProjectCreationValidationError> {
         let path = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty else {

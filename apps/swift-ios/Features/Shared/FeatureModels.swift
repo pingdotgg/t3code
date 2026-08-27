@@ -198,6 +198,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var preview: String?
     public var branch: String?
     public var worktreePath: String?
+    public var linkedPullRequest: ThreadLinkedPullRequest?
     public var createdAt: Date
     public var updatedAt: Date
     public var state: FeatureThreadState
@@ -217,6 +218,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var supportsSnooze: Bool?
     public var supportsPinning: Bool?
     public var supportsTitleRegeneration: Bool?
+    public var supportsPullRequestLinking: Bool?
     public var attentionAt: Date?
     public var workingStartedAt: Date?
     public var latestTurnCompletedAt: Date?
@@ -233,6 +235,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         preview: String? = nil,
         branch: String? = nil,
         worktreePath: String? = nil,
+        linkedPullRequest: ThreadLinkedPullRequest? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now,
         state: FeatureThreadState = .idle,
@@ -252,6 +255,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         supportsSnooze: Bool? = nil,
         supportsPinning: Bool? = nil,
         supportsTitleRegeneration: Bool? = nil,
+        supportsPullRequestLinking: Bool? = nil,
         attentionAt: Date? = nil,
         workingStartedAt: Date? = nil,
         latestTurnCompletedAt: Date? = nil,
@@ -267,6 +271,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.preview = preview
         self.branch = branch
         self.worktreePath = worktreePath
+        self.linkedPullRequest = linkedPullRequest
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.state = state
@@ -286,6 +291,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.supportsSnooze = supportsSnooze
         self.supportsPinning = supportsPinning
         self.supportsTitleRegeneration = supportsTitleRegeneration
+        self.supportsPullRequestLinking = supportsPullRequestLinking
         self.attentionAt = attentionAt
         self.workingStartedAt = workingStartedAt
         self.latestTurnCompletedAt = latestTurnCompletedAt
@@ -293,18 +299,29 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.interactionMode = interactionMode
     }
 
-    /// Older cached environment descriptors may omit the optional capability even
-    /// when their server supports pinning. Always keep an existing pin reversible.
+    /// Missing capabilities mean unsupported. Existing states remain reversible
+    /// so older cached snapshots cannot trap a thread in its current state.
     public var canTogglePin: Bool {
-        pinnedAt != nil || supportsPinning != false
+        pinnedAt != nil || supportsPinning == true
     }
 
     public var canToggleSettlement: Bool {
-        isSettled || supportsSettlement != false
+        isSettled || supportsSettlement == true
     }
 
     public var canToggleSnooze: Bool {
-        snoozedUntil != nil || supportsSnooze != false
+        snoozedUntil != nil || supportsSnooze == true
+    }
+
+    var canSettleNow: Bool {
+        guard canToggleSettlement else { return false }
+        if isSettled { return true }
+        switch state {
+        case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
+            return false
+        case .idle, .failed, .completed:
+            return true
+        }
     }
 }
 
@@ -393,8 +410,20 @@ public enum FeatureApprovalKind: String, Sendable, Codable {
     case command
     case fileRead
     case fileChange
+    case mcpElicitation
     case patch
     case other
+}
+
+public struct FeatureApprovalOption: Identifiable, Sendable, Equatable, Hashable, Codable {
+    public var id: FeatureApprovalDecision { decision }
+    public let decision: FeatureApprovalDecision
+    public let label: String
+
+    public init(decision: FeatureApprovalDecision, label: String) {
+        self.decision = decision
+        self.label = label
+    }
 }
 
 public struct FeatureApproval: Identifiable, Sendable, Equatable, Hashable, Codable {
@@ -405,6 +434,8 @@ public struct FeatureApproval: Identifiable, Sendable, Equatable, Hashable, Coda
     public var kind: FeatureApprovalKind
     public var title: String
     public var detail: String
+    public var appName: String?
+    public var options: [FeatureApprovalOption]?
 
     public init(
         id: String,
@@ -412,7 +443,9 @@ public struct FeatureApproval: Identifiable, Sendable, Equatable, Hashable, Coda
         threadID: String,
         kind: FeatureApprovalKind,
         title: String,
-        detail: String
+        detail: String,
+        appName: String? = nil,
+        options: [FeatureApprovalOption]? = nil
     ) {
         self.id = id
         self.wireID = wireID
@@ -420,6 +453,8 @@ public struct FeatureApproval: Identifiable, Sendable, Equatable, Hashable, Coda
         self.kind = kind
         self.title = title
         self.detail = detail
+        self.appName = appName
+        self.options = options
     }
 }
 
@@ -956,7 +991,30 @@ public struct FeatureSnapshot: Sendable, Equatable, Codable {
 public enum FeatureApprovalDecision: String, Sendable, Codable {
     case allowOnce
     case allowForSession
+    case allowAlways
     case deny
+    case cancel
+
+    init?(wireValue: String) {
+        switch wireValue {
+        case "accept": self = .allowOnce
+        case "acceptForSession": self = .allowForSession
+        case "acceptAlways": self = .allowAlways
+        case "decline": self = .deny
+        case "cancel": self = .cancel
+        default: return nil
+        }
+    }
+
+    var wireValue: String {
+        switch self {
+        case .allowOnce: "accept"
+        case .allowForSession: "acceptForSession"
+        case .allowAlways: "acceptAlways"
+        case .deny: "decline"
+        case .cancel: "cancel"
+        }
+    }
 }
 
 public enum FeatureEvent: Sendable {

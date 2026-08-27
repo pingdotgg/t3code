@@ -285,6 +285,80 @@ final class T3ConnectNativeCapabilityTests: XCTestCase {
         XCTAssertNotNil(controller.errorMessage)
     }
 
+    func testManagedEnvironmentRemovalRevokesCredentialWhenCatalogRemovalFails() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-connect-account-change-revoke-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let catalogURL = directory.appendingPathComponent("environments.json")
+        let managed = Environment(
+            id: "managed-1",
+            label: "Managed Studio",
+            httpBaseURL: URL(string: "https://managed.example")!,
+            webSocketBaseURL: URL(string: "wss://managed.example")!,
+            kind: .managedDPoP
+        )
+        let store = EnvironmentStore(fileURL: catalogURL)
+        try await store.save([managed])
+        let credentials = InMemoryCredentialStore(credentials: [
+            managed.id: .managedDPoP(
+                accessToken: "managed-secret",
+                expiresAt: Date().addingTimeInterval(300),
+                scopes: T3ConnectManagedEnvironmentAuthorizer.standardScopes,
+                environmentID: managed.id,
+                proofKeyThumbprint: "proof-key"
+            ),
+        ])
+        let runtime = EnvironmentRuntime(
+            environmentStore: store,
+            credentialStore: credentials
+        )
+        let client = NativeFeatureClient(runtime: runtime)
+
+        try FileManager.default.removeItem(at: catalogURL)
+        try FileManager.default.createDirectory(at: catalogURL, withIntermediateDirectories: true)
+
+        do {
+            try await client.removeEnvironment(id: managed.id)
+            XCTFail("Managed environment removal succeeded with an unwritable catalog")
+        } catch {
+            let remainingCredential = await credentials.credential(for: managed.id)
+            XCTAssertNil(remainingCredential)
+        }
+    }
+
+    func testManualEnvironmentRemovalKeepsCredentialWhenCatalogRemovalFails() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-connect-manual-removal-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let catalogURL = directory.appendingPathComponent("environments.json")
+        let manual = Environment(
+            id: "manual-1",
+            label: "Manual Studio",
+            httpBaseURL: URL(string: "https://manual.example")!,
+            webSocketBaseURL: URL(string: "wss://manual.example")!
+        )
+        let store = EnvironmentStore(fileURL: catalogURL)
+        try await store.save([manual])
+        let credential = EnvironmentCredential(accessToken: "manual-secret")
+        let credentials = InMemoryCredentialStore(credentials: [manual.id: credential])
+        let runtime = EnvironmentRuntime(
+            environmentStore: store,
+            credentialStore: credentials
+        )
+        let client = NativeFeatureClient(runtime: runtime)
+
+        try FileManager.default.removeItem(at: catalogURL)
+        try FileManager.default.createDirectory(at: catalogURL, withIntermediateDirectories: true)
+
+        do {
+            try await client.removeEnvironment(id: manual.id)
+            XCTFail("Manual environment removal succeeded with an unwritable catalog")
+        } catch {
+            let remainingCredential = await credentials.credential(for: manual.id)
+            XCTAssertEqual(remainingCredential, credential)
+        }
+    }
+
     func testInjectedManagedRuntimeRequiresItsMatchingController() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-connect-controller-mismatch-\(UUID().uuidString)")

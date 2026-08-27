@@ -20,6 +20,7 @@ struct MarkdownDocument: Equatable, Sendable {
 
 indirect enum MarkdownBlock: Equatable, Sendable {
     case paragraph(String)
+    case image(MarkdownImage)
     case heading(level: Int, text: String)
     case unorderedList([MarkdownListItem])
     case orderedList(start: Int, items: [MarkdownListItem])
@@ -27,6 +28,138 @@ indirect enum MarkdownBlock: Equatable, Sendable {
     case table(MarkdownTable)
     case codeBlock(language: String?, code: String)
     case thematicBreak
+}
+
+struct MarkdownImage: Equatable, Sendable {
+    let source: String
+    let alternativeText: String
+}
+
+enum MarkdownImageSource: Equatable, Sendable {
+    case direct(URL)
+    case workspaceFile(String)
+    case blocked
+
+    static func classify(_ rawSource: String, workspaceRoot: String? = nil) -> Self {
+        var source = rawSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        if source.hasPrefix("<"), source.hasSuffix(">") {
+            source = String(source.dropFirst().dropLast())
+        }
+        guard !source.isEmpty, !source.hasPrefix("#"), !source.hasPrefix("?") else {
+            return .blocked
+        }
+
+        let lowercased = source.lowercased()
+        if lowercased.hasPrefix("http://") || lowercased.hasPrefix("https://")
+            || lowercased.hasPrefix("data:") || lowercased.hasPrefix("blob:") {
+            return URL(string: source).map(Self.direct) ?? .blocked
+        }
+        if source.hasPrefix("//") {
+            return URL(string: "https:\(source)").map(Self.direct) ?? .blocked
+        }
+        if lowercased.hasPrefix("file:") {
+            guard let components = URLComponents(string: source),
+                  components.scheme?.lowercased() == "file" else {
+                return .blocked
+            }
+            let decodedPath = components.percentEncodedPath.removingPercentEncoding
+                ?? components.percentEncodedPath
+            guard !decodedPath.isEmpty else { return .blocked }
+            if let host = components.host, !host.isEmpty, host.lowercased() != "localhost" {
+                return .workspaceFile(
+                    "\\\\\(host)\(decodedPath.replacingOccurrences(of: "/", with: "\\"))"
+                )
+            }
+            return .workspaceFile(normalizeWindowsDrivePath(decodedPath))
+        }
+
+        let pathEnd = source.firstIndex(where: { $0 == "?" || $0 == "#" }) ?? source.endIndex
+        let decodedPath = String(source[..<pathEnd]).removingPercentEncoding
+            ?? String(source[..<pathEnd])
+        let path = normalizeWindowsDrivePath(decodedPath)
+        guard !path.isEmpty else { return .blocked }
+
+        if path.hasPrefix("/") || path.hasPrefix("\\\\") || isWindowsDrivePath(path) {
+            return .workspaceFile(path)
+        }
+        if path.hasPrefix("~/") || path.hasPrefix("~\\") || hasURIScheme(path) {
+            return .blocked
+        }
+        guard let workspaceRoot, !workspaceRoot.isEmpty else { return .blocked }
+
+        let isWindows = isWindowsDrivePath(workspaceRoot) || workspaceRoot.hasPrefix("\\\\")
+        let separator = isWindows ? "\\" : "/"
+        let root = workspaceRoot.replacingOccurrences(
+            of: #"[\\/]+$"#,
+            with: "",
+            options: .regularExpression
+        )
+        let relative = path
+            .replacingOccurrences(of: "\\", with: separator)
+            .replacingOccurrences(of: "/", with: separator)
+            .replacingOccurrences(of: #"^[\\/]+"#, with: "", options: .regularExpression)
+        return .workspaceFile("\(root)\(separator)\(relative)")
+    }
+
+    private static func normalizeWindowsDrivePath(_ value: String) -> String {
+        guard value.count >= 4, value.first == "/", isWindowsDrivePath(String(value.dropFirst()))
+        else { return value }
+        return String(value.dropFirst())
+    }
+
+    private static func isWindowsDrivePath(_ value: String) -> Bool {
+        value.range(of: #"^[A-Za-z]:[\\/]"#, options: .regularExpression) != nil
+    }
+
+    private static func hasURIScheme(_ value: String) -> Bool {
+        value.range(of: #"^[A-Za-z][A-Za-z0-9+.-]*:"#, options: .regularExpression) != nil
+    }
+}
+
+enum MarkdownWorkspaceFileLink {
+    static func relativePath(for url: URL, workspaceRoot: String) -> String? {
+        let raw = url.absoluteString.removingPercentEncoding ?? url.absoluteString
+        let lowercase = raw.lowercased()
+        if lowercase.hasPrefix("http://") || lowercase.hasPrefix("https://")
+            || lowercase.hasPrefix("data:") || lowercase.hasPrefix("javascript:") {
+            return nil
+        }
+
+        var path = url.isFileURL ? url.path : raw
+        if let suffix = path.firstIndex(where: { $0 == "#" || $0 == "?" }) {
+            path = String(path[..<suffix])
+        }
+        path = path.replacingOccurrences(
+            of: #":\d+(?::\d+)?$"#,
+            with: "",
+            options: .regularExpression
+        )
+        guard !path.isEmpty, path.contains("/") || path.contains("\\") || path.contains(".") else {
+            return nil
+        }
+
+        let normalizedRoot = workspaceRoot.replacingOccurrences(of: "\\", with: "/")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let normalizedPath = path.replacingOccurrences(of: "\\", with: "/")
+        if normalizedPath.hasPrefix("/") || normalizedPath.range(
+            of: #"^[A-Za-z]:/"#,
+            options: .regularExpression
+        ) != nil {
+            let absolute = normalizedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard absolute == normalizedRoot || absolute.hasPrefix(normalizedRoot + "/") else {
+                return nil
+            }
+            path = String(absolute.dropFirst(normalizedRoot.count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        } else {
+            path = normalizedPath
+            if path.hasPrefix("./") {
+                path = String(path.dropFirst(2))
+            }
+        }
+        guard !path.isEmpty, !path.split(separator: "/").contains("..") else { return nil }
+        return path
+    }
 }
 
 struct MarkdownTable: Equatable, Sendable {
@@ -53,6 +186,10 @@ enum MarkdownTaskState: Equatable, Sendable {
 }
 
 private struct MarkdownBlockParser {
+    private static let imageExpression = try? NSRegularExpression(
+        pattern: #"!\[([^\]]*)\]\(\s*(<[^>]+>|[^\s)]+)(?:\s+[\"'][^\"']*[\"'])?\s*\)"#
+    )
+
     private let lines: [String]
     private var index = 0
 
@@ -110,7 +247,7 @@ private struct MarkdownBlockParser {
                 continue
             }
 
-            blocks.append(parseParagraph())
+            blocks.append(contentsOf: parseParagraph())
         }
 
         return blocks
@@ -257,7 +394,7 @@ private struct MarkdownBlockParser {
         return .unorderedList(items)
     }
 
-    private mutating func parseParagraph() -> MarkdownBlock {
+    private mutating func parseParagraph() -> [MarkdownBlock] {
         var paragraphLines: [String] = []
 
         while index < lines.count, !lines[index].isMarkdownBlank {
@@ -269,7 +406,42 @@ private struct MarkdownBlockParser {
             index += 1
         }
 
-        return .paragraph(paragraphLines.joined(separator: "\n"))
+        return imageBlocks(in: paragraphLines.joined(separator: "\n"))
+    }
+
+    private func imageBlocks(in paragraph: String) -> [MarkdownBlock] {
+        guard paragraph.contains("!["), let expression = Self.imageExpression else {
+            return [.paragraph(paragraph)]
+        }
+        let source = paragraph as NSString
+        let matches = expression.matches(
+            in: paragraph,
+            range: NSRange(location: 0, length: source.length)
+        )
+        guard !matches.isEmpty else { return [.paragraph(paragraph)] }
+
+        var blocks: [MarkdownBlock] = []
+        var cursor = 0
+        for match in matches {
+            let preceding = source.substring(with: NSRange(
+                location: cursor,
+                length: match.range.location - cursor
+            )).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !preceding.isEmpty {
+                blocks.append(.paragraph(preceding))
+            }
+            blocks.append(.image(MarkdownImage(
+                source: source.substring(with: match.range(at: 2)),
+                alternativeText: source.substring(with: match.range(at: 1))
+            )))
+            cursor = match.range.location + match.range.length
+        }
+        let trailing = source.substring(from: cursor)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trailing.isEmpty {
+            blocks.append(.paragraph(trailing))
+        }
+        return blocks
     }
 
     private func tableOpening(at position: Int) -> TableOpening? {

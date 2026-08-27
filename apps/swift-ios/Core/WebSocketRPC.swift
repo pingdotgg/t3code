@@ -167,6 +167,12 @@ public actor WebSocketRPCClient {
         let resume: @Sendable (Result<JSONValue, Error>) -> Void
     }
 
+    private enum SubscriptionYieldResult: Sendable {
+        case enqueued
+        case dropped
+        case terminated
+    }
+
     private struct Subscription {
         let tag: String
         let payload: JSONValue
@@ -175,7 +181,7 @@ public actor WebSocketRPCClient {
         /// The connection that assigned `requestID`. Request IDs are reissued
         /// after reconnects, so an Interrupt is only valid on this connection.
         var requestConnectionID: UUID?
-        let yield: @Sendable (JSONValue) -> Void
+        let yield: @Sendable (JSONValue) -> SubscriptionYieldResult
         let finish: @Sendable (Error?) -> Void
     }
 
@@ -247,6 +253,8 @@ public actor WebSocketRPCClient {
     private let endpointProvider: EndpointProvider
     private let connectionWaitTimeout: Duration
     private let responseTimeout: Duration
+    private let keepaliveInterval: Duration
+    private let subscriptionBufferLimit: Int
     private let reconnectBackoff: @Sendable (Int) -> Duration
     private var connection: (any WebSocketConnection)?
     private var connectionID: UUID?
@@ -258,11 +266,14 @@ public actor WebSocketRPCClient {
     private var unary: [Int: UnaryRequest] = [:]
     private var subscriptions: [UUID: Subscription] = [:]
     private var subscriptionByRequestID: [Int: UUID] = [:]
+    private var awaitingKeepaliveResponse = false
 
     public init(
         connector: any WebSocketConnecting = URLSessionWebSocketConnector(),
         connectionWaitTimeout: Duration = .seconds(4),
         responseTimeout: Duration = .seconds(30),
+        keepaliveInterval: Duration = .seconds(5),
+        subscriptionBufferLimit: Int = 128,
         reconnectBackoff: @escaping @Sendable (Int) -> Duration = { failureCount in
             // Jitter desynchronizes reconnects across environments so a
             // server restart doesn't trigger simultaneous ticket mints.
@@ -274,6 +285,8 @@ public actor WebSocketRPCClient {
         self.connector = connector
         self.connectionWaitTimeout = connectionWaitTimeout
         self.responseTimeout = responseTimeout
+        self.keepaliveInterval = keepaliveInterval > .zero ? keepaliveInterval : .seconds(5)
+        self.subscriptionBufferLimit = max(1, subscriptionBufferLimit)
         self.reconnectBackoff = reconnectBackoff
         self.endpointProvider = endpointProvider
     }
@@ -306,6 +319,7 @@ public actor WebSocketRPCClient {
         loopTask = nil
         keepaliveTask?.cancel()
         keepaliveTask = nil
+        awaitingKeepaliveResponse = false
         connection = nil
         connectionID = nil
         failUnary(RPCError.disconnected, includingUnsent: true)
@@ -341,7 +355,8 @@ public actor WebSocketRPCClient {
         as type: Value.Type
     ) -> AsyncThrowingStream<Value, Error> {
         let subscriptionID = UUID()
-        return AsyncThrowingStream { continuation in
+        return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(subscriptionBufferLimit)) {
+            continuation in
             subscriptions[subscriptionID] = Subscription(
                 tag: tag,
                 payload: payload,
@@ -349,9 +364,19 @@ public actor WebSocketRPCClient {
                 requestID: nil,
                 yield: { value in
                     do {
-                        continuation.yield(try value.decode(type))
+                        switch continuation.yield(try value.decode(type)) {
+                        case .enqueued:
+                            return .enqueued
+                        case .dropped:
+                            return .dropped
+                        case .terminated:
+                            return .terminated
+                        @unknown default:
+                            return .dropped
+                        }
                     } catch {
                         continuation.finish(throwing: error)
+                        return .terminated
                     }
                 },
                 finish: { error in
@@ -516,8 +541,9 @@ public actor WebSocketRPCClient {
         keepaliveTask?.cancel()
         if let connectionID {
             let owner = WeakOwner(self)
+            let interval = keepaliveInterval
             keepaliveTask = Task {
-                await Self.keepaliveLoop(owner: owner, connectionID: connectionID)
+                await Self.keepaliveLoop(owner: owner, connectionID: connectionID, interval: interval)
             }
         }
         // Snapshot the keys: the sends suspend, and reentrant completions or
@@ -539,6 +565,7 @@ public actor WebSocketRPCClient {
         let closingConnection = connection
         keepaliveTask?.cancel()
         keepaliveTask = nil
+        awaitingKeepaliveResponse = false
         connection = nil
         connectionID = nil
         Self.logger.info("WebSocket connection closed")
@@ -560,6 +587,7 @@ public actor WebSocketRPCClient {
     private func handle(_ data: Data, expectedConnectionID: UUID) async throws -> Bool {
         guard connectionID == expectedConnectionID else { return false }
         let response = try JSONDecoder.t3.decode(RPCResponseEnvelope.self, from: data)
+        awaitingKeepaliveResponse = false
         try await handle(response)
         return connectionID == expectedConnectionID
     }
@@ -573,7 +601,25 @@ public actor WebSocketRPCClient {
                   let subscriptionID = subscriptionByRequestID[requestID],
                   let subscription = subscriptions[subscriptionID]
             else { return }
-            response.values?.forEach(subscription.yield)
+            for value in response.values ?? [] {
+                switch subscription.yield(value) {
+                case .enqueued:
+                    continue
+                case .dropped:
+                    let error = RPCError.protocolViolation(
+                        "The live stream exceeded its buffered event limit."
+                    )
+                    if !subscription.reconnect {
+                        subscriptionByRequestID.removeValue(forKey: requestID)
+                        subscriptions.removeValue(forKey: subscriptionID)
+                        subscription.finish(error)
+                    }
+                    throw error
+                case .terminated:
+                    await removeSubscription(subscriptionID)
+                    return
+                }
+            }
             try await sendControl("Ack", requestID: requestID)
         case "Exit":
             guard let requestID = response.requestId, let exit = response.exit else { return }
@@ -660,9 +706,13 @@ public actor WebSocketRPCClient {
         }
     }
 
-    private static func keepaliveLoop(owner: WeakOwner, connectionID: UUID) async {
+    private static func keepaliveLoop(
+        owner: WeakOwner,
+        connectionID: UUID,
+        interval: Duration
+    ) async {
         while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: interval)
             guard !Task.isCancelled,
                   await owner.sendKeepalive(connectionID: connectionID) else { return }
         }
@@ -672,7 +722,12 @@ public actor WebSocketRPCClient {
         guard desired, connectionID == expectedConnectionID, connection != nil else {
             return false
         }
+        if awaitingKeepaliveResponse {
+            await disconnected(expectedConnectionID: expectedConnectionID)
+            return false
+        }
         do {
+            awaitingKeepaliveResponse = true
             try await sendControl("Ping", requestID: nil)
             return connectionID == expectedConnectionID
         } catch {

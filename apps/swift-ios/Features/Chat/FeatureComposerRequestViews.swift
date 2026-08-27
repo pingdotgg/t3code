@@ -27,7 +27,7 @@ struct FeatureComposerApprovalPanel: View {
                     }
                 }
 
-                Text(approval.title)
+                Text(approval.appName ?? approval.title)
                     .font(T3Typography.navigationTitle)
                     .foregroundStyle(T3Colors.textPrimary)
                     .padding(.top, 5)
@@ -66,27 +66,25 @@ struct FeatureComposerApprovalPanel: View {
             Divider().overlay(T3Colors.separator)
 
             VStack(spacing: 9) {
-                HStack(spacing: 7) {
-                    approvalButton(
-                        "Approve once",
-                        background: T3Colors.accent,
-                        action: { onDecision(.allowOnce) }
-                    )
-
-                    approvalButton(
-                        "Always allow",
-                        background: Color.clear,
-                        border: T3Colors.border,
-                        foreground: T3Colors.textPrimary,
-                        action: { onDecision(.allowForSession) }
-                    )
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 7) {
+                    ForEach(positiveOptions) { option in
+                        approvalButton(
+                            option.label,
+                            background: option.decision == .allowOnce ? T3Colors.accent : .clear,
+                            border: option.decision == .allowOnce ? .clear : T3Colors.border,
+                            foreground: option.decision == .allowOnce ? .white : T3Colors.textPrimary,
+                            action: { onDecision(option.decision) }
+                        )
+                    }
                 }
 
                 HStack(spacing: 26) {
-                    Button("Decline", role: .destructive) {
-                        onDecision(.deny)
+                    ForEach(negativeOptions) { option in
+                        Button(option.label, role: .destructive) {
+                            onDecision(option.decision)
+                        }
+                        .foregroundStyle(T3Colors.danger)
                     }
-                    .foregroundStyle(T3Colors.danger)
 
                     Button("Cancel turn", action: onCancelTurn)
                         .foregroundStyle(T3Colors.textTertiary)
@@ -131,9 +129,26 @@ struct FeatureComposerApprovalPanel: View {
         case .command: "Command"
         case .fileRead: "File access"
         case .fileChange: "File change"
+        case .mcpElicitation: "App access"
         case .patch: "Patch"
         case .other: "Details"
         }
+    }
+
+    private var options: [FeatureApprovalOption] {
+        approval.options ?? [
+            FeatureApprovalOption(decision: .allowOnce, label: "Approve once"),
+            FeatureApprovalOption(decision: .allowForSession, label: "Allow session"),
+            FeatureApprovalOption(decision: .deny, label: "Decline"),
+        ]
+    }
+
+    private var positiveOptions: [FeatureApprovalOption] {
+        options.filter { $0.decision != .deny && $0.decision != .cancel }
+    }
+
+    private var negativeOptions: [FeatureApprovalOption] {
+        options.filter { $0.decision == .deny || $0.decision == .cancel }
     }
 }
 

@@ -113,6 +113,49 @@ struct PlatformIncomingShareTests {
     }
 
     @Test
+    func groupedProjectImportUsesTheSameDraftKeyAsTheComposer() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json")
+        )
+        let project = Self.project(
+            repositoryIdentity: FeatureRepositoryIdentity(canonicalKey: "github.com/t3/example")
+        )
+        let snapshot = FeatureSnapshot(projects: [project])
+        let draftKey = FeatureComposerDraftStore.newTaskKey(project: project, in: snapshot)
+        let envelope = Self.envelope(text: "Keep shared context")
+        let pipeline = PlatformIncomingSharePipeline(
+            source: PlatformIncomingShareSource(
+                loadAll: { [envelope] },
+                data: { _ in Data() },
+                remove: { _ in }
+            ),
+            drafts: PlatformIncomingShareDraftRepository(
+                importContent: { shareID, text, attachments, key, maximumCount in
+                    try await store.importSharedContent(
+                        shareID: shareID,
+                        text: text,
+                        attachments: attachments,
+                        for: key,
+                        maximumAttachmentCount: maximumCount
+                    )
+                }
+            ),
+            prepareImage: { _, _ in Self.attachment(id: UUID(), value: 1) }
+        )
+
+        _ = try await pipeline.importEnvelope(envelope, into: project, draftKey: draftKey)
+
+        #expect(draftKey == "logical-project:github.com/t3/example:new-task")
+        #expect(try await store.draft(for: draftKey)?.text == "Keep shared context")
+        #expect(
+            try await store.draft(for: FeatureComposerDraftStore.newTaskKey(project: project)) == nil
+        )
+    }
+
+    @Test
     func imageFailureDoesNotPersistOrRemoveTheEnvelope() async {
         let recorder = IncomingShareTestRecorder()
         let envelope = Self.envelope(
@@ -290,13 +333,16 @@ struct PlatformIncomingShareTests {
         )
     }
 
-    private static func project() -> FeatureProject {
+    private static func project(
+        repositoryIdentity: FeatureRepositoryIdentity? = nil
+    ) -> FeatureProject {
         FeatureProject(
             id: "project:environment:project",
             wireID: "project",
             environmentID: "environment",
             name: "t3code",
-            path: "/repo"
+            path: "/repo",
+            repositoryIdentity: repositoryIdentity
         )
     }
 }

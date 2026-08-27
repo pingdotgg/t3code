@@ -31,7 +31,7 @@ concurrency:
 jobs:
   test:
     name: Contract fixtures and native tests
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: blacksmith-12vcpu-macos-26
     timeout-minutes: 25
     steps:
       - name: Checkout

@@ -1,12 +1,17 @@
 import SwiftUI
+import UIKit
 
 struct FeatureComposerView: View {
     @State private var isManuallyExpanded = false
     @State private var isAttachmentFlowActive = false
+    @State private var isModelPickerPresented = false
+    @State private var restoresFocusAfterModelPickerDismissal = false
     @State private var attachmentPreparation = FeatureAttachmentPreparationState()
     @State private var pathEntries: [FeatureComposerPathEntry] = []
     @State private var isPathSearchLoading = false
     @State private var pathSearchError: String?
+    @State private var textSelectionRequest: FeatureComposerTextSelectionRequest?
+    @State private var imageIntakeErrorMessage: String?
     @Binding private var text: String
     @Binding private var selection: FeatureSelection?
     @Binding private var attachments: [FeatureDraftAttachment]
@@ -16,7 +21,7 @@ struct FeatureComposerView: View {
     private let materializesDefaultSelection: Bool
     private let isSending: Bool
     private let isWorking: Bool
-    private let focused: FocusState<Bool>.Binding
+    @Binding private var focused: Bool
     private let contextUsage: Double?
     private let forceExpanded: Bool
     private let pendingApprovals: [FeatureApproval]
@@ -25,6 +30,7 @@ struct FeatureComposerView: View {
     private let powerFeatures: FeatureComposerPowerFeatures
     private let onSend: () -> Void
     private let onStop: () -> Void
+    private let onDismissKeyboard: (() -> Void)?
     private let onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)?
     private let onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)?
 
@@ -37,7 +43,7 @@ struct FeatureComposerView: View {
         materializesDefaultSelection: Bool = true,
         isSending: Bool,
         isWorking: Bool,
-        focused: FocusState<Bool>.Binding,
+        focused: Binding<Bool>,
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
         contextUsage: Double? = nil,
@@ -46,6 +52,7 @@ struct FeatureComposerView: View {
         pendingUserInputs: [FeatureUserInput] = [],
         isResolvingRequest: Bool = false,
         powerFeatures: FeatureComposerPowerFeatures = .disabled,
+        onDismissKeyboard: (() -> Void)? = nil,
         onApprovalDecision: ((String, FeatureApprovalDecision) -> Void)? = nil,
         onUserInputSubmit: ((String, [String: FeatureInputAnswer]) -> Void)? = nil
     ) {
@@ -57,7 +64,7 @@ struct FeatureComposerView: View {
         self.materializesDefaultSelection = materializesDefaultSelection
         self.isSending = isSending
         self.isWorking = isWorking
-        self.focused = focused
+        _focused = focused
         self.onSend = onSend
         self.onStop = onStop
         self.contextUsage = contextUsage
@@ -66,6 +73,7 @@ struct FeatureComposerView: View {
         self.pendingUserInputs = pendingUserInputs
         self.isResolvingRequest = isResolvingRequest
         self.powerFeatures = powerFeatures
+        self.onDismissKeyboard = onDismissKeyboard
         self.onApprovalDecision = onApprovalDecision
         self.onUserInputSubmit = onUserInputSubmit
     }
@@ -74,6 +82,11 @@ struct FeatureComposerView: View {
         composerSurface
             .overlay(alignment: .top) {
                 if showsCommandMenu, let trigger = composerTrigger {
+                    // Offset by the menu's deterministic height so it sits
+                    // fully above the composer and the active `$`/`@`/`/`
+                    // token stays readable while typing. An alignment-guide
+                    // override here never actually moved the menu, which
+                    // left it covering the text entry.
                     FeatureComposerCommandPopover(
                         triggerKind: trigger.kind,
                         items: commandMenuItems,
@@ -82,11 +95,11 @@ struct FeatureComposerView: View {
                         pathSearchAvailable: powerFeatures.searchPaths != nil,
                         onSelect: selectCommandItem
                     )
-                    .alignmentGuide(.top) { dimensions in
-                        // Keep the menu clear of the text entry surface so the
-                        // active `$`/`@`/`/` token remains readable while typing.
-                        dimensions[.bottom] + 24
-                    }
+                    .offset(
+                        y: -(FeatureComposerCommandPopover.height(
+                            forItemCount: commandMenuItems.count
+                        ) + 12)
+                    )
                 }
             }
             .padding(.horizontal, 12)
@@ -104,12 +117,12 @@ struct FeatureComposerView: View {
                 )
                 .ignoresSafeArea()
             }
-            .onChange(of: focused.wrappedValue) {
+            .onChange(of: focused) {
                 if FeatureComposerCollapsePolicy.shouldCollapse(
-                    isFocused: focused.wrappedValue,
+                    isFocused: focused,
                     textIsEmpty: textIsEmpty,
                     attachmentsAreEmpty: attachments.isEmpty,
-                    isAttachmentFlowActive: isAttachmentFlowActive,
+                    isAttachmentFlowActive: isAttachmentFlowActive || isModelPickerPresented,
                     isPreparingAttachments: attachmentPreparation.isPreparing
                 ) {
                     isManuallyExpanded = false
@@ -117,6 +130,17 @@ struct FeatureComposerView: View {
             }
             .task(id: pathSearchRequest) {
                 await updatePathSearch()
+            }
+            .alert(
+                "Couldn’t add image",
+                isPresented: Binding(
+                    get: { imageIntakeErrorMessage != nil },
+                    set: { if !$0 { imageIntakeErrorMessage = nil } }
+                )
+            ) {
+                Button("OK") { imageIntakeErrorMessage = nil }
+            } message: {
+                Text(imageIntakeErrorMessage ?? "")
             }
     }
 
@@ -153,6 +177,13 @@ struct FeatureComposerView: View {
                 .stroke(T3Colors.inputBorder, lineWidth: 1)
         }
         .clipShape(composerShape)
+        .modifier(
+            FeatureComposerImageDrop(
+                isEnabled: imagesAllowed,
+                shape: composerShape,
+                onDropImages: attachDroppedImages
+            )
+        )
     }
 
     private var collapsedComposer: some View {
@@ -161,10 +192,10 @@ struct FeatureComposerView: View {
                 isManuallyExpanded = true
                 Task { @MainActor in
                     await Task.yield()
-                    focused.wrappedValue = true
+                    focused = true
                 }
             } label: {
-                Text(isWorking ? "Message to queue…" : "Ask anything…")
+                Text(composerPlaceholder)
                     .font(T3Typography.composer)
                     .foregroundStyle(T3Colors.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -188,26 +219,41 @@ struct FeatureComposerView: View {
                 FeatureAttachmentStrip(attachments: $attachments)
                     .padding(.horizontal, 12)
                     .padding(.top, 3)
+                    .padding(.bottom, 8)
 
                 Divider()
                     .overlay(T3Colors.separator)
                     .padding(.horizontal, 13)
             }
 
-            TextField(
-                isWorking ? "Message to queue…" : "Ask anything…",
-                text: $text,
-                axis: .vertical
-            )
-                .font(T3Typography.composer)
-                .lineLimit(1...7)
-                .focused(focused)
-                // Return is always editing input. Sending is deliberately button-only.
-                .submitLabel(.return)
+            // Return is always editing input. Sending is deliberately
+            // button-only, which is UITextView's native return behavior.
+            ZStack(alignment: .topLeading) {
+                FeatureComposerTextInput(
+                    text: $text,
+                    focused: $focused,
+                    placeholder: composerPlaceholder,
+                    acceptsImages: imagesAllowed,
+                    selectionRequest: textSelectionRequest,
+                    onPasteImages: attachImageProviders,
+                    onDismissKeyboard: onDismissKeyboard
+                )
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
-                .padding(.bottom, 7)
-                .frame(minHeight: 62, alignment: .top)
+
+                if text.isEmpty {
+                    Text(composerPlaceholder)
+                        .font(T3Typography.composer)
+                        .foregroundStyle(T3Colors.textTertiary)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.bottom, 7)
+            .frame(minHeight: 62, alignment: .top)
+            .clipped()
 
             if !attachments.isEmpty, !imagesAllowed {
                 Label("Choose a model that accepts images", systemImage: "exclamationmark.circle")
@@ -229,6 +275,8 @@ struct FeatureComposerView: View {
             }
 
             composerFooter
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
         }
     }
 
@@ -246,7 +294,8 @@ struct FeatureComposerView: View {
                 selection: $selection,
                 style: .compact,
                 threadSelection: threadSelection,
-                materializesDefaultSelection: materializesDefaultSelection
+                materializesDefaultSelection: materializesDefaultSelection,
+                onPresentationChange: handleModelPickerPresentation
             )
             .frame(maxWidth: 220, alignment: .leading)
             .layoutPriority(2)
@@ -267,27 +316,34 @@ struct FeatureComposerView: View {
 
     private var submitButton: some View {
         Button(action: performPrimaryAction) {
-            Group {
-                if isSending {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(.white)
-                } else {
-                    Image(systemName: showsStop ? "stop.fill" : "arrow.up")
-                        .font(.system(size: showsStop ? 11 : 14, weight: .bold))
-                }
-            }
-            .foregroundStyle(.white)
-            .frame(width: 34, height: 34)
-            .background(showsStop ? T3Colors.danger : T3Colors.accent, in: Circle())
+            Image(systemName: submitSymbol)
+                .font(.system(size: showsStop ? 11 : 14, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(showsStop ? T3Colors.danger : T3Colors.accent, in: Circle())
+                .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(submitDisabled)
         .opacity(submitDisabled ? 0.3 : 1)
-        .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
-        .contentShape(Rectangle())
-        .accessibilityLabel(showsStop ? "Stop agent" : "Send")
+        .accessibilityLabel(submitAccessibilityLabel)
         .accessibilityIdentifier(showsStop ? "thread-stop" : "message-send")
+    }
+
+    private var composerPlaceholder: String {
+        isWorking ? "Queue a message…" : "Ask anything…"
+    }
+
+    private var submitSymbol: String {
+        if isSending { return "ellipsis" }
+        return showsStop ? "stop.fill" : "arrow.up"
+    }
+
+    private var submitAccessibilityLabel: String {
+        if isSending { return "Sending message" }
+        if showsStop { return "Stop agent" }
+        return isWorking ? "Queue message" : "Send message"
     }
 
     private var composerShape: RoundedRectangle {
@@ -297,7 +353,7 @@ struct FeatureComposerView: View {
     private var isExpanded: Bool {
         forceExpanded
             || isManuallyExpanded
-            || focused.wrappedValue
+            || focused
             || !textIsEmpty
             || !attachments.isEmpty
             || attachmentPreparation.isPreparing
@@ -427,6 +483,13 @@ struct FeatureComposerView: View {
         case let .path(entry):
             replacement = FeatureComposerFileLinkSerializer.markdownLink(for: entry.path) + " "
         }
+        textSelectionRequest = FeatureComposerTextSelectionRequest(
+            location: FeatureComposerTextSelectionPolicy.cursorLocation(
+                afterReplacing: trigger.range,
+                in: text,
+                with: replacement
+            )
+        )
         text = FeatureComposerTriggerParser.replacing(
             trigger.range,
             in: text,
@@ -436,7 +499,7 @@ struct FeatureComposerView: View {
         pathSearchError = nil
         Task { @MainActor in
             await Task.yield()
-            focused.wrappedValue = true
+            focused = true
         }
     }
 
@@ -447,6 +510,77 @@ struct FeatureComposerView: View {
                   canSend {
             onSend()
         }
+    }
+
+    private func handleModelPickerPresentation(_ isPresented: Bool) {
+        if isPresented {
+            restoresFocusAfterModelPickerDismissal = focused
+            isManuallyExpanded = true
+            isModelPickerPresented = true
+            return
+        }
+
+        isModelPickerPresented = false
+        guard restoresFocusAfterModelPickerDismissal else { return }
+        restoresFocusAfterModelPickerDismissal = false
+        Task { @MainActor in
+            await Task.yield()
+            focused = true
+        }
+    }
+
+    /// Attaches images arriving from the text view's paste menu or a drag
+    /// from another app through the same preparation pipeline the attachment
+    /// picker uses, so sending stays blocked until every image is processed.
+    private func attachImageProviders(_ providers: [NSItemProvider]) {
+        guard imagesAllowed, !providers.isEmpty else { return }
+
+        guard let plan = FeatureComposerImageIntakePlan.forProviders(
+            providerCount: providers.count,
+            attachmentCount: attachments.count,
+            pendingCount: attachmentPreparation.pendingItemCount
+        ) else {
+            imageIntakeErrorMessage = "You can attach up to eight images."
+            return
+        }
+        if plan.droppedCount > 0 {
+            imageIntakeErrorMessage =
+                "Some images were not attached because the eight-image limit was reached."
+        }
+
+        let accepted = Array(providers.prefix(plan.acceptedCount))
+        // Begin every provider request while the paste or drop callback still
+        // owns access to its item providers. Image processing can finish
+        // asynchronously after the callback returns.
+        let loads = accepted.map { provider in
+            Result { try FeatureImageItemProviderLoader.start(from: provider) }
+        }
+        let operation = attachmentPreparation.begin(itemCount: accepted.count)
+        Task { @MainActor in
+            defer { attachmentPreparation.finish(operation) }
+            for (offset, load) in loads.enumerated() {
+                do {
+                    let data = try await load.get().data()
+                    let attachment = try await Task.detached(priority: .userInitiated) {
+                        try FeatureImageProcessor.attachment(
+                            from: data,
+                            ordinal: plan.firstOrdinal + offset
+                        )
+                    }.value
+                    attachments.append(attachment)
+                } catch {
+                    imageIntakeErrorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// A drop is refused outright when images are not accepted, so the drag
+    /// session shows the system's "not allowed" badge instead of a dead drop.
+    private func attachDroppedImages(_ providers: [NSItemProvider]) -> Bool {
+        guard imagesAllowed, !providers.isEmpty else { return false }
+        attachImageProviders(providers)
+        return true
     }
 }
 

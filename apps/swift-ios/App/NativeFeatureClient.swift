@@ -24,7 +24,8 @@ private struct T3ConnectManagedCleanupError: LocalizedError {
 /// Composes the transport-focused Core layer with the UI-focused Features layer.
 @MainActor
 final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
-    FeatureProjectCreationClient, FeatureWorkspaceAssetResolving, T3ConnectCapable
+    FeatureProjectCreationClient, FeatureWorkspaceAssetResolving,
+    FeatureFeedbackSubmitting, T3ConnectCapable
 {
     private static let maximumRetainedThreadDetails = 6
     private static let t3ConnectLogger = Logger(
@@ -79,6 +80,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var attachmentURLs: [AttachmentCacheKey: CachedAttachmentURL] = [:]
     private var projectFaviconRefreshTasks: [
         FeatureProjectFaviconCacheKey: Task<Data?, Never>
+    ] = [:]
+    private var sourceControlMonitors: [
+        NativeSourceControlMonitorKey: NativeSourceControlMonitor
     ] = [:]
     private var pendingBootstrapSubmissions: [PendingBootstrapSubmission] = []
     private var pendingTurnSubmissions: [String: PendingTurnSubmission] = [:]
@@ -280,8 +284,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
               let webSocketBaseURL = credential.endpoint.webSocketBaseURL,
               httpBaseURL.scheme?.lowercased() == "https",
               webSocketBaseURL.scheme?.lowercased() == "wss",
-              httpBaseURL.host != nil,
-              webSocketBaseURL.host != nil else {
+              let httpHost = httpBaseURL.host,
+              let webSocketHost = webSocketBaseURL.host,
+              httpHost.caseInsensitiveCompare(webSocketHost) == .orderedSame,
+              (httpBaseURL.port ?? 443) == (webSocketBaseURL.port ?? 443) else {
             throw T3ConnectRelayError.invalidConfiguration(
                 "The managed environment endpoint is invalid."
             )
@@ -399,6 +405,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func removeEnvironment(id: String) async throws {
         let removesActiveEnvironment = activeEnvironment?.id == id
+        let environment = try await runtime.environments().first { $0.id == id }
+        if environment?.kind == .managedDPoP {
+            try await runtime.revokeCredential(id: id)
+        }
         try await runtime.remove(id: id)
         if removesActiveEnvironment {
             await clearActiveEnvironment(disconnectClient: false)
@@ -456,6 +466,200 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         return results.sorted {
             order[$0.environmentID, default: .max] < order[$1.environmentID, default: .max]
+        }
+    }
+
+    func pullRequestLists(_ input: PullRequestListInput) async throws
+        -> [FeaturePullRequestEnvironmentList]
+    {
+        try await pullRequestLists(input, inEnvironment: nil)
+    }
+
+    func pullRequestLists(
+        _ input: PullRequestListInput,
+        environmentID: String
+    ) async throws -> [FeaturePullRequestEnvironmentList] {
+        try await pullRequestLists(input, inEnvironment: environmentID)
+    }
+
+    private func pullRequestLists(
+        _ input: PullRequestListInput,
+        inEnvironment environmentID: String?
+    ) async throws -> [FeaturePullRequestEnvironmentList] {
+        let environments = try await runtime.environments().filter {
+            $0.isEnabled
+                && $0.descriptor?.capabilities.pullRequests == true
+                && (environmentID == nil || $0.id == environmentID)
+        }
+        let runtime = runtime
+        return await withTaskGroup(of: FeaturePullRequestEnvironmentList.self) { group in
+            for environment in environments {
+                group.addTask {
+                    let probe = await runtime.ephemeralClient(for: environment)
+                    do {
+                        let result = try await probe.pullRequests(input)
+                        await probe.disconnect()
+                        return FeaturePullRequestEnvironmentList(
+                            environmentID: environment.id,
+                            environmentName: environment.label,
+                            result: result,
+                            errorMessage: nil
+                        )
+                    } catch {
+                        await probe.disconnect()
+                        return FeaturePullRequestEnvironmentList(
+                            environmentID: environment.id,
+                            environmentName: environment.label,
+                            result: nil,
+                            errorMessage: error.localizedDescription
+                        )
+                    }
+                }
+            }
+            var results: [FeaturePullRequestEnvironmentList] = []
+            for await result in group { results.append(result) }
+            return results.sorted { $0.environmentName < $1.environmentName }
+        }
+    }
+
+    func pullRequestDetail(_ target: FeaturePullRequestTarget) async throws -> PullRequestDetail {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .pullRequestDetail(target.reference)
+    }
+
+    func pullRequestActivity(_ target: FeaturePullRequestTarget) async throws
+        -> PullRequestActivity
+    {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .pullRequestActivity(target.reference)
+    }
+
+    func pullRequestDiff(_ target: FeaturePullRequestTarget, cursor: String?) async throws
+        -> PullRequestDiffResult
+    {
+        try await projectCreationClient(environmentID: target.environmentID).pullRequestDiff(
+            PullRequestDiffInput(
+                projectId: target.reference.projectId,
+                repository: target.reference.repository,
+                number: target.reference.number,
+                cursor: cursor,
+                commit: nil
+            )
+        )
+    }
+
+    func runPullRequestAction(
+        _ target: FeaturePullRequestTarget,
+        action: PullRequestAction,
+        mergeMethod: PullRequestMergeMethod?,
+        updateMethod: PullRequestUpdateMethod?
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID).runPullRequestAction(
+            target.reference,
+            action: action,
+            mergeMethod: mergeMethod,
+            updateMethod: updateMethod
+        )
+    }
+
+    func updatePullRequest(
+        _ target: FeaturePullRequestTarget,
+        title: String?,
+        body: String?
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID).updatePullRequest(
+            target.reference,
+            title: title,
+            body: body
+        )
+    }
+
+    func commentOnPullRequest(_ target: FeaturePullRequestTarget, body: String) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .commentOnPullRequest(target.reference, body: body)
+    }
+
+    func submitPullRequestReview(
+        _ target: FeaturePullRequestTarget,
+        verdict: PullRequestReviewVerdict,
+        body: String,
+        comments: [PullRequestReviewCommentDraft]
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .submitPullRequestReview(
+                target.reference,
+                verdict: verdict,
+                body: body,
+                comments: comments
+            )
+    }
+
+    func replyToPullRequestThread(
+        _ target: FeaturePullRequestTarget,
+        threadID: String,
+        body: String
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .replyToPullRequestThread(target.reference, threadID: threadID, body: body)
+    }
+
+    func setPullRequestThreadResolved(
+        _ target: FeaturePullRequestTarget,
+        threadID: String,
+        resolved: Bool
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .setPullRequestThreadResolved(
+                target.reference,
+                threadID: threadID,
+                resolved: resolved
+            )
+    }
+
+    func setPullRequestReaction(
+        _ target: FeaturePullRequestTarget,
+        subjectID: String?,
+        content: PullRequestReactionContent,
+        reacted: Bool
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .setPullRequestReaction(
+                target.reference,
+                subjectID: subjectID,
+                content: content,
+                reacted: reacted
+            )
+    }
+
+    func pullRequestReviewerCandidates(_ target: FeaturePullRequestTarget) async throws
+        -> PullRequestReviewerCandidateList
+    {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .pullRequestReviewerCandidates(target.reference)
+    }
+
+    func requestPullRequestReviewers(
+        _ target: FeaturePullRequestTarget,
+        reviewers: [PullRequestReviewerCandidate],
+        requested: Bool
+    ) async throws {
+        try await projectCreationClient(environmentID: target.environmentID)
+            .requestPullRequestReviewers(
+                target.reference,
+                reviewers: reviewers,
+                requested: requested
+            )
+    }
+
+    func invalidatePullRequests(_ target: FeaturePullRequestTarget?) async throws {
+        if let target {
+            try await projectCreationClient(environmentID: target.environmentID)
+                .invalidatePullRequests(target.reference)
+            return
+        }
+        let environments = try await runtime.environments().filter(\.isEnabled)
+        for environment in environments {
+            try? await projectCreationClient(environmentID: environment.id).invalidatePullRequests()
         }
     }
 
@@ -606,6 +810,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return try await route.client.resolvedAssetURL(
             resource: .workspaceFile(threadID: route.wireID, path: path)
         )
+    }
+
+    func submitCodexFeedback(threadID: String, reason: String?) async throws -> String {
+        let route = try threadRoute(for: threadID)
+        return try await route.client.uploadFeedback(
+            threadID: route.wireID,
+            reason: reason
+        ).feedbackId
     }
 
     func cachedProjectFavicon(
@@ -797,18 +1009,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ) async -> Bool {
         let environment = client.environment
         let generation = environmentGeneration
-        guard let shell = try? await client.shellSnapshot(),
-              isKnownClient(client, environmentID: environment.id, generation: generation),
-              shell.projects.contains(where: {
+        guard let fetchedShell = try? await client.shellSnapshot(),
+              isKnownClient(client, environmentID: environment.id, generation: generation) else {
+            return false
+        }
+        let shell = newestShell(fetchedShell, for: environment)
+        guard shell.projects.contains(where: {
                   $0.id == projectID
                     || ProjectCreationPath.normalizedForComparison($0.workspaceRoot)
                         == ProjectCreationPath.normalizedForComparison(path)
               }) else {
             return false
-        }
-        shellsByEnvironmentID[environment.id] = shell
-        if activeEnvironment?.id == environment.id {
-            latestShell = shell
         }
         rebuildEntityIndexes((try? await runtime.environments()) ?? [environment])
         await emitSnapshot(shell, environment: environment)
@@ -914,14 +1125,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         } else {
             refreshedShell = try? await client.shellSnapshot()
         }
-        if let shell = refreshedShell {
+        if let refreshedShell {
             guard isKnownClient(client, environmentID: environment.id, generation: generation) else {
                 throw CancellationError()
             }
-            shellsByEnvironmentID[environment.id] = shell
-            if activeEnvironment?.id == environment.id {
-                latestShell = shell
-            }
+            let shell = newestShell(refreshedShell, for: environment)
             await emitSnapshot(shell, environment: environment)
             if let created = shell.threads.first(where: { $0.id == pending.threadID }) {
                 provisionalThreadRoutes[FeatureScopedID.thread(
@@ -1153,14 +1361,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         removePendingBootstrap(identity: pending.identity)
         // Dispatch acceptance is the commit point. A dropped refresh must not
         // turn a successful first turn into a retry that creates a duplicate.
-        if let shell = try? await client.shellSnapshot() {
+        if let refreshedShell = try? await client.shellSnapshot() {
             guard isKnownClient(client, environmentID: environment.id, generation: generation) else {
                 throw CancellationError()
             }
-            shellsByEnvironmentID[environment.id] = shell
-            if activeEnvironment?.id == environment.id {
-                latestShell = shell
-            }
+            let shell = newestShell(refreshedShell, for: environment)
             await emitSnapshot(shell, environment: environment)
             if let created = shell.threads.first(where: { $0.id == pending.threadID }) {
                 provisionalThreadRoutes[FeatureScopedID.thread(
@@ -1677,15 +1882,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             throw NativeFeatureClientError.approvalNotFound
         }
         let route = try threadRoute(for: request.threadID)
-        let wireDecision = switch decision {
-        case .allowOnce: "accept"
-        case .allowForSession: "acceptForSession"
-        case .deny: "decline"
-        }
         _ = try await route.client.respondToApproval(
             threadID: route.wireID,
             requestID: request.wireID,
-            decision: wireDecision
+            decision: decision.wireValue
         )
         approvalRoutes[id] = nil
         removeCachedApproval(id: id, threadID: route.uiID)
@@ -1710,6 +1910,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func saveSettings(_ settings: FeatureSettings) async throws {
         let data = try JSONEncoder().encode(settings)
         settingsStore.set(data, forKey: Self.settingsKey)
+    }
+
+    var managesServerSessions: Bool {
+        !t3ConnectDeviceManager.hasActiveAccount
     }
 
     func loadDeviceSessions() async throws -> [FeatureDeviceSession] {
@@ -1963,6 +2167,99 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return statuses
     }
 
+    func sourceControlStatusEvents(threadID: String) -> AsyncStream<FeatureSourceControlStatus> {
+        let stream = AsyncStream<FeatureSourceControlStatus>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
+
+        guard let route = try? threadRoute(for: threadID),
+              let context = try? workspaceContext(route: route) else {
+            stream.continuation.finish()
+            return stream.stream
+        }
+
+        let key = NativeSourceControlMonitorKey(
+            environmentID: route.environmentID,
+            workingDirectory: URL(fileURLWithPath: context.cwd).standardizedFileURL.path
+        )
+        let subscriberID = UUID()
+        let monitor: NativeSourceControlMonitor
+
+        if let existing = sourceControlMonitors[key] {
+            monitor = existing
+        } else {
+            monitor = NativeSourceControlMonitor()
+            sourceControlMonitors[key] = monitor
+        }
+
+        monitor.continuations[subscriberID] = stream.continuation
+        if let latest = monitor.latestStatus {
+            stream.continuation.yield(latest)
+        }
+        stream.continuation.onTermination = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.removeSourceControlSubscriber(subscriberID, for: key)
+            }
+        }
+
+        if monitor.task == nil {
+            let monitorID = monitor.id
+            monitor.task = Task { [weak self] in
+                await self?.observeSourceControlStatus(
+                    client: route.client,
+                    key: key,
+                    monitorID: monitorID
+                )
+            }
+        }
+
+        return stream.stream
+    }
+
+    private func observeSourceControlStatus(
+        client: T3Client,
+        key: NativeSourceControlMonitorKey,
+        monitorID: UUID
+    ) async {
+        let events = await client.vcsStatusEvents(cwd: key.workingDirectory)
+        var accumulator = NativeSourceControlStatusAccumulator()
+
+        do {
+            for try await event in events {
+                guard !Task.isCancelled,
+                      sourceControlMonitors[key]?.id == monitorID else {
+                    break
+                }
+
+                guard let status = accumulator.consume(event) else { continue }
+                guard let monitor = sourceControlMonitors[key],
+                      monitor.id == monitorID,
+                      monitor.latestStatus != status else {
+                    continue
+                }
+                monitor.latestStatus = status
+                monitor.continuations.values.forEach { $0.yield(status) }
+            }
+        } catch {
+            // Existing rows keep their last known PR until the next subscription.
+        }
+
+        guard sourceControlMonitors[key]?.id == monitorID else { return }
+        let monitor = sourceControlMonitors.removeValue(forKey: key)
+        monitor?.continuations.values.forEach { $0.finish() }
+    }
+
+    private func removeSourceControlSubscriber(
+        _ subscriberID: UUID,
+        for key: NativeSourceControlMonitorKey
+    ) {
+        guard let monitor = sourceControlMonitors[key] else { return }
+        monitor.continuations.removeValue(forKey: subscriberID)
+        guard monitor.continuations.isEmpty else { return }
+        monitor.task?.cancel()
+        sourceControlMonitors.removeValue(forKey: key)
+    }
+
     func performSourceControlAction(
         threadID: String,
         action: FeatureSourceControlAction,
@@ -2177,6 +2474,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let mapped = NativeWorkspaceMapper.terminal(snapshot)
         var scoped = mapped
         scoped.threadID = route.uiID
+        scoped.buffer = Self.cappedTerminalBuffer(scoped.buffer)
         terminalSnapshots[TerminalKey(threadID: route.uiID, terminalID: terminalID)] = scoped
     }
 
@@ -2378,6 +2676,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             interactionMode: thread.interactionMode,
             branch: thread.branch,
             worktreePath: thread.worktreePath,
+            linkedPullRequest: thread.linkedPullRequest,
             latestTurn: thread.latestTurn,
             createdAt: thread.createdAt,
             updatedAt: thread.updatedAt,
@@ -2583,6 +2882,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                   self.isCurrentSession(client: activeClient, generation: generation) else {
                 return
             }
+            self.lastShellEventAt = nil
             self.emitConnection(
                 .reconnecting,
                 detail: "Live updates paused. Refreshing over HTTP."
@@ -2785,7 +3085,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         client: T3Client,
         refreshActiveThread: Bool
     ) async {
-        guard let currentClient = self.client, currentClient === client else { return }
+        guard let currentClient = self.client,
+              currentClient === client,
+              shell.snapshotSequence >= (latestShell?.snapshotSequence ?? .min) else {
+            return
+        }
         shellPublishTask?.cancel()
         shellPublishTask = nil
         latestShell = shell
@@ -2803,7 +3107,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         client: T3Client,
         generation: Int
     ) async {
-        guard isCurrentSession(client: client, generation: generation) else { return }
+        guard isCurrentSession(client: client, generation: generation),
+              shell.snapshotSequence >= (latestShell?.snapshotSequence ?? .min) else {
+            return
+        }
         shellPublishTask?.cancel()
         shellPublishTask = nil
         latestShell = shell
@@ -3294,7 +3601,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 }
             }
             if let shell = load.shell {
-                shellsByEnvironmentID[load.environment.id] = shell
+                if shell.snapshotSequence
+                    >= (shellsByEnvironmentID[load.environment.id]?.snapshotSequence ?? .min) {
+                    shellsByEnvironmentID[load.environment.id] = shell
+                }
                 environmentConnectionStates[load.environment.id] = .connected
                 environmentConnectionDetails[load.environment.id] = nil
             } else {
@@ -3304,6 +3614,24 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             }
         }
         rebuildEntityIndexes(savedEnvironments)
+    }
+
+    private func newestShell(
+        _ candidate: OrchestrationShellSnapshot,
+        for environment: Environment
+    ) -> OrchestrationShellSnapshot {
+        let latest: OrchestrationShellSnapshot
+        if let cached = shellsByEnvironmentID[environment.id],
+           cached.snapshotSequence > candidate.snapshotSequence {
+            latest = cached
+        } else {
+            latest = candidate
+            shellsByEnvironmentID[environment.id] = candidate
+        }
+        if activeEnvironment?.id == environment.id {
+            latestShell = latest
+        }
+        return latest
     }
 
     private func rebuildEntityIndexes(_ environments: [Environment]) {
@@ -3399,6 +3727,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let shell = try await client.shellSnapshot()
         guard isKnownClient(client, environmentID: environment.id, generation: generation) else {
             throw CancellationError()
+        }
+        guard shell.snapshotSequence
+            >= (shellsByEnvironmentID[environment.id]?.snapshotSequence ?? .min) else {
+            return
         }
         shellsByEnvironmentID[environment.id] = shell
         if activeEnvironment?.id == environment.id {
@@ -3505,7 +3837,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let environments = (try? await runtime.environments()) ?? [environment]
         guard generation == environmentGeneration,
               expectedGeneration == nil || expectedGeneration == environmentGeneration,
-              activeEnvironment?.id == environment.id else {
+              activeEnvironment?.id == environment.id,
+              shell.snapshotSequence
+                  >= (shellsByEnvironmentID[sourceEnvironment.id]?.snapshotSequence ?? .min) else {
             return
         }
         shellsByEnvironmentID[sourceEnvironment.id] = shell
@@ -3629,6 +3963,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         previous.connection == next.connection
             && previous.environments == next.environments
             && previous.providers == next.providers
+            && previous.providersByEnvironment == next.providersByEnvironment
+            && previous.preferencesByEnvironment == next.preferencesByEnvironment
             && previous.settings == next.settings
             && projectsMatchIgnoringThreadCounts(previous.projects, next.projects)
     }
@@ -3645,6 +3981,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 && left.name == right.name
                 && left.path == right.path
                 && left.defaultSelection == right.defaultSelection
+                && left.repositoryIdentity == right.repositoryIdentity
+                && left.createdAt == right.createdAt
+                && left.updatedAt == right.updatedAt
         }
     }
 
@@ -3941,6 +4280,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             title: thread.title,
             branch: thread.branch,
             worktreePath: thread.worktreePath,
+            linkedPullRequest: thread.linkedPullRequest,
             createdAt: parseDate(thread.createdAt),
             updatedAt: parseDate(thread.updatedAt),
             state: Self.resolveThreadState(
@@ -3953,7 +4293,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             providerID: thread.modelSelection.instanceId,
             providerName: threadProviderName(
                 session: thread.session,
-                modelSelection: thread.modelSelection
+                modelSelection: thread.modelSelection,
+                environmentID: environment.id
             ),
             modelID: thread.modelSelection.model,
             modelOptions: mapOptionSelections(thread.modelSelection.options),
@@ -3972,6 +4313,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
+            supportsPullRequestLinking: environment.descriptor?.capabilities.threadPullRequestLinking,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -4010,6 +4352,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             preview: previewText(thread.messages.last?.text),
             branch: thread.branch,
             worktreePath: thread.worktreePath,
+            linkedPullRequest: thread.linkedPullRequest,
             createdAt: parseDate(thread.createdAt),
             updatedAt: parseDate(thread.updatedAt),
             state: Self.resolveThreadState(
@@ -4022,7 +4365,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             providerID: thread.modelSelection.instanceId,
             providerName: threadProviderName(
                 session: thread.session,
-                modelSelection: thread.modelSelection
+                modelSelection: thread.modelSelection,
+                environmentID: environment.id
             ),
             modelID: thread.modelSelection.model,
             modelOptions: mapOptionSelections(thread.modelSelection.options),
@@ -4041,6 +4385,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsSnooze: environment.descriptor?.capabilities.threadSnooze,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
+            supportsPullRequestLinking: environment.descriptor?.capabilities.threadPullRequestLinking,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -4297,6 +4642,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             interactionMode: loaded.interactionMode,
             branch: loaded.branch,
             worktreePath: loaded.worktreePath,
+            linkedPullRequest: loaded.linkedPullRequest,
             latestTurn: loaded.latestTurn,
             createdAt: loaded.createdAt,
             updatedAt: loaded.updatedAt,
@@ -4434,19 +4780,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
         switch activity.kind {
         case "approval.requested":
-            let kind: FeatureApprovalKind = switch activity.payload["requestKind"]?.stringValue {
-            case "command": .command
-            case "file-read": .fileRead
-            case "file-change": .fileChange
-            default: .other
-            }
+            let kind = Self.approvalKind(activity.payload)
+            let appName = activity.payload["appName"]?.stringValue
             let approval = FeatureApproval(
                 id: uiRequestID,
                 wireID: requestID,
                 threadID: threadID,
                 kind: kind,
-                title: activity.summary,
-                detail: activity.payload["detail"]?.stringValue ?? activity.summary
+                title: appName ?? activity.summary,
+                detail: activity.payload["detail"]?.stringValue ?? activity.summary,
+                appName: appName,
+                options: Self.approvalOptions(activity.payload)
             )
             cache.approvals.removeAll { $0.id == uiRequestID }
             cache.approvals.append(approval)
@@ -4601,14 +4945,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 FeatureScopedID.approval(environmentID: environment.id, wireID: $0)
             }
             if activity.kind == "approval.requested", let requestID {
-                let requestKind = activity.payload["requestKind"]?.stringValue
-                let kind: FeatureApprovalKind = switch requestKind {
-                case "command": .command
-                case "file-read": .fileRead
-                case "file-change": .fileChange
-                default: .other
-                }
+                let kind = Self.approvalKind(activity.payload)
                 let detail = activity.payload["detail"]?.stringValue ?? activity.summary
+                let appName = activity.payload["appName"]?.stringValue
                 let uiRequestID = FeatureScopedID.approval(
                     environmentID: environment.id,
                     wireID: requestID
@@ -4618,8 +4957,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     wireID: requestID,
                     threadID: threadID,
                     kind: kind,
-                    title: activity.summary,
-                    detail: detail
+                    title: appName ?? activity.summary,
+                    detail: detail,
+                    appName: appName,
+                    options: Self.approvalOptions(activity.payload)
                 )
                 approvalRoutes[uiRequestID] = PendingRequestRoute(
                     threadID: threadID,
@@ -4637,6 +4978,30 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             }
         }
         return open.values.sorted { $0.id < $1.id }
+    }
+
+    private static func approvalKind(_ payload: JSONValue) -> FeatureApprovalKind {
+        switch payload["requestKind"]?.stringValue {
+        case "command": .command
+        case "file-read": .fileRead
+        case "file-change": .fileChange
+        case "mcp-elicitation": .mcpElicitation
+        default: .other
+        }
+    }
+
+    private static func approvalOptions(_ payload: JSONValue) -> [FeatureApprovalOption]? {
+        guard case let .array(values)? = payload["options"] else { return nil }
+        let options = values.compactMap { value -> FeatureApprovalOption? in
+            guard let wireDecision = value["decision"]?.stringValue,
+                  let decision = FeatureApprovalDecision(wireValue: wireDecision),
+                  let label = value["label"]?.stringValue,
+                  !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            return FeatureApprovalOption(decision: decision, label: label)
+        }
+        return options.isEmpty ? nil : options
     }
 
     private func pendingUserInputs(
@@ -5097,14 +5462,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private func threadProviderName(
         session: OrchestrationSession?,
-        modelSelection: ModelSelection
+        modelSelection: ModelSelection,
+        environmentID: String
     ) -> String {
         if let name = session?.providerName?.trimmingCharacters(in: .whitespacesAndNewlines),
            !name.isEmpty {
             return name
         }
         let providerID = session?.providerInstanceId ?? modelSelection.instanceId
-        if let provider = latestServerConfig?.providers.first(where: {
+        if let provider = serverConfigsByEnvironmentID[environmentID]?.providers.first(where: {
             $0.instanceId == providerID
         }) {
             return provider.displayName ?? providerDisplayName(provider.driver)
@@ -5584,6 +5950,8 @@ enum NativeThreadDetailReducer {
         let result: NativeThreadDetailReductionResult
         var renderMutation = NativeDetailRenderMutation.metadata
         switch type {
+        case "thread.meta-updated":
+            result = reduceMetadata(payload: payload, occurredAt: occurredAt, thread: thread)
         case "thread.message-sent":
             result = reduceMessage(
                 payload: payload,
@@ -5618,6 +5986,37 @@ enum NativeThreadDetailReducer {
             result: result,
             renderMutation: renderMutation
         )
+    }
+
+    private static func reduceMetadata(
+        payload: JSONValue,
+        occurredAt: String,
+        thread: OrchestrationThread
+    ) -> NativeThreadDetailReductionResult {
+        guard case let .object(values) = payload,
+              let rawLink = values["linkedPullRequest"] else {
+            return .refresh
+        }
+        guard !["title", "modelSelection", "branch", "worktreePath"].contains(where: {
+            values[$0] != nil
+        }) else {
+            return .refresh
+        }
+        let linkedPullRequest: ThreadLinkedPullRequest?
+        if rawLink == .null {
+            linkedPullRequest = nil
+        } else {
+            guard let decoded = try? rawLink.decode(ThreadLinkedPullRequest.self) else {
+                return .refresh
+            }
+            linkedPullRequest = decoded
+        }
+        var updated = replacing(
+            thread,
+            updatedAt: payload["updatedAt"]?.stringValue ?? occurredAt
+        )
+        updated.linkedPullRequest = linkedPullRequest
+        return .updated(updated)
     }
 
     private static func reduceMessage(
@@ -5857,6 +6256,7 @@ enum NativeThreadDetailReducer {
             interactionMode: thread.interactionMode,
             branch: thread.branch,
             worktreePath: thread.worktreePath,
+            linkedPullRequest: thread.linkedPullRequest,
             latestTurn: latestTurn ?? thread.latestTurn,
             createdAt: thread.createdAt,
             updatedAt: updatedAt,
@@ -5935,6 +6335,19 @@ private struct NativeThreadRoute {
     let wireID: String
     let environmentID: String
     let client: T3Client
+}
+
+private struct NativeSourceControlMonitorKey: Hashable {
+    let environmentID: String
+    let workingDirectory: String
+}
+
+@MainActor
+private final class NativeSourceControlMonitor {
+    let id = UUID()
+    var latestStatus: FeatureSourceControlStatus?
+    var continuations: [UUID: AsyncStream<FeatureSourceControlStatus>.Continuation] = [:]
+    var task: Task<Void, Never>?
 }
 
 private struct ProvisionalThreadRoute {
