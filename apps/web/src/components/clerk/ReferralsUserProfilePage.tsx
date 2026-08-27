@@ -80,7 +80,7 @@ function ReferralSectionHeading({
 }) {
   return (
     <div className="flex items-start gap-3">
-      <ClerkUserProfileIcon>{icon}</ClerkUserProfileIcon>
+      <ClerkUserProfileIcon className="border-0 bg-muted/55">{icon}</ClerkUserProfileIcon>
       <div className="min-w-0 pt-0.5">
         <h3 className="text-sm font-semibold">{title}</h3>
         <p className="mt-0.5 max-w-[30rem] text-xs leading-5 text-muted-foreground">
@@ -196,11 +196,7 @@ export function ReferralsUserProfilePage() {
       ) : null}
 
       {isInitialLoad ? (
-        <Card
-          className="rounded-xl border-border/40 bg-muted/20 p-2 shadow-none before:hidden"
-          aria-label="Loading referrals"
-          role="status"
-        >
+        <Card variant="muted" className="p-2" aria-label="Loading referrals" role="status">
           <div className="grid grid-cols-3 gap-1.5">
             <div className="p-2">
               <Skeleton className="h-11 rounded-lg" />
@@ -215,7 +211,7 @@ export function ReferralsUserProfilePage() {
         </Card>
       ) : summary ? (
         <div className="space-y-3">
-          <Card className="rounded-xl border-border/40 bg-muted/20 p-2 shadow-none before:hidden">
+          <Card variant="muted" className="p-2">
             <dl className="grid grid-cols-3 gap-1.5">
               <ReferralMetric label="Points" value={summary.points} />
               <ReferralMetric label="Successful" value={summary.qualifiedReferrals} />
@@ -223,7 +219,7 @@ export function ReferralsUserProfilePage() {
             </dl>
           </Card>
 
-          <Card className="rounded-xl border-border/40 bg-card/60 shadow-none before:hidden">
+          <Card variant="muted">
             <CardContent className="p-4 sm:p-5">
               <ReferralSectionHeading
                 icon={<GiftIcon className="size-4" />}
@@ -241,7 +237,7 @@ export function ReferralsUserProfilePage() {
                   </div>
                   <Button
                     size="sm"
-                    variant="secondary"
+                    variant="outline"
                     className="shrink-0 text-[0.8125rem]"
                     disabled={!referralLink}
                     onClick={() => void shareReferral()}
@@ -281,7 +277,7 @@ export function ReferralsUserProfilePage() {
           </Card>
 
           {!summary.hasClaimedReferral ? (
-            <Card className="rounded-xl border-border/40 bg-card/60 shadow-none before:hidden">
+            <Card variant="muted">
               <CardContent className="p-4 sm:p-5">
                 <ReferralSectionHeading
                   icon={<TicketCheckIcon className="size-4" />}
@@ -293,7 +289,6 @@ export function ReferralsUserProfilePage() {
                     autoCapitalize="characters"
                     autoComplete="off"
                     autoCorrect="off"
-                    className="border-border/45 bg-muted/28 shadow-none before:hidden dark:bg-muted/28"
                     nativeInput
                     size="sm"
                     spellCheck={false}
