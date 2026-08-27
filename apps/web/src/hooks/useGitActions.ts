@@ -350,6 +350,19 @@ export function useGitActions({
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
 
   const initAction = useVcsInitAction(sourceControlScope);
+  const initRepository = useCallback(async () => {
+    const result = await initAction.run();
+    if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+    const error = squashAtomCommandFailure(result);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Git initialization failed",
+        description: error instanceof Error ? error.message : "An error occurred.",
+        ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+      }),
+    );
+  }, [initAction, threadToastData]);
   const runImmediateGitAction = useGitStackedAction(sourceControlScope);
   const pullAction = useVcsPullAction(sourceControlScope);
   const isGitActionRunning = useSourceControlActionRunning(
@@ -844,6 +857,7 @@ export function useGitActions({
     isDefaultRef,
     allFiles,
     initAction,
+    initRepository,
     pullAction,
     isGitActionRunning,
     gitActionMenuItems,

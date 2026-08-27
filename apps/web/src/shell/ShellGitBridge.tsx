@@ -107,7 +107,7 @@ export function ShellGitBridge({ git, gitCwd, onOpenPublish }: ShellGitBridgePro
             return;
           }
           case "git.init":
-            void current.initAction.run();
+            void current.initRepository();
             return;
           case "git.publish":
             openPublish();
