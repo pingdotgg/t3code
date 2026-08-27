@@ -7906,6 +7906,9 @@ function ChatViewContent(props: ChatViewProps) {
               ? openProjectPullRequest
               : undefined
           }
+          onCheckoutPullRequestRequest={
+            canCheckoutPullRequestIntoThread ? openPullRequestDialog : undefined
+          }
           onEnvironmentChange={onEnvironmentChange}
         />
       ) : null}

@@ -16,6 +16,7 @@ import { type DraftId } from "../composerDraftStore";
 import { resolveAndPersistPreferredEditor, usePreferredEditor } from "../editorPreferences";
 import { useRenameThread } from "../hooks/useRenameThread";
 import { useThreadBranchSelection } from "../hooks/useThreadBranchSelection";
+import { parsePullRequestReference } from "../pullRequestReference";
 import { subscribeShellRenameRequests } from "./shellRenameRequest";
 import { shellEnvironment } from "../state/shell";
 import { buildShellWorkspaceState } from "./shellWorkspaceState";
@@ -53,6 +54,8 @@ export interface ShellWorkspaceBridgeProps {
   readonly onEnvModeChange: (mode: EnvMode) => void;
   readonly onStartFromOriginChange: (enabled: boolean) => void;
   readonly onOpenPullRequest: ((number: number) => void) | undefined;
+  /** Set on draft threads: a PR number or URL in the branch picker checks it out. */
+  readonly onCheckoutPullRequestRequest: ((reference: string) => void) | undefined;
   readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
   readonly renameRequestId: number;
   readonly onTitleMenu: (x: number, y: number) => void;
@@ -242,9 +245,15 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
             if (ref) branches.selectBranch(ref);
             return;
           }
-          case "workspace.branch.create":
+          case "workspace.branch.create": {
+            const prReference = parsePullRequestReference(candidate.name);
+            if (prReference !== null && current.onCheckoutPullRequestRequest) {
+              current.onCheckoutPullRequestRequest(prReference);
+              return;
+            }
             branches.createRef(candidate.name);
             return;
+          }
           case "workspace.environment.set": {
             const target = current.environments.find(
               (environment) => environment.environmentId === candidate.environmentId,
