@@ -236,7 +236,7 @@ export function ReferralsUserProfilePage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="shrink-0"
+                  className="shrink-0 text-[0.8125rem]"
                   disabled={!referralLink}
                   onClick={() => void shareReferral()}
                 >
@@ -299,7 +299,7 @@ export function ReferralsUserProfilePage() {
                 />
                 <Button
                   size="sm"
-                  className="shrink-0"
+                  className="shrink-0 text-[0.8125rem]"
                   disabled={isClaiming}
                   onClick={() => void submitReferralCode()}
                 >
