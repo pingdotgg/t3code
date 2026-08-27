@@ -71,11 +71,16 @@ vp run dev        # terminal 1: server + web (single origin)
 vp run dev:qt     # terminal 2: cmake configure/build, `t3 pair`, launch with --url
 ```
 
-`dev:qt` pairs with whatever server `t3 pair` discovers (worktree `.t3` first,
-then `T3CODE_HOME`); run both commands with the same `T3CODE_HOME` if you set
-one. `pnpm --filter @t3tools/desktop-qt build:qt` builds without launching;
-`--release` builds without disk QML loading. Build output lands in
-`apps/desktop-qt/build/<debug|release>` (gitignored).
+`dev:qt` resolves the data directory the way `vp run dev` does (`--home-dir`,
+else the worktree's own `.t3`, else `T3CODE_HOME`, else `~/.t3`), pairs with
+the server running there, and launches the shell with that directory as its
+`T3CODE_HOME` so it rices from the matching `shell/`. Pass the same
+`--home-dir` to both commands if you set one. Its other flags are `--url` (skip
+pairing), `--release` (no disk QML loading) and `--configure-only` (build, do
+not launch); everything else is forwarded to the binary, so
+`vp run dev:qt --screenshot out.png --action rightPanel.toggle` works.
+`pnpm --filter @t3tools/desktop-qt build:qt` builds without launching. Build
+output lands in `apps/desktop-qt/build/<debug|release>` (gitignored).
 
 Standalone (no dev server): run the binary with no `--url`; it spawns the host,
 which starts the server against a built `apps/web` (`vp run build`).
