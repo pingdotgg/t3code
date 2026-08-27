@@ -6,6 +6,10 @@ balance on web, desktop, or mobile, even when you use a different machine.
 Open your account menu and choose **Referrals** to find your referral link and code. On mobile, open
 **Settings → Account → Referrals**.
 
+Referral links open the hosted T3 Code app. If the recipient is signed out, T3 Code saves the code
+and opens sign-in. It claims the referral after that account signs in. The shared message states
+that the referrer receives the 67 points; it does not promise points to the recipient.
+
 You earn 67 points when someone:
 
 1. Opens your referral link or enters your code while signed in.

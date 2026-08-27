@@ -3,8 +3,9 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { RelayReferralClaimResult } from "@t3tools/contracts/relay";
-import { CheckIcon, CopyIcon, GiftIcon, TicketCheckIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { REFERRAL_SHARE_TEXT, REFERRAL_SHARE_TITLE } from "@t3tools/shared/referral";
+import { CheckIcon, CopyIcon, GiftIcon, LinkIcon, Share2Icon, TicketCheckIcon } from "lucide-react";
+import { type ReactNode, useMemo, useState } from "react";
 
 import {
   claimManagedRelayReferralCommand,
@@ -47,6 +48,46 @@ function claimResultMessage(result: RelayReferralClaimResult): {
   }
 }
 
+function ReferralMetric(props: { readonly label: string; readonly value: number }) {
+  return (
+    <div className="min-w-0 px-3 py-4 first:pl-0 last:pr-0 sm:px-5">
+      <dt className="text-[0.6875rem] leading-4 font-medium text-muted-foreground">
+        {props.label}
+      </dt>
+      <dd className="mt-0.5 text-[1.625rem] leading-8 font-semibold tracking-tight tabular-nums">
+        {props.value}
+      </dd>
+    </div>
+  );
+}
+
+function ReferralSectionHeading({
+  icon,
+  title,
+  description,
+}: {
+  readonly icon: ReactNode;
+  readonly title: string;
+  readonly description: string;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <div
+        aria-hidden="true"
+        className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-muted/32 text-muted-foreground"
+      >
+        {icon}
+      </div>
+      <div className="min-w-0 pt-0.5">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <p className="mt-0.5 max-w-[30rem] text-xs leading-5 text-muted-foreground">
+          {description}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function ReferralsUserProfilePage() {
   const summaryState = useManagedRelayReferralSummary();
   const claimReferral = useAtomCommand(claimManagedRelayReferralCommand, {
@@ -54,7 +95,7 @@ export function ReferralsUserProfilePage() {
   });
   const [referralCode, setReferralCode] = useState("");
   const [isClaiming, setIsClaiming] = useState(false);
-  const { copyToClipboard, isCopied } = useCopyToClipboard({
+  const { copyToClipboard: copyReferralLink, isCopied: isLinkCopied } = useCopyToClipboard({
     target: "referral link",
     onCopy: () => toastManager.add({ type: "success", title: "Referral link copied" }),
     onError: (error) =>
@@ -64,11 +105,22 @@ export function ReferralsUserProfilePage() {
         description: error.message,
       }),
   });
+  const { copyToClipboard: copyReferralCode, isCopied: isCodeCopied } = useCopyToClipboard({
+    target: "referral code",
+    onCopy: () => toastManager.add({ type: "success", title: "Referral code copied" }),
+    onError: (error) =>
+      toastManager.add({
+        type: "error",
+        title: "Could not copy referral code",
+        description: error.message,
+      }),
+  });
   const summary = summaryState.data;
   const referralLink = useMemo(
     () => (summary ? buildReferralLink(configuredHostedAppUrl(), summary.referralCode) : null),
     [summary],
   );
+  const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
 
   const submitReferralCode = async () => {
     const accountId = summaryState.accountId;
@@ -99,13 +151,36 @@ export function ReferralsUserProfilePage() {
     });
   };
 
+  const shareReferral = async () => {
+    if (!referralLink) return;
+    if (!canShare) {
+      await copyReferralLink(referralLink);
+      return;
+    }
+
+    try {
+      await navigator.share({
+        title: REFERRAL_SHARE_TITLE,
+        text: REFERRAL_SHARE_TEXT,
+        url: referralLink,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return;
+      toastManager.add({
+        type: "error",
+        title: "Could not share referral link",
+        description: error instanceof Error ? error.message : "Try copying the link instead.",
+      });
+    }
+  };
+
   const isInitialLoad =
     !summaryState.accountId || (summaryState.data === null && !summaryState.error);
 
   return (
     <ClerkUserProfilePage
       title="Referrals"
-      description="Earn 67 points when someone you invite links their first T3 Code environment. Your points follow your T3 account across devices."
+      description="Earn 67 points when a friend claims your link before connecting their first environment. Your balance follows your T3 account."
       action={
         <ClerkUserProfileRefreshButton
           disabled={isClaiming}
@@ -123,77 +198,91 @@ export function ReferralsUserProfilePage() {
 
       {isInitialLoad ? (
         <div
-          className="grid gap-3 border-t py-5 sm:grid-cols-3"
+          className="grid grid-cols-3 divide-x border-y"
           aria-label="Loading referrals"
           role="status"
         >
-          <Skeleton className="h-24 rounded-xl" />
-          <Skeleton className="h-24 rounded-xl" />
-          <Skeleton className="h-24 rounded-xl" />
+          <div className="py-5 pr-4">
+            <Skeleton className="h-11 rounded-lg" />
+          </div>
+          <div className="px-4 py-5">
+            <Skeleton className="h-11 rounded-lg" />
+          </div>
+          <div className="py-5 pl-4">
+            <Skeleton className="h-11 rounded-lg" />
+          </div>
         </div>
       ) : summary ? (
-        <div className="space-y-6 border-t py-5">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border bg-muted/24 p-4">
-              <p className="text-xs font-medium text-muted-foreground">Points</p>
-              <p className="mt-1 text-3xl font-semibold tracking-tight">{summary.points}</p>
-            </div>
-            <div className="rounded-xl border bg-muted/24 p-4">
-              <p className="text-xs font-medium text-muted-foreground">Successful referrals</p>
-              <p className="mt-1 text-3xl font-semibold tracking-tight">
-                {summary.qualifiedReferrals}
-              </p>
-            </div>
-            <div className="rounded-xl border bg-muted/24 p-4">
-              <p className="text-xs font-medium text-muted-foreground">Pending</p>
-              <p className="mt-1 text-3xl font-semibold tracking-tight">
-                {summary.pendingReferrals}
-              </p>
-            </div>
-          </div>
+        <div className="border-t">
+          <dl className="grid grid-cols-3 divide-x border-b">
+            <ReferralMetric label="Points" value={summary.points} />
+            <ReferralMetric label="Successful" value={summary.qualifiedReferrals} />
+            <ReferralMetric label="Pending" value={summary.pendingReferrals} />
+          </dl>
 
-          <section>
-            <div className="flex items-center gap-2">
-              <GiftIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-              <h3 className="text-sm font-semibold">Invite someone</h3>
+          <section className="border-b py-5">
+            <ReferralSectionHeading
+              icon={<GiftIcon className="size-4" />}
+              title="Invite someone"
+              description="They need to claim your link before linking their first T3 Code environment."
+            />
+            <div className="mt-4 space-y-2 sm:ml-11">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <div className="min-w-0 flex-1 rounded-lg border bg-muted/24 px-3 py-2.5">
+                  <div className="flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
+                    <LinkIcon className="size-3" aria-hidden="true" />
+                    Referral link
+                  </div>
+                  <p className="mt-0.5 truncate text-xs">{referralLink}</p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  disabled={!referralLink}
+                  onClick={() => void shareReferral()}
+                >
+                  {canShare ? (
+                    <Share2Icon className="size-3.5" aria-hidden="true" />
+                  ) : isLinkCopied ? (
+                    <CheckIcon className="size-3.5" aria-hidden="true" />
+                  ) : (
+                    <CopyIcon className="size-3.5" aria-hidden="true" />
+                  )}
+                  {canShare ? "Share" : isLinkCopied ? "Copied" : "Copy link"}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between gap-3 px-1 py-1">
+                <div className="min-w-0">
+                  <span className="text-[0.6875rem] font-medium text-muted-foreground">
+                    Referral code
+                  </span>
+                  <code className="ml-2 text-xs tracking-[0.04em]">{summary.referralCode}</code>
+                </div>
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={isCodeCopied ? "Referral code copied" : "Copy referral code"}
+                  onClick={() => copyReferralCode(summary.referralCode)}
+                >
+                  {isCodeCopied ? (
+                    <CheckIcon className="size-3.5" aria-hidden="true" />
+                  ) : (
+                    <CopyIcon className="size-3.5" aria-hidden="true" />
+                  )}
+                </Button>
+              </div>
             </div>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              They must claim the code before linking their first environment.
-            </p>
-            <div className="mt-3 flex gap-2">
-              <Input
-                nativeInput
-                readOnly
-                size="sm"
-                value={referralLink ?? ""}
-                aria-label="Referral link"
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!referralLink}
-                onClick={() => copyToClipboard(referralLink ?? "")}
-              >
-                {isCopied ? (
-                  <CheckIcon className="size-3.5" aria-hidden="true" />
-                ) : (
-                  <CopyIcon className="size-3.5" aria-hidden="true" />
-                )}
-                {isCopied ? "Copied" : "Copy"}
-              </Button>
-            </div>
-            <p className="mt-2 font-mono text-xs text-muted-foreground">
-              Code: {summary.referralCode}
-            </p>
           </section>
 
           {!summary.hasClaimedReferral ? (
-            <section className="rounded-xl border bg-muted/16 p-4">
-              <div className="flex items-center gap-2">
-                <TicketCheckIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-                <h3 className="text-sm font-semibold">Have a referral code?</h3>
-              </div>
-              <div className="mt-3 flex gap-2">
+            <section className="py-5">
+              <ReferralSectionHeading
+                icon={<TicketCheckIcon className="size-4" />}
+                title="Use a referral code"
+                description="Apply it before linking your first environment."
+              />
+              <div className="mt-4 flex flex-col gap-2 sm:ml-11 sm:flex-row">
                 <Input
                   nativeInput
                   size="sm"
@@ -206,8 +295,13 @@ export function ReferralsUserProfilePage() {
                     if (event.key === "Enter") void submitReferralCode();
                   }}
                 />
-                <Button size="sm" disabled={isClaiming} onClick={() => void submitReferralCode()}>
-                  {isClaiming ? "Applying..." : "Apply"}
+                <Button
+                  size="sm"
+                  className="shrink-0"
+                  disabled={isClaiming}
+                  onClick={() => void submitReferralCode()}
+                >
+                  {isClaiming ? "Applying..." : "Apply code"}
                 </Button>
               </div>
             </section>

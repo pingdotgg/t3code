@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { RelayReferralClaimResult } from "@t3tools/contracts/relay";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   claimManagedRelayReferralCommand,
@@ -19,6 +19,7 @@ import {
   urlWithoutReferralCode,
 } from "../../cloud/referralLinks";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { toastManager } from "../ui/toast";
 
 function clearPendingReferralCode(): void {
@@ -37,16 +38,17 @@ function readPendingReferralCode(): string | null {
   }
 }
 
-function captureReferralCode(): void {
+function captureReferralCode(): string | null {
   const url = new URL(window.location.href);
   const referralCode = referralCodeFromUrl(url);
-  if (!referralCode) return;
+  if (!referralCode) return null;
   try {
     window.localStorage.setItem(PENDING_REFERRAL_CODE_STORAGE_KEY, referralCode);
   } catch {
-    return;
+    // Keep the code in component state for this tab when storage is unavailable.
   }
   window.history.replaceState(window.history.state, "", urlWithoutReferralCode(url));
+  return referralCode;
 }
 
 function showClaimResult(result: RelayReferralClaimResult): void {
@@ -86,16 +88,31 @@ function ConfiguredReferralClaimCoordinator() {
     reportFailure: false,
   });
   const relayAccountId = useAtomValue(managedRelaySessionAtom)?.accountId ?? null;
+  const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
+  const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
   const activeClaimRef = useRef<string | null>(null);
   const completedClaimRef = useRef<string | null>(null);
+  const promptedSignInRef = useRef<string | null>(null);
 
   useEffect(() => {
-    captureReferralCode();
+    setPendingReferralCode(captureReferralCode() ?? readPendingReferralCode());
   }, []);
 
   useEffect(() => {
+    if (!isLoaded || isSignedIn || !pendingReferralCode) return;
+    if (promptedSignInRef.current === pendingReferralCode) return;
+    promptedSignInRef.current = pendingReferralCode;
+    toastManager.add({
+      type: "info",
+      title: "Referral link ready",
+      description: "Sign in to claim it before linking your first environment.",
+    });
+    openAuthPrompt();
+  }, [isLoaded, isSignedIn, openAuthPrompt, pendingReferralCode]);
+
+  useEffect(() => {
     if (!isLoaded || !isSignedIn || !userId || relayAccountId !== userId) return;
-    const referralCode = readPendingReferralCode();
+    const referralCode = pendingReferralCode ?? readPendingReferralCode();
     if (!referralCode) return;
     const attemptKey = `${userId}:${referralCode}`;
     if (activeClaimRef.current === attemptKey || completedClaimRef.current === attemptKey) return;
@@ -107,6 +124,7 @@ function ConfiguredReferralClaimCoordinator() {
         if (result._tag === "Success") {
           completedClaimRef.current = attemptKey;
           clearPendingReferralCode();
+          setPendingReferralCode(null);
           refreshManagedRelayReferralSummary();
           showClaimResult(result.value.result);
           return;
@@ -118,7 +136,7 @@ function ConfiguredReferralClaimCoordinator() {
         if (activeClaimRef.current === attemptKey) activeClaimRef.current = null;
       }
     })();
-  }, [claimReferral, isLoaded, isSignedIn, relayAccountId, userId]);
+  }, [claimReferral, isLoaded, isSignedIn, pendingReferralCode, relayAccountId, userId]);
 
-  return null;
+  return authPrompt;
 }
