@@ -15,11 +15,12 @@ import {
   formatMissingToolsReason,
   formatNodePtyProbeFailureReason,
   formatWslShellTransportFailureReason,
-  parseDistroIp,
+  parseDistroIpCandidates,
   parseNodePath,
   parseNodeVersion,
   parseResolvedPath,
   parseToolchainReport,
+  pickDistroIp,
   probeWslDistros,
 } from "./DesktopWslEnvironment.ts";
 
@@ -89,41 +90,65 @@ describe("probeWslDistros", () => {
   });
 });
 
-describe("parseDistroIp", () => {
-  it("prefers the default-route src address over hostname -I ordering", () => {
-    // Docker bridge networks sort before eth0 in `hostname -I`; the route
-    // lookup must win so an unreachable bridge IP is never picked (#5211).
-    const stdout = [
-      "route:1.1.1.1 via 192.168.1.1 dev eth0 src 192.168.1.219 uid 1000",
-      "all:172.22.0.1 172.19.0.1 172.17.0.1 192.168.1.219",
-    ].join("\n");
-    expect(parseDistroIp(stdout)).toBe("192.168.1.219");
-  });
-
-  it("resolves the NAT-mode eth0 address from the route src field", () => {
+describe("parseDistroIpCandidates", () => {
+  it("orders the route src ahead of the hostname -I list and dedupes", () => {
     const stdout = [
       "route:1.1.1.1 via 172.27.0.1 dev eth0 src 172.27.5.44 uid 1000",
-      "all:172.27.5.44",
+      "all:172.17.0.1 172.27.5.44",
     ].join("\n");
-    expect(parseDistroIp(stdout)).toBe("172.27.5.44");
+    expect(parseDistroIpCandidates(stdout)).toEqual(["172.27.5.44", "172.17.0.1"]);
   });
 
-  it("falls back to the first hostname -I address when there is no default route", () => {
-    expect(parseDistroIp("route:\nall:172.27.5.44 fe80::1")).toBe("172.27.5.44");
+  it("collects only hostname -I addresses when there is no default route", () => {
+    expect(parseDistroIpCandidates("route:\nall:172.27.5.44 fe80::1")).toEqual(["172.27.5.44"]);
   });
 
-  it("falls back when the route line has no valid IPv4 src token", () => {
+  it("skips a route line without a valid IPv4 src token", () => {
     const stdout = ["route:1.1.1.1 dev eth0 src fdcc::2 metric 256", "all:172.27.5.44"].join("\n");
-    expect(parseDistroIp(stdout)).toBe("172.27.5.44");
+    expect(parseDistroIpCandidates(stdout)).toEqual(["172.27.5.44"]);
   });
 
   it("accepts CRLF output", () => {
-    expect(parseDistroIp("route:\r\nall:172.27.5.44\r\n")).toBe("172.27.5.44");
+    expect(parseDistroIpCandidates("route:\r\nall:172.27.5.44\r\n")).toEqual(["172.27.5.44"]);
   });
 
-  it("returns null when neither probe produced an IPv4 address", () => {
-    expect(parseDistroIp("route:\nall:")).toBeNull();
-    expect(parseDistroIp("")).toBeNull();
+  it("returns no candidates when neither probe produced an IPv4 address", () => {
+    expect(parseDistroIpCandidates("route:\nall:")).toEqual([]);
+    expect(parseDistroIpCandidates("")).toEqual([]);
+  });
+});
+
+describe("pickDistroIp", () => {
+  const wslVEthernet = { address: "172.27.0.1", netmask: "255.255.240.0" };
+  const wifi = { address: "192.168.1.219", netmask: "255.255.255.0" };
+
+  it("picks the eth0 address in the WSL vEthernet subnet over Docker bridges (#5211)", () => {
+    // Docker bridge networks sort first in `hostname -I` but are internal to
+    // the distro; only eth0 shares a subnet with a Windows interface.
+    expect(pickDistroIp(["172.17.0.1", "172.19.0.1", "172.27.5.44"], [wslVEthernet, wifi])).toBe(
+      "172.27.5.44",
+    );
+  });
+
+  it("skips a VPN tunnel src that owns the Internet route inside the distro", () => {
+    // A full-tunnel VPN inside WSL makes `ip route get 1.1.1.1` report the
+    // tunnel address, which Windows cannot reach; eth0 must still win.
+    expect(pickDistroIp(["10.8.0.5", "172.17.0.1", "172.27.5.44"], [wslVEthernet, wifi])).toBe(
+      "172.27.5.44",
+    );
+  });
+
+  it("picks the mirrored-mode address that equals a Windows interface IP", () => {
+    expect(pickDistroIp(["192.168.1.219"], [wifi])).toBe("192.168.1.219");
+  });
+
+  it("falls back to the first candidate when nothing is provably reachable", () => {
+    expect(pickDistroIp(["10.8.0.5", "172.17.0.1"], [wifi])).toBe("10.8.0.5");
+    expect(pickDistroIp(["172.27.5.44"], [])).toBe("172.27.5.44");
+  });
+
+  it("returns null with no candidates", () => {
+    expect(pickDistroIp([], [wslVEthernet])).toBeNull();
   });
 });
 

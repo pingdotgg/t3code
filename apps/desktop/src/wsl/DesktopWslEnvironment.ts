@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -689,34 +691,95 @@ const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 const DISTRO_IP_ROUTE_PREFIX = "route:";
 const DISTRO_IP_ADDRESSES_PREFIX = "all:";
 
-// `ip -4 route get 1.1.1.1` is a pure routing-table lookup (no packet is
-// sent): its `src` field is the address the distro would use to reach an
-// external host, which is the eth0/mirrored interface Windows can reach.
-// Docker bridge interfaces never own the default route, so they cannot be
-// picked — unlike `hostname -I`, which lists them first and made the app
-// poll an unreachable 172.x bridge address forever (#5211). `hostname -I`
-// stays as the fallback for distros without a default route.
+// Emits the distro's IPv4 candidates: the `src` of `ip -4 route get 1.1.1.1`
+// (a pure routing-table lookup, no packet is sent) followed by everything
+// `hostname -I` reports. Neither source alone is trustworthy — `hostname -I`
+// lists Docker bridge addresses before eth0 (#5211), and the Internet route's
+// src is a tunnel address when a VPN/VRF inside the distro owns that route —
+// so pickDistroIp validates the candidates against the Windows-side
+// interfaces instead of trusting either ordering.
 const DISTRO_IP_SCRIPT = `printf "${DISTRO_IP_ROUTE_PREFIX}%s\\n" "$(ip -4 route get 1.1.1.1 2>/dev/null)"; printf "${DISTRO_IP_ADDRESSES_PREFIX}%s\\n" "$(hostname -I 2>/dev/null)"`;
 
-export const parseDistroIp = (stdout: string): string | null => {
-  let fallback: string | null = null;
+export const parseDistroIpCandidates = (stdout: string): ReadonlyArray<string> => {
+  const candidates: string[] = [];
+  const push = (ip: string) => {
+    if (!candidates.includes(ip)) candidates.push(ip);
+  };
   for (const line of stdout.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (trimmed.startsWith(DISTRO_IP_ROUTE_PREFIX)) {
       const tokens = trimmed.slice(DISTRO_IP_ROUTE_PREFIX.length).trim().split(/\s+/);
       const srcIndex = tokens.indexOf("src");
       const candidate = srcIndex === -1 ? undefined : tokens[srcIndex + 1];
-      if (candidate !== undefined && IPV4_PATTERN.test(candidate)) return candidate;
-    }
-    if (fallback === null && trimmed.startsWith(DISTRO_IP_ADDRESSES_PREFIX)) {
-      fallback =
-        trimmed
-          .slice(DISTRO_IP_ADDRESSES_PREFIX.length)
-          .split(/\s+/)
-          .find((part) => IPV4_PATTERN.test(part)) ?? null;
+      if (candidate !== undefined && IPV4_PATTERN.test(candidate)) push(candidate);
+    } else if (trimmed.startsWith(DISTRO_IP_ADDRESSES_PREFIX)) {
+      for (const part of trimmed.slice(DISTRO_IP_ADDRESSES_PREFIX.length).split(/\s+/)) {
+        if (IPV4_PATTERN.test(part)) push(part);
+      }
     }
   }
-  return fallback;
+  return candidates;
+};
+
+export interface WindowsIpv4Interface {
+  readonly address: string;
+  readonly netmask: string;
+}
+
+const ipv4ToInt = (ip: string): number | null => {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return null;
+  let value = 0;
+  for (const part of parts) {
+    const octet = Number(part);
+    if (!Number.isInteger(octet) || octet < 0 || octet > 255) return null;
+    value = value * 256 + octet;
+  }
+  return value;
+};
+
+const inSameSubnet = (a: string, b: string, netmask: string): boolean => {
+  const aInt = ipv4ToInt(a);
+  const bInt = ipv4ToInt(b);
+  const maskInt = ipv4ToInt(netmask);
+  if (aInt === null || bInt === null || maskInt === null) return false;
+  return (aInt & maskInt) === (bInt & maskInt);
+};
+
+// A candidate is Windows-reachable when it IS a Windows interface address
+// (mirrored networking, where DesktopBackendConfiguration then swaps to
+// loopback) or when it sits inside a Windows interface's subnet (NAT mode,
+// where the distro's eth0 shares the WSL vEthernet adapter's subnet). Docker
+// bridges and in-distro VPN tunnels match neither. When nothing matches,
+// fall back to the first candidate, preserving the pre-validation behavior.
+export const pickDistroIp = (
+  candidates: ReadonlyArray<string>,
+  windowsInterfaces: ReadonlyArray<WindowsIpv4Interface>,
+): string | null => {
+  for (const candidate of candidates) {
+    for (const iface of windowsInterfaces) {
+      if (candidate === iface.address) return candidate;
+      if (inSameSubnet(candidate, iface.address, iface.netmask)) return candidate;
+    }
+  }
+  return candidates[0] ?? null;
+};
+
+const windowsIpv4Interfaces = (): ReadonlyArray<WindowsIpv4Interface> => {
+  const interfaces: WindowsIpv4Interface[] = [];
+  for (const list of Object.values(NodeOS.networkInterfaces())) {
+    if (!list) continue;
+    for (const entry of list) {
+      // Same family normalization as isLocalHostIpv4 in
+      // DesktopBackendConfiguration: Electron's Node reports the string
+      // "IPv4", some Node builds report the numeric 4.
+      const family = String(entry.family);
+      if (family === "IPv4" || family === "4") {
+        interfaces.push({ address: entry.address, netmask: entry.netmask });
+      }
+    }
+  }
+  return interfaces;
 };
 
 const getDistroIpImpl = (
@@ -741,11 +804,12 @@ const getDistroIpImpl = (
       const exitCode = yield* handle.exitCode;
       if ((exitCode as unknown as number) !== 0) return Option.none<string>();
       const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
-      const candidate = parseDistroIp(raw);
+      const candidates = parseDistroIpCandidates(raw);
+      const chosen = pickDistroIp(candidates, windowsIpv4Interfaces());
       yield* Effect.log(
-        `[wsl] distro IP probe chose ${candidate ?? "none"} from: ${raw.replaceAll("\n", " ")}`,
+        `[wsl] distro IP probe chose ${chosen ?? "none"} from candidates [${candidates.join(", ")}]`,
       );
-      return candidate === null ? Option.none<string>() : Option.some(candidate);
+      return chosen === null ? Option.none<string>() : Option.some(chosen);
     }),
   ).pipe(
     Effect.timeoutOption(USER_HOME_TIMEOUT),
