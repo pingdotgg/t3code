@@ -11,3 +11,10 @@ export const isElectron = typeof window !== "undefined" && window.desktopBridge 
  * itself; the app publishes what they need and hides its own copies.
  */
 export const isT3Shell = typeof window !== "undefined" && window.t3Shell !== undefined;
+
+/**
+ * True in the shell's secondary (embed) document. It shares localStorage with
+ * the primary document and only mirrors its state, so it must never persist a
+ * copy of its own or it overwrites what the primary wrote.
+ */
+export const isT3ShellEmbed = isT3Shell && window.t3Shell?.surfaceId !== "primary";

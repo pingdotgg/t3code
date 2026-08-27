@@ -1,5 +1,6 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
+import { isT3ShellEmbed } from "./env";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
@@ -435,9 +436,15 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     ),
 }));
 
-useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
+if (!isT3ShellEmbed) {
+  useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
+}
 
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+if (
+  !isT3ShellEmbed &&
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
   window.addEventListener("beforeunload", () => {
     debouncedPersistState.flush();
   });
