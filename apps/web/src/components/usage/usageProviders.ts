@@ -26,8 +26,8 @@ export const PROVIDER_PRESENTATION = {
   },
   grok: {
     label: "Grok Build",
-    // Mid zinc so the series stays visible on both light and dark chart surfaces.
-    color: "#71717a",
+    // Contrast-aware neutral between the Codex series and muted chart chrome.
+    color: "color-mix(in oklab, var(--contrast-foreground) 72%, var(--background))",
     mark: GrokIcon,
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
