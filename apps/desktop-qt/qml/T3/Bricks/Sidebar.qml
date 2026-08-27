@@ -14,44 +14,98 @@ Rectangle {
     // rail, say) turns these off so the brick is just the thread list.
     property bool showScope: true
     property bool showFooter: true
+    // The brand band ("T3 Code" plus the collapse toggle) is what the page
+    // shows above its sidebar; a rice with its own title bar leaves it off.
+    // When frameless it doubles as the window's drag handle.
+    property bool showBrand: false
+    property Window window: null
     readonly property var projects: model ? model.projects : []
-    readonly property var rows: buildRows(model)
+    readonly property var projectNames: {
+        const names = {};
+        for (const project of projects) {
+            names[project.key] = project.displayName;
+        }
+        return names;
+    }
+    readonly property string scopeLabel: {
+        if (!model || model.scopeProjectKey === null) {
+            return qsTr("All projects");
+        }
+        return projectNames[model.scopeProjectKey] ?? qsTr("All projects");
+    }
+    property var collapsed: ({})
+    readonly property var rows: buildRows(model, collapsed)
     readonly property color foreground: Theme.color("sidebarForeground", "#e4e4e7")
     readonly property color muted: Theme.color("sidebarMutedForeground", "#8b8b93")
+    readonly property color iconColor: Theme.color("iconMuted", "#8b8b93")
+    readonly property color hairline: Theme.color("sidebarBorder", "#27272a")
 
-    implicitWidth: 260
+    implicitWidth: 256
     color: Theme.color("sidebar", "#0a0a0a")
     // Content keeps its width while the shell animates ours.
     clip: true
 
-    function buildRows(state) {
+    function toggleSection(key) {
+        const next = Object.assign({}, collapsed);
+        next[key] = !next[key];
+        collapsed = next;
+    }
+
+    function buildRows(state, folded) {
         if (!state) {
             return [];
         }
         const out = [];
-        const section = (label, items, kind) => {
+        for (const draft of state.drafts) {
+            out.push({
+                kind: "draft",
+                item: draft
+            });
+        }
+        for (const item of state.pinned) {
+            out.push({
+                kind: "thread",
+                item: item
+            });
+        }
+        if (state.pinned.length > 0 && state.active.length > 0) {
+            out.push({
+                kind: "divider"
+            });
+        }
+        for (const item of state.active) {
+            out.push({
+                kind: "thread",
+                item: item
+            });
+        }
+        const section = (key, label, items) => {
             if (items.length === 0) {
                 return;
             }
+            const open = !folded[key];
             out.push({
                 kind: "header",
-                label: label + " · " + items.length
+                key: key,
+                label: label,
+                count: items.length,
+                open: open
             });
+            if (!open) {
+                return;
+            }
             for (const item of items) {
                 out.push({
-                    kind: kind,
+                    kind: "slim",
                     item: item
                 });
             }
         };
-        section(qsTr("Drafts"), state.drafts, "draft");
-        section(qsTr("Pinned"), state.pinned, "thread");
-        section(qsTr("Threads"), state.active, "thread");
-        section(qsTr("Snoozed"), state.snoozed, "thread");
-        section(qsTr("Settled"), state.settled, "thread");
-        if (state.settledTotal > state.settled.length) {
+        section("snoozed", qsTr("Snoozed"), state.snoozed);
+        section("settled", qsTr("Settled"), state.settled);
+        if (!folded.settled && state.settledTotal > state.settled.length) {
             out.push({
-                kind: "header",
+                kind: "note",
                 label: qsTr("%1 more settled in the app").arg(state.settledTotal - state.settled.length)
             });
         }
@@ -63,38 +117,171 @@ Rectangle {
         anchors.leftMargin: Math.min(0, sidebar.width - sidebar.implicitWidth)
         spacing: 0
 
-        RowLayout {
+        // Brand band: sidebar toggle and wordmark.
+        Item {
             Layout.fillWidth: true
-            Layout.margins: 10
-            Layout.bottomMargin: 4
-            spacing: 8
-            visible: sidebar.showScope
+            Layout.preferredHeight: 52
+            visible: sidebar.showBrand
 
-            ShellComboBox {
-                id: scope
-
-                Layout.fillWidth: true
-                model: [qsTr("All projects")].concat(sidebar.projects.map(project => project.displayName))
-                currentIndex: {
-                    if (!sidebar.model || sidebar.model.scopeProjectKey === null) {
-                        return 0;
-                    }
-                    const index = sidebar.projects.findIndex(project => project.key === sidebar.model.scopeProjectKey);
-                    return index < 0 ? 0 : index + 1;
-                }
-                onActivated: index => Shell.dispatch("sidebar.scope", {
-                        projectKey: index === 0 ? null : sidebar.projects[index - 1].key
-                    })
+            DragHandler {
+                enabled: sidebar.window !== null && Theme.frameless
+                target: null
+                grabPermissions: PointerHandler.CanTakeOverFromAnything
+                onActiveChanged: if (active)
+                    sidebar.window.startSystemMove()
             }
 
             ShellButton {
+                x: 12
+                y: 12
                 subtle: true
-                text: "+"
-                font.pixelSize: 16
-                Accessible.name: qsTr("New thread")
-                onClicked: Shell.dispatch("thread.new", sidebar.model && sidebar.model.scopeProjectKey !== null ? {
-                    projectKey: sidebar.model.scopeProjectKey
-                } : {})
+                implicitHeight: 28
+                iconName: "panel-left-close"
+                iconSize: 16
+                iconTint: sidebar.iconColor
+                Accessible.name: qsTr("Hide sidebar")
+                onClicked: Shell.dispatch("sidebar.toggle")
+            }
+
+            Row {
+                x: 52
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 6
+
+                Text {
+                    text: "T3"
+                    color: sidebar.foreground
+                    font.pixelSize: 15
+                    font.weight: Font.Bold
+                    font.letterSpacing: -0.5
+                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Text {
+                    text: qsTr("Code")
+                    color: sidebar.muted
+                    font.pixelSize: 14
+                    font.weight: Font.Medium
+                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+        }
+
+        // Search + new thread, scope + add project.
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.margins: 8
+            spacing: 4
+            visible: sidebar.showScope
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+
+                ShellButton {
+                    Layout.fillWidth: true
+                    implicitHeight: 32
+                    subtle: true
+                    iconName: "search"
+                    iconSize: 16
+                    iconTint: Qt.alpha(sidebar.muted, 0.8)
+                    tint: sidebar.foreground
+                    text: qsTr("Search")
+                    font.pixelSize: 14
+                    onClicked: Shell.dispatch("palette.open")
+
+                    background: Rectangle {
+                        radius: 8
+                        color: parent.hovered || parent.down ? Theme.color("sidebarRowHover", "#1c1c21") : Theme.color("sidebarControlSurface", "#141416")
+
+                        Behavior on color {
+                            ColorAnimation {
+                                duration: 120
+                            }
+                        }
+                    }
+                }
+
+                ShellButton {
+                    subtle: true
+                    implicitHeight: 32
+                    iconName: "square-pen"
+                    iconSize: 16
+                    iconTint: sidebar.iconColor
+                    Accessible.name: qsTr("New thread")
+                    onClicked: Shell.dispatch("thread.new", sidebar.model && sidebar.model.scopeProjectKey !== null ? {
+                        projectKey: sidebar.model.scopeProjectKey
+                    } : {})
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 4
+
+                ShellButton {
+                    id: scopeButton
+
+                    Layout.fillWidth: true
+                    implicitHeight: 32
+                    leftPadding: 9
+                    subtle: true
+                    chevron: true
+                    chevronSize: 16
+                    iconName: "folder"
+                    iconSize: 16
+                    iconTint: Qt.alpha(sidebar.muted, 0.8)
+                    tint: Qt.alpha(sidebar.muted, 0.8)
+                    text: sidebar.scopeLabel
+                    font.pixelSize: 14
+                    Accessible.name: qsTr("Project scope")
+                    onClicked: scopeMenu.open()
+
+                    ShellMenu {
+                        id: scopeMenu
+
+                        y: parent.height + 4
+                        width: Math.max(parent.width, 200)
+
+                        ShellMenuItem {
+                            text: qsTr("All projects")
+                            current: sidebar.model !== null && sidebar.model.scopeProjectKey === null
+                            onTriggered: Shell.dispatch("sidebar.scope", {
+                                projectKey: null
+                            })
+                        }
+
+                        Instantiator {
+                            model: sidebar.projects
+
+                            delegate: ShellMenuItem {
+                                required property var modelData
+
+                                text: modelData.displayName
+                                iconName: "folder"
+                                current: sidebar.model !== null && sidebar.model.scopeProjectKey === modelData.key
+                                onTriggered: Shell.dispatch("sidebar.scope", {
+                                    projectKey: modelData.key
+                                })
+                            }
+
+                            onObjectAdded: (index, object) => scopeMenu.insertItem(index + 1, object)
+                            onObjectRemoved: (index, object) => scopeMenu.removeItem(object)
+                        }
+                    }
+                }
+
+                ShellButton {
+                    subtle: true
+                    implicitHeight: 32
+                    iconName: "folder-plus"
+                    iconSize: 16
+                    iconTint: sidebar.iconColor
+                    Accessible.name: qsTr("Add project")
+                    onClicked: Shell.dispatch("project.add")
+                }
             }
         }
 
@@ -103,9 +290,13 @@ Rectangle {
 
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.leftMargin: 9
+            Layout.rightMargin: 8
+            Layout.bottomMargin: 4
             clip: true
             model: sidebar.rows
             reuseItems: true
+            spacing: 1
             boundsBehavior: Flickable.StopAtBounds
 
             delegate: Item {
@@ -113,43 +304,124 @@ Rectangle {
 
                 required property var modelData
 
-                readonly property bool isHeader: modelData.kind === "header"
+                readonly property string kind: modelData.kind
 
                 width: ListView.view.width
-                implicitHeight: isHeader ? 30 : 44
+                implicitHeight: kind === "header" ? 36 : kind === "divider" ? 13 : kind === "note" ? 28 : kind === "slim" ? 36 : 82
+
+                // Collapsible section header with a hairline (settled) or tint (snoozed).
+                Item {
+                    anchors.fill: parent
+                    visible: entry.kind === "header"
+
+                    HoverHandler {
+                        id: headerHover
+                    }
+
+                    TapHandler {
+                        onTapped: sidebar.toggleSection(entry.modelData.key)
+                    }
+
+                    RowLayout {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 10
+                        anchors.bottomMargin: 4
+                        height: 20
+                        spacing: 8
+
+                        Text {
+                            text: entry.kind === "header" ? entry.modelData.label : ""
+                            color: entry.kind === "header" && entry.modelData.key === "snoozed" ? Theme.color("info", "#60a5fa") : Qt.alpha(sidebar.muted, headerHover.hovered ? 0.8 : 0.5)
+                            font.pixelSize: 12
+                            font.weight: Font.Medium
+                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            implicitHeight: 1
+                            color: Qt.alpha(sidebar.hairline, 0.6)
+                            visible: entry.kind === "header" && entry.modelData.key === "settled"
+                        }
+
+                        Item {
+                            Layout.fillWidth: true
+                            visible: !(entry.kind === "header" && entry.modelData.key === "settled")
+                        }
+
+                        Text {
+                            visible: entry.kind === "header" && !entry.modelData.open
+                            text: entry.kind === "header" ? entry.modelData.count : ""
+                            color: Qt.alpha(sidebar.muted, 0.5)
+                            font.pixelSize: 12
+                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
+                        }
+
+                        ShellIcon {
+                            name: "chevron-down"
+                            size: 12
+                            color: Qt.alpha(sidebar.muted, 0.5)
+                            rotation: entry.kind === "header" && entry.modelData.open ? 0 : -90
+                            Layout.alignment: Qt.AlignVCenter
+
+                            Behavior on rotation {
+                                NumberAnimation {
+                                    duration: 150
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 10
+                    height: 1
+                    visible: entry.kind === "divider"
+                    color: Qt.alpha(sidebar.hairline, 0.6)
+                }
 
                 Text {
-                    anchors.left: parent.left
-                    anchors.bottom: parent.bottom
-                    anchors.leftMargin: 16
-                    anchors.bottomMargin: 6
-                    visible: entry.isHeader
-                    text: entry.isHeader ? entry.modelData.label : ""
-                    color: sidebar.muted
-                    font.pixelSize: 11
-                    font.capitalization: Font.AllUppercase
-                    font.letterSpacing: 0.6
+                    anchors.centerIn: parent
+                    visible: entry.kind === "note"
+                    text: entry.kind === "note" ? entry.modelData.label : ""
+                    color: Qt.alpha(sidebar.muted, 0.6)
+                    font.pixelSize: 12
+                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                 }
 
                 Loader {
                     anchors.fill: parent
-                    active: !entry.isHeader
+                    anchors.topMargin: entry.kind === "thread" ? 2 : 0
+                    anchors.bottomMargin: entry.kind === "thread" ? 2 : 0
+                    active: entry.kind === "thread" || entry.kind === "slim" || entry.kind === "draft"
 
                     sourceComponent: SidebarThreadRow {
-                        item: entry.modelData.kind === "draft" ? {
+                        slim: entry.kind !== "thread"
+                        item: entry.kind === "draft" ? {
                             title: entry.modelData.item.label,
                             status: "ready",
-                            statusLabel: qsTr("Draft"),
-                            unread: false
+                            statusLabel: null,
+                            unread: false,
+                            branch: null,
+                            updatedAt: null
                         } : entry.modelData.item
-                        active: sidebar.model !== null && (entry.modelData.kind === "draft" ? entry.modelData.item.draftId === sidebar.model.activeDraftId : entry.modelData.item.key === sidebar.model.activeThreadKey)
-                        onActivated: entry.modelData.kind === "draft" ? Shell.dispatch("draft.open", {
+                        projectName: sidebar.projectNames[entry.modelData.item.projectKey] ?? ""
+                        active: sidebar.model !== null && (entry.kind === "draft" ? entry.modelData.item.draftId === sidebar.model.activeDraftId : entry.modelData.item.key === sidebar.model.activeThreadKey)
+                        onActivated: entry.kind === "draft" ? Shell.dispatch("draft.open", {
                             draftId: entry.modelData.item.draftId
                         }) : Shell.dispatch("thread.open", {
                             key: entry.modelData.item.key
                         })
                         onMenuRequested: (windowX, windowY) => {
-                            if (entry.modelData.kind !== "draft") {
+                            if (entry.kind !== "draft") {
                                 Shell.dispatch("thread.menu", {
                                     key: entry.modelData.item.key,
                                     x: windowX,
@@ -162,11 +434,13 @@ Rectangle {
             }
 
             Text {
-                anchors.centerIn: parent
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: 24
                 visible: list.count === 0
-                text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : qsTr("No threads")
-                color: sidebar.muted
+                text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : qsTr("No threads yet")
+                color: Qt.alpha(sidebar.muted, 0.6)
                 font.pixelSize: 12
+                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
             }
         }
 
@@ -177,31 +451,33 @@ Rectangle {
             visible: sidebar.showFooter
 
             FooterButton {
-                text: qsTr("Settings")
+                iconName: "settings"
+                Accessible.name: qsTr("Settings")
                 onClicked: Shell.dispatch("settings.open")
             }
 
             FooterButton {
-                text: qsTr("PRs")
+                iconName: "git-pull-request"
+                Accessible.name: qsTr("Pull requests")
                 onClicked: Shell.dispatch("pullRequests.open")
             }
 
             FooterButton {
-                text: qsTr("Usage")
+                iconName: "chart-no-axes-column"
+                Accessible.name: qsTr("Usage")
                 onClicked: Shell.dispatch("usage.open")
             }
 
-            FooterButton {
-                text: qsTr("Add")
-                Accessible.name: qsTr("Add project")
-                onClicked: Shell.dispatch("project.add")
+            Item {
+                Layout.fillWidth: true
             }
         }
     }
 
     component FooterButton: ShellButton {
         subtle: true
-        Layout.fillWidth: true
-        font.pixelSize: 12
+        implicitHeight: 32
+        iconSize: 16
+        iconTint: sidebar.iconColor
     }
 }
