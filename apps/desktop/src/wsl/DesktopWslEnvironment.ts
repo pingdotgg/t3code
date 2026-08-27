@@ -721,6 +721,7 @@ export const parseDistroIpCandidates = (stdout: string): ReadonlyArray<string> =
 };
 
 export interface WindowsIpv4Interface {
+  readonly name: string;
   readonly address: string;
   readonly netmask: string | undefined;
 }
@@ -745,22 +746,37 @@ const inSameSubnet = (a: string, b: string, netmask: string): boolean => {
   return (aInt & maskInt) === (bInt & maskInt);
 };
 
-// A candidate is Windows-reachable when it IS a Windows interface address
-// (mirrored networking, where DesktopBackendConfiguration then swaps to
-// loopback) or when it sits inside a Windows interface's subnet (NAT mode,
-// where the distro's eth0 shares the WSL vEthernet adapter's subnet). Docker
-// bridges and in-distro VPN tunnels match neither. When nothing matches,
-// fall back to the first candidate, preserving the pre-validation behavior.
+const inInterfaceSubnet = (candidate: string, iface: WindowsIpv4Interface): boolean =>
+  iface.netmask !== undefined && inSameSubnet(candidate, iface.address, iface.netmask);
+
+const isWslAdapterName = (name: string): boolean => name.toLowerCase().includes("wsl");
+
+// Ranked selection, strongest signal first, so a weak match on an early
+// candidate can never shadow a strong match on a later one:
+// 1. A candidate equal to a Windows interface address is the mirrored-mode
+//    signature (DesktopBackendConfiguration then swaps the renderer URL to
+//    loopback).
+// 2. A candidate inside the subnet of a WSL-named adapter ("vEthernet (WSL)",
+//    "vEthernet (WSL (Hyper-V firewall))") is the NAT-mode eth0 address.
+// 3. A candidate inside any other Windows interface's subnet covers renamed
+//    or custom Hyper-V switches — ranked last so a Windows-side VPN whose
+//    10.x/172.x space overlaps an in-distro tunnel or Docker bridge cannot
+//    capture the probe while the real WSL adapter has a match.
+// Docker bridges and in-distro VPN tunnels normally match no pass. When
+// nothing matches, fall back to the first candidate, preserving the
+// pre-validation behavior.
 export const pickDistroIp = (
   candidates: ReadonlyArray<string>,
   windowsInterfaces: ReadonlyArray<WindowsIpv4Interface>,
 ): string | null => {
-  for (const candidate of candidates) {
-    for (const iface of windowsInterfaces) {
-      if (candidate === iface.address) return candidate;
-      if (iface.netmask !== undefined && inSameSubnet(candidate, iface.address, iface.netmask)) {
-        return candidate;
-      }
+  const passes: ReadonlyArray<(candidate: string, iface: WindowsIpv4Interface) => boolean> = [
+    (candidate, iface) => candidate === iface.address,
+    (candidate, iface) => isWslAdapterName(iface.name) && inInterfaceSubnet(candidate, iface),
+    (candidate, iface) => inInterfaceSubnet(candidate, iface),
+  ];
+  for (const pass of passes) {
+    for (const candidate of candidates) {
+      if (windowsInterfaces.some((iface) => pass(candidate, iface))) return candidate;
     }
   }
   return candidates[0] ?? null;
@@ -770,7 +786,7 @@ export const windowsIpv4Interfaces = (
   interfaces: DesktopNetworkInterfaces.NetworkInterfaces,
 ): ReadonlyArray<WindowsIpv4Interface> => {
   const flattened: WindowsIpv4Interface[] = [];
-  for (const list of Object.values(interfaces)) {
+  for (const [name, list] of Object.entries(interfaces)) {
     if (!list) continue;
     for (const entry of list) {
       // Same family normalization as isLocalHostIpv4 in
@@ -778,7 +794,7 @@ export const windowsIpv4Interfaces = (
       // "IPv4", some Node builds report the numeric 4.
       const family = String(entry.family);
       if (family === "IPv4" || family === "4") {
-        flattened.push({ address: entry.address, netmask: entry.netmask });
+        flattened.push({ name, address: entry.address, netmask: entry.netmask });
       }
     }
   }

@@ -120,8 +120,12 @@ describe("parseDistroIpCandidates", () => {
 });
 
 describe("pickDistroIp", () => {
-  const wslVEthernet = { address: "172.27.0.1", netmask: "255.255.240.0" };
-  const wifi = { address: "192.168.1.219", netmask: "255.255.255.0" };
+  const wslVEthernet = {
+    name: "vEthernet (WSL (Hyper-V firewall))",
+    address: "172.27.0.1",
+    netmask: "255.255.240.0",
+  };
+  const wifi = { name: "Wi-Fi", address: "192.168.1.219", netmask: "255.255.255.0" };
 
   it("picks the eth0 address in the WSL vEthernet subnet over Docker bridges (#5211)", () => {
     // Docker bridge networks sort first in `hostname -I` but are internal to
@@ -141,6 +145,25 @@ describe("pickDistroIp", () => {
 
   it("picks the mirrored-mode address that equals a Windows interface IP", () => {
     expect(pickDistroIp(["192.168.1.219"], [wifi])).toBe("192.168.1.219");
+  });
+
+  it("outranks a Windows VPN whose address space overlaps an in-distro tunnel", () => {
+    // A corporate VPN adapter on Windows can share 10.x/172.x space with an
+    // in-distro tunnel or Docker bridge; the WSL adapter match must win even
+    // though the tunnel src is the first candidate.
+    const corporateVpn = { name: "Ethernet 3", address: "10.8.44.7", netmask: "255.255.0.0" };
+    expect(
+      pickDistroIp(["10.8.0.5", "172.17.0.1", "172.27.5.44"], [corporateVpn, wslVEthernet]),
+    ).toBe("172.27.5.44");
+  });
+
+  it("still accepts a subnet match on a custom-named switch when no WSL adapter matches", () => {
+    const customSwitch = {
+      name: "vEthernet (Custom)",
+      address: "192.168.100.1",
+      netmask: "255.255.255.0",
+    };
+    expect(pickDistroIp(["192.168.100.44"], [customSwitch])).toBe("192.168.100.44");
   });
 
   it("falls back to the first candidate when nothing is provably reachable", () => {
@@ -165,8 +188,8 @@ describe("windowsIpv4Interfaces", () => {
         Disconnected: undefined,
       }),
     ).toEqual([
-      { address: "172.27.0.1", netmask: "255.255.240.0" },
-      { address: "192.168.1.219", netmask: undefined },
+      { name: "vEthernet (WSL)", address: "172.27.0.1", netmask: "255.255.240.0" },
+      { name: "Wi-Fi", address: "192.168.1.219", netmask: undefined },
     ]);
   });
 });
