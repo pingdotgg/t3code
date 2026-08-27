@@ -10,7 +10,7 @@ describe("grokImagineOptionsFromToolInput", () => {
     });
   });
 
-  it("passes quality and 2k through when the tool sets them", () => {
+  it("maps high quality to medium because Imagine only accepts low and medium", () => {
     expect(
       grokImagineOptionsFromToolInput({
         prompt: "a poster",
@@ -21,7 +21,7 @@ describe("grokImagineOptionsFromToolInput", () => {
     ).toEqual({
       aspectRatio: "16:9",
       resolution: "2k",
-      quality: "high",
+      quality: "medium",
     });
   });
 });

@@ -8,12 +8,15 @@ import {
   ImageGenerationUnavailableError,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+
+const IMAGINE_TIMEOUT = Duration.minutes(2);
 
 const GrokAuthEntry = Schema.Struct({
   key: Schema.String,
@@ -141,10 +144,21 @@ const postImagine = Effect.fn("GrokImagine.post")(function* (
     HttpClientRequest.setHeader("authorization", `Bearer ${token}`),
     HttpClientRequest.bodyJson(payload),
     Effect.flatMap(httpClient.execute),
-    Effect.mapError(() => providerError("Grok Imagine did not respond.")),
+    Effect.timeout(IMAGINE_TIMEOUT),
+    Effect.mapError((cause) =>
+      cause._tag === "TimeoutError"
+        ? providerError("Grok Imagine timed out after 2 minutes.")
+        : providerError("Grok Imagine did not respond."),
+    ),
   );
   if (response.status < 200 || response.status >= 300) {
-    return yield* providerError(`Grok Imagine failed (${response.status}).`);
+    const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+    const detail = body.replace(/\s+/g, " ").trim().slice(0, 240);
+    return yield* providerError(
+      detail
+        ? `Grok Imagine failed (${response.status}): ${detail}`
+        : `Grok Imagine failed (${response.status}).`,
+    );
   }
   return yield* HttpClientResponse.schemaBodyJson(ImagineResponse)(response).pipe(
     Effect.mapError(() =>
@@ -185,8 +199,12 @@ export const generateGrokImage = Effect.fn("GrokImagine.generate")(function* (
     response_format: "b64_json",
   };
   if (request.quality && request.quality !== "auto") {
-    payload.quality = request.quality;
+    payload.quality = request.quality === "high" ? "medium" : request.quality;
   }
+  yield* Effect.logInfo("Grok Imagine generate started", {
+    model: request.model,
+    resolution: request.resolution,
+  });
   const response = yield* postImagine("/images/generations", payload, token);
   return yield* decodeImage(response);
 });
@@ -207,7 +225,7 @@ export const editGrokImage = Effect.fn("GrokImagine.edit")(function* (
     },
   };
   if (request.quality && request.quality !== "auto") {
-    payload.quality = request.quality;
+    payload.quality = request.quality === "high" ? "medium" : request.quality;
   }
   const response = yield* postImagine("/images/edits", payload, token);
   return yield* decodeImage(response);
@@ -215,8 +233,16 @@ export const editGrokImage = Effect.fn("GrokImagine.edit")(function* (
 
 export const grokImagineOptionsFromToolInput = (
   input: GenerateImageInput | EditImageInput,
-): { aspectRatio: string; resolution: "1k" | "2k"; quality?: GrokImagineRequest["quality"] } => ({
-  aspectRatio: input.aspectRatio ?? "auto",
-  resolution: input.resolution ?? "1k",
-  ...(input.quality ? { quality: input.quality } : {}),
-});
+): { aspectRatio: string; resolution: "1k" | "2k"; quality?: GrokImagineRequest["quality"] } => {
+  const quality =
+    input.quality && input.quality !== "auto"
+      ? input.quality === "high"
+        ? "medium"
+        : input.quality
+      : undefined;
+  return {
+    aspectRatio: input.aspectRatio ?? "auto",
+    resolution: input.resolution ?? "1k",
+    ...(quality ? { quality } : {}),
+  };
+};

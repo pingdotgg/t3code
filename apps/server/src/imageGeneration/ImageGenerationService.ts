@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
@@ -64,6 +65,7 @@ export class ImageGenerationService extends Context.Service<
       const processRunner = yield* ProcessRunner.ProcessRunner;
       const httpClient = yield* HttpClient.HttpClient;
       const clock = yield* Clock.Clock;
+      const runLock = yield* Semaphore.make(1);
 
       const persistBytes = Effect.fn("ImageGenerationService.persistBytes")(function* (input: {
         readonly bytes: Uint8Array;
@@ -303,7 +305,11 @@ export class ImageGenerationService extends Context.Service<
         };
       });
 
-      return ImageGenerationService.of({ generate, edit, importFile });
+      return ImageGenerationService.of({
+        generate: (input) => runLock.withPermits(1)(generate(input)),
+        edit: (input) => runLock.withPermits(1)(edit(input)),
+        importFile,
+      });
     }),
   ).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(FetchHttpClient.layer));
 }
