@@ -38,22 +38,44 @@ running dev server; this is what `vp run dev:qt` uses.
 
 ## Source layout
 
-| Path                   | Role                                                                                                                   |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `src/main.cpp`         | CLI flags, config dir resolution, wiring                                                                               |
-| `src/ShellRuntime.*`   | QML engine generations, `shell.qml` resolution, hot reload, fallback                                                   |
-| `src/ShellBridge.*`    | The `shell` WebChannel object / `Shell` QML singleton                                                                  |
-| `src/ThemeStore.*`     | `theme.json` loader + watcher, `Theme` QML singleton, CSS injection                                                    |
-| `src/BackendProcess.*` | Spawns the Node desktop host, waits for `ready`                                                                        |
-| `qml/T3/Bricks/`       | Pure-QML bricks (`DefaultShell`, `TitleBar`, `WebSurface`, `ShellErrorOverlay`) and the injected `js/shell-connect.js` |
-| `host/main.ts`         | Node desktop host                                                                                                      |
-| `scripts/dev-qt.mjs`   | Build, pair with the dev server, launch                                                                                |
-| `examples/`            | Starter `theme.json` and `shell.qml`                                                                                   |
+| Path                    | Role                                                                 |
+| ----------------------- | -------------------------------------------------------------------- |
+| `src/main.cpp`          | CLI flags, config dir resolution, wiring                             |
+| `src/ShellRuntime.*`    | QML engine generations, `shell.qml` resolution, hot reload, fallback |
+| `src/ShellBridge.*`     | The `shell` WebChannel object / `Shell` QML singleton                |
+| `src/ThemeStore.*`      | `theme.json` loader + watcher, `Theme` QML singleton, CSS injection  |
+| `src/BackendProcess.*`  | Spawns the Node desktop host, waits for `ready`                      |
+| `qml/T3/Bricks/`        | Pure-QML bricks (see below) and the injected `js/shell-connect.js`   |
+| `scripts/gen-icons.mjs` | Regenerates `js/lucide.js`, the icon paths `ShellIcon` draws         |
+| `host/main.ts`          | Node desktop host                                                    |
+| `scripts/dev-qt.mjs`    | Build, pair with the dev server, launch                              |
+| `examples/`             | Starter `theme.json` and `shell.qml`                                 |
 
 QML modules: `T3.Shell` is C++-only (`Shell`, `Theme`, `Runtime` singletons,
 registered once and shared by every engine generation). `T3.Bricks` is
 QML-only with a hand-written `qmldir` (no `prefer` line) so the same directory
 works compiled into the binary and as an on-disk import path.
+
+The bricks come in two layers. Chrome bricks each own one piece of the page's
+chrome and read one key of `Shell.state`: `Sidebar`, `Workspace` (the header
+strip), `Composer`, `RightPanel`, `SettingsNav`, `GitActions`,
+`Notifications`, `ContextMenuHost`, plus `WebSurface`, `DefaultShell` and
+`ShellErrorOverlay`. Under them sit the primitives a rice composes its own
+chrome from, all styled from `Theme`: `ShellButton` (outline, `subtle` ghost,
+`primary`), `ShellComboBox` (ghost, `outline: true` for a field),
+`ShellSplitButton` (the header's action + chevron pill), `ShellMenu` /
+`ShellMenuItem`, `ShellTextField`, `ShellIcon`, `WindowControls` and
+`TitleBar`. `ShellIcon` draws the page's lucide icons as a `Shape` from the
+path table in `js/lucide.js`, so bricks pass an icon name (`iconName:
+"git-branch"`) and get the same glyph the HTML shows, at any size or color.
+
+`DefaultShell` is laid out like the page: the sidebar's brand band ("T3 Code"
+plus the collapse toggle), a 52 px header strip with the breadcrumb and the
+run / open / git pills, the timeline, and the composer card with the checkout
+strip welded under it. Frameless windows get their drag handle and buttons
+from the brand band and the header strip (`Sidebar.window`,
+`Workspace.window`), not from a `TitleBar`; the examples that want a title
+bar row still use that brick.
 
 ## Setup
 
@@ -263,7 +285,10 @@ linked PR), the environments the logical project spans, available editors
 with the preferred one, and project scripts. `ChatHeader` keeps only the git
 control (`shellHosted`), since commit/push/PR flows carry dialogs and progress
 UI that live with that control; the branch toolbar under the composer is not
-rendered. Actions: `workspace.newThread`, `workspace.openInEditor
+rendered. The `Workspace` brick renders the breadcrumb and the run / open
+pills; the branch toolbar's contents (environment, checkout mode, branch
+picker, PR badge) are the context strip under the `Composer` brick, where the
+page puts them. Actions: `workspace.newThread`, `workspace.openInEditor
 {editorId?}` (same command and preference as the HTML picker),
 `workspace.runScript {scriptId}`, `workspace.envMode.set {mode}`,
 `workspace.startFromOrigin.set {enabled}`, `workspace.openPullRequest`,
@@ -278,8 +303,9 @@ stop a live session and rewrite the thread's checkout), and both the HTML
 `branchesLoading`, `branchSwitchPending`; actions `workspace.branch.search
 {query}`, `workspace.branch.select {name}`, `workspace.branch.create {name}`.
 
-Not yet native: renaming the thread and the git write actions (commit / push
-/ PR creation carry their own dialogs).
+Renaming is native too (`workspace.rename {title}`, with `renameRequestId`
+bumping when the page asks the brick to start editing) and the title's
+context menu comes from `workspace.titleMenu {x, y}`.
 
 ### `settings`
 
@@ -317,16 +343,24 @@ The page keeps owning the main sidebar's open state (its `sidebar.toggle`
 keybinding, Mod+B by default, still works when hosted) and publishes it as
 `layout {sidebarCollapsed}` from `ShellLayoutBridge`, mounted inside the
 sidebar provider. `sidebar.toggle` flips it from native chrome — the
-`Workspace` brick shows a toggle when its `sidebarToggle` property is bound.
+`Workspace` brick shows a toggle when its `sidebarToggle` property is bound
+(it takes the sidebar's place at the strip's left edge, as on the page), and
+`Sidebar` shows the matching collapse toggle in its brand band when
+`showBrand` is on. The right panel's toggle follows the same pattern:
+`Workspace.panelToggle` puts it in the header strip and `RightPanel
+{ ownToggle: false }` then takes no width while closed; a rice that leaves
+`ownToggle` on gets the 36 px rail with the toggle instead.
 The shell only animates the result: `DefaultShell` and the examples ease the
 sidebar's `Layout.preferredWidth` to 0 and hide it once it is gone
 (`visible: !sidebarCollapsed || width > 0` — guard on the collapsed flag, not
 on width alone, or a layout-managed item never regains a size).
 
-`Sidebar` carries the project scope picker in its header and the app's places
-(Settings, PRs, Usage, Add project) in its footer. A rice that puts those
-somewhere else — the dashboard example's icon rail — sets `showScope: false`
-and `showFooter: false` so the same action is not reachable from two places.
+`Sidebar` carries the search and new-thread row, the project scope picker
+and "add project" under its brand band, and the app's places (Settings, PRs,
+Usage) in its footer. A rice that puts those somewhere else — the dashboard
+example's icon rail — sets `showScope: false` and `showFooter: false` so the
+same action is not reachable from two places; `showBrand` is off by default
+because most rices bring their own title bar.
 
 ### `notifications`
 
@@ -365,6 +399,15 @@ publish-repository dialog (still HTML). Actions: `git.quick`, `git.menu
 `git.defaultBranch {choice}`, `git.init`, `git.publish`, `git.refresh`. The
 `GitActions` brick renders the split button, the commit dialog (file
 checklist + message) and the confirmation.
+
+### Composer layout
+
+The `Composer` brick is the page's composer card: a centered card (768 px
+max) with the attachment chips, the editor and a footer of ghost pickers —
+model, effort, permissions, the plan/build toggle — and the round send/stop
+button. The context strip hangs under the card with the environment
+selector, the checkout-mode picker, the PR badge and the branch button
+(`workspace.*` actions); the branch picker pops upward from it.
 
 ### Composer extras
 
