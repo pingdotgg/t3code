@@ -434,6 +434,62 @@ const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
   { key: "w", meta: true, shift: false, control: false },
 ]);
 
+/**
+ * Protocols a preview page may open in a real popup window.
+ *
+ * `about:blank` stays out: Chromium skips browser-side navigation for it, so the
+ * child copies the guest's `contextIsolation: false` preferences and Electron
+ * gives no way to override them. Those popups keep loading in the preview tab.
+ *
+ * Deliberately not `ElectronShell.parseSafeExternalUrl`: that also admits
+ * `vscode://vscode-remote/...` deep links, which belong in `shell.openExternal`
+ * and not in a window spawned by a third-party page in the preview.
+ */
+const POPUP_PROTOCOLS = new Set(["http:", "https:"]);
+
+const isPopupUrl = (rawUrl: string): boolean => {
+  try {
+    return POPUP_PROTOCOLS.has(new URL(rawUrl).protocol);
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Preferences for a popup a preview page opens.
+ *
+ * A popup is not a webview attach, so the `will-attach-webview` hardening in
+ * `DesktopWindow` never sees it, and an unoverridden child would inherit the
+ * guest's relaxed posture: the picker preload needs `contextIsolation: false`
+ * to share `globalThis` with the previewed page, and no OAuth provider should
+ * get that. The window keeps the opener and the guest session either way.
+ */
+const POPUP_WINDOW_OPTIONS: Electron.BrowserWindowConstructorOptions = {
+  webPreferences: {
+    contextIsolation: true,
+    sandbox: true,
+    nodeIntegration: false,
+    nodeIntegrationInSubFrames: false,
+  },
+};
+
+/**
+ * Decides what a preview page's `window.open` should do.
+ *
+ * `"popup"` opens a real window, which scripted popups need: denying them makes
+ * `window.open()` return `null` (OAuth SDKs report that as a blocked popup), and
+ * navigating the preview tab instead destroys the opener the popup has to
+ * `postMessage` its result back to.
+ *
+ * `target="_blank"` links arrive as a tab disposition and keep loading in the
+ * preview tab, which is what people expect from a link inside a preview.
+ */
+export const previewWindowOpenAction = (details: {
+  readonly url: string;
+  readonly disposition: Electron.HandlerDetails["disposition"];
+}): "popup" | "navigate" =>
+  details.disposition === "new-window" && isPopupUrl(details.url) ? "popup" : "navigate";
+
 export const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
   input.type === "keyDown" &&
   input.key.toLowerCase() === "r" &&
@@ -1704,10 +1760,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("audio-state-changed", audioStateChanged);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
-        wc.setWindowOpenHandler(({ url }) => {
+        wc.setWindowOpenHandler((details) => {
+          if (previewWindowOpenAction(details) === "popup") {
+            return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
+          }
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
-              wc.loadURL(url),
+              wc.loadURL(details.url),
             ).pipe(Effect.ignore),
           );
           return { action: "deny" };
