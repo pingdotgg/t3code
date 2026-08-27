@@ -87,6 +87,7 @@ function createProviderServiceHarness(
   const rollbackConversation = vi.fn(
     (_input: { readonly threadId: ThreadId; readonly numTurns: number }) => Effect.void,
   );
+  let activeTurnId: TurnId | undefined;
 
   const unsupported = <A>() =>
     Effect.die(new Error("Unsupported provider call in test")) as Effect.Effect<A, never>;
@@ -101,6 +102,7 @@ function createProviderServiceHarness(
             cwd: sessionCwd,
             createdAt: now,
             updatedAt: now,
+            ...(activeTurnId ? { activeTurnId } : {}),
           },
         ] satisfies ReadonlyArray<ProviderSession>)
       : Effect.succeed([] as ReadonlyArray<ProviderSession>);
@@ -139,6 +141,9 @@ function createProviderServiceHarness(
     service,
     rollbackConversation,
     emit,
+    setActiveTurnId: (turnId: TurnId | undefined) => {
+      activeTurnId = turnId;
+    },
   };
 }
 
@@ -342,6 +347,7 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(RuntimeReceiptBusLive),
+      Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer))),
@@ -765,6 +771,130 @@ describe("CheckpointReactor", () => {
       (entry) => entry.latestTurn?.turnId === "turn-main" && entry.checkpoints.length === 1,
     );
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+  });
+
+  it("preserves the active turn when a stale turn.started event arrives", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const activeTurnId = asTurnId("turn-active");
+    const completedAt = "2026-01-01T00:00:10.000Z";
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-active"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId,
+      turnId: activeTurnId,
+    });
+    await waitForGitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 0));
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-stale"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:05.000Z",
+      threadId,
+      turnId: asTurnId("turn-stale"),
+    });
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "active turn\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-active-after-stale-start"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId,
+      turnId: activeTurnId,
+      payload: { state: "completed" },
+    });
+
+    await waitForEvent(
+      harness.engine,
+      (event) => event.type === "thread.turn-diff-completed" && event.occurredAt === completedAt,
+    );
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.checkpoints[0]?.completedAt === completedAt,
+    );
+    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+  });
+
+  it("tracks a new turn when an accepted steer supersedes the active turn", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const oldTurnId = asTurnId("turn-steered-over");
+    const newTurnId = asTurnId("turn-from-steer");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const completedAt = "2026-01-01T00:00:10.000Z";
+
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-set-before-steer"),
+      threadId,
+      session: {
+        threadId,
+        status: "running",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: oldTurnId,
+        lastError: null,
+        updatedAt: createdAt,
+      },
+      createdAt,
+    });
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-before-steer"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt,
+      threadId,
+      turnId: oldTurnId,
+    });
+    await waitForGitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 0));
+
+    await harness.dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-turn-start-steer"),
+      threadId,
+      message: {
+        messageId: MessageId.make("msg-steer"),
+        role: "user",
+        text: "Use the new direction",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt: "2026-01-01T00:00:05.000Z",
+    });
+    harness.provider.setActiveTurnId(newTurnId);
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-from-steer"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:05.000Z",
+      threadId,
+      turnId: newTurnId,
+    });
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "steered turn\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-from-steer"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId,
+      turnId: newTurnId,
+      payload: { state: "completed" },
+    });
+
+    await waitForEvent(
+      harness.engine,
+      (event) => event.type === "thread.turn-diff-completed" && event.occurredAt === completedAt,
+    );
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.checkpoints[0]?.completedAt === completedAt,
+    );
+    expect(thread.latestTurn?.turnId).toBe(newTurnId);
   });
 
   it("captures a completion after the read model advances to a follow-up turn", async () => {

@@ -27,6 +27,8 @@ import {
   resolveThreadWorkspaceCwd,
 } from "../../checkpointing/Utils.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { CheckpointReactor, type CheckpointReactorShape } from "../Services/CheckpointReactor.ts";
 import { forkParked } from "../../serverActivation.ts";
@@ -84,6 +86,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const projectionTurnRepository = yield* ProjectionTurnRepository;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -417,6 +420,40 @@ const make = Effect.gen(function* () {
       });
     },
   );
+
+  const rememberRuntimeTurnStart = Effect.fn("rememberRuntimeTurnStart")(function* (
+    event: Extract<ProviderRuntimeEvent, { type: "turn.started" }>,
+  ) {
+    const turnId = toTurnId(event.turnId);
+    if (!turnId) {
+      return;
+    }
+
+    const activeRuntimeTurnId = activeRuntimeTurnByThread.get(event.threadId);
+    if (!activeRuntimeTurnId || sameId(activeRuntimeTurnId, turnId)) {
+      activeRuntimeTurnByThread.set(event.threadId, turnId);
+      return;
+    }
+
+    const thread = yield* resolveThreadDetail(event.threadId);
+    if (sameId(thread?.session?.activeTurnId, turnId)) {
+      activeRuntimeTurnByThread.set(event.threadId, turnId);
+      return;
+    }
+
+    const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+      threadId: event.threadId,
+    });
+    if (Option.isNone(pendingTurnStart)) {
+      return;
+    }
+
+    const sessions = yield* providerService.listSessions();
+    const providerSession = sessions.find((session) => session.threadId === event.threadId);
+    if (sameId(providerSession?.activeTurnId, turnId)) {
+      activeRuntimeTurnByThread.set(event.threadId, turnId);
+    }
+  });
 
   const ensurePreTurnBaselineFromTurnStart = Effect.fn("ensurePreTurnBaselineFromTurnStart")(
     function* (event: Extract<ProviderRuntimeEvent, { type: "turn.started" }>) {
@@ -783,11 +820,8 @@ const make = Effect.gen(function* () {
     event: ProviderRuntimeEvent,
   ) {
     if (event.type === "turn.started") {
-      const turnId = toTurnId(event.turnId);
-      if (turnId) {
-        activeRuntimeTurnByThread.set(event.threadId, turnId);
-      }
       yield* ensurePreTurnBaselineFromTurnStart(event);
+      yield* rememberRuntimeTurnStart(event);
       return;
     }
 
@@ -869,4 +903,6 @@ const make = Effect.gen(function* () {
   } satisfies CheckpointReactorShape;
 });
 
-export const CheckpointReactorLive = Layer.effect(CheckpointReactor, make);
+export const CheckpointReactorLive = Layer.effect(CheckpointReactor, make).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+);
