@@ -207,7 +207,7 @@ describe("applyGrokSubagentUpdate", () => {
     });
   });
 
-  it("keeps the last token count when a later tick only reports tools", () => {
+  it("keeps spawn-time token count when a later tick only reports tools", () => {
     const spawned = applyGrokSubagentUpdate(emptyGrokSubagentTrackState(), {
       kind: "spawned",
       subagentId: "child-1",
@@ -224,23 +224,7 @@ describe("applyGrokSubagentUpdate", () => {
       lastToolName: undefined,
       output: undefined,
     });
-    const progressed = applyGrokSubagentUpdate(spawned.state, {
-      kind: "progress",
-      subagentId: "child-1",
-      childSessionId: undefined,
-      role: "explore",
-      description: undefined,
-      model: undefined,
-      status: "running",
-      error: undefined,
-      tokensUsed: 50,
-      durationMs: undefined,
-      turnCount: undefined,
-      toolCallCount: undefined,
-      lastToolName: undefined,
-      output: undefined,
-    });
-    const toolOnly = applyGrokSubagentUpdate(progressed.state, {
+    const toolOnly = applyGrokSubagentUpdate(spawned.state, {
       kind: "progress",
       subagentId: "child-1",
       childSessionId: undefined,
@@ -406,5 +390,59 @@ describe("applyGrokWorkflowUpdate", () => {
         (event) => event.payload.taskId === grokWorkflowMemberTaskId("run-1", "agent-a"),
       ),
     ).toHaveLength(0);
+  });
+
+  it("emits member progress when wire state changes but mapped status does not", () => {
+    const member = {
+      agentId: "agent-a",
+      label: "Reviewer",
+      phase: undefined as string | undefined,
+      model: undefined as string | undefined,
+      tokensUsed: 10,
+      durationMs: 50,
+    };
+    const first = applyGrokWorkflowUpdate(emptyGrokSubagentTrackState(), {
+      runId: "run-1",
+      revision: 1,
+      name: "review",
+      objective: "Review the PR",
+      status: "active",
+      phases: [],
+      currentPhase: undefined,
+      agentBudget: undefined,
+      agentsUsed: undefined,
+      elapsedMs: undefined,
+      activeAgents: undefined,
+      currentAgentLabel: undefined,
+      agents: [{ ...member, state: "start" }],
+      pauseMessage: undefined,
+      resultSummary: undefined,
+    });
+    const second = applyGrokWorkflowUpdate(first.state, {
+      runId: "run-1",
+      revision: 2,
+      name: "review",
+      objective: "Review the PR",
+      status: "active",
+      phases: [],
+      currentPhase: undefined,
+      agentBudget: undefined,
+      agentsUsed: undefined,
+      elapsedMs: undefined,
+      activeAgents: undefined,
+      currentAgentLabel: undefined,
+      agents: [{ ...member, state: "running" }],
+      pauseMessage: undefined,
+      resultSummary: undefined,
+    });
+    const memberProgress = second.events.find(
+      (event) =>
+        event.type === "task.progress" &&
+        event.payload.taskId === grokWorkflowMemberTaskId("run-1", "agent-a"),
+    );
+    expect(memberProgress?.payload).toMatchObject({
+      status: "running",
+      summary: "running",
+    });
   });
 });

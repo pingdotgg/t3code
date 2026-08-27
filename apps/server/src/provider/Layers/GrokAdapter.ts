@@ -566,6 +566,20 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       return ctx && turnId !== undefined ? signalTurnLiveness(ctx, turnId) : Effect.void;
     };
 
+    const refreshGrokSessionTurnLiveness = (ctx: GrokSessionContext) =>
+      Effect.gen(function* () {
+        const turnId = resolveNotificationTurnId(ctx);
+        if (turnId === undefined || ctx.livenessTurnId !== turnId) {
+          return;
+        }
+        // Subagent/workflow ticks prove the provider is still working even
+        // when the parent ACP stream is quiet. Stamp the watchdog clock
+        // before signalling; a wake without a fresh timestamp cancels a
+        // turn that has already sat near turnInactivityTimeoutMs.
+        ctx.lastTurnActivityAtNanos = yield* Clock.monotonicTimeNanos;
+        yield* signalTurnLiveness(ctx, turnId);
+      });
+
     const applyGrokSessionNotification = (
       ctx: GrokSessionContext,
       method: GrokSessionNotificationMethod,
@@ -582,7 +596,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             payload: params,
             specs: applied.events,
           });
-          yield* signalSessionTurnLiveness(ctx.threadId, resolveNotificationTurnId(ctx));
+          yield* refreshGrokSessionTurnLiveness(ctx);
           return;
         }
         const subagent = parseXAiSubagentUpdate(params);
@@ -597,7 +611,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           payload: params,
           specs: applied.events,
         });
-        yield* signalSessionTurnLiveness(ctx.threadId, resolveNotificationTurnId(ctx));
+        yield* refreshGrokSessionTurnLiveness(ctx);
       });
 
     const resumeSessionTurnLiveness = Effect.fn("GrokAdapter.resumeSessionTurnLiveness")(function* (

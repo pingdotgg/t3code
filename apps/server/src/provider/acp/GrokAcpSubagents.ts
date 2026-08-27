@@ -325,6 +325,7 @@ export function grokWorkflowMemberTaskId(runId: string, agentId: string): string
 function memberFingerprint(agent: GrokWorkflowAgent, status: RuntimeTaskStatus): string {
   return [
     status,
+    agent.state,
     agent.label,
     agent.model ?? "",
     agent.phase ?? "",
@@ -526,6 +527,10 @@ export function applyGrokSubagentUpdate(
   const usageByTaskId = new Map(state.usageByTaskId);
   const events: Array<GrokTaskEventSpec> = [];
   const title = subagentTitle(update);
+  const typedUsage = mergeTypedUsageFromCounts(update, usageByTaskId.get(update.subagentId));
+  if (typedUsage) {
+    usageByTaskId.set(update.subagentId, typedUsage);
+  }
   const linkage = {
     taskId: update.subagentId,
     description: title,
@@ -546,10 +551,6 @@ export function applyGrokSubagentUpdate(
       events.push({ type: "task.started", payload: linkage });
     }
     if (!completedSubagentIds.has(update.subagentId)) {
-      const typedUsage = mergeTypedUsageFromCounts(update, usageByTaskId.get(update.subagentId));
-      if (typedUsage) {
-        usageByTaskId.set(update.subagentId, typedUsage);
-      }
       events.push({
         type: "task.progress",
         payload: {
@@ -568,10 +569,6 @@ export function applyGrokSubagentUpdate(
     }
     completedSubagentIds.add(update.subagentId);
     const finished = update.status ?? "completed";
-    const typedUsage = mergeTypedUsageFromCounts(update, usageByTaskId.get(update.subagentId));
-    if (typedUsage) {
-      usageByTaskId.set(update.subagentId, typedUsage);
-    }
     events.push({
       type: "task.completed",
       payload: {
