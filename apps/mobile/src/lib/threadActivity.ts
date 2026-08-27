@@ -1388,9 +1388,11 @@ export function derivePendingApprovals(
         ? (activity.payload as Record<string, unknown>)
         : null;
     const requestId = parseApprovalRequestId(payload?.requestId);
-    const requestKind = isProviderRequestKind(payload?.requestKind)
+    const mappedRequestKind = isProviderRequestKind(payload?.requestKind)
       ? payload.requestKind
       : requestKindFromRequestType(payload?.requestType);
+    const requestKind =
+      activity.kind === "approval.requested" ? (mappedRequestKind ?? "command") : mappedRequestKind;
     const detail = typeof payload?.detail === "string" ? payload.detail : undefined;
     const appName = typeof payload?.appName === "string" ? payload.appName : undefined;
     const options = Array.isArray(payload?.options)

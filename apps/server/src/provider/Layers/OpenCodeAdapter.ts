@@ -334,7 +334,11 @@ function toToolLifecycleItemType(toolName: string): ToolLifecycleItemType {
 
 function mapPermissionToRequestType(
   permission: string,
-): "command_execution_approval" | "file_read_approval" | "file_change_approval" | "unknown" {
+):
+  | "command_execution_approval"
+  | "file_read_approval"
+  | "file_change_approval"
+  | "dynamic_tool_call" {
   switch (permission) {
     case "bash":
       return "command_execution_approval";
@@ -343,7 +347,7 @@ function mapPermissionToRequestType(
     case "edit":
       return "file_change_approval";
     default:
-      return "unknown";
+      return "dynamic_tool_call";
   }
 }
 
@@ -557,11 +561,14 @@ function updateProviderSession(
 
 const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   context: OpenCodeSessionContext,
+  cancelPendingPermissions: (context: OpenCodeSessionContext) => Effect.Effect<void>,
 ) {
   // Race-safe one-shot: first caller flips the flag, everyone else no-ops.
   if (yield* Ref.getAndSet(context.stopped, true)) {
     return false;
   }
+
+  yield* cancelPendingPermissions(context).pipe(Effect.ignore);
 
   // Best-effort remote abort. The scope close below tears down the local
   // handles (event-pump fiber, server-exit fiber, event-subscribe fetch),
@@ -653,7 +660,8 @@ export function makeOpenCodeAdapter(
         // the remaining cleanups.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) =>
+            Effect.ignoreCause(stopOpenCodeContext(context, emitCancelledPendingPermissions)),
           { concurrency: "unbounded", discard: true },
         );
         // Close the logger AFTER session teardown so any final lifecycle
@@ -668,6 +676,30 @@ export function makeOpenCodeAdapter(
 
     const emit = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
+    const emitCancelledPendingPermissions = Effect.fn("emitCancelledPendingPermissions")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      yield* Effect.forEach(
+        [...context.pendingPermissions.entries()],
+        ([requestId, permission]) =>
+          Effect.gen(function* () {
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId: context.activeTurnId,
+                requestId,
+              })),
+              type: "request.resolved",
+              payload: {
+                requestType: mapPermissionToRequestType(permission.permission),
+                decision: "cancel",
+              },
+            });
+          }),
+        { concurrency: 1, discard: true },
+      );
+      context.pendingPermissions.clear();
+    });
     const writeNativeEvent = (
       threadId: ThreadId,
       event: {
@@ -726,6 +758,7 @@ export function makeOpenCodeAdapter(
       // Inline the teardown that `stopOpenCodeContext` would do; we can't
       // delegate to it because our `getAndSet` above already flipped the
       // one-shot guard, so the call would no-op.
+      yield* emitCancelledPendingPermissions(context).pipe(Effect.ignore);
       yield* runOpenCodeSdk("session.abort", () =>
         context.client.session.abort({ sessionID: context.openCodeSessionId }),
       ).pipe(Effect.ignore({ log: true }));
@@ -1210,7 +1243,7 @@ export function makeOpenCodeAdapter(
         const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
         const existing = sessions.get(input.threadId);
         if (existing) {
-          yield* stopOpenCodeContext(existing);
+          yield* stopOpenCodeContext(existing, emitCancelledPendingPermissions);
           sessions.delete(input.threadId);
         }
 
@@ -1626,7 +1659,7 @@ export function makeOpenCodeAdapter(
             threadId,
           });
         }
-        const stopped = yield* stopOpenCodeContext(context);
+        const stopped = yield* stopOpenCodeContext(context, emitCancelledPendingPermissions);
         sessions.delete(threadId);
         if (!stopped) {
           return;
@@ -1710,7 +1743,8 @@ export function makeOpenCodeAdapter(
         // interrupt the sibling fibers. Same pattern as the layer finalizer.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) =>
+            Effect.ignoreCause(stopOpenCodeContext(context, emitCancelledPendingPermissions)),
           { concurrency: "unbounded", discard: true },
         );
       });

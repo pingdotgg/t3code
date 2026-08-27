@@ -628,6 +628,68 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("renders and cancels unknown OpenCode permissions", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-unknown-permission");
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "permission.asked",
+          properties: {
+            id: "permission-1",
+            sessionID: "http://127.0.0.1:9999/session",
+            permission: "addCommentReaction",
+            patterns: ["eyes", "confused"],
+            metadata: {},
+          },
+        },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+
+      const openedEvents = Array.from(
+        yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")),
+      );
+      const stoppedEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.stopSession(threadId);
+
+      const stoppedEvents = Array.from(
+        yield* Fiber.join(stoppedEventsFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.deepEqual(
+        openedEvents.map((event) => event.type),
+        ["session.started", "thread.started", "request.opened"],
+      );
+      NodeAssert.equal(
+        openedEvents[2]?.type === "request.opened" && openedEvents[2].payload.requestType,
+        "dynamic_tool_call",
+      );
+      NodeAssert.deepEqual(
+        stoppedEvents.map((event) => event.type),
+        ["request.resolved", "session.exited"],
+      );
+      NodeAssert.equal(
+        stoppedEvents[0]?.type === "request.resolved" && stoppedEvents[0].payload.decision,
+        "cancel",
+      );
+    }),
+  );
+
   it.effect("clears session state even when cleanup finalizers throw", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

@@ -194,6 +194,28 @@ describe("pending approvals", () => {
 
     expect(derivePendingApprovals([requested, resolved])).toEqual([]);
   });
+
+  it("derives unknown provider approvals as actionable generic approvals", () => {
+    const activity = makeActivity({
+      id: EventId.make("approval-unknown"),
+      kind: "approval.requested",
+      summary: "Approval requested",
+      createdAt: "2026-08-24T00:00:00.000Z",
+      payload: {
+        requestId: "req-unknown",
+        requestType: "unknown",
+        detail: "addCommentReaction|eyes|'confused'",
+      },
+    });
+
+    expect(derivePendingApprovals([activity])).toMatchObject([
+      {
+        requestId: "req-unknown",
+        requestKind: "command",
+        detail: "addCommentReaction|eyes|'confused'",
+      },
+    ]);
+  });
 });
 
 function makeActivity(

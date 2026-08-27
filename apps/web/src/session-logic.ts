@@ -396,7 +396,7 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     case "mcp_elicitation_approval":
       return "mcp-elicitation";
     default:
-      return null;
+      return "command";
   }
 }
 
