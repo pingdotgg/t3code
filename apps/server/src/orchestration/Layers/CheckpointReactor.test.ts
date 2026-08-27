@@ -767,6 +767,64 @@ describe("CheckpointReactor", () => {
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
   });
 
+  it("captures a completion after the read model advances to a follow-up turn", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const completedTurnId = asTurnId("turn-completed");
+    const completedAt = "2026-01-01T00:00:10.000Z";
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-before-follow-up"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId,
+      turnId: completedTurnId,
+    });
+    await waitForGitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 0));
+
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-advanced-to-follow-up"),
+      threadId,
+      session: {
+        threadId,
+        status: "running",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: asTurnId("turn-follow-up"),
+        lastError: null,
+        updatedAt: "2026-01-01T00:00:20.000Z",
+      },
+      createdAt: "2026-01-01T00:00:20.000Z",
+    });
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "completed turn\n", "utf8");
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-after-follow-up-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId,
+      turnId: completedTurnId,
+      payload: { state: "completed" },
+    });
+
+    await waitForEvent(
+      harness.engine,
+      (event) => event.type === "thread.turn-diff-completed" && event.occurredAt === completedAt,
+    );
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.checkpoints[0]?.completedAt === completedAt,
+    );
+
+    expect(thread.checkpoints).toHaveLength(1);
+    expect(
+      gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 1), "README.md"),
+    ).toBe("completed turn\n");
+  });
+
   it("captures pre-turn and completion checkpoints for claude runtime events", async () => {
     const harness = await createHarness({
       seedFilesystemCheckpoints: false,

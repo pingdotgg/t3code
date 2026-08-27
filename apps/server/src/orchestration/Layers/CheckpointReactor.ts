@@ -88,6 +88,7 @@ const make = Effect.gen(function* () {
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
+  const activeRuntimeTurnByThread = new Map<ThreadId, TurnId>();
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -353,7 +354,10 @@ const make = Effect.gen(function* () {
 
   // Captures a real git checkpoint when a turn completes via a runtime event.
   const captureCheckpointFromTurnCompletion = Effect.fn("captureCheckpointFromTurnCompletion")(
-    function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) {
+    function* (
+      event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>,
+      activeRuntimeTurnId: TurnId | undefined,
+    ) {
       const turnId = toTurnId(event.turnId);
       if (!turnId) {
         return;
@@ -365,7 +369,8 @@ const make = Effect.gen(function* () {
       }
 
       // When a primary turn is active, only that turn may produce completion checkpoints.
-      if (thread.session?.activeTurnId && !sameId(thread.session.activeTurnId, turnId)) {
+      const primaryTurnId = activeRuntimeTurnId ?? thread.session?.activeTurnId;
+      if (primaryTurnId && !sameId(primaryTurnId, turnId)) {
         return;
       }
 
@@ -778,14 +783,18 @@ const make = Effect.gen(function* () {
     event: ProviderRuntimeEvent,
   ) {
     if (event.type === "turn.started") {
+      const turnId = toTurnId(event.turnId);
+      if (turnId) {
+        activeRuntimeTurnByThread.set(event.threadId, turnId);
+      }
       yield* ensurePreTurnBaselineFromTurnStart(event);
       return;
     }
 
     if (event.type === "turn.completed") {
       const turnId = toTurnId(event.turnId);
-      yield* refreshLocalGitStatusFromTurnCompletion(event);
-      yield* captureCheckpointFromTurnCompletion(event).pipe(
+      const activeRuntimeTurnId = activeRuntimeTurnByThread.get(event.threadId);
+      yield* captureCheckpointFromTurnCompletion(event, activeRuntimeTurnId).pipe(
         Effect.catch((error) =>
           Effect.flatMap(nowIso, (createdAt) =>
             appendCaptureFailureActivity({
@@ -797,6 +806,10 @@ const make = Effect.gen(function* () {
           ),
         ),
       );
+      if (turnId && activeRuntimeTurnId && sameId(activeRuntimeTurnId, turnId)) {
+        activeRuntimeTurnByThread.delete(event.threadId);
+      }
+      yield* refreshLocalGitStatusFromTurnCompletion(event);
       return;
     }
   });
