@@ -1717,9 +1717,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       );
     });
 
-    // Catch-up must replay EVERY un-applied event: `readFromSequence` defaults to a
-    // 1 000-event limit (it still pages internally), and a capped bootstrap would leave
-    // the remaining events un-projected forever once the engine appends its next event.
     const bootstrapProjector = (projector: ProjectorDefinition) =>
       projectionStateRepository
         .getByProjector({
