@@ -22,6 +22,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { toastManager } from "../ui/toast";
+import { claimReferralWithRetry } from "./ReferralClaimCoordinator.logic";
 
 function clearPendingReferralCode(): void {
   try {
@@ -119,12 +120,18 @@ function ConfiguredReferralClaimCoordinator() {
     const referralCode = pendingReferralCode ?? readPendingReferralCode();
     if (!referralCode) return;
     const attemptKey = `${userId}:${referralCode}`;
-    if (activeClaimRef.current === attemptKey || completedClaimRef.current === attemptKey) return;
-    activeClaimRef.current = attemptKey;
 
-    void (async () => {
+    const runClaim = async () => {
+      if (activeClaimRef.current === attemptKey || completedClaimRef.current === attemptKey) return;
+      activeClaimRef.current = attemptKey;
       try {
-        const result = await claimReferral({ accountId: userId, referralCode });
+        const result = await claimReferralWithRetry({
+          claim: () => claimReferral({ accountId: userId, referralCode }),
+          shouldRetry: (claimResult) =>
+            activeClaimRef.current === attemptKey &&
+            claimResult._tag !== "Success" &&
+            !isAtomCommandInterrupted(claimResult),
+        });
         if (result._tag === "Success") {
           completedClaimRef.current = attemptKey;
           clearPendingReferralCode();
@@ -134,13 +141,25 @@ function ConfiguredReferralClaimCoordinator() {
           showClaimResult(result.value.result);
           return;
         }
-        if (isAtomCommandInterrupted(result)) return;
+        if (activeClaimRef.current !== attemptKey || isAtomCommandInterrupted(result)) return;
         const cause = squashAtomCommandFailure(result);
         console.error("[t3-cloud] Could not claim captured referral code", { cause });
+        toastManager.add({
+          type: "error",
+          title: "Referral still pending",
+          description: "Retry before linking an environment so your referrer can receive points.",
+          timeout: 0,
+          actionProps: {
+            children: "Retry",
+            onClick: () => void runClaim(),
+          },
+        });
       } finally {
         if (activeClaimRef.current === attemptKey) activeClaimRef.current = null;
       }
-    })();
+    };
+
+    void runClaim();
   }, [claimReferral, isLoaded, isSignedIn, pendingReferralCode, relayAccountId, userId]);
 
   return authPrompt;
