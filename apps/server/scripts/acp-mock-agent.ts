@@ -19,6 +19,7 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const emitXAiSubagent = process.env.T3_ACP_EMIT_XAI_SUBAGENT === "1";
 const emitXAiExitPlanMode = process.env.T3_ACP_EMIT_XAI_EXIT_PLAN_MODE === "1";
 const emitXAiPlanMdWrite = process.env.T3_ACP_EMIT_XAI_PLAN_MD_WRITE === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
@@ -541,6 +542,44 @@ const program = Effect.gen(function* () {
 
       if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
         return yield* Effect.never;
+      }
+
+      if (emitXAiSubagent) {
+        writeJsonRpcNotification("_x.ai/session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "subagent_spawned",
+            subagent_id: "grok-subagent-1",
+            subagent_type: "explore",
+            description: "Search the codebase",
+            model: "grok-4.6",
+          },
+        });
+        writeJsonRpcNotification("_x.ai/session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "subagent_progress",
+            subagent_id: "grok-subagent-1",
+            subagent_type: "explore",
+            description: "Search the codebase",
+            status: "running",
+            last_tool_name: "grep",
+            tokens_used: 80,
+          },
+        });
+        writeJsonRpcNotification("_x.ai/session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "subagent_finished",
+            subagent_id: "grok-subagent-1",
+            subagent_type: "explore",
+            description: "Search the codebase",
+            status: "completed",
+            output: "Found 3 call sites.",
+            tokens_used: 120,
+            duration_ms: 400,
+          },
+        });
       }
 
       if (emitXAiRateLimitThenHang) {
