@@ -12,13 +12,54 @@ import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+
+const decodeJsonUnknown = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { SAFE_IMAGE_FILE_EXTENSIONS } from "../imageMime.ts";
 
 const IMAGE_PATH_PATTERN = /(?:^|[\s"'=])(\/[^\s"'\\]+\.(?:png|jpe?g|webp|gif))\b/gi;
+const CODEX_IMAGE_TIMEOUT = Duration.minutes(3);
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const asTrimmedString = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+export const summarizeCodexExecOutput = (stdout: string, stderr: string): string => {
+  let lastMessage: string | null = null;
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    const parsed = decodeJsonUnknown(trimmed);
+    if (Option.isNone(parsed)) continue;
+    const record = asRecord(parsed.value);
+    if (!record) continue;
+    const item = asRecord(record.item);
+    const fromItem =
+      asTrimmedString(item?.text) ??
+      asTrimmedString(item?.message) ??
+      asTrimmedString(asRecord(item?.error)?.message);
+    const fromEvent =
+      asTrimmedString(record.message) ??
+      asTrimmedString(record.error) ??
+      asTrimmedString(asRecord(record.error)?.message);
+    lastMessage = fromItem ?? fromEvent ?? lastMessage;
+  }
+  const fallback = stderr.trim() || stdout.trim();
+  const preview = lastMessage ?? fallback;
+  return preview.slice(0, 300);
+};
 
 export interface CodexGeneratedFile {
   readonly path: string;
@@ -90,6 +131,7 @@ export const generateCodexImage = Effect.fn("CodexImageCli.generate")(function* 
     ),
   );
 
+  yield* Effect.logInfo("Codex image generation started");
   const startedAt = yield* Clock.currentTimeMillis;
   const result = yield* runner
     .run({
@@ -100,12 +142,15 @@ export const generateCodexImage = Effect.fn("CodexImageCli.generate")(function* 
         "--ephemeral",
         "--enable",
         "image_generation",
-        "--sandbox",
-        "workspace-write",
+        // Isolated tmp workspace: image_gen needs network, and a non-interactive
+        // exec otherwise sits on an approval prompt until the process timeout.
+        "--dangerously-bypass-approvals-and-sandbox",
         "--add-dir",
         destinationDir,
         "-C",
         scratchDir,
+        "--color",
+        "never",
         "--json",
         buildCodexPrompt(input.generate, input.destinationPath),
       ],
@@ -113,7 +158,7 @@ export const generateCodexImage = Effect.fn("CodexImageCli.generate")(function* 
       env: {
         CODEX_HOME: homePath,
       },
-      timeout: Duration.minutes(5),
+      timeout: CODEX_IMAGE_TIMEOUT,
       timeoutBehavior: "timedOutResult",
       maxOutputBytes: 4 * 1024 * 1024,
       outputMode: "truncate",
@@ -133,7 +178,7 @@ export const generateCodexImage = Effect.fn("CodexImageCli.generate")(function* 
     return yield* new ImageGenerationUnavailableError({
       reason: "provider-error",
       provider: "codex",
-      detail: "Codex image generation timed out.",
+      detail: "Codex image generation timed out after 3 minutes.",
     });
   }
 
@@ -152,13 +197,11 @@ export const generateCodexImage = Effect.fn("CodexImageCli.generate")(function* 
     }
   });
   if (!found) {
-    const preview = result.stderr.trim() || result.stdout.trim();
+    const preview = summarizeCodexExecOutput(result.stdout, result.stderr);
     return yield* new ImageGenerationUnavailableError({
       reason: "provider-error",
       provider: "codex",
-      detail: preview
-        ? `Codex did not save an image. ${preview.slice(0, 300)}`
-        : "Codex did not save an image.",
+      detail: preview ? `Codex did not save an image. ${preview}` : "Codex did not save an image.",
     });
   }
   if (found !== input.destinationPath) {

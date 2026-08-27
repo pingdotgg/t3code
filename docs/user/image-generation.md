@@ -6,9 +6,9 @@ Turn it on in Settings → Integrations → Image generation. The default backen
 
 ## Providers
 
-**Codex** uses the Codex CLI already configured in T3 Code. No extra API key. Images count against Codex usage.
+**Codex** uses the Codex CLI already configured in T3 Code, with full access for that isolated image job. No extra API key. Images count against Codex usage.
 
-**Grok** uses Grok Imagine with your existing `grok login`. You can pick Imagine 2.0, Imagine Quality, or Imagine.
+**Grok** uses Grok Build (the same CLI as the Grok provider) with your existing `grok login` and full access for that isolated image job. You can pick Imagine 2.0, Imagine Quality, or Imagine.
 
 If the selected backend is missing or signed out, the tool reports that instead of generating.
 
@@ -18,4 +18,4 @@ Generated files are stored in T3 Code's image library on the environment, under 
 
 ## Quality and size
 
-The tool defaults aspect ratio to auto. You can ask for `1k` or `2k` resolution and `low`, `medium`, or `high` quality. Grok honors those options on Imagine. Codex gets them as instructions to its built-in image tool.
+The tool defaults aspect ratio to auto. You can ask for `1k` or `2k` resolution and `low`, `medium`, or `high` quality. Both backends pass those as instructions to their built-in image tools.
