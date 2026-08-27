@@ -2970,15 +2970,15 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
-  it("surfaces stale provider approval request failures without faking approval resolution", async () => {
+  it("normalizes stale Codex approval callbacks without faking approval resolution", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     harness.respondToRequest.mockImplementation(() =>
       Effect.fail(
         new ProviderAdapterRequestError({
           provider: ProviderDriverKind.make("codex"),
-          method: "session/request_permission",
-          detail: "Unknown pending permission request: approval-request-1",
+          method: "item/requestApproval/decision",
+          detail: "Unknown pending Codex approval request: approval-request-1",
         }),
       ),
     );
