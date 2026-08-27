@@ -1516,6 +1516,23 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.detail).toBeUndefined();
   });
 
+  it("does not classify unrelated work entries as command approvals", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "web-search-completed",
+        kind: "tool.completed",
+        summary: "Searched the web",
+        payload: {
+          itemType: "web_search",
+          title: "Search",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.requestKind).toBeUndefined();
+  });
+
   it("uses grep raw output summaries instead of repeating the generic tool label", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

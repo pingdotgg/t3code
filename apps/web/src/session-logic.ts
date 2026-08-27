@@ -396,7 +396,7 @@ function requestKindFromRequestType(requestType: unknown): PendingApproval["requ
     case "mcp_elicitation_approval":
       return "mcp-elicitation";
     default:
-      return "command";
+      return null;
   }
 }
 
@@ -431,12 +431,14 @@ export function derivePendingApprovals(
       payload && typeof payload.requestId === "string"
         ? ApprovalRequestId.make(payload.requestId)
         : null;
-    const requestKind =
+    const mappedRequestKind =
       payload && isProviderRequestKind(payload.requestKind)
         ? payload.requestKind
         : payload
           ? requestKindFromRequestType(payload.requestType)
           : null;
+    const requestKind =
+      activity.kind === "approval.requested" ? (mappedRequestKind ?? "command") : mappedRequestKind;
     const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
     const appName = payload && typeof payload.appName === "string" ? payload.appName : undefined;
     const options = Array.isArray(payload?.options)
