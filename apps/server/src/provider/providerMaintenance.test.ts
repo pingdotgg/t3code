@@ -42,12 +42,14 @@ const isNativeTestCommandPath =
 const packageToolUpdate = makeProviderMaintenanceResolver({
   provider: driver("packageTool"),
   packageName: "@example/package-tool",
+  executableName: "package-tool",
   homebrewFormula: "package-tool",
   nativeUpdate: null,
 });
 const nativePackageToolUpdate = makeProviderMaintenanceResolver({
   provider: driver("nativePackageTool"),
   packageName: "@example/native-package-tool",
+  executableName: "native-package-tool",
   homebrewFormula: "native-package-tool",
   nativeUpdate: {
     executable: "native-package-tool",
@@ -63,6 +65,7 @@ const nativePackageToolUpdate = makeProviderMaintenanceResolver({
 const scopedPackageToolUpdate = makeProviderMaintenanceResolver({
   provider: driver("scopedPackageTool"),
   packageName: "@example/scoped-package-tool",
+  executableName: "scoped-package-tool",
   homebrewFormula: "example/tap/scoped-package-tool",
   nativeUpdate: {
     executable: "scoped-package-tool",
@@ -625,6 +628,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     const claudeUpdate = makeProviderMaintenanceResolver({
       provider: driver("claudeAgent"),
       packageName: "@anthropic-ai/claude-code",
+      executableName: "claude",
       homebrewFormula: "claude-code",
       nativeUpdate: {
         executable: "claude",

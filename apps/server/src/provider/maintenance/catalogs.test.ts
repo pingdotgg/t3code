@@ -177,6 +177,48 @@ it.effect("proves a custom global Scoop root from Scoop configuration", () => {
   );
 });
 
+it.effect("treats SCOOP_GLOBAL as authoritative over Scoop configuration", () => {
+  const userRoot = "C:/Users/test/scoop";
+  const observedGlobalRoot = "D:/Shared/ScoopGlobal";
+  const environmentGlobalRoot = "E:/Authoritative/ScoopGlobal";
+  const shim = `${observedGlobalRoot}/shims/codex.exe`;
+  const scoop = `${userRoot}/shims/scoop.ps1`;
+  return resolveInstallation(
+    context({
+      binaryPath: "codex",
+      resolvedCommandPath: shim,
+      platform: "win32",
+      environment: { PATH: "test-path", SCOOP_GLOBAL: environmentGlobalRoot },
+      commands: { scoop },
+      files: {
+        [`${observedGlobalRoot}/shims/codex.shim`]: `path = "${observedGlobalRoot}/apps/codex/current/codex.exe"`,
+        [`${observedGlobalRoot}/apps/codex/current/install.json`]: JSON.stringify({
+          bucket: "main",
+        }),
+        [`${observedGlobalRoot}/apps/codex/current/manifest.json`]: JSON.stringify({
+          version: "1.2.3",
+        }),
+      },
+      probes: {
+        [`${scoop} config global_path`]: {
+          stdout: observedGlobalRoot,
+          stderr: "",
+          exitCode: 0,
+        },
+      },
+    }),
+    catalog,
+  ).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Unknown installation — verification failed",
+        ownershipVerified: false,
+        update: null,
+      });
+    }),
+  );
+});
+
 it.effect("keeps an unknown bare command manual-only", () => {
   return resolveInstallation(
     context({

@@ -573,20 +573,20 @@ function scoopDefinition(input: ProviderMaintenanceDefinitionInput) {
       const global = !within(context, executable, root);
       if (global) {
         const environmentRoot = text(context.environment.SCOOP_GLOBAL);
-        const configProbe =
-          environmentRoot && normalize(context, environmentRoot) === normalize(context, root)
-            ? null
-            : yield* context.run(executable, ["config", "global_path"], context.environment);
-        const configuredRoot = output(configProbe?.stdout);
+        const configProbe = environmentRoot
+          ? null
+          : yield* context.run(executable, ["config", "global_path"], context.environment);
+        const configOutput = output(configProbe?.stdout);
+        const configuredRoot =
+          configProbe?.exitCode === 0 && configOutput && pathApi(context).isAbsolute(configOutput)
+            ? configOutput
+            : null;
         const defaultRoot = pathApi(context).join(
           context.environment.ProgramData ?? "C:\\ProgramData",
           "scoop",
         );
-        const ownsGlobalRoot = [environmentRoot, configuredRoot, defaultRoot].some(
-          (candidate) =>
-            candidate !== null && normalize(context, candidate) === normalize(context, root),
-        );
-        if (!ownsGlobalRoot) {
+        const effectiveGlobalRoot = environmentRoot ?? configuredRoot ?? defaultRoot;
+        if (normalize(context, effectiveGlobalRoot) !== normalize(context, root)) {
           return undetermined("The global Scoop root owning this shim could not be verified.");
         }
       }

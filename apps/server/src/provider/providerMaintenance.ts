@@ -127,6 +127,7 @@ export interface ProviderMaintenanceCapabilitiesResolver {
 export interface ProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly packageName: string;
+  readonly executableName: string;
   readonly homebrewFormula: string | null;
   readonly nativeUpdate: {
     readonly executable: string;
@@ -138,7 +139,6 @@ export interface ProviderMaintenanceDefinition {
       environment: NodeJS.ProcessEnv,
     ) => NodeJS.ProcessEnv;
   } | null;
-  readonly executableName?: string;
   readonly instructionsUrl?: string;
   readonly wingetPackageId?: string;
 }
@@ -226,17 +226,10 @@ export function normalizeCommandPath(commandPath: string): string {
 export function makeProviderMaintenanceResolver(
   definition: ProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilitiesResolver {
-  const executableName =
-    definition.executableName ??
-    (definition.provider === ProviderDriverKind.make("claudeAgent")
-      ? "claude"
-      : definition.provider === ProviderDriverKind.make("opencode")
-        ? "opencode"
-        : "codex");
   const catalog = makeProviderInstallationCatalog({
     provider: definition.provider,
     packageName: definition.packageName,
-    executableName,
+    executableName: definition.executableName,
     homebrewFormula: definition.homebrewFormula,
     native: definition.nativeUpdate
       ? {
