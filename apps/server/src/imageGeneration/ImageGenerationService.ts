@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -183,15 +184,33 @@ export class ImageGenerationService extends Context.Service<
             detail: "Could not resolve the T3 Code images directory.",
           });
         }
-        const generated = yield* generateCodexImage({
-          settings: decodeCodexSettings(settings.providers.codex),
-          generate: input,
-          destinationPath,
-        }).pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-          Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-          Effect.provideService(Clock.Clock, clock),
+        const generated = yield* runLock.withPermits(1)(
+          generateCodexImage({
+            settings: decodeCodexSettings(settings.providers.codex),
+            generate: input,
+            destinationPath,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+            Effect.provideService(Clock.Clock, clock),
+            Effect.timeout(Duration.minutes(3)),
+            Effect.mapError((cause) =>
+              cause._tag === "TimeoutError"
+                ? new ImageGenerationUnavailableError({
+                    reason: "provider-error",
+                    provider: "codex",
+                    detail: "Codex image generation timed out after 3 minutes.",
+                  })
+                : cause._tag === "ImageGenerationUnavailableError"
+                  ? cause
+                  : new ImageGenerationUnavailableError({
+                      reason: "provider-error",
+                      provider: "codex",
+                      detail: "Codex did not start. Check the Codex binary path in Settings.",
+                    }),
+            ),
+          ),
         );
         return {
           image: {
@@ -305,11 +324,7 @@ export class ImageGenerationService extends Context.Service<
         };
       });
 
-      return ImageGenerationService.of({
-        generate: (input) => runLock.withPermits(1)(generate(input)),
-        edit: (input) => runLock.withPermits(1)(edit(input)),
-        importFile,
-      });
+      return ImageGenerationService.of({ generate, edit, importFile });
     }),
   ).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(FetchHttpClient.layer));
 }

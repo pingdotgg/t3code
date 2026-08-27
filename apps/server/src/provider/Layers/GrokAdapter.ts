@@ -670,6 +670,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                           value: mcpSession.authorizationHeader,
                         },
                       ],
+                      // Grok's HTTP MCP client aborts tools around 5 minutes.
+                      _meta: { tool_timeout_sec: 600 },
                     },
                   ],
                 }

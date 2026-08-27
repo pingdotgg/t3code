@@ -140,29 +140,35 @@ const postImagine = Effect.fn("GrokImagine.post")(function* (
   token: string,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
-  const response = yield* HttpClientRequest.post(`https://api.x.ai/v1${path}`).pipe(
-    HttpClientRequest.setHeader("authorization", `Bearer ${token}`),
-    HttpClientRequest.bodyJson(payload),
-    Effect.flatMap(httpClient.execute),
+  const roundTrip = Effect.gen(function* () {
+    const response = yield* HttpClientRequest.post(`https://api.x.ai/v1${path}`).pipe(
+      HttpClientRequest.setHeader("authorization", `Bearer ${token}`),
+      HttpClientRequest.bodyJson(payload),
+      Effect.flatMap(httpClient.execute),
+    );
+    if (response.status < 200 || response.status >= 300) {
+      const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+      const detail = body.replace(/\s+/g, " ").trim().slice(0, 240);
+      return yield* providerError(
+        detail
+          ? `Grok Imagine failed (${response.status}): ${detail}`
+          : `Grok Imagine failed (${response.status}).`,
+      );
+    }
+    return yield* HttpClientResponse.schemaBodyJson(ImagineResponse)(response).pipe(
+      Effect.mapError(() =>
+        providerError("Grok Imagine returned a response T3 Code could not parse."),
+      ),
+    );
+  });
+  return yield* roundTrip.pipe(
     Effect.timeout(IMAGINE_TIMEOUT),
     Effect.mapError((cause) =>
       cause._tag === "TimeoutError"
         ? providerError("Grok Imagine timed out after 2 minutes.")
-        : providerError("Grok Imagine did not respond."),
-    ),
-  );
-  if (response.status < 200 || response.status >= 300) {
-    const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    const detail = body.replace(/\s+/g, " ").trim().slice(0, 240);
-    return yield* providerError(
-      detail
-        ? `Grok Imagine failed (${response.status}): ${detail}`
-        : `Grok Imagine failed (${response.status}).`,
-    );
-  }
-  return yield* HttpClientResponse.schemaBodyJson(ImagineResponse)(response).pipe(
-    Effect.mapError(() =>
-      providerError("Grok Imagine returned a response T3 Code could not parse."),
+        : cause._tag === "ImageGenerationUnavailableError"
+          ? cause
+          : providerError("Grok Imagine did not respond."),
     ),
   );
 });
