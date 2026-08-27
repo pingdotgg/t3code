@@ -117,7 +117,7 @@ export function useCloudLinkController() {
         return false;
       }
       if (!linked || managedTunnelActive !== desired.managedTunnel) {
-        const referralCode = readPendingReferralCode(window.localStorage);
+        const referralCode = readPendingReferralCode();
         const linkResult = await linkPrimaryEnvironment({
           target,
           clerkToken,

@@ -16,8 +16,16 @@ describe("referralLinks", () => {
       getItem: vi.fn(() => "abcd1234efab5678"),
     };
 
-    expect(readPendingReferralCode(storage)).toBe("ABCD1234EFAB5678");
+    expect(readPendingReferralCode(() => storage)).toBe("ABCD1234EFAB5678");
     expect(storage.getItem).toHaveBeenCalledWith(PENDING_REFERRAL_CODE_STORAGE_KEY);
+  });
+
+  it("treats blocked browser storage as empty", () => {
+    expect(
+      readPendingReferralCode(() => {
+        throw new Error("Storage access denied");
+      }),
+    ).toBeNull();
   });
 
   it("reads and removes only the referral parameter", () => {

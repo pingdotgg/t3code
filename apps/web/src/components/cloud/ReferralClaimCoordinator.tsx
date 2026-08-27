@@ -108,7 +108,7 @@ function ConfiguredReferralClaimCoordinator() {
     initializedReferralRef.current = true;
     const initial = referralClaimLoadState(
       capturedCode,
-      capturedCode ? null : readPendingReferralCode(window.localStorage),
+      capturedCode ? null : readPendingReferralCode(),
     );
     shouldPromptSignInRef.current = initial.shouldPromptSignIn;
     setPendingReferralCode(initial.referralCode);
@@ -128,7 +128,7 @@ function ConfiguredReferralClaimCoordinator() {
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn || !userId || relayAccountId !== userId) return;
-    const referralCode = pendingReferralCode ?? readPendingReferralCode(window.localStorage);
+    const referralCode = pendingReferralCode ?? readPendingReferralCode();
     if (!referralCode) return;
     const attemptKey = `${userId}:${referralCode}`;
     const attempt = { key: attemptKey };

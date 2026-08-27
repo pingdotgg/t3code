@@ -7,8 +7,11 @@ import {
 
 export const PENDING_REFERRAL_CODE_STORAGE_KEY = "t3code.pending-referral-code";
 
-export function readPendingReferralCode(storage: Pick<Storage, "getItem">): string | null {
+export function readPendingReferralCode(
+  getStorage: () => Pick<Storage, "getItem"> = () => window.localStorage,
+): string | null {
   try {
+    const storage = getStorage();
     return normalizeReferralCode(storage.getItem(PENDING_REFERRAL_CODE_STORAGE_KEY) ?? "");
   } catch {
     return null;
