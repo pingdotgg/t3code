@@ -35,4 +35,5 @@ private:
   QProcess m_process;
   QByteArray m_stdoutBuffer;
   bool m_announced = false;
+  bool m_stopping = false;
 };

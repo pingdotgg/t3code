@@ -24,12 +24,20 @@ BackendProcess::BackendProcess(Options options, QObject* parent)
     }
   });
   connect(&m_process, &QProcess::finished, this, [this](int exitCode, QProcess::ExitStatus status) {
-    if (!m_announced) {
-      emit failed(QStringLiteral("Desktop host exited before it was ready (code %1, %2).")
-                      .arg(exitCode)
-                      .arg(status == QProcess::CrashExit ? QStringLiteral("crashed")
-                                                         : QStringLiteral("normal exit")));
+    if (m_stopping) {
+      return;
     }
+    const QString how = status == QProcess::CrashExit ? QStringLiteral("crashed")
+                                                       : QStringLiteral("normal exit");
+    // A host that dies after announcing leaves the web view on a dead origin;
+    // say so instead of letting the page spin on reconnects forever.
+    emit failed(m_announced
+                    ? QStringLiteral("Desktop host exited (code %1, %2). Restart T3 Code to reconnect.")
+                          .arg(exitCode)
+                          .arg(how)
+                    : QStringLiteral("Desktop host exited before it was ready (code %1, %2).")
+                          .arg(exitCode)
+                          .arg(how));
   });
 }
 
@@ -40,6 +48,7 @@ void BackendProcess::start() {
 }
 
 void BackendProcess::stop() {
+  m_stopping = true;
   if (m_process.state() == QProcess::NotRunning) {
     return;
   }

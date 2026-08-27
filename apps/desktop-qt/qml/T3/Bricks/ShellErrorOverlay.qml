@@ -3,11 +3,13 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import T3.Shell
 
-// Shown when the user's shell.qml failed and the built-in shell took over.
+// Shown when the user's shell.qml failed and the built-in shell took over,
+// or when the desktop host (the bundled server) went away.
 Item {
     id: overlay
 
-    readonly property bool hasError: Runtime.lastError.length > 0
+    readonly property string backendError: Shell.state.backendError ?? ""
+    readonly property bool hasError: Runtime.lastError.length > 0 || backendError.length > 0
 
     visible: hasError
 
@@ -31,14 +33,16 @@ Item {
 
             Label {
                 Layout.fillWidth: true
-                text: Runtime.usingUserShell ? qsTr("Shell warning") : qsTr("shell.qml failed — using the built-in shell")
+                text: Runtime.lastError.length > 0
+                    ? (Runtime.usingUserShell ? qsTr("Shell warning") : qsTr("shell.qml failed — using the built-in shell"))
+                    : qsTr("Desktop host stopped")
                 font.bold: true
                 color: Theme.color("text", "#e4e4e7")
             }
 
             Label {
                 Layout.fillWidth: true
-                text: Runtime.lastError
+                text: Runtime.lastError.length > 0 ? Runtime.lastError : overlay.backendError
                 wrapMode: Text.Wrap
                 font.family: "monospace"
                 font.pixelSize: 12
