@@ -9,6 +9,8 @@ import T3.Bricks
 Window {
     id: root
 
+    readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
+
     width: 1280
     height: 820
     visible: true
@@ -28,8 +30,16 @@ Window {
 
             Sidebar {
                 Layout.fillHeight: true
-                Layout.preferredWidth: 260
-                visible: !settingsNav.active
+                Layout.preferredWidth: root.sidebarCollapsed ? 0 : 260
+                visible: (!settingsNav.active) && (!root.sidebarCollapsed || width > 0)
+                Layout.minimumWidth: 0
+
+                Behavior on Layout.preferredWidth {
+                    NumberAnimation {
+                        duration: 220
+                        easing.type: Easing.OutCubic
+                    }
+                }
             }
 
             SettingsNav {
@@ -46,6 +56,8 @@ Window {
                 spacing: 0
 
                 Workspace {
+
+                    sidebarToggle: root.sidebarCollapsed
                     Layout.fillWidth: true
                     visible: ready
                 }

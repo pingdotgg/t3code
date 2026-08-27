@@ -69,6 +69,16 @@ export const ShellSidebarState = Schema.Struct({
 });
 export type ShellSidebarState = typeof ShellSidebarState.Type;
 
+/**
+ * Published under the `layout` key by the page's sidebar provider: the
+ * collapse state the page owns (its keybinding toggles it), for the shell to
+ * animate its own chrome.
+ */
+export const ShellLayoutState = Schema.Struct({
+  sidebarCollapsed: Schema.Boolean,
+});
+export type ShellLayoutState = typeof ShellLayoutState.Type;
+
 export const ShellComposerModel = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
@@ -392,6 +402,7 @@ export const ShellAction = Schema.Union([
     type: Schema.Literal("sidebar.scope"),
     projectKey: Schema.NullOr(Schema.String),
   }),
+  Schema.Struct({ type: Schema.Literal("sidebar.toggle") }),
   Schema.Struct({ type: Schema.Literal("project.add") }),
   Schema.Struct({ type: Schema.Literal("settings.open") }),
   Schema.Struct({ type: Schema.Literal("pullRequests.open") }),

@@ -9,6 +9,8 @@ import T3.Bricks
 Window {
     id: root
 
+    readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
+
     property date now: new Date()
 
     readonly property bool settingsActive: Shell.state.settings ? Shell.state.settings.active : false
@@ -92,6 +94,7 @@ Window {
                     anchors.fill: parent
                     anchors.leftMargin: 8
                     visible: ready
+                    sidebarToggle: root.sidebarCollapsed
                     color: "transparent"
                 }
             }
@@ -114,8 +117,18 @@ Window {
             spacing: 14
 
             Glass {
-                Layout.preferredWidth: 290
+                Layout.preferredWidth: root.sidebarCollapsed ? 0 : 290
+                Layout.minimumWidth: 0
                 Layout.fillHeight: true
+                visible: !root.sidebarCollapsed || width > 0
+                clip: true
+
+                Behavior on Layout.preferredWidth {
+                    NumberAnimation {
+                        duration: 220
+                        easing.type: Easing.OutCubic
+                    }
+                }
 
                 Sidebar {
                     anchors.fill: parent

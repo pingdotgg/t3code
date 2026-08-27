@@ -9,6 +9,8 @@ import T3.Bricks
 Window {
     id: root
 
+    readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
+
     readonly property color canvas: Theme.color("canvas", "#f4ece4")
     readonly property color card: Theme.color("surface", "#fffaf6")
     readonly property color line: Theme.color("border", "#e5d6ca")
@@ -82,6 +84,7 @@ Window {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 36
                 visible: ready
+                sidebarToggle: root.sidebarCollapsed
                 color: "transparent"
             }
         }
@@ -92,8 +95,18 @@ Window {
             spacing: 12
 
             Card {
-                Layout.preferredWidth: 280
+                Layout.preferredWidth: root.sidebarCollapsed ? 0 : 280
+                Layout.minimumWidth: 0
                 Layout.fillHeight: true
+                visible: !root.sidebarCollapsed || width > 0
+                clip: true
+
+                Behavior on Layout.preferredWidth {
+                    NumberAnimation {
+                        duration: 220
+                        easing.type: Easing.OutCubic
+                    }
+                }
 
                 Sidebar {
                     anchors.fill: parent

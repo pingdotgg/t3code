@@ -9,6 +9,9 @@ Window {
     id: root
 
     readonly property color chromeColor: Theme.color("chrome", "#0b0b0d")
+    // The page owns the collapse state (its Mod+B toggles it); the shell only
+    // animates it. Shell.dispatch("sidebar.toggle") flips it from native chrome.
+    readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
 
     width: 1280
     height: 820
@@ -36,9 +39,19 @@ Window {
             spacing: 0
 
             Sidebar {
+                id: sidebar
+
                 Layout.fillHeight: true
-                Layout.preferredWidth: 260
-                visible: !settingsNav.active
+                Layout.preferredWidth: root.sidebarCollapsed ? 0 : 260
+                Layout.minimumWidth: 0
+                visible: !settingsNav.active && (!root.sidebarCollapsed || width > 0)
+
+                Behavior on Layout.preferredWidth {
+                    NumberAnimation {
+                        duration: 220
+                        easing.type: Easing.OutCubic
+                    }
+                }
             }
 
             SettingsNav {
@@ -57,6 +70,7 @@ Window {
                 Workspace {
                     Layout.fillWidth: true
                     visible: ready
+                    sidebarToggle: root.sidebarCollapsed
                 }
 
                 WebSurface {

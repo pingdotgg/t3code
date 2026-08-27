@@ -17,6 +17,8 @@ Rectangle {
 
     implicitWidth: 260
     color: Theme.color("sidebar", "#0a0a0a")
+    // Content keeps its width while the shell animates ours.
+    clip: true
 
     function buildRows(state) {
         if (!state) {
@@ -54,12 +56,14 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
+        anchors.leftMargin: Math.min(0, sidebar.width - sidebar.implicitWidth)
         spacing: 0
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 8
-            spacing: 6
+            Layout.margins: 10
+            Layout.bottomMargin: 4
+            spacing: 8
 
             ShellComboBox {
                 id: scope
@@ -112,7 +116,7 @@ Rectangle {
                 Text {
                     anchors.left: parent.left
                     anchors.bottom: parent.bottom
-                    anchors.leftMargin: 14
+                    anchors.leftMargin: 16
                     anchors.bottomMargin: 6
                     visible: entry.isHeader
                     text: entry.isHeader ? entry.modelData.label : ""
@@ -163,8 +167,8 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 6
-            spacing: 2
+            Layout.margins: 8
+            spacing: 4
 
             FooterButton {
                 text: qsTr("Settings")

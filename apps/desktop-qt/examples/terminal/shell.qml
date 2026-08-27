@@ -9,6 +9,8 @@ import T3.Bricks
 Window {
     id: root
 
+    readonly property bool sidebarCollapsed: Shell.state.layout ? Shell.state.layout.sidebarCollapsed : false
+
     property date now: new Date()
 
     readonly property bool settingsActive: Shell.state.settings ? Shell.state.settings.active : false
@@ -107,6 +109,7 @@ Window {
         Workspace {
             Layout.fillWidth: true
             visible: ready
+            sidebarToggle: root.sidebarCollapsed
         }
 
         RowLayout {
@@ -115,9 +118,17 @@ Window {
             spacing: 0
 
             Sidebar {
-                Layout.preferredWidth: 240
+                Layout.preferredWidth: root.sidebarCollapsed ? 0 : 240
+                Layout.minimumWidth: 0
                 Layout.fillHeight: true
-                visible: !root.settingsActive
+                visible: !root.settingsActive && (!root.sidebarCollapsed || width > 0)
+
+                Behavior on Layout.preferredWidth {
+                    NumberAnimation {
+                        duration: 220
+                        easing.type: Easing.OutCubic
+                    }
+                }
             }
 
             SettingsNav {

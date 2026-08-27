@@ -306,9 +306,23 @@ themed controls (`ShellButton` etc.) take radius, surfaces, borders and fonts
 from `Theme`, so native chrome matches the page by default and follows
 whatever the user picks in Settings.
 
+### `layout`
+
+The page keeps owning the main sidebar's open state (its `sidebar.toggle`
+keybinding, Mod+B by default, still works when hosted) and publishes it as
+`layout {sidebarCollapsed}` from `ShellLayoutBridge`, mounted inside the
+sidebar provider. `sidebar.toggle` flips it from native chrome — the
+`Workspace` brick shows a toggle when its `sidebarToggle` property is bound.
+The shell only animates the result: `DefaultShell` and the examples ease the
+sidebar's `Layout.preferredWidth` to 0 and hide it once it is gone
+(`visible: !sidebarCollapsed || width > 0` — guard on the collapsed flag, not
+on width alone, or a layout-managed item never regains a size).
+
 ### `notifications`
 
-`ToastProvider` accepts a `shellMirror` rendered inside it; `ShellToastBridge`
+`ToastProvider` accepts a `shellMirror` rendered inside it; the mirrored
+toasts still get a hidden `Toast.Root` in the HTML viewport, because Base UI
+only drops a closed toast once its root has finished leaving. `ShellToastBridge`
 mirrors the page's stacked toasts (title, description, buttons, update key)
 as `notifications` and runs a toast's button or dismissal on
 `notification.action {id, actionId}` / `notification.dismiss {id}` — the

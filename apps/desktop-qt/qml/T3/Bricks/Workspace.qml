@@ -30,14 +30,64 @@ Rectangle {
         return parts.join(" ");
     }
 
+    // Set by the layout: whether the sidebar is collapsed. Null hides the
+    // toggle; a bool shows it (the icon's pane fills when the sidebar is out).
+    property var sidebarToggle: null
+
     implicitHeight: 40
     color: Theme.color("toolbar", "#0f0f12")
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 12
+        anchors.leftMargin: 8
         anchors.rightMargin: 12
         spacing: 8
+
+        ShellButton {
+            subtle: true
+            visible: strip.sidebarToggle !== null
+            leftPadding: 6
+            rightPadding: 6
+            Accessible.name: strip.sidebarToggle === true ? qsTr("Show sidebar") : qsTr("Hide sidebar")
+            onClicked: Shell.dispatch("sidebar.toggle")
+
+            contentItem: Item {
+                implicitWidth: 16
+                implicitHeight: 12
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: 3
+                    color: "transparent"
+                    border.color: strip.foreground
+                    border.width: 1.2
+                    opacity: 0.85
+                }
+
+                Rectangle {
+                    x: 5
+                    width: 1.2
+                    height: parent.height
+                    color: strip.foreground
+                    opacity: 0.85
+                }
+
+                Rectangle {
+                    x: 1.2
+                    y: 1.2
+                    width: strip.sidebarToggle === true ? 0 : 3.8
+                    height: parent.height - 2.4
+                    color: strip.foreground
+                    opacity: 0.6
+
+                    Behavior on width {
+                        NumberAnimation {
+                            duration: 160
+                        }
+                    }
+                }
+            }
+        }
 
         ShellButton {
             subtle: true
