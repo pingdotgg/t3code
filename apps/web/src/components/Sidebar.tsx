@@ -1414,12 +1414,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         >
           <div className="relative z-10 h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
-              <ProjectFavicon
-                environmentId={thread.environmentId}
-                cwd={props.projectCwd ?? ""}
-                faviconPath={props.projectFaviconPath}
-                className="size-4 shrink-0"
-              />
               {props.projectTitle ? (
                 <span
                   className={cn(
