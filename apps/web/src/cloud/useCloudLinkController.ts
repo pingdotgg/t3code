@@ -17,6 +17,7 @@ import {
 } from "./linkEnvironmentAtoms";
 import { usePrimaryCloudLinkState } from "./primaryCloudLinkState";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
+import { readPendingReferralCode } from "./referralLinks";
 
 export interface CloudLinkDesiredState {
   readonly managedTunnel: boolean;
@@ -116,10 +117,12 @@ export function useCloudLinkController() {
         return false;
       }
       if (!linked || managedTunnelActive !== desired.managedTunnel) {
+        const referralCode = readPendingReferralCode(window.localStorage);
         const linkResult = await linkPrimaryEnvironment({
           target,
           clerkToken,
           mode: desired.managedTunnel ? "managed" : "publish_only",
+          ...(referralCode ? { referralCode } : {}),
         });
         if (linkResult._tag === "Failure") {
           if (!isAtomCommandInterrupted(linkResult)) {

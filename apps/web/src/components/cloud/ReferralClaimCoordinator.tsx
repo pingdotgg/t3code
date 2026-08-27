@@ -17,6 +17,7 @@ import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import {
   captureReferralCodeFromUrl,
   PENDING_REFERRAL_CODE_STORAGE_KEY,
+  readPendingReferralCode,
   urlWithoutMatchingReferralCode,
 } from "../../cloud/referralLinks";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -34,14 +35,6 @@ function clearPendingReferralCode(): void {
   try {
     window.localStorage.removeItem(PENDING_REFERRAL_CODE_STORAGE_KEY);
   } catch {}
-}
-
-function readPendingReferralCode(): string | null {
-  try {
-    return window.localStorage.getItem(PENDING_REFERRAL_CODE_STORAGE_KEY);
-  } catch {
-    return null;
-  }
 }
 
 function captureReferralCode(): string | null {
@@ -115,7 +108,7 @@ function ConfiguredReferralClaimCoordinator() {
     initializedReferralRef.current = true;
     const initial = referralClaimLoadState(
       capturedCode,
-      capturedCode ? null : readPendingReferralCode(),
+      capturedCode ? null : readPendingReferralCode(window.localStorage),
     );
     shouldPromptSignInRef.current = initial.shouldPromptSignIn;
     setPendingReferralCode(initial.referralCode);
@@ -135,7 +128,7 @@ function ConfiguredReferralClaimCoordinator() {
 
   useEffect(() => {
     if (!isLoaded || !isSignedIn || !userId || relayAccountId !== userId) return;
-    const referralCode = pendingReferralCode ?? readPendingReferralCode();
+    const referralCode = pendingReferralCode ?? readPendingReferralCode(window.localStorage);
     if (!referralCode) return;
     const attemptKey = `${userId}:${referralCode}`;
     const attempt = { key: attemptKey };

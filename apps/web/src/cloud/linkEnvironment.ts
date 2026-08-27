@@ -403,6 +403,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
   readonly target: CloudLinkTarget;
   readonly clerkToken: string;
   readonly mode?: CloudLinkMode;
+  readonly referralCode?: string;
 }): Effect.Effect<
   void,
   CloudEnvironmentLinkError,
@@ -423,6 +424,21 @@ export function linkPrimaryEnvironmentToCloud(input: {
     const environmentClient = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
     if (managedTunnelsEnabled) {
       yield* ensureRelayClientAvailable(EnvironmentId.make(input.target.environmentId));
+    }
+
+    if (input.referralCode) {
+      yield* relayClient
+        .claimReferral({
+          clerkToken: input.clerkToken,
+          referralCode: input.referralCode,
+        })
+        .pipe(
+          Effect.mapError(
+            decodedRelayClientError(
+              `${configuredRelayUrl}/v1/client/referrals/claim failed before environment linking`,
+            ),
+          ),
+        );
     }
 
     const challenge = yield* relayClient

@@ -6,12 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { RelayReferralClaimResult } from "@t3tools/contracts/relay";
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
-import {
-  buildReferralLink,
-  buildReferralShareMessage,
-  normalizeReferralCode,
-  REFERRAL_SHARE_TITLE,
-} from "@t3tools/shared/referral";
+import { buildReferralLink, normalizeReferralCode } from "@t3tools/shared/referral";
 import type { ComponentProps } from "react";
 import { useState } from "react";
 import {
@@ -37,6 +32,7 @@ import {
   useManagedRelayReferralSummary,
 } from "../cloud/managedRelayState";
 import { SettingsSection } from "./components/SettingsSection";
+import { shareReferralLink } from "./referralShare";
 
 function showClaimResult(result: RelayReferralClaimResult): void {
   switch (result) {
@@ -169,17 +165,7 @@ export function SettingsReferralsRouteScreen() {
   };
 
   const shareReferral = () => {
-    if (!referralLink) return;
-    void Share.share(
-      {
-        title: REFERRAL_SHARE_TITLE,
-        message: buildReferralShareMessage(referralLink),
-      },
-      {
-        dialogTitle: "Share referral link",
-        subject: REFERRAL_SHARE_TITLE,
-      },
-    );
+    void shareReferralLink(referralLink, (content, options) => Share.share(content, options));
   };
 
   if (!isSignedIn) {

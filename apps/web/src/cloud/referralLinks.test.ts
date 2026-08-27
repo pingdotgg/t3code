@@ -1,14 +1,25 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildReferralShareData,
   captureReferralCodeFromUrl,
+  PENDING_REFERRAL_CODE_STORAGE_KEY,
+  readPendingReferralCode,
   referralCodeFromUrl,
   urlWithoutMatchingReferralCode,
   urlWithoutReferralCode,
 } from "./referralLinks";
 
 describe("referralLinks", () => {
+  it("normalizes a pending referral read from storage", () => {
+    const storage = {
+      getItem: vi.fn(() => "abcd1234efab5678"),
+    };
+
+    expect(readPendingReferralCode(storage)).toBe("ABCD1234EFAB5678");
+    expect(storage.getItem).toHaveBeenCalledWith(PENDING_REFERRAL_CODE_STORAGE_KEY);
+  });
+
   it("reads and removes only the referral parameter", () => {
     const url = new URL("https://app.t3.codes/?channel=nightly&ref=abcd1234efab5678#thread");
     expect(referralCodeFromUrl(url)).toBe("ABCD1234EFAB5678");

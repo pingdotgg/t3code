@@ -7,6 +7,14 @@ import {
 
 export const PENDING_REFERRAL_CODE_STORAGE_KEY = "t3code.pending-referral-code";
 
+export function readPendingReferralCode(storage: Pick<Storage, "getItem">): string | null {
+  try {
+    return normalizeReferralCode(storage.getItem(PENDING_REFERRAL_CODE_STORAGE_KEY) ?? "");
+  } catch {
+    return null;
+  }
+}
+
 export function referralCodeFromUrl(url: URL): string | null {
   return normalizeReferralCode(url.searchParams.get("ref") ?? "");
 }
