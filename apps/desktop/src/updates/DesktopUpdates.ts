@@ -486,6 +486,18 @@ export const make = Effect.gen(function* () {
     { discard: true },
   );
 
+  const recoverFailedInstall = Effect.fn("desktop.updates.recoverFailedInstall")(function* (
+    message: string,
+  ) {
+    yield* resetInstallAction;
+    const instances = yield* pool.list;
+    yield* Effect.forEach(instances, (instance) => instance.start, {
+      concurrency: "unbounded",
+      discard: true,
+    });
+    yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
+  });
+
   const installDownloadedUpdate = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
     const hasInstallableDownload =
@@ -521,7 +533,6 @@ export const make = Effect.gen(function* () {
         (instance) => instance.stop({ timeout: Duration.seconds(5) }),
         { concurrency: "unbounded" },
       );
-      yield* electronWindow.destroyAll;
       yield* electronUpdater.quitAndInstall({
         isSilent: true,
         isForceRunAfter: true,
@@ -531,10 +542,7 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({
         ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
           function* (error) {
-            yield* resetInstallAction;
-            yield* updateState((current) =>
-              reduceDesktopUpdateStateOnInstallFailure(current, error.message),
-            );
+            yield* recoverFailedInstall(error.message);
             yield* logUpdaterError(error.message, {
               errorTag: error._tag,
               channel: error.channel,
@@ -551,11 +559,10 @@ export const make = Effect.gen(function* () {
           if (Cause.hasInterruptsOnly(cause)) {
             return yield* Effect.failCause(cause);
           }
-          yield* resetInstallAction;
-          const error = new DesktopUpdateUnexpectedActionError({ action: "install", cause });
-          yield* updateState((current) =>
-            reduceDesktopUpdateStateOnInstallFailure(current, error.message),
+          yield* recoverFailedInstall(
+            new DesktopUpdateUnexpectedActionError({ action: "install", cause }).message,
           );
+          const error = new DesktopUpdateUnexpectedActionError({ action: "install", cause });
           yield* logUpdaterError(error.message, {
             errorTag: error._tag,
             action: error.action,
@@ -668,11 +675,7 @@ export const make = Effect.gen(function* () {
       cause,
     });
     if (Option.isSome(activeAction) && activeAction.value === "install") {
-      yield* finishUpdateAction("install");
-      yield* Ref.set(desktopState.quitting, false);
-      yield* updateState((current) =>
-        reduceDesktopUpdateStateOnInstallFailure(current, error.message),
-      );
+      yield* recoverFailedInstall(error.message);
       yield* logUpdaterError(error.message, {
         errorTag: error._tag,
         operation: error.operation,

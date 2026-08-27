@@ -42,6 +42,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
+  const installSteps: string[] = [];
 
   const addListener = (eventName: string, listener: (...args: readonly unknown[]) => void) => {
     const eventListeners = listeners.get(eventName) ?? new Set();
@@ -88,6 +89,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     quitAndInstall: () =>
       Effect.sync(() => {
         quitAndInstallCount += 1;
+        installSteps.push("quitAndInstall");
       }).pipe(Effect.andThen(options.quitAndInstall ?? Effect.void)),
     on: (eventName, listener) =>
       Effect.acquireRelease(
@@ -113,7 +115,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       Effect.sync(() => {
         sentStates.push(state as DesktopUpdateState);
       }),
-    destroyAll: Effect.void,
+    destroyAll: Effect.sync(() => {
+      installSteps.push("destroyAll");
+    }),
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"]);
 
@@ -216,6 +220,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     layer,
     checkCount: () => checkCount,
     quitAndInstalls: () => quitAndInstallCount,
+    installSteps,
     downloadCount: () => downloadCount,
     feedUrls: () => feedUrls,
     fullChangelog: () => fullChangelog,
