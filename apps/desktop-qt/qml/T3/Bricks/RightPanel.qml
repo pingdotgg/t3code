@@ -192,9 +192,17 @@ Rectangle {
         Loader {
             id: body
 
+            // Once up, the document stays up: closing the panel or leaving the
+            // thread route (settings) hides it instead of destroying the
+            // terminals and scroll state it holds.
+            readonly property bool wanted: panel.open && panel.embedUrl.toString().length > 0
+
             Layout.fillWidth: true
             Layout.fillHeight: true
-            active: panel.open && panel.embedUrl.toString().length > 0
+            active: false
+            visible: panel.open
+            onWantedChanged: if (wanted) active = true
+            Component.onCompleted: if (wanted) active = true
 
             // The document follows thread changes itself (t3Shell.onState), so
             // the URL is only the starting point; rebinding it would reload.
