@@ -1066,7 +1066,7 @@ export function AppearanceSettingsPanel() {
                     updateSettings({ appearanceContrast });
                   }
                 }}
-                step={5}
+                step={1}
                 style={appearanceContrastSliderStyle}
                 type="range"
                 value={settings.appearanceContrast}
@@ -1113,7 +1113,7 @@ export function AppearanceSettingsPanel() {
                     updateSettings({ glassOpacity });
                   }
                 }}
-                step={5}
+                step={1}
                 style={glassOpacitySliderStyle}
                 type="range"
                 value={settings.glassOpacity}
