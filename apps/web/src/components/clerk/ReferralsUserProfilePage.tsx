@@ -282,8 +282,12 @@ export function ReferralsUserProfilePage() {
               />
               <div className="mt-4 flex flex-col gap-2 sm:ml-11 sm:flex-row">
                 <Input
+                  autoCapitalize="none"
+                  autoComplete="off"
+                  autoCorrect="off"
                   nativeInput
                   size="sm"
+                  spellCheck={false}
                   value={referralCode}
                   placeholder="ABCD1234EFAB5678"
                   aria-label="Referral code"

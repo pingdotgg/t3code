@@ -22,6 +22,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { toastManager } from "../ui/toast";
+import { stackedThreadToast } from "../ui/toastHelpers";
 import { claimReferralWithRetry, referralClaimLoadState } from "./ReferralClaimCoordinator.logic";
 
 function clearPendingReferralCode(): void {
@@ -151,16 +152,18 @@ function ConfiguredReferralClaimCoordinator() {
         if (activeClaimRef.current !== attemptKey || isAtomCommandInterrupted(result)) return;
         const cause = squashAtomCommandFailure(result);
         console.error("[t3-cloud] Could not claim captured referral code", { cause });
-        toastManager.add({
-          type: "error",
-          title: "Referral still pending",
-          description: "Retry before linking an environment so your referrer can receive points.",
-          timeout: 0,
-          actionProps: {
-            children: "Retry",
-            onClick: () => void runClaim(),
-          },
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Referral still pending",
+            description: "Retry before linking an environment so your referrer can receive points.",
+            timeout: 0,
+            actionProps: {
+              children: "Retry",
+              onClick: () => void runClaim(),
+            },
+          }),
+        );
       } finally {
         if (activeClaimRef.current === attemptKey) activeClaimRef.current = null;
       }
