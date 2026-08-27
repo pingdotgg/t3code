@@ -27,6 +27,7 @@ import {
   extractModelConfigId,
   findSessionConfigOption,
   mergeToolCallState,
+  toolCallProgressLength,
   parseSessionModeState,
   parseSessionUpdateEvent,
   sessionUpdateIsReplay,
@@ -233,6 +234,7 @@ export class AcpSessionRuntime extends Context.Service<
      */
     readonly setSessionModel: (
       modelId: string,
+      meta?: EffectAcpSchema.SetSessionModelRequest["_meta"],
     ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
     /**
      * Sends a generic ACP extension request and records it through the request logger.
@@ -796,12 +798,13 @@ export const make = (
           Effect.flatMap((started) => setConfigOption(started.modelConfigId ?? "model", model)),
           Effect.asVoid,
         ),
-      setSessionModel: (modelId) =>
+      setSessionModel: (modelId, meta) =>
         getStartedState.pipe(
           Effect.flatMap((started) => {
             const requestPayload = {
               sessionId: started.sessionId,
               modelId,
+              ...(meta !== undefined ? { _meta: meta } : {}),
             } satisfies EffectAcpSchema.SetSessionModelRequest;
             return runLoggedRequest(
               "session/set_model",
@@ -893,7 +896,7 @@ const handleSessionUpdate = ({
             next.set(nextToolCall.toolCallId, {
               state: nextToolCall,
               lastEmittedDetailLength: decision.emit
-                ? nextToolCall.detail?.length
+                ? toolCallProgressLength(nextToolCall)
                 : tracked?.lastEmittedDetailLength,
               skippedSinceEmit: decision.skippedSinceEmit,
             });
