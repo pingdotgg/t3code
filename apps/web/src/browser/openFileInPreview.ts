@@ -36,6 +36,28 @@ export type OpenPreviewMutation<E = unknown> = (input: {
   readonly input: PreviewOpenInput;
 }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
 
+export interface ExternalFileOpenSession {
+  readonly open: (url: string) => Promise<void>;
+  readonly cancel: () => void;
+}
+
+export function beginExternalFileOpen(input: {
+  readonly isDesktop: boolean;
+  readonly openExternal: (url: string) => Promise<void>;
+  readonly openWindow: () => Pick<Window, "close" | "location" | "opener"> | null;
+}): ExternalFileOpenSession {
+  if (input.isDesktop) {
+    return { open: input.openExternal, cancel: () => undefined };
+  }
+  const tab = input.openWindow();
+  if (!tab) throw new Error("The browser blocked the new tab.");
+  tab.opener = null;
+  return {
+    open: async (url) => tab.location.replace(url),
+    cancel: () => tab.close(),
+  };
+}
+
 export async function openUrlInPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly url: string;
@@ -95,4 +117,47 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     url: assetUrl,
     openPreview: input.openPreview,
   });
+}
+
+export async function openFileInExternalBrowser<AssetError>(input: {
+  readonly threadRef: ScopedThreadRef;
+  readonly filePath: string;
+  readonly httpBaseUrl: string;
+  readonly createAssetUrl: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly input: { readonly resource: AssetResource };
+  }) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
+  /** Runs before the first await so a web click can reserve its tab synchronously. */
+  readonly beginOpen: () => ExternalFileOpenSession;
+}): Promise<AtomCommandResult<void, AssetError>> {
+  const session = input.beginOpen();
+  try {
+    const assetResult = await input.createAssetUrl({
+      environmentId: input.threadRef.environmentId,
+      input: {
+        resource: {
+          _tag: "workspace-file",
+          threadId: input.threadRef.threadId,
+          path: input.filePath,
+        },
+      },
+    });
+    if (assetResult._tag === "Failure") {
+      session.cancel();
+      return AsyncResult.failure(assetResult.cause);
+    }
+    const assetUrl = resolveAssetUrl(input.httpBaseUrl, assetResult.value.relativeUrl);
+    if (assetUrl === null) {
+      session.cancel();
+      return AsyncResult.failure(
+        Cause.die(new Error("The environment returned an invalid asset URL.")),
+      );
+    }
+
+    await session.open(assetUrl);
+    return AsyncResult.success(undefined);
+  } catch (cause) {
+    session.cancel();
+    throw cause;
+  }
 }

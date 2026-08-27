@@ -129,7 +129,9 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { resolvePathLinkTarget } from "../terminal-links";
 import {
+  beginExternalFileOpen,
   isBrowserPreviewFile,
+  openFileInExternalBrowser,
   openFileInPreview,
   openUrlInPreview,
   BrowserPreviewUnavailableError,
@@ -923,6 +925,7 @@ interface MarkdownFileLinkProps {
   onOpenInPanel: (workspaceRelativePath: string, line: number | undefined) => void;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  onOpenInExternalBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onReveal?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   /** Platform-specific menu label ("Reveal in Finder", ...); required for the
       reveal item to show. */
@@ -1280,6 +1283,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpenInPanel,
   openInEditorMenuLabel,
   onOpenInBrowser,
+  onOpenInExternalBrowser,
   onReveal,
   revealLabel,
   className,
@@ -1330,43 +1334,57 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     onOpenInPanel(workspaceRelativePath, line);
   }, [handleOpenInEditor, line, onOpenInPanel, threadRef, workspaceRelativePath]);
 
-  const handleOpenInBrowser = useCallback(() => {
-    if (!onOpenInBrowser) {
-      return;
-    }
-    void (async () => {
-      try {
-        const result = await onOpenInBrowser();
-        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
-          return;
-        }
-        reportMarkdownActionFailure(
-          { operation: "open-file-in-browser", target: targetPath },
-          result.cause,
-        );
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Unable to open file in browser",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      } catch (cause) {
-        reportMarkdownActionFailure(
-          { operation: "open-file-in-browser", target: targetPath },
-          cause,
-        );
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Unable to open file in browser",
-            description: cause instanceof Error ? cause.message : "An error occurred.",
-          }),
-        );
+  const handleOpenInBrowser = useCallback(
+    (external = false) => {
+      const open = external ? onOpenInExternalBrowser : onOpenInBrowser;
+      if (!open) {
+        return;
       }
-    })();
-  }, [onOpenInBrowser, targetPath]);
+      void (async () => {
+        try {
+          const result = await open();
+          if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+            return;
+          }
+          reportMarkdownActionFailure(
+            {
+              operation: external ? "open-file-in-external-browser" : "open-file-in-browser",
+              target: targetPath,
+            },
+            result.cause,
+          );
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: external
+                ? "Unable to open file in system browser"
+                : "Unable to open file in browser",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        } catch (cause) {
+          reportMarkdownActionFailure(
+            {
+              operation: external ? "open-file-in-external-browser" : "open-file-in-browser",
+              target: targetPath,
+            },
+            cause,
+          );
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: external
+                ? "Unable to open file in system browser"
+                : "Unable to open file in browser",
+              description: cause instanceof Error ? cause.message : "An error occurred.",
+            }),
+          );
+        }
+      })();
+    },
+    [onOpenInBrowser, onOpenInExternalBrowser, targetPath],
+  );
 
   const handleRevealInFileManager = useCallback(() => {
     if (!onReveal) {
@@ -1457,6 +1475,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             ...(onOpenInBrowser
               ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
               : []),
+            ...(onOpenInExternalBrowser
+              ? ([{ id: "open-in-external-browser", label: "Open in system browser" }] as const)
+              : []),
             ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
             { id: "copy-relative", label: "Copy relative path" },
             { id: "copy-full", label: "Copy full path" },
@@ -1470,6 +1491,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         }
         if (clicked === "open-in-browser") {
           handleOpenInBrowser();
+          return;
+        }
+        if (clicked === "open-in-external-browser") {
+          handleOpenInBrowser(true);
           return;
         }
         if (clicked === "reveal") {
@@ -1497,6 +1522,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       handleOpenInEditor,
       handleRevealInFileManager,
       onOpenInBrowser,
+      onOpenInExternalBrowser,
       onOpen,
       onReveal,
       openInEditorMenuLabel,
@@ -1619,6 +1645,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpenInPanel === next.onOpenInPanel &&
     previous.openInEditorMenuLabel === next.openInEditorMenuLabel &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
+    previous.onOpenInExternalBrowser === next.onOpenInExternalBrowser &&
     previous.onReveal === next.onReveal &&
     previous.revealLabel === next.revealLabel &&
     previous.className === next.className
@@ -1834,6 +1861,35 @@ function ChatMarkdown({
     },
     [createAssetUrl, openPreview, preparedConnection, threadRef],
   );
+  const openMarkdownFileInExternalBrowser = useCallback(
+    (path: string) => {
+      const api = readLocalApi();
+      if (!threadRef || preparedConnection._tag === "None" || !api) {
+        return Promise.resolve(
+          AsyncResult.failure<void, BrowserPreviewUnavailableError>(
+            Cause.fail(
+              new BrowserPreviewUnavailableError({
+                message: "Environment is not connected.",
+              }),
+            ),
+          ),
+        );
+      }
+      return openFileInExternalBrowser({
+        threadRef,
+        filePath: path,
+        httpBaseUrl: preparedConnection.value.httpBaseUrl,
+        createAssetUrl,
+        beginOpen: () =>
+          beginExternalFileOpen({
+            isDesktop: window.desktopBridge !== undefined,
+            openExternal: (url) => api.shell.openExternal(url),
+            openWindow: () => window.open("about:blank", "_blank"),
+          }),
+      });
+    },
+    [createAssetUrl, preparedConnection, threadRef],
+  );
   const findWorkspaceBasenameMatch = useCallback(
     async (workspaceRelativePath: string) => {
       if (!cwd || environmentId === null || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
@@ -1935,6 +1991,11 @@ function ChatMarkdown({
             isPreviewSupportedInRuntime() &&
             isBrowserPreviewFile(fileLinkMeta.filePath)
               ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
+              : undefined
+          }
+          onOpenInExternalBrowser={
+            threadRef && isBrowserPreviewFile(fileLinkMeta.filePath)
+              ? () => openMarkdownFileInExternalBrowser(fileLinkMeta.filePath)
               : undefined
           }
           className={className}
@@ -2221,6 +2282,7 @@ function ChatMarkdown({
     openChangeRequestLink,
     openExternalLinkInPreview,
     openMarkdownFileInPreview,
+    openMarkdownFileInExternalBrowser,
     preferredEditorMenuLabel,
     resolveThreadPullRequest,
     resolvedTheme,
