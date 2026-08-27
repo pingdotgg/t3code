@@ -441,6 +441,15 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    const projectedTurn = yield* projectionTurnRepository.getByTurnId({
+      threadId: event.threadId,
+      turnId,
+    });
+    if (Option.isSome(projectedTurn) && projectedTurn.value.state === "running") {
+      activeRuntimeTurnByThread.set(event.threadId, turnId);
+      return;
+    }
+
     const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
       threadId: event.threadId,
     });
@@ -820,8 +829,8 @@ const make = Effect.gen(function* () {
     event: ProviderRuntimeEvent,
   ) {
     if (event.type === "turn.started") {
-      yield* ensurePreTurnBaselineFromTurnStart(event);
       yield* rememberRuntimeTurnStart(event);
+      yield* ensurePreTurnBaselineFromTurnStart(event);
       return;
     }
 

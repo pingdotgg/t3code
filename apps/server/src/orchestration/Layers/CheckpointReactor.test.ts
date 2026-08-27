@@ -45,6 +45,8 @@ import { RuntimeReceiptBusLive } from "./RuntimeReceiptBus.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -260,7 +262,8 @@ describe("CheckpointReactor", () => {
     | OrchestrationEngineService
     | CheckpointReactor
     | CheckpointStore.CheckpointStore
-    | ProjectionSnapshotQuery,
+    | ProjectionSnapshotQuery
+    | ProjectionTurnRepository,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -343,7 +346,7 @@ describe("CheckpointReactor", () => {
       streamStatus: () => Stream.empty,
     });
 
-    const layer = CheckpointReactorLive.pipe(
+    const layer = Layer.merge(CheckpointReactorLive, ProjectionTurnRepositoryLive).pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(RuntimeReceiptBusLive),
@@ -370,6 +373,7 @@ describe("CheckpointReactor", () => {
     const checkpointStore = await runtime.runPromise(
       Effect.service(CheckpointStore.CheckpointStore),
     );
+    const projectionTurns = await runtime.runPromise(Effect.service(ProjectionTurnRepository));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(reactor.drain);
@@ -377,6 +381,38 @@ describe("CheckpointReactor", () => {
       runtime!.runPromise(checkpointStore.captureCheckpoint(input));
     const dispatch = (command: Parameters<OrchestrationEngineShape["dispatch"]>[0]) =>
       runtime!.runPromise(engine.dispatch(command));
+    const projectRunningTurn = (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly messageId: MessageId;
+      readonly at: string;
+    }) =>
+      runtime!.runPromise(
+        projectionTurns
+          .upsertByTurnId({
+            threadId: input.threadId,
+            turnId: input.turnId,
+            pendingMessageId: input.messageId,
+            sourceProposedPlanThreadId: null,
+            sourceProposedPlanId: null,
+            assistantMessageId: null,
+            state: "running",
+            requestedAt: input.at,
+            startedAt: input.at,
+            completedAt: null,
+            checkpointTurnCount: null,
+            checkpointRef: null,
+            checkpointStatus: null,
+            checkpointFiles: [],
+          })
+          .pipe(
+            Effect.andThen(
+              projectionTurns.deletePendingTurnStartByThreadId({
+                threadId: input.threadId,
+              }),
+            ),
+          ),
+      );
 
     const createdAt = "2026-01-01T00:00:00.000Z";
     await Effect.runPromise(
@@ -464,6 +500,7 @@ describe("CheckpointReactor", () => {
       provider,
       captureCheckpoint,
       dispatch,
+      projectRunningTurn,
       cwd,
       drain,
     };
@@ -819,7 +856,7 @@ describe("CheckpointReactor", () => {
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
   });
 
-  it("tracks a new turn when an accepted steer supersedes the active turn", async () => {
+  it("tracks an accepted steer after its pending start is projected", async () => {
     const harness = await createHarness({ seedFilesystemCheckpoints: false });
     const threadId = ThreadId.make("thread-1");
     const oldTurnId = asTurnId("turn-steered-over");
@@ -865,6 +902,12 @@ describe("CheckpointReactor", () => {
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
       runtimeMode: "approval-required",
       createdAt: "2026-01-01T00:00:05.000Z",
+    });
+    await harness.projectRunningTurn({
+      threadId,
+      turnId: newTurnId,
+      messageId: MessageId.make("msg-steer"),
+      at: "2026-01-01T00:00:05.000Z",
     });
     harness.provider.setActiveTurnId(newTurnId);
     harness.provider.emit({
@@ -953,6 +996,71 @@ describe("CheckpointReactor", () => {
     expect(
       gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 1), "README.md"),
     ).toBe("completed turn\n");
+  });
+
+  it("tracks the turn before a baseline capture failure", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const threadId = ThreadId.make("thread-1");
+    const completedTurnId = asTurnId("turn-baseline-failed");
+    const gitDir = NodePath.join(harness.cwd, ".git");
+    const gitDirMode = NodeFS.statSync(gitDir).mode;
+    const completedAt = "2026-01-01T00:00:10.000Z";
+
+    NodeFS.chmodSync(gitDir, 0o555);
+    try {
+      harness.provider.emit({
+        type: "turn.started",
+        eventId: EventId.make("evt-turn-started-baseline-failed"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: completedTurnId,
+      });
+      await harness.drain();
+    } finally {
+      NodeFS.chmodSync(gitDir, gitDirMode);
+    }
+    expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 0))).toBe(false);
+
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("cmd-session-advanced-after-baseline-failure"),
+      threadId,
+      session: {
+        threadId,
+        status: "running",
+        providerName: "codex",
+        runtimeMode: "approval-required",
+        activeTurnId: asTurnId("turn-follow-up"),
+        lastError: null,
+        updatedAt: "2026-01-01T00:00:20.000Z",
+      },
+      createdAt: "2026-01-01T00:00:20.000Z",
+    });
+    await harness.captureCheckpoint({
+      cwd: harness.cwd,
+      checkpointRef: checkpointRefForThreadTurn(threadId, 0),
+    });
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "completed turn\n", "utf8");
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-after-baseline-failure"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: completedAt,
+      threadId,
+      turnId: completedTurnId,
+      payload: { state: "completed" },
+    });
+
+    await waitForEvent(
+      harness.engine,
+      (event) => event.type === "thread.turn-diff-completed" && event.occurredAt === completedAt,
+    );
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.checkpoints[0]?.completedAt === completedAt,
+    );
+    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
   });
 
   it("captures pre-turn and completion checkpoints for claude runtime events", async () => {
