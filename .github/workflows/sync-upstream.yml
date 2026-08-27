@@ -104,7 +104,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           META_MODEL_API_KEY: ${{ secrets.META_MODEL_API_KEY }}
         with:
-          model: meta/muse-spark-1.2-contributor
+          model: muse-spark-1.2-contributor
           use_github_token: true
           prompt: |
             Resolve git merge conflicts from an upstream sync (upstream/${{ env.UPSTREAM_BRANCH }} into ${{ env.TARGET_BRANCH }}).
