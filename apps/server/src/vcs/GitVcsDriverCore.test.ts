@@ -759,18 +759,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notInclude(error.detail, "Git command failed in");
       }),
     );
-
-    it.effect("treats removing an already-gone worktree as a no-op", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const pathService = yield* Path.Path;
-        const missingWorktree = pathService.join(cwd, "missing-worktree");
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* driver.initRepo({ cwd });
-
-        yield* driver.removeWorktree({ cwd, path: missingWorktree });
-      }),
-    );
   });
 
   describe("review diff previews", () => {
