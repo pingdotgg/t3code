@@ -166,6 +166,7 @@ export const relayDocsRedirectRoute = HttpRouter.add(
 // contains the exact child span that stalled, and the response still carries
 // the traceparent back to the client.
 export const RELAY_REQUEST_DEADLINE_MS = 9_000;
+export const REFERRAL_SUMMARY_RECOVERY_BUDGET_MS = 500;
 
 const relayRequestDeadline = <E, R>(
   httpEffect: Effect.Effect<
@@ -404,6 +405,34 @@ export const healthApi = HttpApiBuilder.group(
   }),
 );
 
+export const loadReferralSummary = Effect.fn("relay.api.client.loadReferralSummary")(function* (
+  userId: string,
+) {
+  const referrals = yield* ReferralProgram.ReferralProgram;
+  yield* referrals.recoverPendingAwards({ referrerUserId: userId }).pipe(
+    Effect.tapError((error) =>
+      Effect.logWarning("pending referral award recovery before summary failed", {
+        errorTag: error._tag,
+        operation: error.operation,
+        userId,
+      }),
+    ),
+    Effect.timeoutOption(Duration.millis(REFERRAL_SUMMARY_RECOVERY_BUDGET_MS)),
+    Effect.tap(
+      Option.match({
+        onNone: () =>
+          Effect.logWarning("pending referral award recovery before summary timed out", {
+            budgetMs: REFERRAL_SUMMARY_RECOVERY_BUDGET_MS,
+            userId,
+          }),
+        onSome: () => Effect.void,
+      }),
+    ),
+    Effect.ignore,
+  );
+  return yield* referrals.getSummary({ userId });
+});
+
 export const revokeEnvironmentLinkRecord = Effect.fn(
   "relay.api.client.revokeEnvironmentLinkRecord",
 )(function* (input: {
@@ -554,8 +583,7 @@ export const clientApi = HttpApiBuilder.group(
         "getReferralSummary",
         Effect.fn("relay.api.client.getReferralSummary")(function* () {
           const { userId } = yield* RelayClientPrincipal;
-          yield* referrals.recoverPendingAwards({ referrerUserId: userId });
-          return yield* referrals.getSummary({ userId });
+          return yield* loadReferralSummary(userId);
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(

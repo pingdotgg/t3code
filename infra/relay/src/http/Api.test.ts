@@ -18,7 +18,9 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { RelayEnvironmentAuth } from "@t3tools/contracts/relay";
 
 import {
+  REFERRAL_SUMMARY_RECOVERY_BUDGET_MS,
   RELAY_REQUEST_DEADLINE_MS,
+  loadReferralSummary,
   relayCors,
   relayDocsRedirectRoute,
   relayEnvironmentAuthLayer,
@@ -34,6 +36,7 @@ import * as RelayDb from "../db.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
+import * as ReferralProgram from "../referrals/ReferralProgram.ts";
 
 vi.mock("@clerk/backend", () => ({
   createClerkClient: vi.fn(),
@@ -58,6 +61,57 @@ const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
   managedEndpointBaseDomain: undefined,
   managedEndpointNamespace: undefined,
 };
+
+const referralSummary = {
+  points: 67,
+  referralCode: "ABCDEF0123456789",
+  awardPoints: 67,
+  qualifiedReferrals: 1,
+  pendingReferrals: 0,
+  hasClaimedReferral: false,
+} as const;
+
+function referralService(
+  recoverPendingAwards: ReferralProgram.ReferralProgram["Service"]["recoverPendingAwards"],
+) {
+  return ReferralProgram.ReferralProgram.of({
+    getSummary: () => Effect.succeed(referralSummary),
+    claim: () => Effect.die("unused claim"),
+    qualify: () => Effect.die("unused qualify"),
+    recoverPendingAwards,
+  });
+}
+
+describe("relay referral summary", () => {
+  it.effect("returns the summary when pending award recovery fails", () => {
+    const failure = new ReferralProgram.ReferralProgramPersistenceError({
+      operation: "recover-referrals",
+      userId: "system",
+      cause: new Error("database unavailable"),
+    });
+    return Effect.gen(function* () {
+      expect(yield* loadReferralSummary("referrer")).toEqual(referralSummary);
+    }).pipe(
+      Effect.provideService(
+        ReferralProgram.ReferralProgram,
+        referralService(() => Effect.fail(failure)),
+      ),
+    );
+  });
+
+  it.effect("bounds pending award recovery before returning the summary", () =>
+    Effect.gen(function* () {
+      const fiber = yield* loadReferralSummary("referrer").pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.millis(REFERRAL_SUMMARY_RECOVERY_BUDGET_MS));
+      expect(yield* Fiber.join(fiber)).toEqual(referralSummary);
+    }).pipe(
+      Effect.provideService(
+        ReferralProgram.ReferralProgram,
+        referralService(() => Effect.never),
+      ),
+    ),
+  );
+});
 
 describe("relay client authentication", () => {
   it.effect("preserves the existing Clerk session JWT path", () =>
