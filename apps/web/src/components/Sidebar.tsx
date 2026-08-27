@@ -1948,6 +1948,15 @@ export default function Sidebar() {
         : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
     [projectGroups, projectScopeKey],
   );
+  // Held stable: the footer below is memoized, and a ref rebuilt inline in its
+  // JSX would re-render it on every keystroke in the thread search.
+  const scopedProjectRef = useMemo(
+    () =>
+      scopedProjectGroup === null
+        ? null
+        : scopeProjectRef(scopedProjectGroup.environmentId, scopedProjectGroup.id),
+    [scopedProjectGroup],
+  );
   const scopedProjectKeys = useMemo(
     () =>
       scopedProjectGroup === null
@@ -3954,13 +3963,7 @@ export default function Sidebar() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
-      <SidebarChromeFooter
-        projectRef={
-          scopedProjectGroup === null
-            ? null
-            : scopeProjectRef(scopedProjectGroup.environmentId, scopedProjectGroup.id)
-        }
-      />
+      <SidebarChromeFooter projectRef={scopedProjectRef} />
     </>
   );
 }
