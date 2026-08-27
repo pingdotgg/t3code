@@ -55,9 +55,9 @@ so add one in **Settings** → **Keybindings** if you want to use it.
 `thread.settle` settles the active thread or restores it when it is already settled. Its default
 shortcut is `mod+shift+s`, and it does not run while the terminal has focus.
 
-`thread.pin` pins the active thread to the top of the sidebar, or unpins it when it is already
-pinned. A fresh pin lands at the top of the pinned list. Its default shortcut is `mod+shift+p`, and
-it does not run while the terminal has focus.
+`thread.pin` pins the active thread to the pinned section of the sidebar, or unpins it when it is
+already pinned. Its default shortcut is `mod+shift+p`, and it does not run while the terminal has
+focus. See [Organizing threads](./thread-sidebar.md) for how pinned threads are ordered.
 
 The command palette searches active thread titles, projects, branches, user messages, and final
 agent responses across connected environments. Message matches show one labeled excerpt while
