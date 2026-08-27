@@ -464,14 +464,13 @@ const isPopupUrl = (rawUrl: string): boolean => {
  * to share `globalThis` with the previewed page, and no OAuth provider should
  * get that. The window keeps the opener and the guest session either way.
  */
-const POPUP_WINDOW_OPTIONS: Electron.BrowserWindowConstructorOptions = {
+const POPUP_WINDOW_OPTIONS = {
   webPreferences: {
     contextIsolation: true,
-    sandbox: true,
     nodeIntegration: false,
-    nodeIntegrationInSubFrames: false,
+    sandbox: true,
   },
-};
+} satisfies Electron.BrowserWindowConstructorOptions;
 
 /**
  * Decides what a preview page's `window.open` should do.
@@ -1717,6 +1716,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ],
       });
     });
+    // A popup opens with Electron's default handler, so the page inside it could
+    // otherwise spawn native windows without limit. Nothing in an OAuth flow
+    // opens a second popup, so the chain stops at the first one.
+    const windowCreated = (window: Electron.BrowserWindow): void => {
+      window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
       if (isPreviewRefreshShortcut(input)) {
         event.preventDefault();
@@ -1742,6 +1747,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("did-stop-loading", sync);
         wc.off("did-fail-load", failed as never);
         wc.off("audio-state-changed", audioStateChanged);
+        wc.off("did-create-window", windowCreated);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
@@ -1771,6 +1777,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           );
           return { action: "deny" };
         });
+        wc.on("did-create-window", windowCreated);
         wc.on("before-input-event", beforeInput);
       });
       yield* Ref.update(attachedRef, (attached) =>
