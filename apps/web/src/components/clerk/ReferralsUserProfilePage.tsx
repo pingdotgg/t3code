@@ -18,6 +18,7 @@ import {
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
 import { Input } from "../ui/input";
@@ -189,10 +190,10 @@ export function ReferralsUserProfilePage() {
       }
     >
       {summaryState.error ? (
-        <div className="mb-3 rounded-lg bg-destructive/8 px-3 py-2.5 text-[0.8125rem]" role="alert">
-          <p className="font-medium text-destructive-foreground">Could not load referral points</p>
-          <p className="mt-1 text-xs text-muted-foreground">{summaryState.error}</p>
-        </div>
+        <Alert variant="error" className="mb-3 text-[0.8125rem]">
+          <AlertTitle>Could not load referral points</AlertTitle>
+          <AlertDescription className="text-xs">{summaryState.error}</AlertDescription>
+        </Alert>
       ) : null}
 
       {isInitialLoad ? (
