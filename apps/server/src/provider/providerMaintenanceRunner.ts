@@ -27,6 +27,7 @@ import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import { enrichProviderSnapshotWithVersionAdvisory } from "./providerMaintenance.ts";
 import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
+import { compareMaintenanceVersions } from "./maintenance/version.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
@@ -361,6 +362,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 instanceId,
                 provider,
               );
+            const versionBeforeUpdate = (yield* providerRegistry.getProviders).find(
+              (candidate) => candidate.driver === provider && candidate.instanceId === instanceId,
+            )?.version;
             const freshUpdate = freshCapabilities.update;
             if (
               !freshUpdate ||
@@ -440,8 +444,19 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               instanceId,
             );
             const couldNotVerify = verifiedProviders.length === 0;
+            const requiresVersionAdvance = freshCapabilities.latestVersion === null;
+            const versionAdvanced =
+              versionBeforeUpdate !== null &&
+              versionBeforeUpdate !== undefined &&
+              verifiedProviders.some(
+                (verifiedProvider) =>
+                  verifiedProvider.version !== null &&
+                  compareMaintenanceVersions(versionBeforeUpdate, verifiedProvider.version) === -1,
+              );
+            const nativeVersionUnchanged = requiresVersionAdvance && !versionAdvanced;
             const stillOutdated =
               couldNotVerify ||
+              nativeVersionUnchanged ||
               verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
             return yield* finish(
               makeUpdateState({
@@ -450,9 +465,11 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 finishedAt,
                 message: couldNotVerify
                   ? "Update command completed, but T3 Code could not verify the provider version."
-                  : stillOutdated
-                    ? "Update command completed, but T3 Code still detects an outdated provider version."
-                    : "Provider updated.",
+                  : nativeVersionUnchanged
+                    ? "Update command completed, but the provider version did not advance."
+                    : stillOutdated
+                      ? "Update command completed, but T3 Code still detects an outdated provider version."
+                      : "Provider updated.",
                 output: commandOutput(result),
               }),
             );

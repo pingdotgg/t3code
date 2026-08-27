@@ -56,11 +56,9 @@ import {
   connectionPhasePingClassName,
 } from "../ConnectionStatusDot";
 import {
-  canOneClickUpdateProviderCandidate,
-  collectProviderUpdateCandidates,
-  hasOneClickUpdateProviderCandidate,
+  isProviderSettingsUpdateCandidate,
   isProviderUpdateActive,
-  type ProviderUpdateCandidate,
+  type ProviderSettingsUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
@@ -435,13 +433,14 @@ export function EnvironmentProviderSettings({
   const refreshingRef = useRef(false);
   const updatingDriversRef = useRef<Set<ProviderDriverKind>>(new Set());
 
-  const providerUpdateCandidates = useMemo(
-    () => collectProviderUpdateCandidates(serverProviders),
-    [serverProviders],
-  );
   const providerUpdateCandidateByInstanceId = useMemo(
-    () => new Map(providerUpdateCandidates.map((candidate) => [candidate.instanceId, candidate])),
-    [providerUpdateCandidates],
+    () =>
+      new Map(
+        serverProviders
+          .filter(isProviderSettingsUpdateCandidate)
+          .map((candidate) => [candidate.instanceId, candidate]),
+      ),
+    [serverProviders],
   );
   const visibleProviderSettings = PROVIDER_SETTINGS.filter(
     (providerSettings) =>
@@ -491,7 +490,7 @@ export function EnvironmentProviderSettings({
   }, [environmentId, refreshServerProviders]);
 
   const runProviderUpdate = useCallback(
-    async (candidate: ProviderUpdateCandidate) => {
+    async (candidate: ProviderSettingsUpdateCandidate) => {
       // Ref-based re-entry guard, mirroring refreshProviders: a state updater
       // may run after this function returns, so it cannot gate the dispatch.
       if (updatingDriversRef.current.has(candidate.driver)) {
@@ -731,12 +730,10 @@ export function EnvironmentProviderSettings({
           (provider) =>
             provider.driver === updateCandidate.driver && isProviderUpdateActive(provider),
         ));
-    const showInlineUpdateButton =
-      updateCandidate !== undefined &&
-      hasOneClickUpdateProviderCandidate(updateCandidate, serverProviders);
+    const showInlineUpdateButton = updateCandidate !== undefined;
     const canRunInlineUpdate =
       updateCandidate !== undefined &&
-      canOneClickUpdateProviderCandidate(updateCandidate, serverProviders) &&
+      !isDriverUpdateRunning &&
       !updatingProviderDrivers.has(updateCandidate.driver);
     const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
       hiddenModels: [],

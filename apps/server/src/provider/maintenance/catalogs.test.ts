@@ -34,6 +34,7 @@ function context(input: {
   readonly resolvedCommandPath: string;
   readonly realCommandPath?: string;
   readonly platform?: NodeJS.Platform;
+  readonly environment?: NodeJS.ProcessEnv;
   readonly files?: Readonly<Record<string, string>>;
   readonly commands?: Readonly<Record<string, string>>;
   readonly probes?: Readonly<Record<string, MaintenanceProbeResult>>;
@@ -52,7 +53,7 @@ function context(input: {
     isBareCommand: !input.binaryPath.includes("/") && !input.binaryPath.includes("\\"),
     resolvedCommandPath: input.resolvedCommandPath,
     realCommandPath: input.realCommandPath ?? input.resolvedCommandPath,
-    environment: { PATH: "test-path" },
+    environment: input.environment ?? { PATH: "test-path" },
     platform: input.platform ?? "linux",
     readTextFile: (path) =>
       Effect.succeed(files.get(path.replaceAll("\\", "/").toLowerCase()) ?? null),
@@ -130,6 +131,46 @@ it.effect("proves Scoop ownership from the resolved shim and uses that Scoop and
         update: {
           executable: scoop,
           args: ["update", "custom/codex-nightly"],
+        },
+      });
+    }),
+  );
+});
+
+it.effect("proves a custom global Scoop root from Scoop configuration", () => {
+  const userRoot = "C:/Users/test/scoop";
+  const globalRoot = "D:/Shared/ScoopGlobal";
+  const shim = `${globalRoot}/shims/codex.exe`;
+  const scoop = `${userRoot}/shims/scoop.ps1`;
+  return resolveInstallation(
+    context({
+      binaryPath: "codex",
+      resolvedCommandPath: shim,
+      platform: "win32",
+      commands: { scoop },
+      files: {
+        [`${globalRoot}/shims/codex.shim`]: `path = "${globalRoot}/apps/codex/current/codex.exe"`,
+        [`${globalRoot}/apps/codex/current/install.json`]: JSON.stringify({ bucket: "main" }),
+        [`${globalRoot}/apps/codex/current/manifest.json`]: JSON.stringify({ version: "1.2.3" }),
+        [`${userRoot}/buckets/main/bucket/codex.json`]: JSON.stringify({ version: "1.3.0" }),
+      },
+      probes: {
+        [`${scoop} config global_path`]: {
+          stdout: globalRoot,
+          stderr: "",
+          exitCode: 0,
+        },
+      },
+    }),
+    catalog,
+  ).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Managed by Scoop",
+        ownershipVerified: true,
+        update: {
+          executable: scoop,
+          args: ["update", "main/codex", "--global"],
         },
       });
     }),
@@ -547,6 +588,41 @@ it.effect("accepts Homebrew cask metadata with a scalar installed version", () =
         currentVersion: "0.149.1",
         latestVersion: "0.150.0",
         update: { executable: brew, args: ["upgrade", "codex"] },
+      });
+    }),
+  );
+});
+
+it.effect("derives a Homebrew alias from the verified Caskroom path", () => {
+  const brew = "/opt/homebrew/bin/brew";
+  const formula = "codex@latest";
+  const caskPrefix = `/opt/homebrew/Caskroom/${formula}`;
+  return resolveInstallation(
+    context({
+      binaryPath: "codex",
+      resolvedCommandPath: "/opt/homebrew/bin/codex",
+      realCommandPath: `${caskPrefix}/0.150.0/codex-aarch64-apple-darwin`,
+      commands: { brew },
+      probes: {
+        [`${brew} --prefix --installed ${formula}`]: { stdout: "", stderr: "", exitCode: 1 },
+        [`${brew} --caskroom ${formula}`]: { stdout: caskPrefix, stderr: "", exitCode: 0 },
+        [`${brew} info --json=v2 ${formula}`]: {
+          stdout: JSON.stringify({
+            casks: [{ installed: "0.150.0", version: "0.151.0" }],
+          }),
+          stderr: "",
+          exitCode: 0,
+        },
+      },
+    }),
+    catalog,
+  ).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Managed by Homebrew",
+        currentVersion: "0.150.0",
+        latestVersion: "0.151.0",
+        update: { executable: brew, args: ["upgrade", formula] },
       });
     }),
   );

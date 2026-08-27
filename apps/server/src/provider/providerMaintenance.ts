@@ -48,7 +48,7 @@ const CommandLookupEnvConfig = Config.all({
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 const MAINTENANCE_PROBE_MAX_BYTES = 64_000;
 
-const runMaintenanceProbe = Effect.fn("runMaintenanceProbe")(function* (input: {
+export const runMaintenanceProbe = Effect.fn("runMaintenanceProbe")(function* (input: {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly environment: NodeJS.ProcessEnv;
@@ -78,6 +78,7 @@ const runMaintenanceProbe = Effect.fn("runMaintenanceProbe")(function* (input: {
       ],
       { concurrency: "unbounded" },
     );
+    if (stdout.truncated || stderr.truncated) return null;
     return { stdout: stdout.text, stderr: stderr.text, exitCode: Number(exitCode) };
   }).pipe(
     Effect.scoped,

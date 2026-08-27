@@ -399,9 +399,18 @@ function isHomebrewShimPath(path: string) {
   );
 }
 
+function homebrewPackageFromPath(path: string): string | null {
+  const lower = path.toLowerCase();
+  const marker = ["/cellar/", "/caskroom/"].find((candidate) => lower.includes(candidate));
+  if (!marker) return null;
+  const start = lower.indexOf(marker) + marker.length;
+  return path.slice(start).split("/")[0] || null;
+}
+
 function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
   return defineInstallation<{
     executable: string;
+    formula: string;
     prefix: string;
     currentVersion: string | null;
     latestVersion: string | null;
@@ -418,28 +427,48 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
       }
       const executable = yield* context.resolveCommand("brew");
       if (!executable) return undetermined("Homebrew executable is unavailable.");
-      const formula = input.homebrewFormula;
-      const formulaPrefixProbe = yield* context.run(
-        executable,
-        ["--prefix", "--installed", formula],
-        context.environment,
-      );
-      const formulaPrefix = output(formulaPrefixProbe?.stdout);
-      const caskPrefixProbe = yield* context.run(
-        executable,
-        ["--caskroom", formula],
-        context.environment,
-      );
-      const caskPrefix = output(caskPrefixProbe?.stdout);
-      const prefix =
-        formulaPrefixProbe?.exitCode === 0 &&
-        formulaPrefix &&
-        within(context, observed, formulaPrefix)
-          ? formulaPrefix
-          : caskPrefixProbe?.exitCode === 0 && caskPrefix && within(context, observed, caskPrefix)
-            ? caskPrefix
+      const pathPackage = homebrewPackageFromPath(observed);
+      const candidates = [
+        ...new Set(
+          [pathPackage, input.homebrewFormula].filter(
+            (candidate): candidate is string => candidate !== null,
+          ),
+        ),
+      ];
+      const ownershipCandidates = yield* Effect.forEach(candidates, (formula) =>
+        Effect.gen(function* () {
+          const formulaPrefixProbe = yield* context.run(
+            executable,
+            ["--prefix", "--installed", formula],
+            context.environment,
+          );
+          const formulaPrefix = output(formulaPrefixProbe?.stdout);
+          if (
+            formulaPrefixProbe?.exitCode === 0 &&
+            formulaPrefix &&
+            within(context, observed, formulaPrefix)
+          ) {
+            return { formula, prefix: formulaPrefix };
+          }
+          const caskPrefixProbe = yield* context.run(
+            executable,
+            ["--caskroom", formula],
+            context.environment,
+          );
+          const caskPrefix = output(caskPrefixProbe?.stdout);
+          return caskPrefixProbe?.exitCode === 0 &&
+            caskPrefix &&
+            within(context, observed, caskPrefix)
+            ? { formula, prefix: caskPrefix }
             : null;
-      if (!prefix) return undetermined("Homebrew formula ownership could not be verified.");
+        }),
+      );
+      const ownership = ownershipCandidates.find(
+        (candidate): candidate is { readonly formula: string; readonly prefix: string } =>
+          candidate !== null,
+      );
+      if (!ownership) return undetermined("Homebrew formula ownership could not be verified.");
+      const { formula, prefix } = ownership;
       const infoProbe = yield* context.run(
         executable,
         ["info", "--json=v2", formula],
@@ -466,13 +495,14 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
       if (!currentVersion) return undetermined("Homebrew installed version is unavailable.");
       return matched({
         executable,
+        formula,
         prefix,
         currentVersion,
         latestVersion: normalizeMaintenanceVersion(stable ?? text(caskInfo?.version)),
       });
     }),
     resolve: (evidence, context) => {
-      const formula = input.homebrewFormula!;
+      const formula = evidence.formula;
       return Effect.succeed(
         resolved(input, context, {
           kind: "homebrew",
@@ -540,20 +570,23 @@ function scoopDefinition(input: ProviderMaintenanceDefinitionInput) {
       const managerIndex = executablePath.lastIndexOf(managerMarker);
       if (managerIndex < 0) return undetermined("The owning Scoop root is unavailable.");
       const managerRoot = slashExecutable.slice(0, managerIndex);
-      let global = !within(context, executable, root);
+      const global = !within(context, executable, root);
       if (global) {
-        const globalProbe = yield* context.run(
-          executable,
-          ["config", "SCOOP_GLOBAL"],
-          context.environment,
+        const environmentRoot = text(context.environment.SCOOP_GLOBAL);
+        const configProbe =
+          environmentRoot && normalize(context, environmentRoot) === normalize(context, root)
+            ? null
+            : yield* context.run(executable, ["config", "global_path"], context.environment);
+        const configuredRoot = output(configProbe?.stdout);
+        const defaultRoot = pathApi(context).join(
+          context.environment.ProgramData ?? "C:\\ProgramData",
+          "scoop",
         );
-        const globalRoot = output(globalProbe?.stdout);
-        if (
-          !globalProbe ||
-          globalProbe.exitCode !== 0 ||
-          !globalRoot ||
-          normalize(context, globalRoot) !== normalize(context, root)
-        ) {
+        const ownsGlobalRoot = [environmentRoot, configuredRoot, defaultRoot].some(
+          (candidate) =>
+            candidate !== null && normalize(context, candidate) === normalize(context, root),
+        );
+        if (!ownsGlobalRoot) {
           return undetermined("The global Scoop root owning this shim could not be verified.");
         }
       }

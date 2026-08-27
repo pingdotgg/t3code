@@ -197,6 +197,7 @@ function makeRegistry(
 
     return {
       registry,
+      providersRef,
       updateStatesRef,
     };
   });
@@ -636,6 +637,87 @@ describe("providerMaintenanceRunner", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("does not report a native update as successful when its version does not advance", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        version: "1.0.0",
+      });
+      const nativeCapabilities = makeProviderMaintenanceCapabilities({
+        provider: CODEX_DRIVER,
+        packageName: "@openai/codex",
+        updateExecutable: "/home/test/.local/bin/codex",
+        updateArgs: ["update"],
+        updateLockKey: "codex-native",
+        identityKey: "codex-native-installation",
+        ownershipVerified: true,
+        currentVersion: null,
+        latestVersion: null,
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        resolveProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(nativeCapabilities),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+
+      assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Update command completed, but the provider version did not advance.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("1.0.0"),
+          mockSpawnerLayer(() => ({ stdout: "already current" })),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("reports a native update as successful when its version advances", () =>
+    Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry({
+        ...baseProvider,
+        version: "1.0.0",
+      });
+      const nativeCapabilities = makeProviderMaintenanceCapabilities({
+        provider: CODEX_DRIVER,
+        packageName: "@openai/codex",
+        updateExecutable: "/home/test/.local/bin/codex",
+        updateArgs: ["update"],
+        updateLockKey: "codex-native",
+        identityKey: "codex-native-installation",
+        ownershipVerified: true,
+        currentVersion: null,
+        latestVersion: null,
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        resolveProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(nativeCapabilities),
+        refreshInstance: () =>
+          Ref.updateAndGet(providersRef, (providers) =>
+            providers.map((provider) => ({ ...provider, version: "1.1.0" })),
+          ),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      assert.strictEqual(result.providers[0]?.updateState?.message, "Provider updated.");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("1.1.0"),
+          mockSpawnerLayer(() => ({ stdout: "updated" })),
+        ),
+      ),
+    ),
   );
 
   it.effect("prevents concurrent updates for the same provider", () => {

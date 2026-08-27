@@ -116,6 +116,21 @@ function provider(): ServerProvider {
   };
 }
 
+function nativeProvider(): ServerProvider {
+  return {
+    ...provider(),
+    versionAdvisory: {
+      status: "unknown",
+      currentVersion: "1.0.0",
+      latestVersion: null,
+      updateCommand: "codex update",
+      canUpdate: true,
+      checkedAt: "2026-07-24T12:00:00.000Z",
+      message: null,
+    },
+  };
+}
+
 function renderPanel(options?: {
   readonly readOnly?: boolean;
 }): ReactElement<Record<string, unknown>> {
@@ -172,6 +187,25 @@ describe("EnvironmentProviderSettings routing", () => {
       (element) =>
         element.props.instanceId === codexId && typeof element.props.onRunUpdate === "function",
     );
+    expect(providerCard).not.toBeNull();
+    (providerCard?.props.onRunUpdate as (() => void) | undefined)?.();
+    await flushPromises();
+
+    expect(commands.updateProvider).toHaveBeenCalledWith({
+      environmentId,
+      input: { provider: ProviderDriverKind.make("codex"), instanceId: codexId },
+    });
+  });
+
+  it("offers a verified native updater in settings when latest is unknown", async () => {
+    atoms.providers = [nativeProvider()];
+    const panel = renderPanel();
+    const providerCard = visitElements(
+      panel,
+      (element) =>
+        element.props.instanceId === codexId && typeof element.props.onRunUpdate === "function",
+    );
+
     expect(providerCard).not.toBeNull();
     (providerCard?.props.onRunUpdate as (() => void) | undefined)?.();
     await flushPromises();

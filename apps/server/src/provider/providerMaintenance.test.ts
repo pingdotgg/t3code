@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeProcess from "node:process";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
@@ -20,6 +21,7 @@ import {
   ProviderVersionCache,
   resolveLatestProviderVersion,
   resolveProviderMaintenanceCapabilitiesEffect,
+  runMaintenanceProbe,
 } from "./providerMaintenance.ts";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
@@ -93,6 +95,18 @@ const installedPackageToolProvider: ServerProvider = {
 };
 
 it.layer(NodeServices.layer)("providerMaintenance", (it) => {
+  it.effect("rejects truncated maintenance probe output", () =>
+    runMaintenanceProbe({
+      executable: NodeProcess.execPath,
+      args: ["-e", 'process.stdout.write("x".repeat(64_001))'],
+      environment: NodeProcess.env,
+    }).pipe(
+      Effect.map((result) => {
+        expect(result).toBeNull();
+      }),
+    ),
+  );
+
   it.effect("reads cached versions through the injectable cache reference", () =>
     resolveLatestProviderVersion(packageToolUpdate.resolve()).pipe(
       Effect.provideService(
