@@ -79,6 +79,7 @@ void ShellRuntime::start() {
 
 void ShellRuntime::reload() {
   QQmlApplicationEngine* previous = m_engine;
+  const bool previousUsingUserShell = m_usingUserShell;
   m_engine = nullptr;
   m_lastError.clear();
   m_usingUserShell = false;
@@ -103,6 +104,16 @@ void ShellRuntime::reload() {
     }
   }
 
+  if (!loaded) {
+    // Neither shell loaded: keep the previous generation on screen so the
+    // app never loses its window; the overlay shows lastError until the next
+    // source change retries.
+    m_engine = previous;
+    m_usingUserShell = previousUsingUserShell;
+    m_fingerprint = sourceFingerprint();
+    emit generationChanged();
+    return;
+  }
   // The new window exists before the old one goes, so the app never hits
   // "last window closed" mid-reload.
   if (previous != nullptr) {
