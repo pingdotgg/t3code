@@ -17,7 +17,7 @@ import { referralClaimMessage } from "../../cloud/referralClaimResult";
 import {
   captureReferralCodeFromUrl,
   clearPendingReferralCode,
-  PENDING_REFERRAL_CODE_STORAGE_KEY,
+  persistPendingReferralCode,
   readPendingReferralCode,
   urlWithoutMatchingReferralCode,
 } from "../../cloud/referralLinks";
@@ -33,9 +33,7 @@ import {
 
 function captureReferralCode(): string | null {
   const url = new URL(window.location.href);
-  const captured = captureReferralCodeFromUrl(url, (referralCode) => {
-    window.localStorage.setItem(PENDING_REFERRAL_CODE_STORAGE_KEY, referralCode);
-  });
+  const captured = captureReferralCodeFromUrl(url, persistPendingReferralCode);
   if (!captured) return null;
   if (captured.cleanedUrl) {
     window.history.replaceState(window.history.state, "", captured.cleanedUrl);

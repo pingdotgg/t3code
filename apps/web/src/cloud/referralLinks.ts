@@ -7,20 +7,42 @@ import {
 
 export const PENDING_REFERRAL_CODE_STORAGE_KEY = "t3code.pending-referral-code";
 
+let inMemoryPendingReferralCode: string | null = null;
+
+export function persistPendingReferralCode(
+  referralCode: string,
+  getStorage: () => Pick<Storage, "setItem"> = () => window.localStorage,
+): boolean {
+  const normalized = normalizeReferralCode(referralCode);
+  if (!normalized) return false;
+
+  inMemoryPendingReferralCode = normalized;
+  try {
+    getStorage().setItem(PENDING_REFERRAL_CODE_STORAGE_KEY, normalized);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function readPendingReferralCode(
   getStorage: () => Pick<Storage, "getItem"> = () => window.localStorage,
 ): string | null {
   try {
     const storage = getStorage();
-    return normalizeReferralCode(storage.getItem(PENDING_REFERRAL_CODE_STORAGE_KEY) ?? "");
+    return (
+      inMemoryPendingReferralCode ??
+      normalizeReferralCode(storage.getItem(PENDING_REFERRAL_CODE_STORAGE_KEY) ?? "")
+    );
   } catch {
-    return null;
+    return inMemoryPendingReferralCode;
   }
 }
 
 export function clearPendingReferralCode(
   getStorage: () => Pick<Storage, "removeItem"> = () => window.localStorage,
 ): void {
+  inMemoryPendingReferralCode = null;
   try {
     getStorage().removeItem(PENDING_REFERRAL_CODE_STORAGE_KEY);
   } catch {}
@@ -47,13 +69,15 @@ export function urlWithoutMatchingReferralCode(
 
 export function captureReferralCodeFromUrl(
   url: URL,
-  persist: (referralCode: string) => void,
+  persist: (referralCode: string) => boolean | void,
 ): { referralCode: string; cleanedUrl: string | null } | null {
   const referralCode = referralCodeFromUrl(url);
   if (!referralCode) return null;
 
   try {
-    persist(referralCode);
+    if (persist(referralCode) === false) {
+      return { referralCode, cleanedUrl: null };
+    }
   } catch {
     return { referralCode, cleanedUrl: null };
   }

@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildReferralShareData,
   captureReferralCodeFromUrl,
   clearPendingReferralCode,
   PENDING_REFERRAL_CODE_STORAGE_KEY,
+  persistPendingReferralCode,
   readPendingReferralCode,
   referralCodeFromUrl,
   urlWithoutMatchingReferralCode,
@@ -12,6 +13,10 @@ import {
 } from "./referralLinks";
 
 describe("referralLinks", () => {
+  afterEach(() => {
+    clearPendingReferralCode(() => ({ removeItem: vi.fn() }));
+  });
+
   it("clears a pending code without exposing storage failures", () => {
     const removeItem = vi.fn();
     clearPendingReferralCode(() => ({ removeItem }));
@@ -39,6 +44,23 @@ describe("referralLinks", () => {
         throw new Error("Storage access denied");
       }),
     ).toBeNull();
+  });
+
+  it("keeps a captured code available for linking when browser storage is blocked", () => {
+    const url = new URL("https://app.t3.codes/?ref=abcd1234efab5678");
+    const blockedStorage = () => {
+      throw new Error("Storage access denied");
+    };
+
+    expect(
+      captureReferralCodeFromUrl(url, (referralCode) =>
+        persistPendingReferralCode(referralCode, blockedStorage),
+      ),
+    ).toEqual({
+      referralCode: "ABCD1234EFAB5678",
+      cleanedUrl: null,
+    });
+    expect(readPendingReferralCode(blockedStorage)).toBe("ABCD1234EFAB5678");
   });
 
   it("reads and removes only the referral parameter", () => {
