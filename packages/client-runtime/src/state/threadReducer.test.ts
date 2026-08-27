@@ -305,6 +305,51 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.modelSelection).toEqual(baseThread.modelSelection);
       }
     });
+
+    it("sets and clears a linked pull request", () => {
+      const linkedPullRequest = {
+        projectId: ProjectId.make("project-1"),
+        repository: "pingdotgg/t3code",
+        number: 42,
+        url: "https://github.com/pingdotgg/t3code/pull/42",
+      };
+      const linked = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: "2026-04-01T05:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          linkedPullRequest,
+          updatedAt: "2026-04-01T05:00:00.000Z",
+        },
+      });
+
+      expect(linked.kind).toBe("updated");
+      if (linked.kind !== "updated") return;
+      expect(linked.thread.linkedPullRequest).toEqual(linkedPullRequest);
+
+      const cleared = applyThreadDetailEvent(linked.thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          linkedPullRequest: null,
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+
+      expect(cleared.kind).toBe("updated");
+      if (cleared.kind === "updated") {
+        expect(cleared.thread.linkedPullRequest).toBeNull();
+      }
+    });
   });
 
   describe("thread.message-sent", () => {

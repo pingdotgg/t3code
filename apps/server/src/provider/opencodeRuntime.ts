@@ -51,6 +51,7 @@ export function resolveOpenCodeConfigContent(
 const OPENCODE_SERVER_READY_PREFIX = "opencode server listening";
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
+const OPENCODE_SKILL_DISCOVERY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 export interface OpenCodeServerProcess {
   readonly url: string;
   readonly exitCode: Effect.Effect<number, never>;
@@ -124,14 +125,12 @@ export interface OpenCodeSkill {
   readonly name?: string | null;
   readonly description?: string | null;
   readonly location?: string | null;
-  readonly content?: string | null;
 }
 
 const OpenCodeSkillSchema = Schema.Struct({
   name: Schema.optionalKey(Schema.NullOr(Schema.String)),
   description: Schema.optionalKey(Schema.NullOr(Schema.String)),
   location: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  content: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 const decodeOpenCodeSkillsCliOutputExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(Schema.Array(OpenCodeSkillSchema)),
@@ -169,6 +168,7 @@ export interface OpenCodeRuntimeShape {
     readonly args: ReadonlyArray<string>;
     readonly environment?: NodeJS.ProcessEnv;
     readonly cwd?: string;
+    readonly maxOutputBytes?: number;
   }) => Effect.Effect<OpenCodeCommandResult, OpenCodeRuntimeError>;
   readonly createOpenCodeSdkClient: (input: {
     readonly baseUrl: string;
@@ -373,10 +373,16 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     return [{ permission: "*", pattern: "*", action: "allow" }];
   }
 
+  // "Auto-accept edits" is documented as "auto-approve edits, ask before other
+  // actions", so prompting for every edit ignores the mode the user picked.
+  // "auto" is left asking on purpose: the docs say providers without an AI
+  // reviewer, OpenCode among them, fall back to Supervised for that mode.
+  const editAction = runtimeMode === "auto-accept-edits" ? "allow" : "ask";
+
   return [
     { permission: "*", pattern: "*", action: "ask" },
     { permission: "bash", pattern: "*", action: "ask" },
-    { permission: "edit", pattern: "*", action: "ask" },
+    { permission: "edit", pattern: "*", action: editAction },
     { permission: "webfetch", pattern: "*", action: "ask" },
     { permission: "websearch", pattern: "*", action: "ask" },
     { permission: "codesearch", pattern: "*", action: "ask" },
@@ -447,8 +453,14 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ...(input.environment ? { env: input.environment } : { extendEnv: true }),
         }),
       );
+      const collectOptions =
+        input.maxOutputBytes === undefined ? undefined : { maxBytes: input.maxOutputBytes };
       const [stdout, stderr, code] = yield* Effect.all(
-        [collectStreamAsString(child.stdout), collectStreamAsString(child.stderr), child.exitCode],
+        [
+          collectStreamAsString(child.stdout, collectOptions),
+          collectStreamAsString(child.stderr, collectOptions),
+          child.exitCode,
+        ],
         { concurrency: "unbounded" },
       );
       const exitCode = Number(code);
@@ -702,7 +714,13 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 
   const loadSkills = (client: OpencodeClient) =>
     runOpenCodeSdk("app.skills", () => client.app.skills()).pipe(
-      Effect.map((result) => (result.data ?? []) as ReadonlyArray<OpenCodeSkill>),
+      Effect.map((result) =>
+        (result.data ?? []).map((skill) => ({
+          name: skill.name,
+          ...(skill.description === undefined ? {} : { description: skill.description }),
+          location: skill.location,
+        })),
+      ),
       Effect.orElseSucceed((): ReadonlyArray<OpenCodeSkill> => []),
     );
 
@@ -732,6 +750,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         runOpenCodeCommand({
           binaryPath: input.binaryPath,
           args: ["debug", "skill"],
+          maxOutputBytes: OPENCODE_SKILL_DISCOVERY_MAX_OUTPUT_BYTES,
           ...commandContext,
         }).pipe(Effect.exit);
 
