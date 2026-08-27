@@ -122,7 +122,7 @@ export function RewriteCommitMessagesDialog({
       toastManager.add({
         type: "success",
         title: `Rewrote ${count} commit ${count === 1 ? "message" : "messages"}`,
-        description: "Branch history updated; source files and working-tree changes are unchanged.",
+        description: commandResult.value.subjects.join("\n"),
       });
       onOpenChange(false);
     });
