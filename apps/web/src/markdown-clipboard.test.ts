@@ -149,9 +149,7 @@ describe("serializeRenderedMarkdownFragment", () => {
       renderedCodeBlock(["pnpm test"]),
     );
 
-    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
-      "-\n\n```\npnpm test\n```",
-    );
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("-\n\n```\npnpm test\n```");
   });
 
   it("keeps fences when a checkbox-only task item sits alongside the code block", () => {
