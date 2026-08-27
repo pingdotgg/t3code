@@ -8,10 +8,8 @@ import {
 import { resolveDiffThemeName } from "./diffRendering";
 
 /**
- * Always highlight with the Oniguruma WASM engine. The JavaScript regex engine
- * can backtrack catastrophically on ordinary source lines (a Go comment
- * containing `{}` and a non-ASCII dash pinned the renderer main thread for 12+
- * minutes; the same input tokenizes in under 10ms on WASM). The shared
+ * Always highlight with the Oniguruma WASM engine — the JS regex engine can
+ * backtrack catastrophically and hang the tokenizing thread. The shared
  * highlighter is a first-caller-wins singleton, so every creation site must
  * pass this value.
  */
