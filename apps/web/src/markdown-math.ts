@@ -2,8 +2,6 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
-import { isSameLineOverIndentedCode } from "./markdown-list-indentation";
-
 interface MarkdownNode {
   readonly type?: string;
   readonly value?: unknown;
@@ -53,22 +51,22 @@ export function normalizeLatexMathDelimiters(source: string): string {
   const replacements = new Map<number, string>();
   const tree = markdownParser.parse(source) as MarkdownNode;
 
-  const visit = (node: MarkdownNode, parent: MarkdownNode | undefined, linkUrl: string | null) => {
+  const visit = (node: MarkdownNode, linkUrl: string | null) => {
     const nextLinkUrl = node.type === "link" && typeof node.url === "string" ? node.url : linkUrl;
 
-    if (node.type === "text" || isSameLineOverIndentedCode(node, parent, source)) {
+    if (node.type === "text") {
       // Autolink labels are their destination. Treat them as URLs rather than
       // prose even though the Markdown AST represents them as text children.
-      if (node.type !== "text" || !(nextLinkUrl !== null && node.value === nextLinkUrl)) {
+      if (!(nextLinkUrl !== null && node.value === nextLinkUrl)) {
         collectTextNodeReplacements(source, node, replacements);
       }
       return;
     }
 
-    node.children?.forEach((child) => visit(child, node, nextLinkUrl));
+    node.children?.forEach((child) => visit(child, nextLinkUrl));
   };
 
-  visit(tree, undefined, null);
+  visit(tree, null);
   if (replacements.size === 0) return source;
 
   const output = source.split("");

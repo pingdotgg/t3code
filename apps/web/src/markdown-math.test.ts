@@ -125,10 +125,24 @@ describe("normalizeLatexMathDelimiters", () => {
     expect(normalizeLatexMathDelimiters("\\(a\\) and \\[b\\]")).toBe("$$a$$ and $$b$$");
   });
 
-  it("renders math recovered from over-indented list content", () => {
+  it("renders inline math recovered from over-indented list content", () => {
     const source = "-       formula \\(a+b\\)";
-    expect(normalizeLatexMathDelimiters(source)).toBe("-       formula $$a+b$$");
+    expect(normalizeLatexMathDelimiters(source)).toBe(source);
     expect(renderMarkdown(source)).toContain('class="katex"');
+  });
+
+  it("renders display math recovered from over-indented list content", () => {
+    expect(renderMarkdown("-       formula \\[a+b\\]", true)).toContain('class="katex-display"');
+  });
+
+  it("preserves markdown structure when recovering over-indented list content", () => {
+    const html = renderMarkdown(
+      '-       `\\(code\\)` [link](https://example.com/\\(path\\)) <https://example.com/\\(path\\)> <span title="\\(attr\\)">html</span> and \\(math\\)',
+    );
+    expect(html.match(/class="katex"/g)).toHaveLength(1);
+    expect(html).toContain("\\(code\\)");
+    expect(html).toContain("https://example.com/%5C(path%5C)");
+    expect(html).toContain("title=&quot;\\(attr\\)&quot;");
   });
 
   it("scans long backslash runs without repeatedly rescanning the prefix", () => {
