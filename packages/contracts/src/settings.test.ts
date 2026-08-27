@@ -49,6 +49,29 @@ describe("ClaudeSettings auto-compaction", () => {
   });
 });
 
+describe("ServerSettings image generation", () => {
+  it("defaults to Codex with Imagine 2.0 available for Grok", () => {
+    const decoded = decodeServerSettings({});
+    expect(decoded.enableImageGeneration).toBe(true);
+    expect(decoded.imageGenerationProvider).toBe("codex");
+    expect(decoded.imageGenerationGrokModel).toBe("grok-imagine-image-2.0");
+  });
+
+  it("accepts a Grok provider patch", () => {
+    expect(
+      decodeServerSettingsPatch({
+        enableImageGeneration: false,
+        imageGenerationProvider: "grok",
+        imageGenerationGrokModel: "grok-imagine-image-quality",
+      }),
+    ).toMatchObject({
+      enableImageGeneration: false,
+      imageGenerationProvider: "grok",
+      imageGenerationGrokModel: "grok-imagine-image-quality",
+    });
+  });
+});
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);

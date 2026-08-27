@@ -106,6 +106,7 @@ import {
   type ParsedPreviewAnnotation,
 } from "~/lib/previewAnnotation";
 import { cn } from "~/lib/utils";
+import { useAssetUrlState } from "~/assets/assetUrls";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
@@ -2713,6 +2714,11 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           </span>
         </div>
       </div>
+      {workEntry.generatedImage ? (
+        <div className="ms-7 mt-1.5" onClick={stopRowToggle} onPointerDown={stopRowToggle}>
+          <GeneratedImageThumb image={workEntry.generatedImage} />
+        </div>
+      ) : null}
       {expanded && canExpand && expandedBody ? (
         <div
           className="mt-1 ms-7 cursor-default border-s border-border/45 ps-3 pt-0.5"
@@ -2725,3 +2731,48 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     </div>
   );
 });
+
+function GeneratedImageThumb(props: {
+  readonly image: NonNullable<TimelineWorkEntry["generatedImage"]>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const assetUrl = useAssetUrlState(ctx.activeThreadEnvironmentId, {
+    _tag: "generated-image",
+    imageId: props.image.imageId,
+  });
+  if (assetUrl._tag === "Failure") {
+    return (
+      <div className="rounded-lg border border-border/70 bg-muted/40 px-2 py-1.5 text-secondary-label text-xs">
+        {props.image.filename}
+      </div>
+    );
+  }
+  if (assetUrl._tag !== "Success") {
+    return (
+      <div
+        role="status"
+        aria-label="Loading generated image"
+        className="aspect-square w-40 max-w-full rounded-lg bg-muted/60"
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="block max-w-[20rem] overflow-hidden rounded-lg border border-border/80 bg-background/70"
+      aria-label={`Preview ${props.image.filename}`}
+      onClick={() => {
+        ctx.onImageExpand({
+          images: [{ src: assetUrl.url, name: props.image.filename }],
+          index: 0,
+        });
+      }}
+    >
+      <img
+        src={assetUrl.url}
+        alt={props.image.filename}
+        className="block h-auto max-h-[16rem] w-full object-contain"
+      />
+    </button>
+  );
+}

@@ -417,6 +417,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         providerInstanceId: ProviderInstanceId.make("codex"),
         endpoint: "http://127.0.0.1:4567/mcp",
         authorizationHeader: "Bearer test-token",
+        capabilities: new Set(["preview", "thread-reference", "image-generation"]),
       });
       const adapter = yield* CodexAdapter;
 

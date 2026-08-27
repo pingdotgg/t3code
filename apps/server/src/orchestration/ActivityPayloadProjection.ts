@@ -3,6 +3,10 @@ import type {
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+const decodeJsonUnknown = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -178,6 +182,7 @@ const MCP_ITEM_KEPT_FIELDS = [
   "appContext",
   "error",
   "durationMs",
+  "generatedImage",
 ] as const;
 
 /**
@@ -223,6 +228,31 @@ function summarizeMcpResult(result: unknown): Record<string, unknown> | undefine
  * keep the expanded-row UI working. Keep the fields the UI actually renders
  * and summarize the result like regular tool output.
  */
+function extractGeneratedImageRef(value: unknown): Record<string, unknown> | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  if (typeof record.imageId === "string" && record.imageId.trim().length > 0) {
+    return record;
+  }
+  const direct = asRecord(record.generatedImage) ?? asRecord(record.image);
+  if (typeof direct?.imageId === "string" && direct.imageId.trim().length > 0) {
+    return direct;
+  }
+  const nestedItem = asRecord(record.item);
+  if (nestedItem) {
+    const fromItem = extractGeneratedImageRef(nestedItem);
+    if (fromItem) return fromItem;
+  }
+  const fromResult = extractGeneratedImageRef(record.result);
+  if (fromResult) return fromResult;
+  const fromStructured = extractGeneratedImageRef(record.structuredContent);
+  if (fromStructured) return fromStructured;
+  const text = extractMcpResultText(record);
+  if (!text?.includes("imageId")) return undefined;
+  const parsed = decodeJsonUnknown(text);
+  return Option.isSome(parsed) ? extractGeneratedImageRef(parsed.value) : undefined;
+}
+
 function projectMcpToolCallData(data: Record<string, unknown>): Record<string, unknown> {
   const projectedData: Record<string, unknown> = {};
 
@@ -259,6 +289,15 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
   }
   if ("kind" in data) {
     projectedData.kind = data.kind;
+  }
+
+  const generatedImage = extractGeneratedImageRef(data);
+  if (generatedImage) {
+    projectedData.generatedImage = generatedImage;
+    const item = asRecord(projectedData.item);
+    if (item && item.generatedImage === undefined) {
+      projectedData.item = { ...item, generatedImage };
+    }
   }
 
   const changedFiles: string[] = [];

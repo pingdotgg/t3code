@@ -136,6 +136,73 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
   });
 
+  it("extracts a generated image ref from MCP result JSON when the item has no extra field", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "mcp_tool_call",
+        data: {
+          item: {
+            type: "mcpToolCall",
+            tool: "generate_image",
+            server: "t3-code",
+            status: "completed",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    image: {
+                      imageId: "22222222-2222-2222-2222-222222222222.jpg",
+                      filename: "22222222-2222-2222-2222-222222222222.jpg",
+                      mimeType: "image/jpeg",
+                      provider: "codex",
+                    },
+                    path: "/tmp/t3/userdata/images/22222222-2222-2222-2222-222222222222.jpg",
+                  }),
+                },
+              ],
+            },
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.generatedImage).toMatchObject({
+      imageId: "22222222-2222-2222-2222-222222222222.jpg",
+      provider: "codex",
+    });
+  });
+
+  it("keeps a generated image ref on MCP tool calls so chat can render it", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "mcp_tool_call",
+        data: {
+          item: {
+            type: "mcpToolCall",
+            tool: "generate_image",
+            server: "t3-code",
+            status: "completed",
+            generatedImage: {
+              imageId: "11111111-1111-1111-1111-111111111111.png",
+              filename: "11111111-1111-1111-1111-111111111111.png",
+              mimeType: "image/png",
+              provider: "grok",
+            },
+            result: {
+              content: [{ type: "text", text: '{"path":"/tmp/out.png"}' }],
+            },
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.generatedImage).toMatchObject({
+      imageId: "11111111-1111-1111-1111-111111111111.png",
+      provider: "grok",
+    });
+  });
+
   it("slims Codex-shaped mcp_tool_call items to rendered fields plus a result summary", () => {
     const projected = projectActivityPayload(
       activity({

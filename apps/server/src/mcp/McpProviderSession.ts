@@ -1,5 +1,7 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
+import type { McpCapability } from "./McpInvocationContext.ts";
+
 // Operator waits intentionally span complete child turns. Keep provider-side
 // MCP call limits above realistic implementation runs while preserving normal
 // cancellation when the coordinator turn is interrupted.
@@ -13,6 +15,7 @@ export interface McpProviderSessionConfig {
   readonly providerInstanceId: ProviderInstanceId;
   readonly endpoint: string;
   readonly authorizationHeader: string;
+  readonly capabilities: ReadonlySet<McpCapability>;
 }
 
 const sessionsByThread = new Map<ThreadId, McpProviderSessionConfig>();

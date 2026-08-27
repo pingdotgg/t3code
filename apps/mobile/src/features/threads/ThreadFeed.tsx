@@ -1175,6 +1175,7 @@ function renderFeedEntry(
 
   return (
     <ThreadWorkLog
+      environmentId={props.environmentId}
       activities={entry.activities}
       copiedRowId={props.copiedRowId}
       expandedRows={props.expandedWorkRows}

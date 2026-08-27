@@ -19,6 +19,10 @@
       "types": "./src/markdownImages.ts",
       "default": "./src/markdownImages.ts"
     },
+    "./generated-image": {
+      "types": "./src/generatedImage.ts",
+      "default": "./src/generatedImage.ts"
+    },
     "./errors": {
       "types": "./src/errors/index.ts",
       "default": "./src/errors/index.ts"

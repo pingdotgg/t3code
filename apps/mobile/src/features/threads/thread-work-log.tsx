@@ -1,6 +1,7 @@
 import * as Haptics from "expo-haptics";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
-import { LayoutAnimation, Pressable, ScrollView, View } from "react-native";
+import { Image, LayoutAnimation, Pressable, ScrollView, View } from "react-native";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { AppText as Text } from "../../components/AppText";
 import { scaledTypographyLineHeight } from "../../lib/appearancePreferences";
@@ -8,6 +9,7 @@ import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useThemeColor } from "../../lib/useThemeColor";
+import { useAssetUrl } from "../../state/assets";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 const WORK_LOG_LAYOUT_ANIMATION = {
@@ -98,6 +100,7 @@ const WORK_ROW_HEIGHT = 32; // min-h-8
 const WORK_ROW_GAP = 1; // gap-px
 const WORK_LOG_HEADER_PADDING = 2; // pb-0.5 under the "work log" label
 const WORK_LOG_BOTTOM_MARGIN = 4; // mb-1
+const GENERATED_IMAGE_HEIGHT = 164; // h-40 (160) + mb-1 (4)
 
 export const WORK_GROUP_TOGGLE_HEIGHT = 36; // min-h-8 (32) + mb-1 (4)
 
@@ -112,15 +115,21 @@ export function collapsedWorkLogHeight(
   const onlyToolRows = rows.every((row) => row.toolLike);
   const headerHeight =
     scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.caption, baseFontSize) + WORK_LOG_HEADER_PADDING;
+  const imageHeight = rows.reduce(
+    (sum, row) => sum + (row.generatedImage ? GENERATED_IMAGE_HEIGHT : 0),
+    0,
+  );
   return (
     WORK_LOG_BOTTOM_MARGIN +
     (onlyToolRows ? 0 : headerHeight) +
     rows.length * WORK_ROW_HEIGHT +
-    (rows.length - 1) * WORK_ROW_GAP
+    (rows.length - 1) * WORK_ROW_GAP +
+    imageHeight
   );
 }
 
 export function ThreadWorkLog(props: {
+  readonly environmentId: EnvironmentId;
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly copiedRowId: string | null;
   readonly expandedRows: Readonly<Record<string, boolean>>;
@@ -248,6 +257,14 @@ export function ThreadWorkLog(props: {
                 </View>
               </Pressable>
 
+              {row.generatedImage ? (
+                <WorkLogGeneratedImage
+                  environmentId={props.environmentId}
+                  imageId={row.generatedImage.imageId}
+                  filename={row.generatedImage.filename}
+                />
+              ) : null}
+
               {fullDetail ? (
                 <View className="ml-7 border-l border-neutral-300/60 pb-1 pl-3 pt-0.5 dark:border-white/[0.12]">
                   <ScrollView
@@ -270,6 +287,29 @@ export function ThreadWorkLog(props: {
           );
         })}
       </View>
+    </View>
+  );
+}
+
+function WorkLogGeneratedImage(props: {
+  readonly environmentId: EnvironmentId;
+  readonly imageId: string;
+  readonly filename: string;
+}) {
+  const url = useAssetUrl(props.environmentId, {
+    _tag: "generated-image",
+    imageId: props.imageId,
+  });
+  return (
+    <View className="ml-7 mb-1 h-40 overflow-hidden rounded-lg border border-neutral-300/60 dark:border-white/[0.12]">
+      {url ? (
+        <Image
+          accessibilityLabel={props.filename}
+          source={{ uri: url }}
+          className="h-40 w-full"
+          resizeMode="contain"
+        />
+      ) : null}
     </View>
   );
 }

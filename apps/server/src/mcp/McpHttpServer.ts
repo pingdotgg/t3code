@@ -26,6 +26,8 @@ import { OperatorToolkitHandlersLive } from "./toolkits/operator/handlers.ts";
 import { OperatorToolkit } from "./toolkits/operator/tools.ts";
 import { ThreadReferenceToolkitHandlersLive } from "./toolkits/threadReference/handlers.ts";
 import { ThreadReferenceToolkit } from "./toolkits/threadReference/tools.ts";
+import { ImageGenerationToolkitHandlersLive } from "./toolkits/imageGeneration/handlers.ts";
+import { ImageGenerationToolkit } from "./toolkits/imageGeneration/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -228,6 +230,10 @@ export const ThreadReferenceToolkitRegistrationLive = McpServer.toolkit(
   ThreadReferenceToolkit,
 ).pipe(Layer.provide(ThreadReferenceToolkitHandlersLive));
 
+export const ImageGenerationToolkitRegistrationLive = McpServer.toolkit(
+  ImageGenerationToolkit,
+).pipe(Layer.provide(ImageGenerationToolkitHandlersLive));
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -239,4 +245,5 @@ export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   OperatorToolkitRegistrationLive,
   ThreadReferenceToolkitRegistrationLive,
+  ImageGenerationToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));
