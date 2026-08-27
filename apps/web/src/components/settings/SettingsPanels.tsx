@@ -146,6 +146,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { PercentageSettingInput } from "./PercentageSettingInput";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -1042,12 +1043,13 @@ export function AppearanceSettingsPanel() {
           }
           control={
             <div className="flex w-full items-center gap-3 sm:w-52">
-              <output
-                className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
-                htmlFor="appearance-contrast"
-              >
-                {settings.appearanceContrast}%
-              </output>
+              <PercentageSettingInput
+                ariaLabel="Contrast percentage"
+                max={MAX_APPEARANCE_CONTRAST}
+                min={MIN_APPEARANCE_CONTRAST}
+                onCommit={(appearanceContrast) => updateSettings({ appearanceContrast })}
+                value={settings.appearanceContrast}
+              />
               <input
                 aria-label="Contrast"
                 className="settings-slider min-w-0 flex-1"
@@ -1088,12 +1090,13 @@ export function AppearanceSettingsPanel() {
           }
           control={
             <div className="flex w-full items-center gap-3 sm:w-52">
-              <output
-                className="min-w-12 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
-                htmlFor="glass-opacity"
-              >
-                {settings.glassOpacity}%
-              </output>
+              <PercentageSettingInput
+                ariaLabel="Glass opacity percentage"
+                max={MAX_GLASS_OPACITY}
+                min={MIN_GLASS_OPACITY}
+                onCommit={(glassOpacity) => updateSettings({ glassOpacity })}
+                value={settings.glassOpacity}
+              />
               <input
                 aria-label="Glass opacity"
                 className="settings-slider min-w-0 flex-1"
