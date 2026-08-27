@@ -71,9 +71,10 @@ const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
 const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);
 // Keep detail reads consistent with the in-memory projector's retained
-// activity window. Applying the limit in SQL avoids decoding an unbounded
-// payload_json set before the projector can enforce that invariant.
+// activity window. Apply both limits in SQL so large tool results do not cross
+// into JavaScript only to be discarded by the client payload projection.
 const THREAD_DETAIL_ACTIVITY_LIMIT = 500;
+const THREAD_DETAIL_ACTIVITY_BYTE_LIMIT = 16 * 1024 * 1024;
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
@@ -1019,27 +1020,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     Result: ProjectionThreadActivityDbRowSchema,
     execute: ({ threadId }) =>
       sql`
-        SELECT
-          activity_id AS "activityId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          tone,
-          kind,
-          summary,
-          payload_json AS "payload",
-          sequence,
-          created_at AS "createdAt"
-        FROM (
+        WITH recent_activity_metadata AS (
           SELECT
             activity_id,
-            thread_id,
-            turn_id,
-            tone,
-            kind,
-            summary,
-            payload_json,
             sequence,
-            created_at
+            created_at,
+            LENGTH(CAST(payload_json AS BLOB)) AS payload_bytes
           FROM projection_thread_activities
           WHERE thread_id = ${threadId}
           ORDER BY
@@ -1047,11 +1033,38 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             created_at DESC,
             activity_id DESC
           LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
-        ) AS recent_activities
+        ),
+        budgeted_activity_ids AS (
+          SELECT
+            activity_id,
+            ROW_NUMBER() OVER (
+              ORDER BY sequence DESC, created_at DESC, activity_id DESC
+            ) AS activity_order,
+            SUM(payload_bytes) OVER (
+              ORDER BY sequence DESC, created_at DESC, activity_id DESC
+              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            ) AS cumulative_payload_bytes
+          FROM recent_activity_metadata
+        )
+        SELECT
+          activity.activity_id AS "activityId",
+          activity.thread_id AS "threadId",
+          activity.turn_id AS "turnId",
+          activity.tone,
+          activity.kind,
+          activity.summary,
+          activity.payload_json AS "payload",
+          activity.sequence,
+          activity.created_at AS "createdAt"
+        FROM budgeted_activity_ids AS budgeted
+        INNER JOIN projection_thread_activities AS activity
+          ON activity.activity_id = budgeted.activity_id
+        WHERE budgeted.activity_order = 1
+          OR budgeted.cumulative_payload_bytes <= ${THREAD_DETAIL_ACTIVITY_BYTE_LIMIT}
         ORDER BY
-          sequence ASC,
-          created_at ASC,
-          activity_id ASC
+          activity.sequence ASC,
+          activity.created_at ASC,
+          activity.activity_id ASC
       `,
   });
 
@@ -1357,27 +1370,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     Result: ProjectionThreadActivityDbRowSchema,
     execute: ({ threadId, minAnchorAt, minTurnKey, beforeAnchorAt, beforeTurnKey }) =>
       sql`
-        SELECT
-          activity_id AS "activityId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          tone,
-          kind,
-          summary,
-          payload_json AS "payload",
-          sequence,
-          created_at AS "createdAt"
-        FROM (
+        WITH recent_activity_metadata AS (
           SELECT
             activity_id,
-            thread_id,
-            turn_id,
-            tone,
-            kind,
-            summary,
-            payload_json,
             sequence,
-            created_at
+            created_at,
+            LENGTH(CAST(payload_json AS BLOB)) AS payload_bytes
           FROM projection_thread_activities
           WHERE thread_id = ${threadId}
             AND (
@@ -1411,11 +1409,38 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             created_at DESC,
             activity_id DESC
           LIMIT ${THREAD_DETAIL_ACTIVITY_LIMIT}
-        ) AS recent_activities
+        ),
+        budgeted_activity_ids AS (
+          SELECT
+            activity_id,
+            ROW_NUMBER() OVER (
+              ORDER BY sequence DESC, created_at DESC, activity_id DESC
+            ) AS activity_order,
+            SUM(payload_bytes) OVER (
+              ORDER BY sequence DESC, created_at DESC, activity_id DESC
+              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+            ) AS cumulative_payload_bytes
+          FROM recent_activity_metadata
+        )
+        SELECT
+          activity.activity_id AS "activityId",
+          activity.thread_id AS "threadId",
+          activity.turn_id AS "turnId",
+          activity.tone,
+          activity.kind,
+          activity.summary,
+          activity.payload_json AS "payload",
+          activity.sequence,
+          activity.created_at AS "createdAt"
+        FROM budgeted_activity_ids AS budgeted
+        INNER JOIN projection_thread_activities AS activity
+          ON activity.activity_id = budgeted.activity_id
+        WHERE budgeted.activity_order = 1
+          OR budgeted.cumulative_payload_bytes <= ${THREAD_DETAIL_ACTIVITY_BYTE_LIMIT}
         ORDER BY
-          sequence ASC,
-          created_at ASC,
-          activity_id ASC
+          activity.sequence ASC,
+          activity.created_at ASC,
+          activity.activity_id ASC
       `,
   });
 

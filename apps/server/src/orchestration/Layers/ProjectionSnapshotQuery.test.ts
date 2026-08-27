@@ -2421,6 +2421,68 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
     }),
   );
 
+  it.effect("bounds activity hydration by serialized payload bytes", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`
+        WITH RECURSIVE activity_rows(sequence) AS (
+          SELECT 1
+          UNION ALL
+          SELECT sequence + 1 FROM activity_rows WHERE sequence < 18
+        )
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
+        )
+        SELECT
+          printf('large-activity-%04d', sequence),
+          'thread-w',
+          'turn-5',
+          'tool',
+          'tool.completed',
+          'viewed image',
+          json_object(
+            'sequence', sequence,
+            'data', json_object(
+              'item', json_object(
+                'result', printf('%.*c', 1048576, 'x')
+              )
+            )
+          ),
+          sequence,
+          '2026-03-01T00:04:00.000Z'
+        FROM activity_rows
+      `;
+
+      const fullDetail = yield* snapshotQuery.getThreadDetailById(threadW);
+      assert.equal(fullDetail._tag, "Some");
+      if (fullDetail._tag === "Some") {
+        assert.equal(fullDetail.value.activities.length, 15);
+        assert.equal(fullDetail.value.activities[0]?.id, asEventId("large-activity-0004"));
+        assert.equal(fullDetail.value.activities.at(-1)?.id, asEventId("large-activity-0018"));
+      }
+
+      const windowedDetail = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+        turnLimit: 2,
+      });
+      assert.equal(windowedDetail._tag, "Some");
+      if (windowedDetail._tag === "Some") {
+        assert.equal(windowedDetail.value.thread.activities.length, 15);
+        assert.equal(
+          windowedDetail.value.thread.activities[0]?.id,
+          asEventId("large-activity-0004"),
+        );
+        assert.equal(
+          windowedDetail.value.thread.activities.at(-1)?.id,
+          asEventId("large-activity-0018"),
+        );
+      }
+    }),
+  );
+
   it.effect("a thread with no turns returns its content unwindowed on the first page", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
