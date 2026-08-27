@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-export class CatalogDependencyResolutionError extends Schema.TaggedErrorClass<CatalogDependencyResolutionError>()(
+class CatalogDependencyResolutionError extends Schema.TaggedErrorClass<CatalogDependencyResolutionError>()(
   "CatalogDependencyResolutionError",
   {
     workspacePackage: Schema.String,

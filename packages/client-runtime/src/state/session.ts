@@ -16,7 +16,7 @@ import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../
 import { buildEnvironmentAuthHeaders, withEnvironmentCredentials } from "./environmentHttpAuth.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
-export function initialConfigOption<E>(
+function initialConfigOption<E>(
   initialConfig: Effect.Effect<ServerConfig, E>,
 ): Effect.Effect<Option.Option<ServerConfig>> {
   return initialConfig.pipe(
