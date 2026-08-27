@@ -780,6 +780,57 @@ enum HomeWorkingDuration {
     }
 }
 
+/// The completion age shown in a completed rich Home row.
+///
+/// Recent completions stay minute-granular because Home refreshes quiet rows every 60 seconds.
+enum HomeDoneDuration {
+    static func compact(since date: Date, now: Date) -> String {
+        let minutes = elapsedMinutes(since: date, now: now)
+        guard minutes >= 1 else { return "now" }
+        guard minutes >= 60 else { return "\(minutes)m" }
+        let hours = minutes / 60
+        guard hours >= 24 else { return "\(hours)h \(minutes % 60)m" }
+        let days = hours / 24
+        guard days >= 7 else { return "\(days)d \(hours % 24)h" }
+        guard days >= 365 else { return "\(days / 7)w" }
+        return "\(days / 365)y"
+    }
+
+    static func accessibility(since date: Date, now: Date) -> String {
+        "Completed \(elapsedPhrase(since: date, now: now))"
+    }
+
+    private static func elapsedPhrase(since date: Date, now: Date) -> String {
+        let minutes = elapsedMinutes(since: date, now: now)
+        guard minutes >= 1 else { return "just now" }
+        guard minutes >= 60 else { return "\(unit(minutes, singular: "minute")) ago" }
+
+        let hours = minutes / 60
+        guard hours >= 24 else {
+            let remainingMinutes = minutes % 60
+            guard remainingMinutes > 0 else { return "\(unit(hours, singular: "hour")) ago" }
+            return "\(unit(hours, singular: "hour")), \(unit(remainingMinutes, singular: "minute")) ago"
+        }
+
+        let days = hours / 24
+        guard days < 7 else {
+            guard days >= 365 else { return "\(unit(days / 7, singular: "week")) ago" }
+            return "\(unit(days / 365, singular: "year")) ago"
+        }
+        let remainingHours = hours % 24
+        guard remainingHours > 0 else { return "\(unit(days, singular: "day")) ago" }
+        return "\(unit(days, singular: "day")), \(unit(remainingHours, singular: "hour")) ago"
+    }
+
+    private static func elapsedMinutes(since date: Date, now: Date) -> Int {
+        max(0, Int(now.timeIntervalSince(date))) / 60
+    }
+
+    private static func unit(_ value: Int, singular: String) -> String {
+        "\(value) \(singular)\(value == 1 ? "" : "s")"
+    }
+}
+
 extension FeatureThread {
     var homeStatus: HomeThreadStatus {
         switch state {
@@ -836,7 +887,9 @@ extension FeatureThread {
 
     func homeRowStatusLabel(at now: Date) -> String {
         switch homeStatus {
-        case .done, .ready:
+        case .done:
+            homeDoneDuration(at: now) ?? SidebarRelativeAge.compact(since: updatedAt, now: now)
+        case .ready:
             SidebarRelativeAge.compact(since: updatedAt, now: now)
         case .approval, .input, .working, .monitoring, .failed:
             homeStatusLabel ?? SidebarRelativeAge.compact(since: updatedAt, now: now)
@@ -846,6 +899,25 @@ extension FeatureThread {
     func homeWorkingDuration(at now: Date) -> String? {
         guard homeStatus == .working, let workingStartedAt else { return nil }
         return HomeWorkingDuration.compact(since: workingStartedAt, now: now)
+    }
+
+    func homeDoneDuration(at now: Date) -> String? {
+        guard homeStatus == .done, let latestTurnCompletedAt else { return nil }
+        return HomeDoneDuration.compact(since: latestTurnCompletedAt, now: now)
+    }
+
+    func homeDoneAccessibilityLabel(at now: Date) -> String? {
+        guard homeStatus == .done, let latestTurnCompletedAt else { return nil }
+        return HomeDoneDuration.accessibility(since: latestTurnCompletedAt, now: now)
+    }
+
+    func homeRowAccessibilityStatus(rich: Bool, at now: Date) -> String {
+        guard rich else { return homeStatusLabel ?? "Ready" }
+        if let completed = homeDoneAccessibilityLabel(at: now) { return completed }
+        if homeStatus == .done {
+            return "Done. \(SidebarRelativeAge.accessibility(since: updatedAt, now: now))"
+        }
+        return homeStatusLabel ?? "Ready"
     }
 
     var hasLiveWorkingDuration: Bool {

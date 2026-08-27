@@ -4262,7 +4262,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 backgroundWorkIsActive: backgroundWorkIsActive,
                 fallbackUpdatedAt: thread.updatedAt
             ),
-            latestTurnCompletedAt: thread.latestTurn?.completedAt.map(parseDate),
+            latestTurnCompletedAt: thread.latestTurn?.completedAt.flatMap(parseValidDate),
             runtimeMode: mapRuntimeMode(thread.runtimeMode),
             interactionMode: mapInteractionMode(thread.interactionMode)
         )
@@ -4334,7 +4334,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 backgroundWorkIsActive: backgroundWorkIsActive,
                 fallbackUpdatedAt: thread.updatedAt
             ),
-            latestTurnCompletedAt: thread.latestTurn?.completedAt.map(parseDate),
+            latestTurnCompletedAt: thread.latestTurn?.completedAt.flatMap(parseValidDate),
             runtimeMode: mapRuntimeMode(thread.runtimeMode),
             interactionMode: mapInteractionMode(thread.interactionMode)
         )
