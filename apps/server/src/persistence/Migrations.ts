@@ -56,6 +56,7 @@ import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
 import Migration0041 from "./Migrations/041_AuthSessionClientConnection.ts";
 import Migration0042 from "./Migrations/042_ProjectionThreadLinkedPullRequest.ts";
 import Migration0043 from "./Migrations/043_ProjectionThreadsUnsettledAt.ts";
+import Migration0050 from "./Migrations/050_ProjectionThreadsUnsettledAtRecovery.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -111,6 +112,8 @@ export const migrationEntries = [
   [41, "AuthSessionClientConnection", Migration0041],
   [42, "ProjectionThreadLinkedPullRequest", Migration0042],
   [43, "ProjectionThreadsUnsettledAt", Migration0043],
+  // Keep 44-49 unused because affected databases may already contain those migration IDs.
+  [50, "ProjectionThreadsUnsettledAtRecovery", Migration0050],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
