@@ -388,8 +388,8 @@ function distributeRetainedTailAcrossContent(
   > = Array.from({ length: content.length });
   let offset = 0;
   let seenText = false;
-  for (let index = 0; index < content.length; index += 1) {
-    const text = toolCallContentText(content[index])?.trim();
+  for (const [index, entry] of content.entries()) {
+    const text = toolCallContentText(entry)?.trim();
     if (!text) {
       continue;
     }

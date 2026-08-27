@@ -1760,6 +1760,88 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("asks before a different command after Always allow this session", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-session-approval-scope");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+          T3_ACP_OMIT_ALLOW_ALWAYS: "1",
+          T3_ACP_PERMISSION_REQUEST_COUNT: "2",
+          T3_ACP_PERMISSION_TITLE: "Terminal",
+          T3_ACP_SECOND_PERMISSION_COMMAND: "rm server/package.json",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const openedCount = yield* Ref.make(0);
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "request.opened"
+          ? Effect.gen(function* () {
+              const count = yield* Ref.updateAndGet(openedCount, (value) => value + 1);
+              yield* adapter.respondToRequest(
+                threadId,
+                ApprovalRequestId.make(String(event.requestId)),
+                count === 1 ? "acceptForSession" : "decline",
+              );
+            })
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      yield* adapter.sendTurn({ threadId, input: "check approval scope", attachments: [] });
+      assert.equal(yield* Ref.get(openedCount), 2);
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("captures a plan under the provider instance GROK_HOME", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-instance-plan-home");
+      const grokHome = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-instance-home-")),
+      );
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_EMIT_XAI_PLAN_MD_WRITE: "1",
+          T3_ACP_PLAN_ROOT: grokHome,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        environment: { ...process.env, GROK_HOME: grokHome },
+      });
+      const plans = yield* Ref.make<ReadonlyArray<string>>([]);
+      const completed = yield* Deferred.make<void>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (event.type === "turn.proposed.completed") {
+          return Ref.update(plans, (current) => [...current, event.payload.planMarkdown]);
+        }
+        return event.type === "turn.completed"
+          ? Deferred.succeed(completed, undefined).pipe(Effect.asVoid)
+          : Effect.void;
+      }).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "write the plan", attachments: [] });
+      yield* Deferred.await(completed);
+      assert.deepEqual(yield* Ref.get(plans), [
+        "# Mock plan\n\n- Write the feature\n- Add a test\n- Ship it",
+      ]);
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("handles xAI ask_user_question extension requests", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-xai-ask-user-question");

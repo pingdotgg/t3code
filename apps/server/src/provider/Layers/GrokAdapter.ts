@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -346,7 +347,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
     const hostPlatform = yield* HostProcessPlatform;
     const hostEnvironment = yield* HostProcessEnvironment;
-    const grokPlanPathHost = { platform: hostPlatform, environment: hostEnvironment };
+    const grokPlanPathHost = {
+      platform: hostPlatform,
+      environment: options?.environment ?? hostEnvironment,
+    };
 
     const sessions = new Map<ThreadId, GrokSessionContext>();
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
@@ -960,7 +964,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
           const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
           const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
-          let sessionAllowAll = false;
+          const sessionApprovedOperations = new Set<string>();
           const sessionScope = yield* Scope.make("sequential");
           let sessionScopeTransferred = false;
           yield* Effect.addFinalizer(() =>
@@ -1121,8 +1125,27 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               mapAcpCallbackFailure(
                 Effect.gen(function* () {
                   yield* logNative(input.threadId, "session/request_permission", params);
-                  if (input.runtimeMode === "full-access" || sessionAllowAll) {
-                    const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
+                  const permissionRequest = parsePermissionRequest(params);
+                  const command = permissionRequest.toolCall?.command;
+                  const { kind, title, rawInput, locations } = params.toolCall;
+                  let operationInput = rawInput;
+                  if (isRecord(rawInput) && rawInput.variant === "Bash") {
+                    const { description: _description, ...shellInput } = rawInput;
+                    operationInput = shellInput;
+                  }
+                  // Remember the operation, not the tool-call id or every future tool.
+                  // Generic titles without input cannot identify an operation safely.
+                  const approvalKey =
+                    command || (isRecord(rawInput) && Object.keys(rawInput).length > 0)
+                      ? stableStringify({ kind, title, command, input: operationInput, locations })
+                      : undefined;
+                  const alreadyApproved =
+                    approvalKey !== undefined && sessionApprovedOperations.has(approvalKey);
+                  if (input.runtimeMode === "full-access" || alreadyApproved) {
+                    const autoApprovedOptionId =
+                      input.runtimeMode === "full-access"
+                        ? selectAutoApprovedPermissionOption(params)
+                        : selectGrokPermissionOptionId(params, "accept");
                     if (autoApprovedOptionId !== undefined) {
                       return {
                         outcome: {
@@ -1132,7 +1155,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                       };
                     }
                   }
-                  const permissionRequest = parsePermissionRequest(params);
                   const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
                   const runtimeRequestId = RuntimeRequestId.make(requestId);
                   const decision = yield* Deferred.make<ProviderApprovalDecision>();
@@ -1175,8 +1197,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                     resolved === "cancel"
                       ? undefined
                       : selectGrokPermissionOptionId(params, resolved);
-                  if (resolved === "acceptForSession" && selectedOptionId) {
-                    sessionAllowAll = true;
+                  if (
+                    resolved === "acceptForSession" &&
+                    selectedOptionId &&
+                    approvalKey !== undefined
+                  ) {
+                    sessionApprovedOperations.add(approvalKey);
                   }
                   return {
                     outcome: selectedOptionId

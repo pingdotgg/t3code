@@ -26,6 +26,9 @@ unattended until it finishes or asks a question of its own.
 Approvals appear inline in the conversation. Approve or reject one and the agent continues from
 there.
 
+For Grok, **Always allow this session** remembers the matching command or tool input. Other
+actions still ask for approval. It does not change the thread to **Full access**.
+
 ## Choosing a Mode
 
 Use **Full access** for work in a worktree or a sandbox you can throw away.

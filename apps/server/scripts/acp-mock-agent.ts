@@ -755,19 +755,28 @@ const program = Effect.gen(function* () {
 
         let cancelled = cancelledSessions.delete(requestedSessionId);
         for (let index = 0; index < permissionRequestCount; index++) {
+          const command =
+            index > 0
+              ? (process.env.T3_ACP_SECOND_PERMISSION_COMMAND ?? "cat server/package.json")
+              : "cat server/package.json";
           const permission = yield* agent.client.requestPermission({
             sessionId: requestedSessionId,
             toolCall: {
               toolCallId: index === 0 ? toolCallId : `${toolCallId}-${index + 1}`,
-              title: "`cat server/package.json`",
+              title: process.env.T3_ACP_PERMISSION_TITLE ?? `\`${command}\``,
               kind: "execute",
               status: "pending",
+              rawInput: {
+                variant: "Bash",
+                command,
+                description: index === 0 ? "Read package metadata" : "Read it again",
+              },
               content: [
                 {
                   type: "content",
                   content: {
                     type: "text",
-                    text: "Not in allowlist: cat server/package.json",
+                    text: `Not in allowlist: ${command}`,
                   },
                 },
               ],
@@ -911,7 +920,8 @@ const program = Effect.gen(function* () {
 
       if (emitXAiPlanMdWrite) {
         // Match Grok's real session layout so isGrokPlanMarkdownPath accepts it.
-        const planPath = `/tmp/mock-home/.grok/sessions/${requestedSessionId}/plan.md`;
+        const planRoot = process.env.T3_ACP_PLAN_ROOT ?? "/tmp/mock-home/.grok";
+        const planPath = `${planRoot}/sessions/${requestedSessionId}/plan.md`;
         const planBody = "# Mock plan\n\n- Write the feature\n- Add a test\n- Ship it\n";
         // enter_plan_mode first so the adapter arms planModeActive.
         yield* agent.client.sessionUpdate({
