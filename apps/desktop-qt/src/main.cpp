@@ -141,11 +141,18 @@ int main(int argc, char* argv[]) {
     auto* armed = new bool(false);
     QObject::connect(&bridge, &ShellBridge::pageLoaded, &runtime,
                      [&runtime, &bridge, &app, target, scriptedActions, screenshotRequested,
-                      armed](bool) {
+                      armed](bool ok) {
                        if (*armed) {
                          return;
                        }
                        *armed = true;
+                       if (!ok) {
+                         qWarning().noquote() << "[shell] page failed to load; scripted run aborted";
+                         if (screenshotRequested) {
+                           app.exit(2);
+                         }
+                         return;
+                       }
                        int delay = 1500;
                        for (const QString& spec : scriptedActions) {
                          QTimer::singleShot(delay, &bridge, [&bridge, spec] {
