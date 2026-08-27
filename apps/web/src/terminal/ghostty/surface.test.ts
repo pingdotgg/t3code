@@ -4,6 +4,7 @@ import type { GhosttyCell, GhosttyRow } from "./core";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
+  GhosttyTerminalSurface,
   advanceTerminalSelectionClickSequence,
   applyTerminalCopyEvent,
   clearPrimedTerminalCopyInput,
@@ -32,6 +33,25 @@ import {
   terminalWheelArrowData,
   terminalWheelDeltaRows,
 } from "./surface";
+
+const terminalSurfaceForPaste = (onData: (data: string) => void) => {
+  const surface = Object.create(GhosttyTerminalSurface.prototype) as GhosttyTerminalSurface;
+  Object.assign(surface, {
+    disposed: false,
+    pasteShortcutToken: 0,
+    options: { onData },
+    core: { encodePaste: (data: string) => `[paste]${data}` },
+  });
+  return surface;
+};
+
+const deferredClipboardText = () => {
+  let resolve: (text: string) => void = () => {};
+  const promise = new Promise<string>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+};
 
 const cell = (text: string): GhosttyCell => ({
   text,
@@ -346,6 +366,50 @@ describe("isTerminalPasteShortcut", () => {
     expect(isTerminalPasteShortcut(event({ key: "Insert", shiftKey: true }), "MacIntel")).toBe(
       false,
     );
+  });
+});
+
+describe("GhosttyTerminalSurface paste races", () => {
+  it("lets a keyboard paste supersede a pending context-menu read", async () => {
+    const onData = vi.fn();
+    const surface = terminalSurfaceForPaste(onData);
+    const clipboard = deferredClipboardText();
+    const contextMenuPaste = surface.pasteFromClipboard(() => clipboard.promise);
+
+    surface.paste("keyboard");
+    clipboard.resolve("context menu");
+    await contextMenuPaste;
+
+    expect(onData).toHaveBeenCalledOnce();
+    expect(onData).toHaveBeenCalledWith("[paste]keyboard");
+  });
+
+  it("lets a native paste supersede a pending shortcut read", async () => {
+    const onData = vi.fn();
+    const surface = terminalSurfaceForPaste(onData);
+    const clipboard = deferredClipboardText();
+    const shortcutPaste = surface.pasteFromClipboard(() => clipboard.promise);
+
+    surface.paste("native");
+    clipboard.resolve("shortcut");
+    await shortcutPaste;
+
+    expect(onData).toHaveBeenCalledOnce();
+    expect(onData).toHaveBeenCalledWith("[paste]native");
+  });
+
+  it("keeps a pending clipboard read current after an empty paste", async () => {
+    const onData = vi.fn();
+    const surface = terminalSurfaceForPaste(onData);
+    const clipboard = deferredClipboardText();
+    const shortcutPaste = surface.pasteFromClipboard(() => clipboard.promise);
+
+    surface.paste("");
+    clipboard.resolve("shortcut");
+    await shortcutPaste;
+
+    expect(onData).toHaveBeenCalledOnce();
+    expect(onData).toHaveBeenCalledWith("[paste]shortcut");
   });
 });
 
