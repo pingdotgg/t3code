@@ -1044,7 +1044,10 @@ const makeWsRpcLayer = (
                           threadId: command.threadId,
                           baseBranch: prepareWorktree.baseBranch,
                           remoteName: "origin",
-                          detail: error.message,
+                          operation: error.operation,
+                          exitCode: error.exitCode ?? null,
+                          stdoutLength: error.stdoutLength ?? null,
+                          stderrLength: error.stderrLength ?? null,
                         }).pipe(Effect.as(prepareWorktree.baseBranch)),
                       ),
                     )
