@@ -12,14 +12,16 @@ Window {
     property date now: new Date()
 
     readonly property bool settingsActive: Shell.state.settings ? Shell.state.settings.active : false
-    readonly property color glass: Qt.rgba(Theme.color("surface", "#1b2033").r, Theme.color("surface", "#1b2033").g, Theme.color("surface", "#1b2033").b, 0.82)
+    readonly property color glass: Qt.rgba(Theme.color("surface", "#1b2033").r, Theme.color("surface", "#1b2033").g, Theme.color("surface", "#1b2033").b, 0.6)
     readonly property color line: Qt.rgba(1, 1, 1, 0.08)
 
     width: 1400
     height: 880
     visible: true
     title: qsTr("T3 Code")
-    color: Theme.windowTransparent ? "transparent" : Theme.color("canvas", "#141826")
+    // macOS blurs in proportion to alpha, so the gaps keep a faint tint
+    // instead of going fully clear.
+    color: Theme.windowTransparent ? Qt.rgba(Theme.color("canvas", "#141826").r, Theme.color("canvas", "#141826").g, Theme.color("canvas", "#141826").b, 0.3) : Theme.color("canvas", "#141826")
     opacity: Theme.windowOpacity
     flags: Qt.Window | Qt.FramelessWindowHint
 
