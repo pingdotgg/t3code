@@ -6,6 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { RelayReferralClaimResult } from "@t3tools/contracts/relay";
+import { useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -16,8 +17,7 @@ import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import {
   captureReferralCodeFromUrl,
   PENDING_REFERRAL_CODE_STORAGE_KEY,
-  referralCodeFromUrl,
-  urlWithoutReferralCode,
+  urlWithoutMatchingReferralCode,
 } from "../../cloud/referralLinks";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
@@ -56,10 +56,11 @@ function captureReferralCode(): string | null {
   return captured.referralCode;
 }
 
-function clearReferralCodeFromUrl(): void {
+function clearReferralCodeFromUrl(referralCode: string): void {
   const url = new URL(window.location.href);
-  if (!referralCodeFromUrl(url)) return;
-  window.history.replaceState(window.history.state, "", urlWithoutReferralCode(url));
+  const cleanedUrl = urlWithoutMatchingReferralCode(url, referralCode);
+  if (!cleanedUrl) return;
+  window.history.replaceState(window.history.state, "", cleanedUrl);
 }
 
 function showClaimResult(result: RelayReferralClaimResult): void {
@@ -95,6 +96,7 @@ export function ReferralClaimCoordinator() {
 
 function ConfiguredReferralClaimCoordinator() {
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
+  const locationHref = useLocation({ select: (location) => location.href });
   const claimReferral = useAtomCommand(claimManagedRelayReferralCommand, {
     reportFailure: false,
   });
@@ -103,18 +105,21 @@ function ConfiguredReferralClaimCoordinator() {
   const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
   const activeClaimRef = useRef<ReferralClaimAttempt | null>(null);
   const completedClaimRef = useRef<string | null>(null);
+  const initializedReferralRef = useRef(false);
   const promptedSignInRef = useRef<string | null>(null);
   const shouldPromptSignInRef = useRef(false);
 
   useEffect(() => {
     const capturedCode = captureReferralCode();
+    if (!capturedCode && initializedReferralRef.current) return;
+    initializedReferralRef.current = true;
     const initial = referralClaimLoadState(
       capturedCode,
       capturedCode ? null : readPendingReferralCode(),
     );
     shouldPromptSignInRef.current = initial.shouldPromptSignIn;
     setPendingReferralCode(initial.referralCode);
-  }, []);
+  }, [locationHref]);
 
   useEffect(() => {
     if (!isLoaded || isSignedIn || !pendingReferralCode || !shouldPromptSignInRef.current) return;
@@ -155,7 +160,7 @@ function ConfiguredReferralClaimCoordinator() {
           if (!isCurrentAttempt()) return;
           completedClaimRef.current = attemptKey;
           clearPendingReferralCode();
-          clearReferralCodeFromUrl();
+          clearReferralCodeFromUrl(referralCode);
           setPendingReferralCode(null);
           refreshManagedRelayReferralSummary();
           showClaimResult(result.value.result);

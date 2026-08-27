@@ -4,6 +4,7 @@ import {
   buildReferralShareData,
   captureReferralCodeFromUrl,
   referralCodeFromUrl,
+  urlWithoutMatchingReferralCode,
   urlWithoutReferralCode,
 } from "./referralLinks";
 
@@ -27,6 +28,13 @@ describe("referralLinks", () => {
       referralCode: "ABCD1234EFAB5678",
       cleanedUrl: "/#thread",
     });
+  });
+
+  it("does not clear a newer referral from the current URL", () => {
+    const currentUrl = new URL("https://app.t3.codes/?ref=BBBBBBBBBBBBBBBB#thread");
+
+    expect(urlWithoutMatchingReferralCode(currentUrl, "AAAAAAAAAAAAAAAA")).toBeNull();
+    expect(urlWithoutMatchingReferralCode(currentUrl, "bbbbbbbbbbbbbbbb")).toBe("/#thread");
   });
 
   it("embeds the claim URL in web share text even when a share target drops the url field", () => {

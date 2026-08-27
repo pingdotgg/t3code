@@ -17,6 +17,15 @@ export function urlWithoutReferralCode(url: URL): string {
   return `${next.pathname}${next.search}${next.hash}`;
 }
 
+export function urlWithoutMatchingReferralCode(
+  url: URL,
+  expectedReferralCode: string,
+): string | null {
+  const expected = normalizeReferralCode(expectedReferralCode);
+  if (!expected || referralCodeFromUrl(url) !== expected) return null;
+  return urlWithoutReferralCode(url);
+}
+
 export function captureReferralCodeFromUrl(
   url: URL,
   persist: (referralCode: string) => void,
