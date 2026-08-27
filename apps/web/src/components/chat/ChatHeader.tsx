@@ -258,12 +258,16 @@ export const ChatHeader = memo(function ChatHeader({
     [cancelPendingTitleMenu, closeMenu, startRename],
   );
   // Native title clicks arrive as window coordinates; the shell renders the
-  // menu at the window level for the "shell" surface.
+  // menu at the window level for the "shell" surface. Keyed on the request
+  // alone: openMenu changes identity on rename and PR polling, which must
+  // not re-open the menu.
+  const openMenuRef = useRef(openMenu);
+  openMenuRef.current = openMenu;
   useEffect(() => {
     if (!shellHosted || shellMenuRequest === null) return;
     const position = { x: shellMenuRequest.x, y: shellMenuRequest.y, surface: "shell" };
-    openMenu(position);
-  }, [openMenu, shellHosted, shellMenuRequest]);
+    openMenuRef.current(position);
+  }, [shellHosted, shellMenuRequest]);
 
   const handleHeaderContextMenu = useCallback(
     (event: ReactMouseEvent) => {
