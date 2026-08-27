@@ -10,10 +10,21 @@ import { CodexSettings } from "@t3tools/contracts";
 import {
   CodexShadowHomeEntryConflictError,
   CodexShadowHomePathConflictError,
+  CodexShadowHomePrivateEntrySymlinkError,
+  classifyCodexShadowHomeEntry,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
 const decodeCodexSettingsValue = Schema.decodeSync(CodexSettings);
+
+const AUTH_LIKE_ENTRY_NAMES = [
+  "auth.json",
+  "auth-fixture-a.json",
+  "auth-fixture-b.json",
+  "auth-fixture-c.json",
+  "auth.json.bak",
+  "auth_fixture_d.json",
+] as const;
 
 const decodeCodexSettings = (input: {
   readonly enabled?: boolean;
@@ -39,6 +50,22 @@ const writeTextFile = Effect.fn("CodexHomeLayout.test.writeTextFile")(function* 
 });
 
 it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
+  describe("classifyCodexShadowHomeEntry", () => {
+    it("fails closed for auth-like names without matching normal shared names", () => {
+      for (const entryName of AUTH_LIKE_ENTRY_NAMES) {
+        expect(classifyCodexShadowHomeEntry(entryName)).toBe("credential-private");
+      }
+      expect(classifyCodexShadowHomeEntry("AUTH-FIXTURE-E.JSON")).toBe("credential-private");
+      expect(classifyCodexShadowHomeEntry("author.json")).toBe("shared");
+      expect(classifyCodexShadowHomeEntry("sessions")).toBe("shared");
+      expect(classifyCodexShadowHomeEntry("config.toml")).toBe("shared");
+      expect(classifyCodexShadowHomeEntry("skills")).toBe("shared");
+      expect(classifyCodexShadowHomeEntry("cache")).toBe("shared");
+      expect(classifyCodexShadowHomeEntry("models_cache.json")).toBe("private");
+      expect(classifyCodexShadowHomeEntry("memories")).toBe("shadow-local");
+    });
+  });
+
   describe("resolveCodexHomeLayout", () => {
     it.effect("uses direct CODEX_HOME when no shadow home is configured", () =>
       Effect.gen(function* () {
@@ -84,7 +111,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
   });
 
   describe("materializeCodexShadowHome", () => {
-    it.effect("materializes a shadow home with shared state links and private auth", () =>
+    it.effect("keeps auth-like files private while sharing normal Codex state", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -93,11 +120,16 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         const shadowHome = path.join(shadowRoot, "shadow");
 
         yield* fileSystem.makeDirectory(path.join(sharedHome, "sessions"));
+        yield* writeTextFile(path.join(sharedHome, "skills", "fixture", "SKILL.md"), "fixture\n");
+        yield* writeTextFile(path.join(sharedHome, "cache", "fixture.json"), "{}\n");
         yield* writeTextFile(path.join(sharedHome, "config.toml"), 'model = "gpt-5-codex"\n');
         yield* writeTextFile(path.join(sharedHome, "models_cache.json"), '{"models":["shared"]}\n');
-        yield* writeTextFile(path.join(sharedHome, "auth.json"), '{"shared":true}\n');
+        yield* writeTextFile(path.join(sharedHome, "author.json"), '{"kind":"fixture"}\n');
         yield* fileSystem.makeDirectory(shadowHome, { recursive: true });
-        yield* writeTextFile(path.join(shadowHome, "auth.json"), '{"shadow":true}\n');
+        for (const entryName of AUTH_LIKE_ENTRY_NAMES) {
+          yield* writeTextFile(path.join(sharedHome, entryName), '{"scope":"shared-fixture"}\n');
+          yield* writeTextFile(path.join(shadowHome, entryName), '{"scope":"shadow-fixture"}\n');
+        }
         yield* fileSystem.symlink(
           path.join(sharedHome, "models_cache.json"),
           path.join(shadowHome, "models_cache.json"),
@@ -114,23 +146,65 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
         const sessionsTarget = yield* fileSystem.readLink(path.join(shadowHome, "sessions"));
         const configTarget = yield* fileSystem.readLink(path.join(shadowHome, "config.toml"));
+        const skillsTarget = yield* fileSystem.readLink(path.join(shadowHome, "skills"));
+        const cacheTarget = yield* fileSystem.readLink(path.join(shadowHome, "cache"));
+        const authorTarget = yield* fileSystem.readLink(path.join(shadowHome, "author.json"));
         const mcpOauthLocksTarget = yield* fileSystem.readLink(
           path.join(shadowHome, "mcp-oauth-locks"),
         );
         const modelsCacheExists = yield* fileSystem.exists(
           path.join(shadowHome, "models_cache.json"),
         );
-        const authLinkResult = yield* fileSystem
-          .readLink(path.join(shadowHome, "auth.json"))
-          .pipe(Effect.result);
-        const authContents = yield* fileSystem.readFileString(path.join(shadowHome, "auth.json"));
 
         expect(sessionsTarget).toBe(path.join(sharedHome, "sessions"));
         expect(configTarget).toBe(path.join(sharedHome, "config.toml"));
+        expect(skillsTarget).toBe(path.join(sharedHome, "skills"));
+        expect(cacheTarget).toBe(path.join(sharedHome, "cache"));
+        expect(authorTarget).toBe(path.join(sharedHome, "author.json"));
         expect(mcpOauthLocksTarget).toBe(path.join(sharedHome, "mcp-oauth-locks"));
         expect(modelsCacheExists).toBe(false);
-        expect(authLinkResult._tag).toBe("Failure");
-        expect(authContents).toContain("shadow");
+        for (const entryName of AUTH_LIKE_ENTRY_NAMES) {
+          const authLinkResult = yield* fileSystem
+            .readLink(path.join(shadowHome, entryName))
+            .pipe(Effect.result);
+          const authContents = yield* fileSystem.readFileString(path.join(shadowHome, entryName));
+          expect(authLinkResult._tag).toBe("Failure");
+          expect(authContents).toContain("shadow-fixture");
+        }
+      }),
+    );
+
+    it.effect("rejects an auth-like entry that is already a shadow-home symlink", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+        const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+        const shadowHome = path.join(shadowRoot, "shadow");
+        const entryName = "auth-fixture-a.json";
+        const sharedAuthPath = path.join(sharedHome, entryName);
+        const shadowAuthPath = path.join(shadowHome, entryName);
+
+        yield* writeTextFile(sharedAuthPath, '{"scope":"shared-fixture"}\n');
+        yield* fileSystem.makeDirectory(shadowHome, { recursive: true });
+        yield* fileSystem.symlink(sharedAuthPath, shadowAuthPath);
+
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({
+            homePath: sharedHome,
+            shadowHomePath: shadowHome,
+          }),
+        );
+
+        const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(CodexShadowHomePrivateEntrySymlinkError);
+        expect(error).toMatchObject({
+          sharedHomePath: sharedHome,
+          effectiveHomePath: shadowHome,
+          entryName,
+          path: shadowAuthPath,
+        });
       }),
     );
 
