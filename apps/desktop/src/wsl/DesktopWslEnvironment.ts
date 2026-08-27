@@ -686,19 +686,48 @@ const windowsToWslPathImpl = (
 
 const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
+const DISTRO_IP_ROUTE_PREFIX = "route:";
+const DISTRO_IP_ADDRESSES_PREFIX = "all:";
+
+// `ip -4 route get 1.1.1.1` is a pure routing-table lookup (no packet is
+// sent): its `src` field is the address the distro would use to reach an
+// external host, which is the eth0/mirrored interface Windows can reach.
+// Docker bridge interfaces never own the default route, so they cannot be
+// picked — unlike `hostname -I`, which lists them first and made the app
+// poll an unreachable 172.x bridge address forever (#5211). `hostname -I`
+// stays as the fallback for distros without a default route.
+const DISTRO_IP_SCRIPT = `printf "${DISTRO_IP_ROUTE_PREFIX}%s\\n" "$(ip -4 route get 1.1.1.1 2>/dev/null)"; printf "${DISTRO_IP_ADDRESSES_PREFIX}%s\\n" "$(hostname -I 2>/dev/null)"`;
+
+export const parseDistroIp = (stdout: string): string | null => {
+  let fallback: string | null = null;
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith(DISTRO_IP_ROUTE_PREFIX)) {
+      const tokens = trimmed.slice(DISTRO_IP_ROUTE_PREFIX.length).trim().split(/\s+/);
+      const srcIndex = tokens.indexOf("src");
+      const candidate = srcIndex === -1 ? undefined : tokens[srcIndex + 1];
+      if (candidate !== undefined && IPV4_PATTERN.test(candidate)) return candidate;
+    }
+    if (fallback === null && trimmed.startsWith(DISTRO_IP_ADDRESSES_PREFIX)) {
+      fallback =
+        trimmed
+          .slice(DISTRO_IP_ADDRESSES_PREFIX.length)
+          .split(/\s+/)
+          .find((part) => IPV4_PATTERN.test(part)) ?? null;
+    }
+  }
+  return fallback;
+};
+
 const getDistroIpImpl = (
   distro: string | null,
 ): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      // `hostname -I` prints a space-separated list of all non-loopback
-      // IPs the distro has bound. The first entry on the WSL2 default
-      // network is always the eth0 vEthernet address Windows can reach
-      // directly (no wslhost forwarding required).
       const command = ChildProcess.make(
         "wsl.exe",
-        [...buildDistroArgs(distro), "--", "sh", "-c", "hostname -I"],
+        [...buildDistroArgs(distro), "--", "sh", "-c", DISTRO_IP_SCRIPT],
         {
           stdin: "ignore",
           stdout: "pipe",
@@ -712,8 +741,11 @@ const getDistroIpImpl = (
       const exitCode = yield* handle.exitCode;
       if ((exitCode as unknown as number) !== 0) return Option.none<string>();
       const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
-      const candidate = raw.split(/\s+/).find((part) => IPV4_PATTERN.test(part));
-      return candidate ? Option.some(candidate) : Option.none<string>();
+      const candidate = parseDistroIp(raw);
+      yield* Effect.log(
+        `[wsl] distro IP probe chose ${candidate ?? "none"} from: ${raw.replaceAll("\n", " ")}`,
+      );
+      return candidate === null ? Option.none<string>() : Option.some(candidate);
     }),
   ).pipe(
     Effect.timeoutOption(USER_HOME_TIMEOUT),

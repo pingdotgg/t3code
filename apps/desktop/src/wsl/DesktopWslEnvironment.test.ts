@@ -15,6 +15,7 @@ import {
   formatMissingToolsReason,
   formatNodePtyProbeFailureReason,
   formatWslShellTransportFailureReason,
+  parseDistroIp,
   parseNodePath,
   parseNodeVersion,
   parseResolvedPath,
@@ -85,6 +86,44 @@ describe("probeWslDistros", () => {
       expect(error).toBeInstanceOf(DesktopWslDistroListError);
       expect(error.message).toContain("timed out");
     }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("parseDistroIp", () => {
+  it("prefers the default-route src address over hostname -I ordering", () => {
+    // Docker bridge networks sort before eth0 in `hostname -I`; the route
+    // lookup must win so an unreachable bridge IP is never picked (#5211).
+    const stdout = [
+      "route:1.1.1.1 via 192.168.1.1 dev eth0 src 192.168.1.219 uid 1000",
+      "all:172.22.0.1 172.19.0.1 172.17.0.1 192.168.1.219",
+    ].join("\n");
+    expect(parseDistroIp(stdout)).toBe("192.168.1.219");
+  });
+
+  it("resolves the NAT-mode eth0 address from the route src field", () => {
+    const stdout = [
+      "route:1.1.1.1 via 172.27.0.1 dev eth0 src 172.27.5.44 uid 1000",
+      "all:172.27.5.44",
+    ].join("\n");
+    expect(parseDistroIp(stdout)).toBe("172.27.5.44");
+  });
+
+  it("falls back to the first hostname -I address when there is no default route", () => {
+    expect(parseDistroIp("route:\nall:172.27.5.44 fe80::1")).toBe("172.27.5.44");
+  });
+
+  it("falls back when the route line has no valid IPv4 src token", () => {
+    const stdout = ["route:1.1.1.1 dev eth0 src fdcc::2 metric 256", "all:172.27.5.44"].join("\n");
+    expect(parseDistroIp(stdout)).toBe("172.27.5.44");
+  });
+
+  it("accepts CRLF output", () => {
+    expect(parseDistroIp("route:\r\nall:172.27.5.44\r\n")).toBe("172.27.5.44");
+  });
+
+  it("returns null when neither probe produced an IPv4 address", () => {
+    expect(parseDistroIp("route:\nall:")).toBeNull();
+    expect(parseDistroIp("")).toBeNull();
   });
 });
 
