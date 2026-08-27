@@ -232,11 +232,13 @@ export function T3ShellBridge() {
             return;
           case "thread.new": {
             const group =
-              (candidate.projectKey === undefined
+              candidate.projectKey === undefined
                 ? groups[0]
-                : groups.find((item) => item.projectKey === candidate.projectKey)) ?? groups[0];
+                : groups.find((item) => item.projectKey === candidate.projectKey);
             if (group === undefined) {
-              openCommandPalette({ open: "add-project" });
+              // A stale key (project removed, environment gone) must not land
+              // the thread in whichever project sorts first.
+              if (candidate.projectKey === undefined) openCommandPalette({ open: "add-project" });
               return;
             }
             void newThread(scopeProjectRef(group.environmentId, group.id));
