@@ -296,6 +296,16 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
       scan.other = true;
       continue;
     }
+    if (element.tagName === "LI") {
+      // serializeListItem emits a marker ("- ", "1. ", "[x] ") for every item,
+      // so an item that does not hold the block carries content of its own even
+      // when it renders no text. An item that wraps the block is just the
+      // structure around it, and a pre-only selection would drop the marker too.
+      const preBeforeItem = scan.pre;
+      scanForSoleCodeBlock(element, scan);
+      if (!scan.other && scan.pre === preBeforeItem) scan.other = true;
+      continue;
+    }
     scanForSoleCodeBlock(element, scan);
   }
 }

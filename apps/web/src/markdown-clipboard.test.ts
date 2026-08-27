@@ -33,6 +33,10 @@ class FakeElement {
     return this.childNodes.map((child) => child.textContent).join("");
   }
 
+  get children(): ReadonlyArray<FakeElement> {
+    return this.childNodes.filter((child): child is FakeElement => child instanceof FakeElement);
+  }
+
   append(...children: Array<FakeElement | FakeText>): this {
     this.childNodes.push(...children);
     return this;
@@ -50,8 +54,28 @@ class FakeElement {
     return null;
   }
 
-  querySelector(): FakeElement | null {
-    return null;
+  /** Supports only the selectors markdown-clipboard actually asks for. */
+  querySelector(selector: string): FakeElement | null {
+    const childOnly = selector.startsWith(":scope > ");
+    const target = childOnly ? selector.slice(":scope > ".length) : selector;
+    const matches = (element: FakeElement): boolean => {
+      if (target === 'input[type="checkbox"]') {
+        return element.tagName === "INPUT" && element.getAttribute("type") === "checkbox";
+      }
+      return element.tagName === target.toUpperCase();
+    };
+    const search = (parent: FakeElement): FakeElement | null => {
+      for (const child of parent.childNodes) {
+        if (!(child instanceof FakeElement)) continue;
+        if (matches(child)) return child;
+        if (!childOnly) {
+          const nested = search(child);
+          if (nested) return nested;
+        }
+      }
+      return null;
+    };
+    return search(this);
   }
 }
 
@@ -115,6 +139,45 @@ describe("serializeRenderedMarkdownFragment", () => {
     const container = new FakeElement("DIV").append(code);
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
+  });
+
+  it("keeps fences when a bare list item sits alongside the code block", () => {
+    // serializeListItem emits "- " for an item with no text, so the item is
+    // content the plain-code path would drop.
+    const container = new FakeElement("DIV").append(
+      new FakeElement("UL").append(new FakeElement("LI")),
+      renderedCodeBlock(["pnpm test"]),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "-\n\n```\npnpm test\n```",
+    );
+  });
+
+  it("keeps fences when a checkbox-only task item sits alongside the code block", () => {
+    // The checkbox is a skipped tag, so the item renders no text of its own, but
+    // it still carries the task state.
+    const container = new FakeElement("DIV").append(
+      new FakeElement("UL").append(
+        new FakeElement("LI").append(new FakeElement("INPUT", [], { type: "checkbox" })),
+      ),
+      renderedCodeBlock(["pnpm test"]),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "- [ ]\n\n```\npnpm test\n```",
+    );
+  });
+
+  it("still drops fences for a code block that is the whole list item", () => {
+    // The item only wraps the block, so a selection that never left the pre
+    // would drop the marker too.
+    const container = new FakeElement("DIV").append(
+      new FakeElement("UL").append(new FakeElement("LI").append(renderedCodeBlock(["pnpm test"]))),
+      new FakeText("\n"),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("pnpm test");
   });
 
   it("keeps fences when a file chip sits alongside the code block", () => {
