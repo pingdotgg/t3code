@@ -27,6 +27,7 @@ struct MarkdownMessageView: View {
     private let isStreaming: Bool
     private let copyActionTitle: String
     private let imageContext: MarkdownImageContext?
+    private let skills: [FeatureProviderSkill]
     @State private var selectionSource: MarkdownSelectionSource
     @State private var renderedDocument: MarkdownRenderedDocument?
     @State private var streamingRenderer = StreamingMarkdownRenderer()
@@ -35,12 +36,14 @@ struct MarkdownMessageView: View {
         _ source: String,
         isStreaming: Bool = false,
         copyActionTitle: String = "Copy message",
-        imageContext: MarkdownImageContext? = nil
+        imageContext: MarkdownImageContext? = nil,
+        skills: [FeatureProviderSkill] = []
     ) {
         self.source = source
         self.isStreaming = isStreaming
         self.copyActionTitle = copyActionTitle
         self.imageContext = imageContext
+        self.skills = skills
         _selectionSource = State(initialValue: MarkdownSelectionSource(source))
         let revision = MarkdownContentRevision(source)
         self.revision = revision
@@ -129,7 +132,8 @@ struct MarkdownMessageView: View {
         selectionSource.text = source
         return MarkdownSelectionContext(
             source: selectionSource,
-            copyActionTitle: copyActionTitle
+            copyActionTitle: copyActionTitle,
+            skills: skills
         )
     }
 }
@@ -210,9 +214,12 @@ private final class MarkdownSelectionSource: @unchecked Sendable {
 private struct MarkdownSelectionContext: Equatable, Sendable {
     let source: MarkdownSelectionSource
     let copyActionTitle: String
+    let skills: [FeatureProviderSkill]
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.source === rhs.source && lhs.copyActionTitle == rhs.copyActionTitle
+        lhs.source === rhs.source
+            && lhs.copyActionTitle == rhs.copyActionTitle
+            && lhs.skills == rhs.skills
     }
 }
 
@@ -796,7 +803,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+        let textView = FeatureInlineSkillTextView()
         textView.backgroundColor = .clear
         textView.isEditable = false
         textView.isSelectable = true
@@ -825,7 +832,9 @@ private struct MarkdownInlineText: UIViewRepresentable {
             lineSpacing: lineSpacing,
             textColor: textColor,
             dynamicTypeSize: dynamicTypeSize,
-            wrapsLines: wrapsLines
+            wrapsLines: wrapsLines,
+            skills: selectionContext.skills,
+            traits: textView.traitCollection
         )
         if context.coordinator.shouldApply(attributedText) {
             let previousText = context.coordinator.lastAppliedText
@@ -871,6 +880,8 @@ private struct MarkdownInlineText: UIViewRepresentable {
             let textColor: MarkdownTextColor
             let dynamicTypeSize: DynamicTypeSize
             let wrapsLines: Bool
+            let skills: [FeatureProviderSkill]
+            let userInterfaceStyle: UIUserInterfaceStyle
         }
 
         private struct SizeKey: Hashable {
@@ -880,7 +891,8 @@ private struct MarkdownInlineText: UIViewRepresentable {
 
         var selectionContext = MarkdownSelectionContext(
             source: MarkdownSelectionSource(""),
-            copyActionTitle: "Copy message"
+            copyActionTitle: "Copy message",
+            skills: []
         )
         var onOpenURL: ((URL) -> Void)?
         private var cacheKey: CacheKey?
@@ -896,13 +908,17 @@ private struct MarkdownInlineText: UIViewRepresentable {
             lineSpacing: CGFloat,
             textColor: MarkdownTextColor,
             dynamicTypeSize: DynamicTypeSize,
-            wrapsLines: Bool
+            wrapsLines: Bool,
+            skills: [FeatureProviderSkill],
+            traits: UITraitCollection
         ) -> NSAttributedString {
             let key = CacheKey(
                 lineSpacing: lineSpacing,
                 textColor: textColor,
                 dynamicTypeSize: dynamicTypeSize,
-                wrapsLines: wrapsLines
+                wrapsLines: wrapsLines,
+                skills: skills,
+                userInterfaceStyle: traits.userInterfaceStyle
             )
             if cachedRendered === rendered, key == cacheKey, let cachedAttributedText {
                 return cachedAttributedText
@@ -912,7 +928,9 @@ private struct MarkdownInlineText: UIViewRepresentable {
                 lineSpacing: lineSpacing,
                 foregroundColor: textColor.uiColor,
                 dynamicTypeSize: dynamicTypeSize,
-                wrapsLines: wrapsLines
+                wrapsLines: wrapsLines,
+                skills: skills,
+                traits: traits
             )
             cacheKey = key
             cachedRendered = rendered
@@ -1047,7 +1065,9 @@ enum MarkdownSelectableTextAttributes {
         lineSpacing: CGFloat,
         foregroundColor: UIColor = T3Colors.uiTextPrimary,
         dynamicTypeSize: DynamicTypeSize = .large,
-        wrapsLines: Bool = true
+        wrapsLines: Bool = true,
+        skills: [FeatureProviderSkill] = [],
+        traits: UITraitCollection = .current
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let paragraphStyle = NSMutableParagraphStyle()
@@ -1074,10 +1094,22 @@ enum MarkdownSelectableTextAttributes {
             if let link = run.link {
                 attributes[.link] = link
             }
+            let runText = String(rendered.attributedText[run.range].characters)
+            let descriptors = intent?.contains(.code) == true || run.link != nil
+                ? []
+                : FeatureInlineSkillParser.descriptors(
+                    in: runText,
+                    skills: skills,
+                    allowsEndBoundary: true
+                )
             result.append(
-                NSAttributedString(
-                    string: String(rendered.attributedText[run.range].characters),
-                    attributes: attributes
+                FeatureInlineSkillPillRenderer.attributedText(
+                    source: runText,
+                    descriptors: descriptors,
+                    baseAttributes: attributes,
+                    font: attributes[.font] as? UIFont
+                        ?? rendered.style.uiFont(dynamicTypeSize: dynamicTypeSize),
+                    traits: traits
                 )
             )
         }

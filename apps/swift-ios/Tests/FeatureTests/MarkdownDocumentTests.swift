@@ -686,6 +686,33 @@ struct MarkdownDocumentTests {
     }
 
     @Test @MainActor
+    func selectableTextRendersKnownSkillsAsPillsOutsideCodeAndLinks() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision(
+                    "Use $file-pr now, not `$file-pr` or [$file-pr](https://example.com)."
+                )
+            )
+        )
+        guard case let .paragraph(inline) = document.blocks.first else {
+            Issue.record("Expected a rendered paragraph")
+            return
+        }
+
+        let attributed = MarkdownSelectableTextAttributes.make(
+            from: inline,
+            lineSpacing: 4,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")]
+        )
+
+        #expect(FeatureInlineSkillProjection.signatures(in: attributed).count == 1)
+        #expect(
+            FeatureInlineSkillProjection.plainText(from: attributed)
+                == "Use $file-pr now, not $file-pr or $file-pr."
+        )
+    }
+
+    @Test @MainActor
     func codeBlocksReuseSelectableInlineRendering() throws {
         let literalCode = "x = arr[i](fn)\na **b** c\nprintf(\\\"a\\\\tb\\\");"
         let cache = MarkdownRenderCache()

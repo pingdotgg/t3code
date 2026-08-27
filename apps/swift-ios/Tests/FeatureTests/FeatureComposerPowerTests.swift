@@ -680,6 +680,99 @@ struct FeatureComposerPowerTests {
     }
 
     @Test
+    func inlineSkillTokensUseProviderLabelsAndWebBoundaries() throws {
+        let skills = [
+            FeatureProviderSkill(name: "file-pr", displayName: "File PR"),
+            FeatureProviderSkill(name: "review-follow-up"),
+        ]
+
+        let completed = FeatureInlineSkillParser.descriptors(
+            in: "Use $file-pr then ",
+            skills: skills,
+            allowsEndBoundary: false
+        )
+        #expect(completed.map(\.rawText) == ["$file-pr"])
+        #expect(completed.map(\.displayName) == ["File PR"])
+
+        #expect(
+            FeatureInlineSkillParser.descriptors(
+                in: "$review-follow-up",
+                skills: skills,
+                allowsEndBoundary: true
+            ).map(\.displayName) == ["Review Follow Up"]
+        )
+        #expect(
+            FeatureInlineSkillParser.descriptors(
+                in: "$file-pr",
+                skills: skills,
+                allowsEndBoundary: false
+            ).isEmpty
+        )
+        #expect(
+            FeatureInlineSkillParser.descriptors(
+                in: "prefix$file-pr ",
+                skills: skills,
+                allowsEndBoundary: true
+            ).isEmpty
+        )
+    }
+
+    @Test @MainActor
+    func inlineSkillAttachmentsRoundTripPlainTextAndSelectionOffsets() throws {
+        let source = "Use $file-pr now"
+        let descriptors = FeatureInlineSkillParser.descriptors(
+            in: source,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")],
+            allowsEndBoundary: false
+        )
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let attributed = FeatureInlineSkillPillRenderer.attributedText(
+            source: source,
+            descriptors: descriptors,
+            baseAttributes: [.font: font],
+            font: font,
+            traits: UITraitCollection(userInterfaceStyle: .dark)
+        )
+
+        #expect(FeatureInlineSkillProjection.plainText(from: attributed) == source)
+        #expect(FeatureInlineSkillProjection.signatures(in: attributed).count == 1)
+        #expect(attributed.string == "Use \u{FFFC} now")
+
+        let plainAfterSkill = NSMaxRange(try #require(descriptors.first).range)
+        let displaySelection = FeatureInlineSkillProjection.displayRange(
+            for: NSRange(location: plainAfterSkill, length: 0),
+            in: attributed
+        )
+        #expect(displaySelection == NSRange(location: 5, length: 0))
+        #expect(
+            FeatureInlineSkillProjection.plainRange(
+                for: displaySelection,
+                in: attributed
+            ) == NSRange(location: plainAfterSkill, length: 0)
+        )
+    }
+
+    @Test
+    func completedComposerPillSurvivesDeletingItsTrailingSpace() throws {
+        let skill = FeatureProviderSkill(name: "file-pr", displayName: "File PR")
+        let completed = try #require(
+            FeatureInlineSkillParser.descriptors(
+                in: "$file-pr ",
+                skills: [skill],
+                allowsEndBoundary: false
+            ).first
+        )
+        #expect(
+            FeatureInlineSkillParser.descriptors(
+                in: "$file-pr",
+                skills: [skill],
+                allowsEndBoundary: false,
+                preservingTrailing: completed
+            ) == [completed]
+        )
+    }
+
+    @Test
     func changingInputQuestionsKeepsAValidActiveQuestionAndDropsStaleAnswers() {
         #expect(
             FeatureComposerQuestionReconciliation.index(
