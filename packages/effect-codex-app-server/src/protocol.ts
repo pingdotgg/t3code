@@ -157,7 +157,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const incomingRequests = yield* Queue.unbounded<CodexAppServerIncomingRequest>();
     const pending = yield* Ref.make(new Map<string, CodexAppServerPendingRequest>());
     const nextRequestId = yield* Ref.make(1);
-    const remainder = yield* Ref.make("");
+    const pendingLineParts: Array<string> = [];
     const terminationHandled = yield* Ref.make(false);
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
@@ -354,12 +354,29 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     yield* options.stdio.stdin.pipe(
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
-        Ref.modify(remainder, (current) => {
-          const combined = current + chunk;
-          const lines = combined.split("\n");
-          const nextRemainder = lines.pop() ?? "";
-          return [lines.map((line) => line.replace(/\r$/, "")), nextRemainder] as const;
-        }).pipe(Effect.flatMap((lines) => Effect.forEach(lines, handleLine, { discard: true }))),
+        Effect.gen(function* () {
+          let start = 0;
+          let newline = chunk.indexOf("\n");
+
+          while (newline !== -1) {
+            let line = chunk.slice(start, newline);
+            if (pendingLineParts.length > 0) {
+              pendingLineParts.push(line);
+              line = pendingLineParts.join("");
+              pendingLineParts.length = 0;
+            }
+            if (line.endsWith("\r")) {
+              line = line.slice(0, -1);
+            }
+            yield* handleLine(line);
+            start = newline + 1;
+            newline = chunk.indexOf("\n", start);
+          }
+
+          if (start < chunk.length) {
+            pendingLineParts.push(chunk.slice(start));
+          }
+        }),
       ),
       Effect.matchEffect({
         onFailure: (error) =>
@@ -367,7 +384,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             Effect.succeed(normalizeIncomingError(error, "read-input-stream")),
           ),
         onSuccess: () =>
-          Ref.get(remainder).pipe(
+          Effect.sync(() => pendingLineParts.join("")).pipe(
             Effect.flatMap((line) => (line.trim().length === 0 ? Effect.void : handleLine(line))),
             Effect.matchEffect({
               onFailure: (error) => handleTermination(() => Effect.succeed(error)),
