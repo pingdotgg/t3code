@@ -26,6 +26,7 @@ import { stackedThreadToast } from "../ui/toastHelpers";
 import {
   claimReferralWithRetry,
   isCurrentReferralClaimAttempt,
+  type ReferralClaimAttempt,
   referralClaimLoadState,
 } from "./ReferralClaimCoordinator.logic";
 
@@ -100,7 +101,7 @@ function ConfiguredReferralClaimCoordinator() {
   const relayAccountId = useAtomValue(managedRelaySessionAtom)?.accountId ?? null;
   const { authPrompt, openAuthPrompt } = useT3ConnectAuthPrompt();
   const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
-  const activeClaimRef = useRef<string | null>(null);
+  const activeClaimRef = useRef<ReferralClaimAttempt | null>(null);
   const completedClaimRef = useRef<string | null>(null);
   const promptedSignInRef = useRef<string | null>(null);
   const shouldPromptSignInRef = useRef(false);
@@ -132,14 +133,16 @@ function ConfiguredReferralClaimCoordinator() {
     const referralCode = pendingReferralCode ?? readPendingReferralCode();
     if (!referralCode) return;
     const attemptKey = `${userId}:${referralCode}`;
+    const attempt = { key: attemptKey };
     let isCancelled = false;
     const isCurrentAttempt = () =>
-      isCurrentReferralClaimAttempt(isCancelled, activeClaimRef.current, attemptKey);
+      isCurrentReferralClaimAttempt(isCancelled, activeClaimRef.current, attempt);
 
     const runClaim = async () => {
       if (isCancelled) return;
-      if (activeClaimRef.current === attemptKey || completedClaimRef.current === attemptKey) return;
-      activeClaimRef.current = attemptKey;
+      if (activeClaimRef.current?.key === attemptKey || completedClaimRef.current === attemptKey)
+        return;
+      activeClaimRef.current = attempt;
       try {
         const result = await claimReferralWithRetry({
           claim: () => claimReferral({ accountId: userId, referralCode }),
@@ -174,14 +177,14 @@ function ConfiguredReferralClaimCoordinator() {
           }),
         );
       } finally {
-        if (activeClaimRef.current === attemptKey) activeClaimRef.current = null;
+        if (activeClaimRef.current === attempt) activeClaimRef.current = null;
       }
     };
 
     void runClaim();
     return () => {
       isCancelled = true;
-      if (activeClaimRef.current === attemptKey) activeClaimRef.current = null;
+      if (activeClaimRef.current === attempt) activeClaimRef.current = null;
     };
   }, [claimReferral, isLoaded, isSignedIn, pendingReferralCode, relayAccountId, userId]);
 

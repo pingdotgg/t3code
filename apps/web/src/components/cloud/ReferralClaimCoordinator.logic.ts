@@ -1,5 +1,9 @@
 const REFERRAL_CLAIM_RETRY_DELAYS_MS = [250, 1_000, 3_000] as const;
 
+export interface ReferralClaimAttempt {
+  readonly key: string;
+}
+
 function waitForRetry(delay: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, delay));
 }
@@ -16,10 +20,10 @@ export function referralClaimLoadState(
 
 export function isCurrentReferralClaimAttempt(
   isCancelled: boolean,
-  activeAttemptKey: string | null,
-  attemptKey: string,
+  activeAttempt: ReferralClaimAttempt | null,
+  attempt: ReferralClaimAttempt,
 ): boolean {
-  return !isCancelled && activeAttemptKey === attemptKey;
+  return !isCancelled && activeAttempt === attempt;
 }
 
 export async function claimReferralWithRetry<Result>({

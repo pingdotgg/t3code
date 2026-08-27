@@ -57,12 +57,20 @@ describe("claimReferralWithRetry", () => {
 
 describe("isCurrentReferralClaimAttempt", () => {
   it("rejects a result after the account changes or the effect is cancelled", () => {
-    const accountAAttempt = "account-a:ABCD1234EFAB5678";
+    const accountAAttempt = { key: "account-a:ABCD1234EFAB5678" };
 
     expect(isCurrentReferralClaimAttempt(false, accountAAttempt, accountAAttempt)).toBe(true);
     expect(
-      isCurrentReferralClaimAttempt(false, "account-b:ABCD1234EFAB5678", accountAAttempt),
+      isCurrentReferralClaimAttempt(false, { key: "account-b:ABCD1234EFAB5678" }, accountAAttempt),
     ).toBe(false);
     expect(isCurrentReferralClaimAttempt(true, accountAAttempt, accountAAttempt)).toBe(false);
+  });
+
+  it("rejects a stale result when a same-key successor is active", () => {
+    const staleAttempt = { key: "account-a:ABCD1234EFAB5678" };
+    const successorAttempt = { key: "account-a:ABCD1234EFAB5678" };
+
+    expect(isCurrentReferralClaimAttempt(false, successorAttempt, staleAttempt)).toBe(false);
+    expect(isCurrentReferralClaimAttempt(false, successorAttempt, successorAttempt)).toBe(true);
   });
 });
