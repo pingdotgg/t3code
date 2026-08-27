@@ -4,6 +4,7 @@ import {
   GitPullRequestIcon,
   SettingsIcon,
 } from "lucide-react";
+import type { ScopedProjectRef } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
@@ -143,7 +144,24 @@ function SidebarUtilityItem({
   );
 }
 
-export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+export function pullRequestsSearchForProject(projectRef: ScopedProjectRef | null) {
+  return {
+    involvement: "all" as const,
+    state: "open" as const,
+    ...(projectRef === null
+      ? {}
+      : {
+          projectId: projectRef.projectId,
+          environmentId: projectRef.environmentId,
+        }),
+  };
+}
+
+export const SidebarUtilityMenu = memo(function SidebarUtilityMenu({
+  projectRef = null,
+}: {
+  projectRef?: ScopedProjectRef | null;
+}) {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -170,8 +188,8 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   }, [isMobile, setOpenMobile]);
   const handlePullRequestsClick = useCallback(() => {
     closeMobileSidebar();
-    void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
-  }, [closeMobileSidebar, navigate]);
+    void navigate({ to: "/pull-requests", search: pullRequestsSearchForProject(projectRef) });
+  }, [closeMobileSidebar, navigate, projectRef]);
   const handleSettingsClick = useCallback(() => {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
@@ -228,12 +246,16 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   );
 });
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+export const SidebarChromeFooter = memo(function SidebarChromeFooter({
+  projectRef = null,
+}: {
+  projectRef?: ScopedProjectRef | null;
+}) {
   return (
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <SidebarUtilityMenu />
+      <SidebarUtilityMenu projectRef={projectRef} />
     </SidebarFooter>
   );
 });

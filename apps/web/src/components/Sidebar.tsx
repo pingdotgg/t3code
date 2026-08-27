@@ -3954,7 +3954,13 @@ export default function Sidebar() {
           ) : null}
         </SidebarGroup>
       </SidebarContent>
-      <SidebarChromeFooter />
+      <SidebarChromeFooter
+        projectRef={
+          scopedProjectGroup === null
+            ? null
+            : scopeProjectRef(scopedProjectGroup.environmentId, scopedProjectGroup.id)
+        }
+      />
     </>
   );
 }
