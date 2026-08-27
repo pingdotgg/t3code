@@ -323,6 +323,11 @@ sidebar's `Layout.preferredWidth` to 0 and hide it once it is gone
 (`visible: !sidebarCollapsed || width > 0` — guard on the collapsed flag, not
 on width alone, or a layout-managed item never regains a size).
 
+`Sidebar` carries the project scope picker in its header and the app's places
+(Settings, PRs, Usage, Add project) in its footer. A rice that puts those
+somewhere else — the dashboard example's icon rail — sets `showScope: false`
+and `showFooter: false` so the same action is not reachable from two places.
+
 ### `notifications`
 
 `ToastProvider` accepts a `shellMirror` rendered inside it; the mirrored

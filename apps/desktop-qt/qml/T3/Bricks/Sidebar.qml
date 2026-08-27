@@ -10,6 +10,10 @@ Rectangle {
     id: sidebar
 
     readonly property var model: Shell.state.sidebar ?? null
+    // A rice that puts project scope and the app's places elsewhere (an icon
+    // rail, say) turns these off so the brick is just the thread list.
+    property bool showScope: true
+    property bool showFooter: true
     readonly property var projects: model ? model.projects : []
     readonly property var rows: buildRows(model)
     readonly property color foreground: Theme.color("sidebarForeground", "#e4e4e7")
@@ -64,6 +68,7 @@ Rectangle {
             Layout.margins: 10
             Layout.bottomMargin: 4
             spacing: 8
+            visible: sidebar.showScope
 
             ShellComboBox {
                 id: scope
@@ -169,6 +174,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.margins: 8
             spacing: 4
+            visible: sidebar.showFooter
 
             FooterButton {
                 text: qsTr("Settings")
