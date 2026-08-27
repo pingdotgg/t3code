@@ -356,6 +356,7 @@ private struct FeatureSourceTextView: View {
                             FeatureHighlightedSourceLine(line: line)
                         }
                         .font(T3Typography.code)
+                        .t3CodeTextSize()
                         .fixedSize(horizontal: true, vertical: false)
                         .frame(
                             minWidth: proxy.size.width,

@@ -49,6 +49,7 @@ struct FeatureComposerApprovalPanel: View {
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
+                        .t3CodeTextSize(approval.kind == .command)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)

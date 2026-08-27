@@ -42,6 +42,8 @@ public struct FeatureRootView: View {
             }
         }
         .preferredColorScheme(preferredColorScheme)
+        .t3AppTextSize(steps: model.snapshot.settings.textSize.steps)
+        .t3CodeSizing(steps: model.snapshot.settings.codeSize.steps)
         .tint(T3Colors.accent)
         .background(T3Colors.background.ignoresSafeArea())
         .task { await model.start() }

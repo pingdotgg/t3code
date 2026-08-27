@@ -1204,6 +1204,7 @@ private struct PullRequestFilesView: View {
                                                 .frame(minWidth: 500, alignment: .leading)
                                         }
                                         .font(T3Typography.code)
+                                        .t3CodeTextSize()
                                         .foregroundStyle(line.foreground)
                                         .padding(.vertical, 2)
                                         .background(line.background)

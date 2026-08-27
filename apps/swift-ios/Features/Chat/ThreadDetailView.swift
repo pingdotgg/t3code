@@ -4,6 +4,7 @@ import UIKit
 
 public struct ThreadDetailView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @SwiftUI.Environment(\.t3CodeSizeSteps) private var codeSizeSteps
     @SwiftUI.Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @SwiftUI.Environment(\.openURL) private var parentOpenURL
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
@@ -155,6 +156,7 @@ public struct ThreadDetailView: View {
             }
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
+            .t3CodeSizing(steps: codeSizeSteps)
         }
         .alert("Message not sent", isPresented: $sendFailed) {
             // Refocusing happens here rather than when the send fails: the
@@ -674,6 +676,7 @@ public struct ThreadDetailView: View {
                     },
                     renderUpdate: timelineRenderUpdate,
                     dynamicTypeSize: dynamicTypeSize,
+                    codeSizeSteps: codeSizeSteps,
                     isWorking: isWorking,
                     isCompacting: isCompacting,
                     activeSubagentCount: detail.activeSubagentCount,
@@ -1326,6 +1329,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     let attachmentContext: FeatureAttachmentContext?
     let renderUpdate: FeatureDetailRenderUpdate?
     let dynamicTypeSize: DynamicTypeSize
+    let codeSizeSteps: Int
     let isWorking: Bool
     let isCompacting: Bool
     let activeSubagentCount: Int
@@ -1364,6 +1368,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             attachmentContext: attachmentContext,
             renderUpdate: renderUpdate,
             dynamicTypeSize: dynamicTypeSize,
+            codeSizeSteps: codeSizeSteps,
             isWorking: isWorking,
             isCompacting: isCompacting,
             activeSubagentCount: activeSubagentCount,
@@ -1417,6 +1422,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var currentAttachmentContext: FeatureAttachmentContext?
         private var currentDetailRevision: UInt64?
         private var currentDynamicTypeSize: DynamicTypeSize?
+        private var currentCodeSizeSteps = 0
         private var currentIsWorking = false
         private var currentIsCompacting = false
         private var currentActiveSubagentCount = 0
@@ -1472,6 +1478,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                         attachmentContext: self?.currentAttachmentContext
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .environment(\.t3CodeSizeSteps, self?.currentCodeSizeSteps ?? 0)
                 }
                 .margins(.all, 0)
                 cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
@@ -1498,6 +1505,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             attachmentContext: FeatureAttachmentContext?,
             renderUpdate: FeatureDetailRenderUpdate?,
             dynamicTypeSize: DynamicTypeSize,
+            codeSizeSteps: Int,
             isWorking: Bool,
             isCompacting: Bool,
             activeSubagentCount: Int,
@@ -1517,6 +1525,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             let imageContextChanged = currentImageContext != imageContext
                 || currentAttachmentContext != attachmentContext
             let typeSizeChanged = currentDynamicTypeSize != dynamicTypeSize
+                || currentCodeSizeSteps != codeSizeSteps
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
             let workingChanged = currentIsWorking != isWorking
             let workingDetailChanged = currentIsCompacting != isCompacting
@@ -1542,6 +1551,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             currentAttachmentContext = attachmentContext
             currentDetailRevision = renderUpdate?.revision
             currentDynamicTypeSize = dynamicTypeSize
+            currentCodeSizeSteps = codeSizeSteps
             currentIsWorking = isWorking
             currentIsCompacting = isCompacting
             currentActiveSubagentCount = activeSubagentCount
@@ -2601,6 +2611,7 @@ private struct FeatureWorkLogView: View {
                     .lineSpacing(3)
                     .textSelection(.enabled)
                     .padding(.top, 8)
+                    .t3CodeTextSize()
                     .transition(.identity)
                 if FeatureWorkLogMedia.shouldRenderImages(
                     isExpanded: isExpanded,

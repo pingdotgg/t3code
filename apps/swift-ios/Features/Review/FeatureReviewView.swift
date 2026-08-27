@@ -446,6 +446,7 @@ private struct FeatureDiffLineRow: View {
             }
         }
         .font(T3Typography.code)
+        .t3CodeTextSize()
         .fixedSize(horizontal: true, vertical: false)
         .frame(
             minWidth: minimumWidth,
