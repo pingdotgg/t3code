@@ -53,6 +53,26 @@ describe("claimReferralWithRetry", () => {
     expect(result).toBe("failure");
     expect(attempts).toBe(4);
   });
+
+  it("does not retry after cancellation during backoff", async () => {
+    let attempts = 0;
+    let isCurrent = true;
+
+    const result = await claimReferralWithRetry({
+      claim: async () => {
+        attempts += 1;
+        return "failure";
+      },
+      shouldContinue: () => isCurrent,
+      shouldRetry: () => true,
+      wait: async () => {
+        isCurrent = false;
+      },
+    });
+
+    expect(result).toBe("failure");
+    expect(attempts).toBe(1);
+  });
 });
 
 describe("isCurrentReferralClaimAttempt", () => {

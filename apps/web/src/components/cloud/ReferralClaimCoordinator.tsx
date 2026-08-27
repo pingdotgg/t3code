@@ -151,6 +151,7 @@ function ConfiguredReferralClaimCoordinator() {
       try {
         const result = await claimReferralWithRetry({
           claim: () => claimReferral({ accountId: userId, referralCode }),
+          shouldContinue: isCurrentAttempt,
           shouldRetry: (claimResult) =>
             isCurrentAttempt() &&
             claimResult._tag !== "Success" &&

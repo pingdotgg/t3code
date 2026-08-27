@@ -28,10 +28,12 @@ export function isCurrentReferralClaimAttempt(
 
 export async function claimReferralWithRetry<Result>({
   claim,
+  shouldContinue = () => true,
   shouldRetry,
   wait = waitForRetry,
 }: {
   readonly claim: () => Promise<Result>;
+  readonly shouldContinue?: () => boolean;
   readonly shouldRetry: (result: Result) => boolean;
   readonly wait?: (delay: number) => Promise<void>;
 }): Promise<Result> {
@@ -44,5 +46,6 @@ export async function claimReferralWithRetry<Result>({
     if (retryDelay === undefined) return result;
     failedAttempts += 1;
     await wait(retryDelay);
+    if (!shouldContinue()) return result;
   }
 }
