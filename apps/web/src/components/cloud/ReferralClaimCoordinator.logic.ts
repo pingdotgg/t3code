@@ -14,6 +14,14 @@ export function referralClaimLoadState(
   };
 }
 
+export function isCurrentReferralClaimAttempt(
+  isCancelled: boolean,
+  activeAttemptKey: string | null,
+  attemptKey: string,
+): boolean {
+  return !isCancelled && activeAttemptKey === attemptKey;
+}
+
 export async function claimReferralWithRetry<Result>({
   claim,
   shouldRetry,

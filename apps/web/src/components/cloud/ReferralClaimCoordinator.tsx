@@ -23,7 +23,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { toastManager } from "../ui/toast";
 import { stackedThreadToast } from "../ui/toastHelpers";
-import { claimReferralWithRetry, referralClaimLoadState } from "./ReferralClaimCoordinator.logic";
+import {
+  claimReferralWithRetry,
+  isCurrentReferralClaimAttempt,
+  referralClaimLoadState,
+} from "./ReferralClaimCoordinator.logic";
 
 function clearPendingReferralCode(): void {
   try {
@@ -128,19 +132,24 @@ function ConfiguredReferralClaimCoordinator() {
     const referralCode = pendingReferralCode ?? readPendingReferralCode();
     if (!referralCode) return;
     const attemptKey = `${userId}:${referralCode}`;
+    let isCancelled = false;
+    const isCurrentAttempt = () =>
+      isCurrentReferralClaimAttempt(isCancelled, activeClaimRef.current, attemptKey);
 
     const runClaim = async () => {
+      if (isCancelled) return;
       if (activeClaimRef.current === attemptKey || completedClaimRef.current === attemptKey) return;
       activeClaimRef.current = attemptKey;
       try {
         const result = await claimReferralWithRetry({
           claim: () => claimReferral({ accountId: userId, referralCode }),
           shouldRetry: (claimResult) =>
-            activeClaimRef.current === attemptKey &&
+            isCurrentAttempt() &&
             claimResult._tag !== "Success" &&
             !isAtomCommandInterrupted(claimResult),
         });
         if (result._tag === "Success") {
+          if (!isCurrentAttempt()) return;
           completedClaimRef.current = attemptKey;
           clearPendingReferralCode();
           clearReferralCodeFromUrl();
@@ -149,7 +158,7 @@ function ConfiguredReferralClaimCoordinator() {
           showClaimResult(result.value.result);
           return;
         }
-        if (activeClaimRef.current !== attemptKey || isAtomCommandInterrupted(result)) return;
+        if (!isCurrentAttempt() || isAtomCommandInterrupted(result)) return;
         const cause = squashAtomCommandFailure(result);
         console.error("[t3-cloud] Could not claim captured referral code", { cause });
         toastManager.add(
@@ -170,6 +179,10 @@ function ConfiguredReferralClaimCoordinator() {
     };
 
     void runClaim();
+    return () => {
+      isCancelled = true;
+      if (activeClaimRef.current === attemptKey) activeClaimRef.current = null;
+    };
   }, [claimReferral, isLoaded, isSignedIn, pendingReferralCode, relayAccountId, userId]);
 
   return authPrompt;

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { claimReferralWithRetry, referralClaimLoadState } from "./ReferralClaimCoordinator.logic";
+import {
+  claimReferralWithRetry,
+  isCurrentReferralClaimAttempt,
+  referralClaimLoadState,
+} from "./ReferralClaimCoordinator.logic";
 
 describe("referralClaimLoadState", () => {
   it("only prompts sign-in for a referral captured on the current load", () => {
@@ -48,5 +52,17 @@ describe("claimReferralWithRetry", () => {
 
     expect(result).toBe("failure");
     expect(attempts).toBe(4);
+  });
+});
+
+describe("isCurrentReferralClaimAttempt", () => {
+  it("rejects a result after the account changes or the effect is cancelled", () => {
+    const accountAAttempt = "account-a:ABCD1234EFAB5678";
+
+    expect(isCurrentReferralClaimAttempt(false, accountAAttempt, accountAAttempt)).toBe(true);
+    expect(
+      isCurrentReferralClaimAttempt(false, "account-b:ABCD1234EFAB5678", accountAAttempt),
+    ).toBe(false);
+    expect(isCurrentReferralClaimAttempt(true, accountAAttempt, accountAAttempt)).toBe(false);
   });
 });
