@@ -175,7 +175,10 @@ function probeWidth(fontList: string): number | null {
  */
 export function isFontFamilyAvailable(family: string): boolean {
   const families = cssFontFamilies(family);
-  if (families === null) return false;
+  return families !== null && familiesResolve(families);
+}
+
+function familiesResolve(families: string): boolean {
   if (/^(system-ui|sans-serif|serif|monospace|ui-monospace)$/i.test(families)) return true;
   try {
     for (const generic of ["monospace", "serif", "sans-serif"]) {
@@ -208,13 +211,16 @@ export function areFontAdvancesMonospace(advances: readonly number[]): boolean {
 
 /**
  * Probing a family is up to 32 measureText calls, and setting the canvas font
- * to a new family string forces engine font matching on top. Verdicts cannot
- * change while the page lives (the installed font list is itself cached for
- * the session), so both passes and failures are kept, keyed by the normalized
- * family list.
+ * to a new family string forces engine font matching on top, so verdicts are
+ * kept keyed by the normalized family list. A failure always names a resolved
+ * face and is final. A pass may be the generic fallback speaking for a face
+ * that has not loaded yet, so it is only kept once the family resolves;
+ * until then every call probes again, which is what lets the terminal
+ * revalidate after a late face loads and still reject a proportional one.
  */
 export function createCachedFamilyProbe(
   probe: (families: string) => boolean,
+  resolves: (families: string) => boolean,
 ): (family: string) => boolean {
   const verdicts = new Map<string, boolean>();
   return (family) => {
@@ -223,7 +229,7 @@ export function createCachedFamilyProbe(
     const cached = verdicts.get(families);
     if (cached !== undefined) return cached;
     const verdict = probe(families);
-    verdicts.set(families, verdict);
+    if (!verdict || resolves(families)) verdicts.set(families, verdict);
     return verdict;
   };
 }
@@ -257,7 +263,7 @@ function measureMonospaceFamilies(families: string): boolean {
  * Unmeasurable environments answer true, so a missing canvas never blocks a
  * legitimate font.
  */
-export const isMonospaceFamily = createCachedFamilyProbe(measureMonospaceFamilies);
+export const isMonospaceFamily = createCachedFamilyProbe(measureMonospaceFamilies, familiesResolve);
 
 // Nameable faces the platform generics commonly map to, likeliest first.
 // Pixel-comparing a generic against these names the actual face; Apple's own

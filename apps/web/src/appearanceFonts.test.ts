@@ -31,10 +31,13 @@ describe("areFontAdvancesMonospace", () => {
 describe("createCachedFamilyProbe", () => {
   it("probes a family once and caches both verdicts", () => {
     const probed: string[] = [];
-    const probe = createCachedFamilyProbe((families) => {
-      probed.push(families);
-      return families.includes("Mono");
-    });
+    const probe = createCachedFamilyProbe(
+      (families) => {
+        probed.push(families);
+        return families.includes("Mono");
+      },
+      () => true,
+    );
     expect(probe("Comic Mono")).toBe(true);
     expect(probe("Comic Mono")).toBe(true);
     expect(probe("Comic Sans MS")).toBe(false);
@@ -44,19 +47,62 @@ describe("createCachedFamilyProbe", () => {
 
   it("shares the verdict across spellings of the same family list", () => {
     const probed: string[] = [];
-    const probe = createCachedFamilyProbe((families) => {
-      probed.push(families);
-      return true;
-    });
+    const probe = createCachedFamilyProbe(
+      (families) => {
+        probed.push(families);
+        return true;
+      },
+      () => true,
+    );
     expect(probe("Fira Code")).toBe(true);
     expect(probe(' "Fira Code" ')).toBe(true);
     expect(probed).toEqual(['"Fira Code"']);
   });
 
+  it("keeps a pass only once the family resolves", () => {
+    let resolved = false;
+    let monospace = true;
+    let probes = 0;
+    const probe = createCachedFamilyProbe(
+      () => {
+        probes += 1;
+        return monospace;
+      },
+      () => resolved,
+    );
+    // An absent face measures as the monospace fallback; that pass is not final.
+    expect(probe("Late Sans")).toBe(true);
+    expect(probe("Late Sans")).toBe(true);
+    expect(probes).toBe(2);
+    // The real face arrives and turns out proportional: the guard sees it.
+    monospace = false;
+    resolved = true;
+    expect(probe("Late Sans")).toBe(false);
+    expect(probe("Late Sans")).toBe(false);
+    expect(probes).toBe(3);
+  });
+
+  it("keeps a failure without waiting for resolution", () => {
+    let probes = 0;
+    const probe = createCachedFamilyProbe(
+      () => {
+        probes += 1;
+        return false;
+      },
+      () => false,
+    );
+    expect(probe("Comic Sans MS")).toBe(false);
+    expect(probe("Comic Sans MS")).toBe(false);
+    expect(probes).toBe(1);
+  });
+
   it("accepts empty input without probing", () => {
-    const probe = createCachedFamilyProbe(() => {
-      throw new Error("should not probe");
-    });
+    const probe = createCachedFamilyProbe(
+      () => {
+        throw new Error("should not probe");
+      },
+      () => true,
+    );
     expect(probe("")).toBe(true);
     expect(probe("  ")).toBe(true);
   });
