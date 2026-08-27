@@ -639,7 +639,7 @@ export const RelayReferralSummary = Schema.Struct({
   awardPoints: Schema.Int.check(Schema.isGreaterThan(0)),
   qualifiedReferrals: RelayNonNegativeInt,
   pendingReferrals: RelayNonNegativeInt,
-  hasClaimedReferral: Schema.Boolean,
+  canClaimReferral: Schema.Boolean,
 });
 export type RelayReferralSummary = typeof RelayReferralSummary.Type;
 

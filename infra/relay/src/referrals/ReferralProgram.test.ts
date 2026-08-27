@@ -1,177 +1,49 @@
+import { PgliteClient } from "@effect/sql-pglite";
 import { describe, expect, it } from "@effect/vitest";
-import { PgDialect } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import * as PgDrizzle from "drizzle-orm/effect-pglite";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as RelayDb from "../db.ts";
-import {
-  relayEnvironmentLinks,
-  relayReferralAccounts,
-  relayReferralPointEntries,
-} from "../persistence/schema.ts";
+import { relayReferralAccounts, relayReferralPointEntries } from "../persistence/schema.ts";
 import * as ReferralProgram from "./ReferralProgram.ts";
 
-type ReferralAccount = typeof relayReferralAccounts.$inferSelect;
-type ReferralPointEntry = typeof relayReferralPointEntries.$inferSelect;
+const TEST_SCHEMA = [
+  `create table relay_environment_links (
+    user_id varchar(191) not null,
+    environment_id varchar(191) not null,
+    created_at varchar(64) not null,
+    primary key (user_id, environment_id)
+  )`,
+  `create table relay_referral_accounts (
+    user_id varchar(191) primary key,
+    referral_code varchar(16) not null,
+    referrer_user_id varchar(191),
+    referred_at varchar(64),
+    qualified_at varchar(64),
+    created_at varchar(64) not null,
+    updated_at varchar(64) not null
+  )`,
+  `create unique index idx_relay_referral_accounts_code
+    on relay_referral_accounts (referral_code)`,
+  `create table relay_referral_point_entries (
+    id varchar(36) primary key,
+    user_id varchar(191) not null,
+    points integer not null,
+    reason varchar(32) not null,
+    referred_user_id varchar(191) not null,
+    qualifying_environment_id varchar(191) not null,
+    created_at varchar(64) not null
+  )`,
+  `create unique index idx_relay_referral_point_entries_award
+    on relay_referral_point_entries (user_id, reason, referred_user_id)`,
+  `create unique index idx_relay_referral_point_entries_environment_award
+    on relay_referral_point_entries (reason, qualifying_environment_id)`,
+] as const;
 
-interface FakeReferralState {
-  readonly accounts: Map<string, ReferralAccount>;
-  readonly claimUpdateSql: Array<string>;
-  readonly environmentUsers: Set<string>;
-  readonly pointEntries: Array<ReferralPointEntry>;
-  beforeClaimUpdate?: () => void;
-  pointInsertFailure?: Error;
-}
-
-const hasSelection = (selection: unknown, key: string): boolean =>
-  typeof selection === "object" && selection !== null && key in selection;
-
-function sqlQuery(condition: unknown) {
-  return new PgDialect().sqlToQuery(condition as never);
-}
-
-function makeFakeDb(state: FakeReferralState) {
-  return {
-    select: (selection?: unknown) => ({
-      from: (table: unknown) => {
-        if (table === relayReferralPointEntries) {
-          return {
-            where: (condition: unknown) => {
-              const userId = String(sqlQuery(condition).params[0]);
-              const points = state.pointEntries
-                .filter((entry) => entry.userId === userId)
-                .reduce((sum, entry) => sum + entry.points, 0);
-              return Effect.succeed([{ points }]);
-            },
-          };
-        }
-
-        if (table === relayEnvironmentLinks) {
-          return {
-            where: (condition: unknown) => ({
-              limit: () => {
-                const userId = String(sqlQuery(condition).params[0]);
-                return Effect.succeed(
-                  state.environmentUsers.has(userId) ? [{ environmentId: "environment-1" }] : [],
-                );
-              },
-            }),
-          };
-        }
-
-        expect(table).toBe(relayReferralAccounts);
-        return {
-          where: (condition: unknown) => {
-            const query = sqlQuery(condition);
-            const value = String(query.params[0]);
-
-            if (hasSelection(selection, "referrals")) {
-              const wantsQualified = query.sql.includes('"qualified_at" is not null');
-              const referrals = [...state.accounts.values()].filter(
-                (account) =>
-                  account.referrerUserId === value &&
-                  (wantsQualified ? account.qualifiedAt !== null : account.qualifiedAt === null),
-              ).length;
-              return Effect.succeed([{ referrals }]);
-            }
-
-            if (
-              hasSelection(selection, "userId") &&
-              query.sql.includes('"qualified_at" is null') &&
-              query.sql.includes('from "relay_environment_links"')
-            ) {
-              const referrerUserId = query.sql.includes('"referrer_user_id" =') ? value : null;
-              return Effect.succeed(
-                [...state.accounts.values()]
-                  .filter(
-                    (row) =>
-                      row.referrerUserId !== null &&
-                      row.qualifiedAt === null &&
-                      state.environmentUsers.has(row.userId) &&
-                      (referrerUserId === null || row.referrerUserId === referrerUserId),
-                  )
-                  .map((row) => ({ userId: row.userId })),
-              );
-            }
-
-            const account = hasSelection(selection, "userId")
-              ? [...state.accounts.values()].find((row) => row.referralCode === value)
-              : state.accounts.get(value);
-            return {
-              limit: () => Effect.succeed(account ? [account] : []),
-            };
-          },
-        };
-      },
-    }),
-    insert: (table: unknown) => ({
-      values: (value: ReferralAccount | ReferralPointEntry) => ({
-        onConflictDoNothing: () => ({
-          returning: () => {
-            if (table === relayReferralAccounts) {
-              const account = value as ReferralAccount;
-              const conflict =
-                state.accounts.has(account.userId) ||
-                [...state.accounts.values()].some(
-                  (existing) => existing.referralCode === account.referralCode,
-                );
-              if (conflict) return Effect.succeed([]);
-              state.accounts.set(account.userId, account);
-              return Effect.succeed([account]);
-            }
-
-            expect(table).toBe(relayReferralPointEntries);
-            if (state.pointInsertFailure) return Effect.fail(state.pointInsertFailure);
-            const entry = value as ReferralPointEntry;
-            const conflict = state.pointEntries.some(
-              (existing) =>
-                existing.userId === entry.userId &&
-                existing.reason === entry.reason &&
-                existing.referredUserId === entry.referredUserId,
-            );
-            if (conflict) return Effect.succeed([]);
-            state.pointEntries.push(entry);
-            return Effect.succeed([{ id: entry.id }]);
-          },
-        }),
-      }),
-    }),
-    update: (table: unknown) => {
-      expect(table).toBe(relayReferralAccounts);
-      return {
-        set: (values: Partial<ReferralAccount>) => ({
-          where: (condition: unknown) => {
-            const query = sqlQuery(condition);
-            const userId = String(query.params[0]);
-            const account = state.accounts.get(userId);
-
-            if (values.referrerUserId !== undefined) {
-              state.claimUpdateSql.push(query.sql);
-              return {
-                returning: () => {
-                  const eligible =
-                    account !== undefined &&
-                    account.referrerUserId === null &&
-                    !state.environmentUsers.has(userId);
-                  state.beforeClaimUpdate?.();
-                  if (!eligible || !account) return Effect.succeed([]);
-                  state.accounts.set(userId, { ...account, ...values });
-                  return Effect.succeed([{ userId }]);
-                },
-              };
-            }
-
-            if (account) state.accounts.set(userId, { ...account, ...values });
-            return Effect.void;
-          },
-        }),
-      };
-    },
-  } as unknown as RelayDb.RelayDb["Service"];
-}
-
-function makeTestLayer(state: FakeReferralState) {
+function makeTestLayer() {
   let randomByte = 0;
   const crypto = Crypto.make({
     randomBytes: (size) => {
@@ -180,166 +52,232 @@ function makeTestLayer(state: FakeReferralState) {
     },
     digest: (_algorithm, data) => Effect.succeed(data),
   });
-  const db = makeFakeDb(state);
-  return ReferralProgram.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.succeed(RelayDb.RelayDb, db),
-        Layer.succeed(
-          RelayDb.RelayTransactions,
-          RelayDb.RelayTransactions.of({
-            withTransaction: (effect) =>
-              Effect.suspend(() => {
-                const accounts = new Map(state.accounts);
-                const pointEntries = [...state.pointEntries];
-                return effect.pipe(
-                  Effect.tapError(() =>
-                    Effect.sync(() => {
-                      state.accounts.clear();
-                      for (const [userId, account] of accounts) {
-                        state.accounts.set(userId, account);
-                      }
-                      state.pointEntries.splice(0, state.pointEntries.length, ...pointEntries);
-                    }),
-                  ),
-                );
-              }),
-          }),
-        ),
-        Layer.succeed(Crypto.Crypto, crypto),
-      ),
+  const relayDbLayer = Layer.effect(
+    RelayDb.RelayDb,
+    PgDrizzle.makeWithDefaults().pipe(
+      Effect.map((db) => db as unknown as RelayDb.RelayDb["Service"]),
     ),
+  ).pipe(Layer.provide(PgliteClient.layer()));
+
+  return Layer.empty.pipe(
+    Layer.provideMerge(ReferralProgram.layer),
+    Layer.provideMerge(RelayDb.RelayTransactions.layer),
+    Layer.provideMerge(relayDbLayer),
+    Layer.provideMerge(Layer.succeed(Crypto.Crypto, crypto)),
   );
 }
 
-function makeState(): FakeReferralState {
-  return {
-    accounts: new Map(),
-    claimUpdateSql: [],
-    environmentUsers: new Set(),
-    pointEntries: [],
-  };
+const setupDatabase = Effect.gen(function* () {
+  const db = yield* RelayDb.RelayDb;
+  yield* Effect.forEach(TEST_SCHEMA, (statement) => db.execute(sql.raw(statement)), {
+    concurrency: 1,
+    discard: true,
+  });
+});
+
+function linkEnvironment(userId: string, environmentId: string, createdAt: string) {
+  return Effect.gen(function* () {
+    const db = yield* RelayDb.RelayDb;
+    yield* db.execute(
+      sql`insert into relay_environment_links (user_id, environment_id, created_at)
+          values (${userId}, ${environmentId}, ${createdAt})`,
+    );
+  });
 }
 
-describe("ReferralProgram", () => {
-  it.effect("uses all 64 random bits in generated referral codes", () => {
-    const state = makeState();
-    return Effect.gen(function* () {
-      const referrals = yield* ReferralProgram.ReferralProgram;
+function testEffect<A, E>(
+  effect: Effect.Effect<A, E, ReferralProgram.ReferralProgram | RelayDb.RelayDb>,
+) {
+  return Effect.gen(function* () {
+    yield* setupDatabase;
+    return yield* effect;
+  }).pipe(Effect.provide(makeTestLayer()));
+}
 
-      expect((yield* referrals.getSummary({ userId: "first" })).referralCode).toBe(
-        "0101010101010101",
-      );
-      expect((yield* referrals.getSummary({ userId: "second" })).referralCode).toBe(
-        "0202020202020202",
-      );
-    }).pipe(Effect.provide(makeTestLayer(state)));
-  });
+describe("ReferralProgram with PostgreSQL", () => {
+  it.effect("uses all 64 random bits and reports historical link eligibility", () =>
+    testEffect(
+      Effect.gen(function* () {
+        const referrals = yield* ReferralProgram.ReferralProgram;
 
-  it.effect("awards 67 account points once when the referred account links", () => {
-    const state = makeState();
-    return Effect.gen(function* () {
-      const referrals = yield* ReferralProgram.ReferralProgram;
-      const referrer = yield* referrals.getSummary({ userId: "referrer" });
-      const claim = yield* referrals.claim({
-        userId: "referred",
-        referralCode: referrer.referralCode.toLowerCase(),
-      });
+        expect(yield* referrals.getSummary({ userId: "first" })).toMatchObject({
+          referralCode: "0101010101010101",
+          canClaimReferral: true,
+        });
+        expect((yield* referrals.getSummary({ userId: "second" })).referralCode).toBe(
+          "0202020202020202",
+        );
 
-      expect(claim.result).toBe("claimed");
-      expect((yield* referrals.getSummary({ userId: "referrer" })).pendingReferrals).toBe(1);
-      state.environmentUsers.add("referred");
-      expect(yield* referrals.qualify({ userId: "referred" })).toBe(true);
-      expect(yield* referrals.qualify({ userId: "referred" })).toBe(false);
+        yield* linkEnvironment("linked-user", "environment-1", "2026-08-01T00:00:00.000Z");
+        expect(yield* referrals.getSummary({ userId: "linked-user" })).toMatchObject({
+          canClaimReferral: false,
+        });
+      }),
+    ),
+  );
 
-      expect(yield* referrals.getSummary({ userId: "referrer" })).toMatchObject({
-        points: 67,
-        awardPoints: 67,
-        qualifiedReferrals: 1,
-        pendingReferrals: 0,
-      });
-      expect(state.pointEntries).toHaveLength(1);
-    }).pipe(Effect.provide(makeTestLayer(state)));
-  });
+  it.effect("claims once, rejects late claims, and prevents referral-chain cycles", () =>
+    testEffect(
+      Effect.gen(function* () {
+        const referrals = yield* ReferralProgram.ReferralProgram;
+        const a = yield* referrals.getSummary({ userId: "account-a" });
+        const b = yield* referrals.getSummary({ userId: "account-b" });
 
-  it.effect("rejects self-referrals and accounts that already linked an environment", () => {
-    const state = makeState();
-    state.environmentUsers.add("linked-user");
-    return Effect.gen(function* () {
-      const referrals = yield* ReferralProgram.ReferralProgram;
-      const referrer = yield* referrals.getSummary({ userId: "referrer" });
+        const concurrentClaims = yield* Effect.all(
+          [
+            referrals.claim({ userId: "account-a", referralCode: b.referralCode }),
+            referrals.claim({ userId: "account-b", referralCode: a.referralCode }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(concurrentClaims.map((claim) => claim.result).sort()).toEqual([
+          "claimed",
+          "self_referral",
+        ]);
 
-      expect(
-        (yield* referrals.claim({
-          userId: "referrer",
-          referralCode: referrer.referralCode,
-        })).result,
-      ).toBe("self_referral");
-      expect(
-        (yield* referrals.claim({
-          userId: "linked-user",
-          referralCode: referrer.referralCode,
-        })).result,
-      ).toBe("ineligible");
-    }).pipe(Effect.provide(makeTestLayer(state)));
-  });
+        const referrer = yield* referrals.getSummary({ userId: "referrer" });
+        yield* linkEnvironment("linked-user", "environment-2", "2026-08-02T00:00:00.000Z");
+        expect(
+          (yield* referrals.claim({
+            userId: "linked-user",
+            referralCode: referrer.referralCode,
+          })).result,
+        ).toBe("ineligible");
+        expect(
+          (yield* referrals.claim({
+            userId: "referrer",
+            referralCode: referrer.referralCode,
+          })).result,
+        ).toBe("self_referral");
+        expect(
+          (yield* referrals.claim({
+            userId: "fresh-user",
+            referralCode: "FFFFFFFFFFFFFFFF",
+          })).result,
+        ).toBe("invalid_code");
+      }),
+    ),
+  );
 
-  it.effect("awards a referral when the first link commits during the claim write", () => {
-    const state = makeState();
-    return Effect.gen(function* () {
-      const referrals = yield* ReferralProgram.ReferralProgram;
-      const referrer = yield* referrals.getSummary({ userId: "referrer" });
-      state.beforeClaimUpdate = () => state.environmentUsers.add("referred");
+  it.effect("awards one account once under concurrent qualification", () =>
+    testEffect(
+      Effect.gen(function* () {
+        const referrals = yield* ReferralProgram.ReferralProgram;
+        const referrer = yield* referrals.getSummary({ userId: "referrer" });
+        expect(
+          (yield* referrals.claim({
+            userId: "referred",
+            referralCode: referrer.referralCode,
+          })).result,
+        ).toBe("claimed");
+        yield* linkEnvironment("referred", "environment-1", "2026-08-03T00:00:00.000Z");
 
-      expect(
-        (yield* referrals.claim({
-          userId: "referred",
-          referralCode: referrer.referralCode,
-        })).result,
-      ).toBe("claimed");
-      expect(state.claimUpdateSql[0]).toContain("not exists");
-      expect(state.claimUpdateSql[0]).toContain('from "relay_environment_links"');
-      expect(yield* referrals.getSummary({ userId: "referrer" })).toMatchObject({
-        points: 67,
-        qualifiedReferrals: 1,
-        pendingReferrals: 0,
-      });
-    }).pipe(Effect.provide(makeTestLayer(state)));
-  });
+        const qualificationResults = yield* Effect.all(
+          [
+            referrals.qualify({ userId: "referred" }),
+            referrals.qualify({ userId: "referred" }),
+            referrals.qualify({ userId: "referred" }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(qualificationResults.filter(Boolean)).toHaveLength(1);
+        expect(yield* referrals.getSummary({ userId: "referrer" })).toMatchObject({
+          points: 67,
+          awardPoints: 67,
+          qualifiedReferrals: 1,
+          pendingReferrals: 0,
+        });
+      }),
+    ),
+  );
 
-  it.effect("keeps a claim recoverable when its immediate point award cannot be persisted", () => {
-    const state = makeState();
-    state.pointInsertFailure = new Error("point insert failed");
-    return Effect.gen(function* () {
-      const referrals = yield* ReferralProgram.ReferralProgram;
-      const referrer = yield* referrals.getSummary({ userId: "referrer" });
-      state.beforeClaimUpdate = () => state.environmentUsers.add("referred");
+  it.effect("allows only one award per physical environment across accounts", () =>
+    testEffect(
+      Effect.gen(function* () {
+        const referrals = yield* ReferralProgram.ReferralProgram;
+        const db = yield* RelayDb.RelayDb;
+        const referrer = yield* referrals.getSummary({ userId: "referrer" });
 
-      expect(
-        (yield* referrals.claim({
-          userId: "referred",
-          referralCode: referrer.referralCode,
-        })).result,
-      ).toBe("claimed");
-      expect(state.accounts.get("referred")?.referrerUserId).toBe("referrer");
-      expect(state.pointEntries).toHaveLength(0);
+        for (const userId of ["referred-a", "referred-b"] as const) {
+          expect(
+            (yield* referrals.claim({ userId, referralCode: referrer.referralCode })).result,
+          ).toBe("claimed");
+          yield* linkEnvironment(userId, "shared-environment", "2026-08-04T00:00:00.000Z");
+        }
 
-      const error = yield* Effect.flip(referrals.qualify({ userId: "referred" }));
-      expect(error).toMatchObject({
-        _tag: "ReferralProgramPersistenceError",
-        operation: "qualify-referral",
-        cause: state.pointInsertFailure,
-      });
+        const results = yield* Effect.all(
+          [
+            referrals.qualify({ userId: "referred-a" }),
+            referrals.qualify({ userId: "referred-b" }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(results.filter(Boolean)).toHaveLength(1);
+        expect(yield* referrals.getSummary({ userId: "referrer" })).toMatchObject({
+          points: 67,
+          qualifiedReferrals: 1,
+          pendingReferrals: 1,
+        });
+        const entries = yield* db.select().from(relayReferralPointEntries);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]?.qualifyingEnvironmentId).toBe("shared-environment");
+      }),
+    ),
+  );
 
-      delete state.pointInsertFailure;
-      expect(yield* referrals.recoverPendingAwards({ referrerUserId: "someone-else" })).toBe(0);
-      expect(yield* referrals.recoverPendingAwards({ referrerUserId: "referrer" })).toBe(1);
-      expect(yield* referrals.recoverPendingAwards()).toBe(0);
-      expect(yield* referrals.getSummary({ userId: "referrer" })).toMatchObject({
-        points: 67,
-        qualifiedReferrals: 1,
-        pendingReferrals: 0,
-      });
-    }).pipe(Effect.provide(makeTestLayer(state)));
-  });
+  it.effect("rolls back a partial award and recovers it later", () =>
+    testEffect(
+      Effect.gen(function* () {
+        const referrals = yield* ReferralProgram.ReferralProgram;
+        const db = yield* RelayDb.RelayDb;
+        const referrer = yield* referrals.getSummary({ userId: "referrer" });
+        expect(
+          (yield* referrals.claim({
+            userId: "referred",
+            referralCode: referrer.referralCode,
+          })).result,
+        ).toBe("claimed");
+        yield* linkEnvironment("referred", "environment-1", "2026-08-05T00:00:00.000Z");
+        yield* db.execute(
+          sql.raw(`
+          create function reject_referral_qualification() returns trigger language plpgsql as $$
+          begin
+            if new.qualified_at is not null then
+              raise exception 'qualification update failed';
+            end if;
+            return new;
+          end;
+          $$
+        `),
+        );
+        yield* db.execute(
+          sql.raw(`
+          create trigger reject_referral_qualification
+          before update on relay_referral_accounts
+          for each row execute function reject_referral_qualification()
+        `),
+        );
+
+        yield* Effect.flip(referrals.qualify({ userId: "referred" }));
+        expect(yield* db.select().from(relayReferralPointEntries)).toHaveLength(0);
+        expect(
+          (yield* db
+            .select({ qualifiedAt: relayReferralAccounts.qualifiedAt })
+            .from(relayReferralAccounts)
+            .where(sql`${relayReferralAccounts.userId} = ${"referred"}`))[0]?.qualifiedAt,
+        ).toBeNull();
+
+        yield* db.execute(
+          sql.raw("drop trigger reject_referral_qualification on relay_referral_accounts"),
+        );
+        expect(yield* referrals.recoverPendingAwards({ referrerUserId: "referrer" })).toBe(1);
+        expect(yield* referrals.recoverPendingAwards()).toBe(0);
+        expect(yield* referrals.getSummary({ userId: "referrer" })).toMatchObject({
+          points: 67,
+          qualifiedReferrals: 1,
+          pendingReferrals: 0,
+        });
+      }),
+    ),
+  );
 });

@@ -68,7 +68,7 @@ const referralSummary = {
   awardPoints: 67,
   qualifiedReferrals: 1,
   pendingReferrals: 0,
-  hasClaimedReferral: false,
+  canClaimReferral: true,
 } as const;
 
 function referralService(

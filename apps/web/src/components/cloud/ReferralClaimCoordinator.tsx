@@ -5,17 +5,18 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { RelayReferralClaimResult } from "@t3tools/contracts/relay";
 import { useLocation } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   claimManagedRelayReferralCommand,
   refreshManagedRelayReferralSummary,
 } from "../../cloud/managedRelayState";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { referralClaimMessage } from "../../cloud/referralClaimResult";
 import {
   captureReferralCodeFromUrl,
+  clearPendingReferralCode,
   PENDING_REFERRAL_CODE_STORAGE_KEY,
   readPendingReferralCode,
   urlWithoutMatchingReferralCode,
@@ -28,14 +29,7 @@ import {
   claimReferralWithRetry,
   isCurrentReferralClaimAttempt,
   type ReferralClaimAttempt,
-  referralClaimLoadState,
 } from "./ReferralClaimCoordinator.logic";
-
-function clearPendingReferralCode(): void {
-  try {
-    window.localStorage.removeItem(PENDING_REFERRAL_CODE_STORAGE_KEY);
-  } catch {}
-}
 
 function captureReferralCode(): string | null {
   const url = new URL(window.location.href);
@@ -56,32 +50,6 @@ function clearReferralCodeFromUrl(referralCode: string): void {
   window.history.replaceState(window.history.state, "", cleanedUrl);
 }
 
-function showClaimResult(result: RelayReferralClaimResult): void {
-  switch (result) {
-    case "claimed":
-      toastManager.add({
-        type: "success",
-        title: "Referral applied",
-        description: "Your referrer will receive 67 points after you link your first environment.",
-      });
-      return;
-    case "already_claimed":
-      return;
-    case "invalid_code":
-      toastManager.add({ type: "warning", title: "This referral code is not valid" });
-      return;
-    case "self_referral":
-      toastManager.add({ type: "warning", title: "You cannot use your own referral code" });
-      return;
-    case "ineligible":
-      toastManager.add({
-        type: "info",
-        title: "Referral code not applied",
-        description: "Referral codes must be claimed before linking an environment.",
-      });
-  }
-}
-
 export function ReferralClaimCoordinator() {
   if (!hasCloudPublicConfig()) return null;
   return <ConfiguredReferralClaimCoordinator />;
@@ -98,20 +66,22 @@ function ConfiguredReferralClaimCoordinator() {
   const [pendingReferralCode, setPendingReferralCode] = useState<string | null>(null);
   const activeClaimRef = useRef<ReferralClaimAttempt | null>(null);
   const completedClaimRef = useRef<string | null>(null);
+  const retryToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const initializedReferralRef = useRef(false);
   const promptedSignInRef = useRef<string | null>(null);
   const shouldPromptSignInRef = useRef(false);
+  const closeRetryToast = useCallback(() => {
+    if (retryToastIdRef.current === null) return;
+    toastManager.close(retryToastIdRef.current);
+    retryToastIdRef.current = null;
+  }, []);
 
   useEffect(() => {
     const capturedCode = captureReferralCode();
     if (!capturedCode && initializedReferralRef.current) return;
     initializedReferralRef.current = true;
-    const initial = referralClaimLoadState(
-      capturedCode,
-      capturedCode ? null : readPendingReferralCode(),
-    );
-    shouldPromptSignInRef.current = initial.shouldPromptSignIn;
-    setPendingReferralCode(initial.referralCode);
+    shouldPromptSignInRef.current = capturedCode !== null;
+    setPendingReferralCode(capturedCode ?? readPendingReferralCode());
   }, [locationHref]);
 
   useEffect(() => {
@@ -153,28 +123,41 @@ function ConfiguredReferralClaimCoordinator() {
         if (result._tag === "Success") {
           if (!isCurrentAttempt()) return;
           completedClaimRef.current = attemptKey;
+          closeRetryToast();
           clearPendingReferralCode();
           clearReferralCodeFromUrl(referralCode);
           setPendingReferralCode(null);
           refreshManagedRelayReferralSummary();
-          showClaimResult(result.value.result);
+          if (result.value.result !== "already_claimed") {
+            toastManager.add(
+              referralClaimMessage(result.value.result, result.value.summary.awardPoints),
+            );
+          }
           return;
         }
         if (!isCurrentAttempt() || isAtomCommandInterrupted(result)) return;
         const cause = squashAtomCommandFailure(result);
         console.error("[t3-cloud] Could not claim captured referral code", { cause });
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Referral still pending",
-            description: "Retry before linking an environment so your referrer can receive points.",
-            timeout: 0,
-            actionProps: {
-              children: "Retry",
-              onClick: () => void runClaim(),
+        const retryToast = stackedThreadToast({
+          type: "error",
+          title: "Referral still pending",
+          description: "Retry before linking an environment so your referrer can receive points.",
+          timeout: 0,
+          actionProps: {
+            children: "Retry",
+            onClick: () => void runClaim(),
+          },
+          data: {
+            onClose: () => {
+              retryToastIdRef.current = null;
             },
-          }),
-        );
+          },
+        });
+        if (retryToastIdRef.current === null) {
+          retryToastIdRef.current = toastManager.add(retryToast);
+        } else {
+          toastManager.update(retryToastIdRef.current, retryToast);
+        }
       } finally {
         if (activeClaimRef.current === attempt) activeClaimRef.current = null;
       }
@@ -184,8 +167,17 @@ function ConfiguredReferralClaimCoordinator() {
     return () => {
       isCancelled = true;
       if (activeClaimRef.current === attempt) activeClaimRef.current = null;
+      closeRetryToast();
     };
-  }, [claimReferral, isLoaded, isSignedIn, pendingReferralCode, relayAccountId, userId]);
+  }, [
+    claimReferral,
+    closeRetryToast,
+    isLoaded,
+    isSignedIn,
+    pendingReferralCode,
+    relayAccountId,
+    userId,
+  ]);
 
   return authPrompt;
 }

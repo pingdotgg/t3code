@@ -198,7 +198,6 @@ function CardFooter({ className, render, ...props }: useRender.ComponentProps<"d
 
 export {
   Card,
-  cardVariants,
   CardFrame,
   CardFrameHeader,
   CardFrameTitle,

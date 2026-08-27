@@ -23,6 +23,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260601.1",
     "@effect/platform-node": "catalog:",
+    "@effect/sql-pglite": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "drizzle-kit": "1.0.0-rc.4",

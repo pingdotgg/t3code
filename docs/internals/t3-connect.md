@@ -264,8 +264,12 @@ the ledger instead of trusting a mutable counter.
 
 A signed-in user can claim one code only before their account has an environment link. The claim is
 pending until `linkEnvironment` succeeds for that account. The link handler then qualifies the
-referral and appends one 67-point ledger entry for the referrer. A unique index on referrer, reason,
-and referred user makes retries idempotent.
+referral and appends one 67-point ledger entry for the referrer. The ledger stores the account's
+first historical environment ID. Unique indexes make retries idempotent and allow a physical
+environment to qualify only one referral award, even if it is linked to multiple accounts.
+Claims lock both participating accounts and reject any edge that would create a referral-chain
+cycle. Referral summaries read the account, eligibility, balance, and referral counts in one SQL
+statement so the client never sees aggregates from mixed snapshots.
 
 Web and desktop expose referrals in the Clerk account menu. A hosted `?ref=` link is captured before
 sign-in and claimed after Clerk supplies the account session. Mobile exposes the same relay-backed

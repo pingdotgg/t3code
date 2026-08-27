@@ -149,10 +149,3 @@ export function refreshManagedRelayEnvironments(): void {
     managedRelayQueryManager.refreshEnvironments(appAtomRegistry, session.accountId);
   }
 }
-
-export function refreshManagedRelayReferralSummary(): void {
-  const session = appAtomRegistry.get(managedRelaySessionAtom);
-  if (session) {
-    managedRelayQueryManager.refreshReferralSummary(appAtomRegistry, session.accountId);
-  }
-}

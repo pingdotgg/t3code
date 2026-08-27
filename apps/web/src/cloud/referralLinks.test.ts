@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   buildReferralShareData,
   captureReferralCodeFromUrl,
+  clearPendingReferralCode,
   PENDING_REFERRAL_CODE_STORAGE_KEY,
   readPendingReferralCode,
   referralCodeFromUrl,
@@ -11,6 +12,18 @@ import {
 } from "./referralLinks";
 
 describe("referralLinks", () => {
+  it("clears a pending code without exposing storage failures", () => {
+    const removeItem = vi.fn();
+    clearPendingReferralCode(() => ({ removeItem }));
+    expect(removeItem).toHaveBeenCalledWith(PENDING_REFERRAL_CODE_STORAGE_KEY);
+
+    expect(() =>
+      clearPendingReferralCode(() => {
+        throw new Error("storage unavailable");
+      }),
+    ).not.toThrow();
+  });
+
   it("normalizes a pending referral read from storage", () => {
     const storage = {
       getItem: vi.fn(() => "abcd1234efab5678"),

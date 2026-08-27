@@ -34,6 +34,13 @@ function ConfiguredT3ConnectSidebarAvatar() {
         },
       }}
     >
+      <UserButton.MenuItems>
+        <UserButton.Action
+          label="Referrals"
+          labelIcon={<GiftIcon className="size-4" />}
+          open="referrals"
+        />
+      </UserButton.MenuItems>
       <UserButton.UserProfilePage
         label="Mobile clients"
         labelIcon={<SmartphoneIcon className="size-4" />}

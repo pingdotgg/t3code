@@ -18,6 +18,7 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { REFERRAL_AWARD_POINTS } from "@t3tools/shared/referral";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
@@ -462,7 +463,7 @@ function ConfiguredSettingsRouteScreen() {
               <SettingsRow
                 icon="link"
                 label="Referrals"
-                value="67 points each"
+                value={`${REFERRAL_AWARD_POINTS} points each`}
                 target="SettingsReferrals"
               />
             ) : null}

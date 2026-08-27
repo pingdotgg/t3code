@@ -18,6 +18,14 @@ export function readPendingReferralCode(
   }
 }
 
+export function clearPendingReferralCode(
+  getStorage: () => Pick<Storage, "removeItem"> = () => window.localStorage,
+): void {
+  try {
+    getStorage().removeItem(PENDING_REFERRAL_CODE_STORAGE_KEY);
+  } catch {}
+}
+
 export function referralCodeFromUrl(url: URL): string | null {
   return normalizeReferralCode(url.searchParams.get("ref") ?? "");
 }
@@ -53,10 +61,10 @@ export function captureReferralCodeFromUrl(
   return { referralCode, cleanedUrl: urlWithoutReferralCode(url) };
 }
 
-export function buildReferralShareData(referralLink: string) {
+export function buildReferralShareData(referralLink: string, awardPoints?: number) {
   return {
     title: REFERRAL_SHARE_TITLE,
-    text: buildReferralShareMessage(referralLink),
+    text: buildReferralShareMessage(referralLink, awardPoints),
     url: referralLink,
   };
 }

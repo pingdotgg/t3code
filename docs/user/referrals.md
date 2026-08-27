@@ -18,4 +18,5 @@ You earn 67 points when someone:
 
 A referral appears as pending after the code is claimed. It becomes successful and adds 67 points
 when the referred account links its first environment. A code can be claimed only once per account,
-and you cannot claim your own code.
+one physical environment can qualify only one referral award, and referral chains cannot loop back
+to an account that is already in the chain.

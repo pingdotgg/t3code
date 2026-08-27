@@ -10,6 +10,7 @@ import { useState } from "react";
 import { toastManager } from "../components/ui/toast";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
+import { CloudEnvironmentLinkError } from "./linkEnvironment";
 import {
   linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
@@ -17,7 +18,7 @@ import {
 } from "./linkEnvironmentAtoms";
 import { usePrimaryCloudLinkState } from "./primaryCloudLinkState";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
-import { readPendingReferralCode } from "./referralLinks";
+import { clearPendingReferralCode, readPendingReferralCode } from "./referralLinks";
 
 export interface CloudLinkDesiredState {
   readonly managedTunnel: boolean;
@@ -126,11 +127,19 @@ export function useCloudLinkController() {
         });
         if (linkResult._tag === "Failure") {
           if (!isAtomCommandInterrupted(linkResult)) {
-            reportUpdateFailure(squashAtomCommandFailure(linkResult));
+            const cause = squashAtomCommandFailure(linkResult);
+            if (
+              cause instanceof CloudEnvironmentLinkError &&
+              cause.referralClaimResult !== undefined
+            ) {
+              clearPendingReferralCode();
+            }
+            reportUpdateFailure(cause);
           }
           primaryCloudLinkState.refresh();
           return false;
         }
+        if (referralCode) clearPendingReferralCode();
       }
       const prefResult = await updatePrimaryEnvironmentPreferences({
         target,

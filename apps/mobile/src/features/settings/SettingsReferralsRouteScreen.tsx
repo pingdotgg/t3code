@@ -1,5 +1,5 @@
 import { useAuth } from "@clerk/expo";
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -8,12 +8,13 @@ import type { RelayReferralClaimResult } from "@t3tools/contracts/relay";
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 import { buildReferralLink, normalizeReferralCode } from "@t3tools/shared/referral";
 import type { ComponentProps } from "react";
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   Share,
   View,
@@ -31,15 +32,16 @@ import {
   claimManagedRelayReferralCommand,
   useManagedRelayReferralSummary,
 } from "../cloud/managedRelayState";
+import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { SettingsSection } from "./components/SettingsSection";
 import { shareReferralLink } from "./referralShare";
 
-function showClaimResult(result: RelayReferralClaimResult): void {
+function showClaimResult(result: RelayReferralClaimResult, awardPoints: number): void {
   switch (result) {
     case "claimed":
       Alert.alert(
         "Referral applied",
-        "Your referrer will receive 67 points after you link your first environment.",
+        `Your referrer will receive ${awardPoints} points after you link your first environment.`,
       );
       return;
     case "already_claimed":
@@ -122,6 +124,18 @@ function ReferralActionRow(props: {
 }
 
 export function SettingsReferralsRouteScreen() {
+  const navigation = useNavigation();
+
+  useLayoutEffect(() => {
+    if (!hasCloudPublicConfig()) {
+      navigation.dispatch(StackActions.replace("SettingsContent"));
+    }
+  }, [navigation]);
+
+  return hasCloudPublicConfig() ? <ConfiguredSettingsReferralsRouteScreen /> : null;
+}
+
+function ConfiguredSettingsReferralsRouteScreen() {
   const { isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -132,7 +146,6 @@ export function SettingsReferralsRouteScreen() {
   const [referralCode, setReferralCode] = useState("");
   const [isClaiming, setIsClaiming] = useState(false);
   const iconColor = useThemeColor("--color-icon");
-  const iconSuccess = useThemeColor("--color-success");
   const primaryForeground = useThemeColor("--color-primary-foreground");
   const summary = summaryState.data;
   const referralLink = summary
@@ -152,7 +165,7 @@ export function SettingsReferralsRouteScreen() {
     setIsClaiming(false);
     if (result._tag === "Success") {
       setReferralCode("");
-      showClaimResult(result.value.result);
+      showClaimResult(result.value.result, result.value.summary.awardPoints);
       summaryState.refresh();
       return;
     }
@@ -164,8 +177,19 @@ export function SettingsReferralsRouteScreen() {
     );
   };
 
-  const shareReferral = () => {
-    void shareReferralLink(referralLink, (content, options) => Share.share(content, options));
+  const shareReferral = async () => {
+    try {
+      await shareReferralLink(
+        referralLink,
+        (content, options) => Share.share(content, options),
+        summary?.awardPoints,
+      );
+    } catch (cause) {
+      Alert.alert(
+        "Could not share referral link",
+        cause instanceof Error ? cause.message : "Try again.",
+      );
+    }
   };
 
   if (!isSignedIn) {
@@ -200,6 +224,12 @@ export function SettingsReferralsRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={summary !== null && summaryState.isPending}
+            onRefresh={summaryState.refresh}
+          />
+        }
       >
         {summaryState.error ? (
           <SettingsSection card title="Referral points">
@@ -263,7 +293,6 @@ export function SettingsReferralsRouteScreen() {
                     accessibilityLabel="Copy referral code"
                     text={summary.referralCode}
                     tintColor={iconColor}
-                    copiedTintColor={iconSuccess}
                   />
                 </View>
                 <ReferralActionRow
@@ -271,16 +300,16 @@ export function SettingsReferralsRouteScreen() {
                   label="Share referral link"
                   detail={referralLink}
                   disabled={!referralLink}
-                  onPress={shareReferral}
+                  onPress={() => void shareReferral()}
                 />
               </SettingsSection>
               <Text className="px-2 text-sm leading-normal text-foreground-muted">
-                Your friend must claim the link before linking their first environment. You receive
-                67 points after that environment connects.
+                Your friend must claim the link before linking their first environment. You receive{" "}
+                {summary.awardPoints} points after that environment connects.
               </Text>
             </View>
 
-            {!summary.hasClaimedReferral ? (
+            {summary.canClaimReferral ? (
               <View className="gap-3">
                 <SettingsSection card title="Use a referral code">
                   <View className="gap-3 p-4">
@@ -289,7 +318,6 @@ export function SettingsReferralsRouteScreen() {
                       autoCapitalize="characters"
                       autoCorrect={false}
                       editable={!isClaiming}
-                      maxLength={19}
                       placeholder="ABCD1234EFAB5678"
                       returnKeyType="done"
                       value={referralCode}

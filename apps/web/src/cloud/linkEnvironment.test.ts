@@ -356,7 +356,7 @@ describe("web cloud link environment client", () => {
               awardPoints: 67,
               qualifiedReferrals: 0,
               pendingReferrals: 0,
-              hasClaimedReferral: true,
+              canClaimReferral: false,
             },
           }),
         )
@@ -420,6 +420,97 @@ describe("web cloud link environment client", () => {
 
       expect(error.message).toContain("referrals/claim failed before environment linking");
       expect(fetchMock).toHaveBeenCalledOnce();
+    }),
+  );
+
+  it.effect("continues linking for every non-rejected referral outcome", () =>
+    Effect.gen(function* () {
+      for (const claimResult of ["already_claimed", "ineligible"] as const) {
+        const fetchMock = vi
+          .fn()
+          .mockResolvedValueOnce(
+            Response.json({
+              result: claimResult,
+              summary: {
+                points: 0,
+                referralCode: "1111222233334444",
+                awardPoints: 67,
+                qualifiedReferrals: 0,
+                pendingReferrals: 0,
+                canClaimReferral: false,
+              },
+            }),
+          )
+          .mockResolvedValueOnce(
+            Response.json({
+              challenge: "challenge",
+              expiresAt: "2026-06-06T00:05:00.000Z",
+            }),
+          )
+          .mockResolvedValueOnce(Response.json("signed-proof"))
+          .mockResolvedValueOnce(
+            Response.json({
+              ok: true,
+              environmentId: TARGET.environmentId,
+              endpoint: {
+                httpBaseUrl: "https://desktop.example.test",
+                wsBaseUrl: "wss://desktop.example.test",
+                providerKind: "cloudflare_tunnel",
+              },
+              endpointRuntime: null,
+              relayIssuer: "https://relay.example.test",
+              cloudUserId: "user-1",
+              environmentCredential: "environment-credential",
+              cloudMintPublicKey: "public-key",
+            }),
+          )
+          .mockResolvedValueOnce(
+            Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
+          );
+        vi.stubGlobal("fetch", fetchMock);
+
+        yield* withServices(
+          linkPrimaryEnvironmentToCloud({
+            target: TARGET,
+            clerkToken: "clerk-token",
+            referralCode: "ABCD1234EFAB5678",
+          }),
+        );
+
+        expect(fetchMock).toHaveBeenCalledTimes(5);
+      }
+    }),
+  );
+
+  it.effect("rejects invalid and cyclic referral codes before the environment is linked", () =>
+    Effect.gen(function* () {
+      for (const claimResult of ["invalid_code", "self_referral"] as const) {
+        const fetchMock = vi.fn().mockResolvedValue(
+          Response.json({
+            result: claimResult,
+            summary: {
+              points: 0,
+              referralCode: "1111222233334444",
+              awardPoints: 67,
+              qualifiedReferrals: 0,
+              pendingReferrals: 0,
+              canClaimReferral: true,
+            },
+          }),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const error = yield* withServices(
+          linkPrimaryEnvironmentToCloud({
+            target: TARGET,
+            clerkToken: "clerk-token",
+            referralCode: "ABCD1234EFAB5678",
+          }),
+        ).pipe(Effect.flip);
+
+        expect(error).toMatchObject({ referralClaimResult: claimResult });
+        expect(fetchMock).toHaveBeenCalledOnce();
+      }
     }),
   );
 

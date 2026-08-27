@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "a3c85f32-9315-46ec-acce-8ccb82c0edea",
+  "id": "84e959ac-2c9c-425c-a980-e26b93b5fb24",
   "prevIds": ["2374caff-40bf-423c-9255-55e76dddbc2a"],
   "ddl": [
     {
@@ -1280,6 +1280,19 @@
       "table": "relay_referral_point_entries"
     },
     {
+      "type": "varchar(191)",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "qualifying_environment_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "relay_referral_point_entries"
+    },
+    {
       "type": "varchar(64)",
       "typeSchema": null,
       "notNull": true,
@@ -1715,6 +1728,34 @@
       "method": "btree",
       "concurrently": false,
       "name": "idx_relay_referral_point_entries_award",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "relay_referral_point_entries"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "reason",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "qualifying_environment_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "idx_relay_referral_point_entries_environment_award",
       "entityType": "indexes",
       "schema": "public",
       "table": "relay_referral_point_entries"

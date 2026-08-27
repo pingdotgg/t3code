@@ -2,7 +2,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { RelayReferralClaimResult } from "@t3tools/contracts/relay";
+import { REFERRAL_AWARD_POINTS } from "@t3tools/shared/referral";
 import { CheckIcon, CopyIcon, GiftIcon, LinkIcon, Share2Icon, TicketCheckIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
@@ -15,6 +15,7 @@ import {
   buildReferralShareData,
   normalizeReferralCode,
 } from "../../cloud/referralLinks";
+import { referralClaimMessage } from "../../cloud/referralClaimResult";
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -29,33 +30,6 @@ import {
   ClerkUserProfilePage,
   ClerkUserProfileRefreshButton,
 } from "./ClerkUserProfilePage";
-
-function claimResultMessage(result: RelayReferralClaimResult): {
-  readonly type: "success" | "warning" | "info";
-  readonly title: string;
-  readonly description?: string;
-} {
-  switch (result) {
-    case "claimed":
-      return {
-        type: "success",
-        title: "Referral applied",
-        description: "Your referrer will receive 67 points after you link your first environment.",
-      };
-    case "already_claimed":
-      return { type: "info", title: "This account already claimed a referral" };
-    case "invalid_code":
-      return { type: "warning", title: "This referral code is not valid" };
-    case "self_referral":
-      return { type: "warning", title: "You cannot use your own referral code" };
-    case "ineligible":
-      return {
-        type: "info",
-        title: "Referral code not applied",
-        description: "Referral codes must be claimed before linking an environment.",
-      };
-  }
-}
 
 function ReferralMetric(props: { readonly label: string; readonly value: number }) {
   return (
@@ -140,7 +114,7 @@ export function ReferralsUserProfilePage() {
     const result = await claimReferral({ accountId, referralCode: normalized });
     setIsClaiming(false);
     if (result._tag === "Success") {
-      const message = claimResultMessage(result.value.result);
+      const message = referralClaimMessage(result.value.result, result.value.summary.awardPoints);
       toastManager.add(message);
       setReferralCode("");
       summaryState.refresh();
@@ -163,7 +137,7 @@ export function ReferralsUserProfilePage() {
     }
 
     try {
-      await navigator.share(buildReferralShareData(referralLink));
+      await navigator.share(buildReferralShareData(referralLink, summary?.awardPoints));
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") return;
       toastManager.add({
@@ -180,7 +154,7 @@ export function ReferralsUserProfilePage() {
   return (
     <ClerkUserProfilePage
       title="Referrals"
-      description="Earn 67 points when a friend claims your link before connecting their first environment. Your balance follows your T3 account."
+      description={`Earn ${summary?.awardPoints ?? REFERRAL_AWARD_POINTS} points when a friend claims your link before connecting their first environment. Your balance follows your T3 account.`}
       action={
         <ClerkUserProfileRefreshButton
           disabled={isClaiming}
@@ -277,7 +251,7 @@ export function ReferralsUserProfilePage() {
             </CardContent>
           </Card>
 
-          {!summary.hasClaimedReferral ? (
+          {summary.canClaimReferral ? (
             <Card variant="muted">
               <CardContent className="p-4 sm:p-5">
                 <ReferralSectionHeading

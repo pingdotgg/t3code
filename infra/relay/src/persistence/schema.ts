@@ -135,6 +135,7 @@ export const relayReferralPointEntries = pgTable(
     points: integer("points").notNull(),
     reason: varchar("reason", { length: 32 }).notNull().$type<"qualified_referral">(),
     referredUserId: varchar("referred_user_id", { length: 191 }).notNull(),
+    qualifyingEnvironmentId: varchar("qualifying_environment_id", { length: 191 }).notNull(),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
   },
   (table) => [
@@ -143,6 +144,10 @@ export const relayReferralPointEntries = pgTable(
       table.userId,
       table.reason,
       table.referredUserId,
+    ),
+    uniqueIndex("idx_relay_referral_point_entries_environment_award").on(
+      table.reason,
+      table.qualifyingEnvironmentId,
     ),
   ],
 );
