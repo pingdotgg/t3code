@@ -25,7 +25,12 @@ Rectangle {
         return origin ? origin[1] + model.embedPath : "";
     }
 
-    implicitWidth: open ? openWidth : 36
+    // Whether the panel draws its own open/close button. A layout that puts
+    // the toggle in the header strip (Workspace.panelToggle) turns this off,
+    // and the closed panel then takes no width.
+    property bool ownToggle: true
+
+    implicitWidth: open ? openWidth : ownToggle ? 36 : 0
     color: Theme.color("chrome", "#0b0b0d")
     clip: true
 
@@ -58,7 +63,10 @@ Rectangle {
                 anchors.top: parent.top
                 width: 36
                 height: 36
-                text: panel.open ? "▸" : "◂"
+                visible: panel.ownToggle
+                iconName: panel.open ? "panel-right-close" : "panel-right"
+                iconSize: 16
+                iconTint: panel.muted
                 enabled: panel.available
                 Accessible.name: panel.open ? qsTr("Close panel") : qsTr("Open panel")
                 onClicked: Shell.dispatch("rightPanel.toggle")
@@ -67,7 +75,8 @@ Rectangle {
             ListView {
                 id: tabs
 
-                anchors.left: toggleButton.right
+                anchors.left: parent.left
+                anchors.leftMargin: panel.ownToggle ? 36 : 8
                 anchors.right: addButton.left
                 anchors.top: parent.top
                 height: 36
@@ -113,10 +122,10 @@ Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
-                        Text {
-                            text: "✕"
+                        ShellIcon {
+                            name: "x"
+                            size: 12
                             color: panel.muted
-                            font.pixelSize: 10
                             anchors.verticalCenter: parent.verticalCenter
 
                             TapHandler {
@@ -137,8 +146,13 @@ Rectangle {
                 anchors.top: parent.top
                 width: 36
                 height: 36
-                text: "+"
+                leftPadding: 10
+                rightPadding: 10
+                iconName: "plus"
+                iconSize: 16
+                iconTint: panel.muted
                 visible: panel.open
+                Accessible.name: qsTr("Add panel")
                 onClicked: addMenu.open()
 
                 ShellMenu {
@@ -148,6 +162,7 @@ Rectangle {
 
                     ShellMenuItem {
                         text: qsTr("Diff")
+                        iconName: "file-diff"
                         enabled: panel.open && panel.model.canAdd.diff
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "diff"
@@ -156,6 +171,7 @@ Rectangle {
 
                     ShellMenuItem {
                         text: qsTr("Files")
+                        iconName: "files"
                         enabled: panel.open && panel.model.canAdd.files
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "files"
@@ -164,6 +180,7 @@ Rectangle {
 
                     ShellMenuItem {
                         text: qsTr("Terminal")
+                        iconName: "terminal"
                         enabled: panel.open && panel.model.canAdd.terminal
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "terminal"
@@ -172,6 +189,7 @@ Rectangle {
 
                     ShellMenuItem {
                         text: qsTr("Pull request")
+                        iconName: "git-pull-request"
                         enabled: panel.open && panel.model.canAdd.pullRequest
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "pullRequest"
@@ -180,6 +198,7 @@ Rectangle {
 
                     ShellMenuItem {
                         text: qsTr("Agents")
+                        iconName: "bot"
                         enabled: panel.open && panel.model.canAdd.agents
                         onTriggered: Shell.dispatch("rightPanel.add", {
                             kind: "agents"

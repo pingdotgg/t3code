@@ -3,7 +3,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import T3.Shell
 
-// The git split button: quick action + menu, with the commit and
+// The git pill: quick action + menu, with the commit and
 // default-branch dialogs rendered here from Shell.state.git. Progress and
 // results are the page's toasts, shown by Notifications.
 RowLayout {
@@ -14,34 +14,48 @@ RowLayout {
     readonly property color muted: Theme.color("textMuted", "#8b8b93")
     readonly property color foreground: Theme.color("text", "#e4e4e7")
 
+    // Icon-only pill, for narrow header strips.
+    property bool compact: false
+
     spacing: 0
     visible: ready
 
+    readonly property string quickIcon: {
+        if (!ready) {
+            return "git-commit-horizontal";
+        }
+        switch (model.quickAction.kind) {
+        case "open_pr":
+            return "git-pull-request";
+        case "open_publish":
+            return "cloud-upload";
+        case "run_pull":
+            return "git-merge";
+        default:
+            return model.quickAction.label.toLowerCase().indexOf("push") >= 0 ? "cloud-upload" : "git-commit-horizontal";
+        }
+    }
+
     ShellButton {
+        implicitHeight: 24
+        font.pixelSize: 12
+        iconName: "git-branch"
         visible: git.ready && !git.model.isRepo
         enabled: git.ready && !git.model.initPending
         text: git.ready && git.model.initPending ? qsTr("Initializing…") : qsTr("Initialize Git")
         onClicked: Shell.dispatch("git.init")
     }
 
-    ShellButton {
-        id: quick
-
-        visible: git.ready && git.model.isRepo
-        enabled: git.ready && !git.model.busy && git.model.quickAction.disabledReason === null
-        text: git.ready ? git.model.quickAction.label : ""
-        ToolTip.visible: hovered && git.ready && git.model.quickAction.disabledReason !== null
-        ToolTip.text: git.ready ? (git.model.quickAction.disabledReason ?? "") : ""
-        onClicked: Shell.dispatch("git.quick")
-    }
-
-    ShellButton {
+    ShellSplitButton {
         visible: git.ready && git.model.isRepo
         enabled: git.ready && !git.model.busy
-        subtle: true
-        chevron: true
-        Accessible.name: qsTr("Git actions")
-        onClicked: {
+        actionEnabled: git.ready && git.model.quickAction.disabledReason === null
+        compact: git.compact
+        iconName: git.quickIcon
+        text: git.ready ? git.model.quickAction.label : ""
+        toolTip: git.ready ? (git.model.quickAction.disabledReason ?? "") : ""
+        onClicked: Shell.dispatch("git.quick")
+        onMenuRequested: {
             Shell.dispatch("git.refresh");
             menu.open();
         }
@@ -49,7 +63,8 @@ RowLayout {
         ShellMenu {
             id: menu
 
-            y: parent.height
+            y: parent.height + 4
+            x: parent.width - width
 
             Instantiator {
                 model: git.ready ? git.model.menu : []
@@ -80,6 +95,7 @@ RowLayout {
                 visible: git.ready && git.model.canPublish
                 height: visible ? implicitHeight : 0
                 text: qsTr("Publish repository…")
+                iconName: "cloud-upload"
                 onTriggered: Shell.dispatch("git.publish")
             }
 

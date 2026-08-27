@@ -3,8 +3,11 @@ import QtQuick.Layouts
 import T3.Shell
 import T3.Bricks
 
-// Built-in layout. A user's ~/.t3/shell/shell.qml replaces this file
-// wholesale; it is also the fallback when that file fails to load.
+// Built-in layout, laid out like the page's own chrome: sidebar, header
+// strip, timeline, composer. A user's ~/.t3/shell/shell.qml replaces this
+// file wholesale; it is also the fallback when that file fails to load.
+// Frameless windows get their drag handle and window buttons from the
+// sidebar band and the header strip rather than a separate title bar.
 Window {
     id: root
 
@@ -27,12 +30,6 @@ Window {
         anchors.fill: parent
         spacing: 0
 
-        TitleBar {
-            Layout.fillWidth: true
-            visible: Theme.frameless
-            window: root
-        }
-
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -42,9 +39,11 @@ Window {
                 id: sidebar
 
                 Layout.fillHeight: true
-                Layout.preferredWidth: root.sidebarCollapsed ? 0 : 260
+                Layout.preferredWidth: root.sidebarCollapsed ? 0 : 256
                 Layout.minimumWidth: 0
                 visible: !settingsNav.active && (!root.sidebarCollapsed || width > 0)
+                showBrand: true
+                window: root
 
                 Behavior on Layout.preferredWidth {
                     NumberAnimation {
@@ -58,7 +57,7 @@ Window {
                 id: settingsNav
 
                 Layout.fillHeight: true
-                Layout.preferredWidth: 260
+                Layout.preferredWidth: 256
                 visible: active
             }
 
@@ -71,6 +70,8 @@ Window {
                     Layout.fillWidth: true
                     visible: ready
                     sidebarToggle: root.sidebarCollapsed
+                    panelToggle: rightPanel.available ? rightPanel.open : null
+                    window: root
                 }
 
                 WebSurface {
@@ -86,7 +87,10 @@ Window {
             }
 
             RightPanel {
+                id: rightPanel
+
                 Layout.fillHeight: true
+                ownToggle: false
                 Layout.preferredWidth: implicitWidth
                 visible: available
             }
