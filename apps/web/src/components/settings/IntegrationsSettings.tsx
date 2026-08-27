@@ -415,7 +415,7 @@ function ImageGenerationProviderSetting() {
   return (
     <SettingsRow
       {...searchableSetting("image-generation-provider")}
-      description="Codex uses your existing Codex CLI login. Grok uses Imagine through your Grok login, with a model you can pick."
+      description="Codex is the default. Switch to Grok to use Imagine. A prompt that explicitly asks for Grok still uses Grok."
       resetAction={
         !disabled && settings.imageGenerationProvider !== DEFAULT_IMAGE_GENERATION_PROVIDER ? (
           <SettingResetButton
@@ -460,7 +460,7 @@ function ImageGenerationGrokModelSetting() {
   return (
     <SettingsRow
       {...searchableSetting("image-generation-grok-model")}
-      description="Imagine model used when Grok is the image provider."
+      description="Imagine model used when Grok generates an image."
       resetAction={
         !disabled && settings.imageGenerationGrokModel !== DEFAULT_GROK_IMAGE_MODEL ? (
           <SettingResetButton

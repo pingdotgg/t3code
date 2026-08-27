@@ -8,6 +8,7 @@ import {
   GROK_IMAGE_MODELS,
   GrokImageModel,
   ImageGenerationProvider,
+  resolveImageGenerationProvider,
 } from "./imageGeneration.ts";
 
 const decodeGenerate = Schema.decodeUnknownSync(GenerateImageInput);
@@ -36,6 +37,18 @@ describe("image generation contracts", () => {
     expect(decoded.quality).toBe("high");
     expect(decoded.resolution).toBe("2k");
     expect(decoded.aspectRatio).toBe("16:9");
+  });
+
+  it("accepts an explicit Grok provider on a generate call", () => {
+    expect(decodeGenerate({ prompt: "a red circle", provider: "grok" }).provider).toBe("grok");
+    expect(decodeGenerate({ prompt: "a red circle" }).provider).toBeUndefined();
+  });
+
+  it("uses the requested provider and falls back to Settings", () => {
+    expect(resolveImageGenerationProvider(undefined, "codex")).toBe("codex");
+    expect(resolveImageGenerationProvider(undefined, "grok")).toBe("grok");
+    expect(resolveImageGenerationProvider("grok", "codex")).toBe("grok");
+    expect(resolveImageGenerationProvider("codex", "grok")).toBe("codex");
   });
 
   it("rejects unknown providers and Grok models", () => {

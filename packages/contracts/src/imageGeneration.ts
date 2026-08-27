@@ -53,8 +53,14 @@ const ImagePrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(8000)).annota
   description: "Text description of the image to generate or edit.",
 });
 
+const ImageProviderOverride = Schema.optional(ImageGenerationProvider).annotate({
+  description:
+    "Image backend for this call. Omit to use Settings (Codex unless the user changed it). Pass grok only when the user explicitly asks for Grok.",
+});
+
 export const GenerateImageInput = Schema.Struct({
   prompt: ImagePrompt,
+  provider: ImageProviderOverride,
   aspectRatio: Schema.optional(ImageGenerationAspectRatio).annotate({
     description:
       "Output aspect ratio. Defaults to auto so the image model picks a ratio from the prompt.",
@@ -74,11 +80,17 @@ export const EditImageInput = Schema.Struct({
     description:
       "Absolute path to the image to edit, or a T3 image id previously returned by generate_image.",
   }),
+  provider: ImageProviderOverride,
   aspectRatio: Schema.optional(ImageGenerationAspectRatio),
   quality: Schema.optional(ImageGenerationQuality),
   resolution: Schema.optional(ImageGenerationResolution),
 });
 export type EditImageInput = typeof EditImageInput.Type;
+
+export const resolveImageGenerationProvider = (
+  requested: ImageGenerationProvider | undefined,
+  settingsProvider: ImageGenerationProvider,
+): ImageGenerationProvider => requested ?? settingsProvider;
 
 export const GenerateImageResult = Schema.Struct({
   image: GeneratedImageRef,

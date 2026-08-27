@@ -20,6 +20,8 @@ export const T3_CODE_IMAGE_GENERATION_INSTRUCTIONS = `
 
 When the \`t3-code\` MCP server exposes \`generate_image\` and \`edit_image\`, use those tools for raster image generation and editing. Do not shell out to Codex CLI, Grok CLI, curl, or a one-off SDK to make images.
 
+The default image provider is Codex. Omit \`provider\` unless the user explicitly names one. If they ask to generate the image with Grok, pass \`provider="grok"\`. Do not pick Grok just because this session is a Grok agent.
+
 Files are stored in T3 Code's image library. Copy a library file into the current project only when the user wants that asset in the repo. Prefer the path returned by the tool.
 `;
 

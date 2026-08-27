@@ -519,8 +519,10 @@ describe("T3 browser developer instructions", () => {
   });
 
   it("describes generate_image when image generation is attached", () => {
-    NodeAssert.match(codexDefaultModeDeveloperInstructions(false, true), /generate_image/);
-    NodeAssert.doesNotMatch(codexDefaultModeDeveloperInstructions(false, true), /preview_open/);
+    const instructions = codexDefaultModeDeveloperInstructions(false, true);
+    NodeAssert.match(instructions, /generate_image/);
+    NodeAssert.match(instructions, /provider="grok"/);
+    NodeAssert.doesNotMatch(instructions, /preview_open/);
   });
 
   it("omits the browser block entirely when the preview tools are not attached", () => {

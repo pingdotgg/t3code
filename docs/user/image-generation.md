@@ -2,7 +2,7 @@
 
 T3 Code can generate images through a built-in `generate_image` tool. Any signed-in provider can call it: Claude, Codex, Grok, Cursor, or OpenCode.
 
-Turn it on in Settings → Integrations → Image generation. Pick the image backend there.
+Turn it on in Settings → Integrations → Image generation. The default backend is Codex. You can switch it to Grok. If you ask for Grok in the prompt, that image uses Grok even when the default is Codex.
 
 ## Providers
 

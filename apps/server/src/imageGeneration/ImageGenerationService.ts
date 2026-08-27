@@ -5,6 +5,7 @@ import {
   type GenerateImageResult,
   type GeneratedImageRef,
   ImageGenerationUnavailableError,
+  resolveImageGenerationProvider,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -135,7 +136,11 @@ export class ImageGenerationService extends Context.Service<
         "ImageGenerationService.generate",
       )(function* (input) {
         const settings = yield* requireEnabled();
-        if (settings.imageGenerationProvider === "grok") {
+        const provider = resolveImageGenerationProvider(
+          input.provider,
+          settings.imageGenerationProvider,
+        );
+        if (provider === "grok") {
           const options = grokImagineOptionsFromToolInput(input);
           const image = yield* generateGrokImage({
             prompt: input.prompt,
@@ -218,12 +223,16 @@ export class ImageGenerationService extends Context.Service<
       const edit: ImageGenerationServiceShape["edit"] = Effect.fn("ImageGenerationService.edit")(
         function* (input) {
           const settings = yield* requireEnabled();
-          if (settings.imageGenerationProvider !== "grok") {
+          const provider = resolveImageGenerationProvider(
+            input.provider,
+            settings.imageGenerationProvider,
+          );
+          if (provider !== "grok") {
             return yield* new ImageGenerationUnavailableError({
               reason: "provider-unavailable",
               provider: "codex",
               detail:
-                "Image editing is available when the image provider is Grok. Switch the provider in Settings → Integrations, or generate a new image.",
+                "Image editing is available with Grok. Ask to edit with Grok, switch the provider in Settings → Integrations, or generate a new image.",
             });
           }
           const source = yield* readSourceBytes(input.imagePath);
