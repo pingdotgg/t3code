@@ -789,7 +789,7 @@ function TimelineMinimap({
   return (
     <div
       className={cn(
-        "group/minimap pointer-events-none absolute inset-y-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
+        "group/minimap pointer-events-none absolute inset-y-0 right-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
         hasPersistentGutter
           ? "opacity-100"
           : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
@@ -801,7 +801,7 @@ function TimelineMinimap({
         <button
           aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
           className={cn(
-            "absolute top-1/2 left-3 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+            "absolute top-1/2 right-3 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
             // The strip is width-capped to the side gutter so it never overlays
             // the centered content column; with no usable gutter it goes inert.
             hitStripWidth > 0 ? "pointer-events-auto" : "pointer-events-none",
@@ -853,7 +853,7 @@ function TimelineMinimap({
           }}
           type="button"
         >
-          <div className="absolute top-0 left-3 h-full w-px bg-border/15" />
+          <div className="absolute top-0 right-3 h-full w-px bg-border/15" />
           {items.map((item, index) => {
             const top = `${resolveTimelineMinimapTopPercent(index, items.length)}%`;
             const activeDistance =
@@ -862,7 +862,7 @@ function TimelineMinimap({
               <span
                 aria-hidden="true"
                 className={cn(
-                  "pointer-events-none absolute left-0 h-0.5 -translate-y-1/2 rounded-full bg-muted-foreground/35 transition-[background-color,width] duration-150 data-[in-view=true]:bg-foreground/90",
+                  "pointer-events-none absolute right-0 h-0.5 -translate-y-1/2 rounded-full bg-muted-foreground/35 transition-[background-color,width] duration-150 data-[in-view=true]:bg-foreground/90",
                   activeDistance === 0
                     ? "w-6 bg-muted-foreground/75"
                     : activeDistance === 1
@@ -887,7 +887,7 @@ function TimelineMinimap({
           })}
           {activeItem ? (
             <span
-              className="pointer-events-auto absolute left-8 w-80 cursor-text select-text"
+              className="pointer-events-auto absolute right-8 w-80 cursor-text select-text"
               data-minimap-preview
               onMouseMove={(event) => event.stopPropagation()}
               style={{

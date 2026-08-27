@@ -108,12 +108,12 @@ export function resolveTimelineMinimapHasPersistentGutter(viewportWidth: number)
   return sideGutter >= TIMELINE_MINIMAP_PERSISTENT_GUTTER;
 }
 
-export const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 12;
+export const TIMELINE_MINIMAP_HIT_STRIP_INSET = 12;
 export const TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH = 40;
 export const TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH = "22rem";
 
 /**
- * The minimap overlays the viewport's left edge while the content column is
+ * The minimap overlays the viewport's right edge while the content column is
  * centered, so the side gutter between them shrinks under browser zoom or a
  * narrow pane. A fixed-width hover strip would then sit on top of the message
  * text and swallow its pointer events. Cap the strip's width so it never
@@ -130,7 +130,7 @@ export function resolveTimelineMinimapHitStripWidth(viewportWidth: number): numb
     0,
     Math.min(
       TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH,
-      Math.floor(sideGutter) - TIMELINE_MINIMAP_HIT_STRIP_LEFT,
+      Math.floor(sideGutter) - TIMELINE_MINIMAP_HIT_STRIP_INSET,
     ),
   );
 }

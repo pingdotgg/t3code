@@ -346,6 +346,25 @@ describe("MessagesTimeline", () => {
     expect(fadedMarkup).toContain("topbar-scroll-fade");
   });
 
+  it("renders the user-message minimap on the right side", () => {
+    const firstEntry = buildUserTimelineEntry("First prompt.");
+    const secondEntry = {
+      ...buildUserTimelineEntry("Second prompt."),
+      id: "entry-2",
+      message: {
+        ...buildUserTimelineEntry("Second prompt.").message,
+        id: MessageId.make("message-2"),
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[firstEntry, secondEntry]} />,
+    );
+
+    expect(markup).toContain('data-testid="timeline-minimap"');
+    expect(markup).toContain("absolute inset-y-0 right-0");
+    expect(markup).not.toContain("absolute inset-y-0 left-0");
+  });
+
   it("keeps assistant changed-files headers sticky below the thread header", () => {
     const assistantMessageId = MessageId.make("message-assistant-with-files");
     const turnId = TurnId.make("turn-with-files");
