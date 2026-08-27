@@ -157,14 +157,24 @@ export function applyGrokAcpModelSelection<E>(input: {
 }): Effect.Effect<string | undefined, E> {
   const modelChanged =
     input.requestedModelId !== undefined && input.requestedModelId !== input.currentModelId;
-  const reasoningEffort = normalizeGrokReasoningEffort(input.requestedReasoningEffort);
+  const reasoningProvided = input.requestedReasoningEffort !== undefined;
+  const reasoningEffort = reasoningProvided
+    ? normalizeGrokReasoningEffort(input.requestedReasoningEffort)
+    : undefined;
   const reasoningEffortChanged =
-    input.requestedModelId !== undefined && reasoningEffort !== input.currentReasoningEffort;
+    reasoningProvided && reasoningEffort !== input.currentReasoningEffort;
   const targetModelId = input.requestedModelId ?? input.currentModelId;
   if ((!modelChanged && !reasoningEffortChanged) || targetModelId === undefined) {
     return Effect.succeed(input.currentModelId);
   }
+  const reasoningMeta =
+    reasoningProvided && reasoningEffort !== undefined ? { reasoningEffort } : undefined;
+  // When reasoning was explicitly provided but invalid (normalize => undefined), we deliberately
+  // send no meta so the invalid value is dropped rather than forwarded. When reasoning was not
+  // provided at all, we also send no meta, but we only reach this call when the model itself
+  // changed - an omitted reasoning preference must not be treated as an explicit clear of the
+  // CLI-advertised default (e.g. Extra High) on same-model reselections.
   return input.runtime
-    .setSessionModel(targetModelId, reasoningEffort !== undefined ? { reasoningEffort } : undefined)
+    .setSessionModel(targetModelId, reasoningMeta)
     .pipe(Effect.mapError(input.mapError), Effect.as(targetModelId));
 }

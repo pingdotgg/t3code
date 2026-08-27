@@ -1261,7 +1261,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             promptResponsesReady: 0,
             currentModelId: boundModelId,
             currentReasoningEffort:
-              requestedStartModelId !== undefined
+              requestedStartReasoningEffort !== undefined
                 ? normalizeGrokReasoningEffort(requestedStartReasoningEffort)
                 : currentStartReasoningEffort,
             stopped: false,
@@ -1534,7 +1534,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   mapAcpToAdapterError(PROVIDER, input.threadId, "session/set_model", cause),
               });
               ctx.currentModelId = currentModelId;
-              if (requestedTurnModelId !== undefined) {
+              if (requestedTurnReasoningEffort !== undefined) {
                 ctx.currentReasoningEffort = normalizeGrokReasoningEffort(
                   requestedTurnReasoningEffort,
                 );
