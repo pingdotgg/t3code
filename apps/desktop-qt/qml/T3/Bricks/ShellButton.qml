@@ -26,6 +26,12 @@ Button {
         border.color: control.primary || control.subtle ? "transparent" : Theme.color("border", "#27272a")
         border.width: control.primary || control.subtle ? 0 : 1
         opacity: control.enabled ? 1 : 0.5
+
+        Behavior on color {
+            ColorAnimation {
+                duration: 120
+            }
+        }
     }
 
     contentItem: Item {

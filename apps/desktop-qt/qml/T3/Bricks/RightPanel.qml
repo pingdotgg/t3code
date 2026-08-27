@@ -27,6 +27,14 @@ Rectangle {
 
     implicitWidth: open ? openWidth : 36
     color: Theme.color("chrome", "#0b0b0d")
+    clip: true
+
+    Behavior on implicitWidth {
+        NumberAnimation {
+            duration: 220
+            easing.type: Easing.OutCubic
+        }
+    }
 
     ColumnLayout {
         id: column

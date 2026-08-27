@@ -37,8 +37,14 @@ Item {
         anchors.fill: parent
         anchors.leftMargin: 6
         anchors.rightMargin: 6
-        radius: 6
+        radius: Math.min(Theme.radius, 8)
         color: row.active ? Theme.color("sidebarRowSelected", "#2a2a30") : hover.hovered ? Theme.color("sidebarRowHover", "#1c1c21") : "transparent"
+
+        Behavior on color {
+            ColorAnimation {
+                duration: 120
+            }
+        }
     }
 
     HoverHandler {
@@ -60,8 +66,8 @@ Item {
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 14
-        anchors.rightMargin: 14
+        anchors.leftMargin: 16
+        anchors.rightMargin: 16
         spacing: 8
 
         Rectangle {

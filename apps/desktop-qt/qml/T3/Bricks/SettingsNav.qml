@@ -22,8 +22,9 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.margins: 8
-            spacing: 6
+            Layout.margins: 10
+            Layout.bottomMargin: 4
+            spacing: 8
 
             ShellButton {
                 subtle: true
@@ -44,8 +45,9 @@ Rectangle {
             id: search
 
             Layout.fillWidth: true
-            Layout.leftMargin: 8
-            Layout.rightMargin: 8
+            Layout.leftMargin: 10
+            Layout.rightMargin: 10
+            Layout.bottomMargin: 6
             placeholderText: qsTr("Search settings")
             text: nav.model ? nav.model.searchQuery : ""
             onTextEdited: Shell.dispatch("settings.search", {
@@ -105,8 +107,8 @@ Rectangle {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 14
-                    anchors.rightMargin: 14
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
                     spacing: 1
 
                     Text {

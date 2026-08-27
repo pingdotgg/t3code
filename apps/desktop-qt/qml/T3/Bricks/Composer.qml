@@ -254,7 +254,9 @@ Rectangle {
 
             ScrollView {
                 anchors.fill: parent
-                anchors.margins: 10
+                anchors.margins: 8
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
 
                 TextArea {
                     id: input
@@ -290,7 +292,7 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: 8
 
             ShellButton {
                 subtle: true

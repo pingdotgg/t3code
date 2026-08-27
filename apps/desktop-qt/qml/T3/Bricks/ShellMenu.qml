@@ -9,6 +9,24 @@ Menu {
     padding: 4
     implicitWidth: 220
 
+    enter: Transition {
+        NumberAnimation {
+            property: "opacity"
+            from: 0
+            to: 1
+            duration: 90
+        }
+    }
+
+    exit: Transition {
+        NumberAnimation {
+            property: "opacity"
+            from: 1
+            to: 0
+            duration: 70
+        }
+    }
+
     background: Rectangle {
         radius: Theme.radius
         color: Theme.color("surfaceOverlay", "#18181b")
