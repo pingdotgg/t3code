@@ -21,6 +21,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
@@ -175,6 +176,16 @@ type OpenCodeSubscribedEvent =
     ? TEvent
     : never;
 
+function isPendingRequestEvent(event: OpenCodeSubscribedEvent): boolean {
+  return (
+    event.type === "permission.asked" ||
+    event.type === "permission.replied" ||
+    event.type === "question.asked" ||
+    event.type === "question.replied" ||
+    event.type === "question.rejected"
+  );
+}
+
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
@@ -229,6 +240,7 @@ interface OpenCodeSessionContext {
   readonly openCodeSessionId: string;
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
+  readonly pendingGate: Semaphore.Semaphore;
   readonly messageRoleById: Map<string, "user" | "assistant">;
   readonly partById: Map<string, Part>;
   readonly emittedTextByPartId: Map<string, string>;
@@ -561,14 +573,14 @@ function updateProviderSession(
 
 const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   context: OpenCodeSessionContext,
-  cancelPendingPermissions: (context: OpenCodeSessionContext) => Effect.Effect<void>,
+  settlePendingRequests: (context: OpenCodeSessionContext) => Effect.Effect<void>,
 ) {
   // Race-safe one-shot: first caller flips the flag, everyone else no-ops.
   if (yield* Ref.getAndSet(context.stopped, true)) {
     return false;
   }
 
-  yield* cancelPendingPermissions(context).pipe(Effect.ignore);
+  yield* settlePendingRequests(context).pipe(Effect.ignore);
 
   // Best-effort remote abort. The scope close below tears down the local
   // handles (event-pump fiber, server-exit fiber, event-subscribe fetch),
@@ -660,8 +672,7 @@ export function makeOpenCodeAdapter(
         // the remaining cleanups.
         yield* Effect.forEach(
           contexts,
-          (context) =>
-            Effect.ignoreCause(stopOpenCodeContext(context, emitCancelledPendingPermissions)),
+          (context) => Effect.ignoreCause(stopOpenCodeContext(context, settlePendingRequests)),
           { concurrency: "unbounded", discard: true },
         );
         // Close the logger AFTER session teardown so any final lifecycle
@@ -676,29 +687,56 @@ export function makeOpenCodeAdapter(
 
     const emit = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
-    const emitCancelledPendingPermissions = Effect.fn("emitCancelledPendingPermissions")(function* (
+    const settlePendingRequests = Effect.fn("settlePendingRequests")(function* (
       context: OpenCodeSessionContext,
     ) {
-      yield* Effect.forEach(
-        [...context.pendingPermissions.entries()],
-        ([requestId, permission]) =>
-          Effect.gen(function* () {
-            yield* emit({
-              ...(yield* buildEventBase({
+      yield* context.pendingGate.withPermits(1)(
+        Effect.gen(function* () {
+          yield* Effect.forEach(
+            [...context.pendingPermissions.entries()],
+            ([requestId, permission]) =>
+              buildEventBase({
                 threadId: context.session.threadId,
                 turnId: context.activeTurnId,
                 requestId,
-              })),
-              type: "request.resolved",
-              payload: {
-                requestType: mapPermissionToRequestType(permission.permission),
-                decision: "cancel",
-              },
-            });
-          }),
-        { concurrency: 1, discard: true },
+              }).pipe(
+                Effect.flatMap((base) =>
+                  emit({
+                    ...base,
+                    type: "request.resolved",
+                    payload: {
+                      requestType: mapPermissionToRequestType(permission.permission),
+                      decision: "cancel",
+                    },
+                  }),
+                ),
+                Effect.ignore,
+              ),
+            { concurrency: 1, discard: true },
+          );
+          context.pendingPermissions.clear();
+          yield* Effect.forEach(
+            [...context.pendingQuestions.keys()],
+            (requestId) =>
+              buildEventBase({
+                threadId: context.session.threadId,
+                turnId: context.activeTurnId,
+                requestId,
+              }).pipe(
+                Effect.flatMap((base) =>
+                  emit({
+                    ...base,
+                    type: "user-input.resolved",
+                    payload: { answers: {} },
+                  }),
+                ),
+                Effect.ignore,
+              ),
+            { concurrency: 1, discard: true },
+          );
+          context.pendingQuestions.clear();
+        }),
       );
-      context.pendingPermissions.clear();
     });
     const writeNativeEvent = (
       threadId: ThreadId,
@@ -758,7 +796,7 @@ export function makeOpenCodeAdapter(
       // Inline the teardown that `stopOpenCodeContext` would do; we can't
       // delegate to it because our `getAndSet` above already flipped the
       // one-shot guard, so the call would no-op.
-      yield* emitCancelledPendingPermissions(context).pipe(Effect.ignore);
+      yield* settlePendingRequests(context).pipe(Effect.ignore);
       yield* runOpenCodeSdk("session.abort", () =>
         context.client.session.abort({ sessionID: context.openCodeSessionId }),
       ).pipe(Effect.ignore({ log: true }));
@@ -853,6 +891,9 @@ export function makeOpenCodeAdapter(
           payload: event,
         },
       });
+      if (isPendingRequestEvent(event) && (yield* Ref.get(context.stopped))) {
+        return;
+      }
 
       switch (event.type) {
         case "session.updated": {
@@ -1011,6 +1052,10 @@ export function makeOpenCodeAdapter(
         }
 
         case "permission.replied": {
+          const permission = context.pendingPermissions.get(event.properties.requestID);
+          if (!permission) {
+            break;
+          }
           context.pendingPermissions.delete(event.properties.requestID);
           yield* emit({
             ...(yield* buildEventBase({
@@ -1021,7 +1066,7 @@ export function makeOpenCodeAdapter(
             })),
             type: "request.resolved",
             payload: {
-              requestType: "unknown",
+              requestType: mapPermissionToRequestType(permission.permission),
               decision: mapPermissionDecision(event.properties.reply),
             },
           });
@@ -1047,13 +1092,10 @@ export function makeOpenCodeAdapter(
 
         case "question.replied": {
           const request = context.pendingQuestions.get(event.properties.requestID);
+          if (!request) {
+            break;
+          }
           context.pendingQuestions.delete(event.properties.requestID);
-          const answers = Object.fromEntries(
-            (request?.questions ?? []).map((question, index) => [
-              openCodeQuestionId(index, question),
-              event.properties.answers[index]?.join(", ") ?? "",
-            ]),
-          );
           yield* emit({
             ...(yield* buildEventBase({
               threadId: context.session.threadId,
@@ -1062,13 +1104,22 @@ export function makeOpenCodeAdapter(
               raw: event,
             })),
             type: "user-input.resolved",
-            payload: { answers },
+            payload: {
+              answers: Object.fromEntries(
+                request.questions.map((question, index) => [
+                  openCodeQuestionId(index, question),
+                  event.properties.answers[index]?.join(", ") ?? "",
+                ]),
+              ),
+            },
           });
           break;
         }
 
         case "question.rejected": {
-          context.pendingQuestions.delete(event.properties.requestID);
+          if (!context.pendingQuestions.delete(event.properties.requestID)) {
+            break;
+          }
           yield* emit({
             ...(yield* buildEventBase({
               threadId: context.session.threadId,
@@ -1127,6 +1178,7 @@ export function makeOpenCodeAdapter(
         case "session.error": {
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
+          yield* settlePendingRequests(context).pipe(Effect.ignore);
           context.activeTurnId = undefined;
           yield* updateProviderSession(
             context,
@@ -1198,7 +1250,14 @@ export function makeOpenCodeAdapter(
                 detail: openCodeRuntimeErrorDetail(cause),
                 cause,
               }),
-          ).pipe(Stream.runForEach((event) => handleSubscribedEvent(context, event))),
+          ).pipe(
+            Stream.runForEach((event) => {
+              const handled = handleSubscribedEvent(context, event);
+              return isPendingRequestEvent(event)
+                ? context.pendingGate.withPermits(1)(handled)
+                : handled;
+            }),
+          ),
       ).pipe(
         Effect.exit,
         Effect.flatMap((exit) =>
@@ -1243,7 +1302,7 @@ export function makeOpenCodeAdapter(
         const resumeSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
         const existing = sessions.get(input.threadId);
         if (existing) {
-          yield* stopOpenCodeContext(existing, emitCancelledPendingPermissions);
+          yield* stopOpenCodeContext(existing, settlePendingRequests);
           sessions.delete(input.threadId);
         }
 
@@ -1427,6 +1486,7 @@ export function makeOpenCodeAdapter(
           openCodeSessionId: started.openCodeSession.id,
           pendingPermissions: new Map(),
           pendingQuestions: new Map(),
+          pendingGate: yield* Semaphore.make(1),
           partById: new Map(),
           emittedTextByPartId: new Map(),
           messageRoleById: new Map(),
@@ -1591,6 +1651,7 @@ export function makeOpenCodeAdapter(
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = yield* ensureSessionContext(sessions, threadId);
+        yield* settlePendingRequests(context);
         yield* runOpenCodeSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.openCodeSessionId }),
         ).pipe(Effect.mapError(toRequestError));
@@ -1659,7 +1720,7 @@ export function makeOpenCodeAdapter(
             threadId,
           });
         }
-        const stopped = yield* stopOpenCodeContext(context, emitCancelledPendingPermissions);
+        const stopped = yield* stopOpenCodeContext(context, settlePendingRequests);
         sessions.delete(threadId);
         if (!stopped) {
           return;
@@ -1743,8 +1804,7 @@ export function makeOpenCodeAdapter(
         // interrupt the sibling fibers. Same pattern as the layer finalizer.
         yield* Effect.forEach(
           contexts,
-          (context) =>
-            Effect.ignoreCause(stopOpenCodeContext(context, emitCancelledPendingPermissions)),
+          (context) => Effect.ignoreCause(stopOpenCodeContext(context, settlePendingRequests)),
           { concurrency: "unbounded", discard: true },
         );
       });
