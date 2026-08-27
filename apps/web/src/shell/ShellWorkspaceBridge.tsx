@@ -86,10 +86,7 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
   const onRenameRequestedRef = useRef(props.onRenameRequested);
   onRenameRequestedRef.current = props.onRenameRequested;
   useEffect(
-    () =>
-      subscribeShellRenameRequests((key) => {
-        if (key === threadKey) onRenameRequestedRef.current();
-      }),
+    () => subscribeShellRenameRequests(threadKey, () => onRenameRequestedRef.current()),
     [threadKey],
   );
   const branchSelection = useThreadBranchSelection({

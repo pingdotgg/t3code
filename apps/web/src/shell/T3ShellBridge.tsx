@@ -85,8 +85,8 @@ export function T3ShellBridge() {
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(menuThreadRef),
       });
-      // The workspace bridge for that thread mounts after navigation.
-      window.setTimeout(() => requestShellRename(scopedThreadKey(menuThreadRef)), 150);
+      // The workspace bridge for that thread claims the request once mounted.
+      requestShellRename(scopedThreadKey(menuThreadRef));
     },
   });
   useEffect(() => {
