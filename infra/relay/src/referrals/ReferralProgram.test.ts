@@ -222,6 +222,20 @@ function makeState(): FakeReferralState {
 }
 
 describe("ReferralProgram", () => {
+  it.effect("uses all 64 random bits in generated referral codes", () => {
+    const state = makeState();
+    return Effect.gen(function* () {
+      const referrals = yield* ReferralProgram.ReferralProgram;
+
+      expect((yield* referrals.getSummary({ userId: "first" })).referralCode).toBe(
+        "0101010101010101",
+      );
+      expect((yield* referrals.getSummary({ userId: "second" })).referralCode).toBe(
+        "0202020202020202",
+      );
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
   it.effect("awards 67 account points once when the referred account links", () => {
     const state = makeState();
     return Effect.gen(function* () {

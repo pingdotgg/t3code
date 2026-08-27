@@ -8,6 +8,7 @@ import { and, count, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Encoding from "effect/Encoding";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -64,10 +65,6 @@ export class ReferralProgram extends Context.Service<
   }
 >()("t3code-relay/referrals/ReferralProgram") {}
 
-function referralCodeFromUuid(uuid: string): string {
-  return uuid.replaceAll("-", "").slice(0, 16).toUpperCase();
-}
-
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const db = yield* RelayDb.RelayDb;
@@ -100,16 +97,15 @@ export const make = Effect.gen(function* () {
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const now = DateTime.formatIso(yield* DateTime.now);
-      const referralCode = referralCodeFromUuid(
-        yield* crypto.randomUUIDv4.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ReferralProgramPersistenceError({
-                operation: "create-account",
-                userId,
-                cause,
-              }),
-          ),
+      const referralCode = yield* crypto.randomBytes(8).pipe(
+        Effect.map((bytes) => Encoding.encodeHex(bytes).toUpperCase()),
+        Effect.mapError(
+          (cause) =>
+            new ReferralProgramPersistenceError({
+              operation: "create-account",
+              userId,
+              cause,
+            }),
         ),
       );
       const inserted = yield* db
