@@ -43,6 +43,7 @@ import {
   isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextWindowEnv,
   resolveClaudeCatalogEffort,
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,
@@ -163,10 +164,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       thinkingDescriptor?.type === "boolean" ? thinkingDescriptor.currentValue : undefined;
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
+    const contextWindowEnv = resolveClaudeCatalogContextWindowEnv(catalog, resolvedModelSelection);
     const settings = {
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
       ...(ultracode ? { ultracode: true } : {}),
+      ...(contextWindowEnv ? { env: contextWindowEnv } : {}),
     };
     const settingsJson =
       Object.keys(settings).length > 0

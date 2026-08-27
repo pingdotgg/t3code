@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import type { ModelManifestData } from "./ModelManifest.ts";
@@ -7,6 +8,7 @@ import {
   formatClaudeVersionUpgradeMessage,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextWindowEnv,
   resolveClaudeModelCatalog,
   resolveClaudeModelsForVersion,
   resolveClaudeModelSlug,
@@ -38,7 +40,10 @@ const manifest = (): ModelManifestData => ({
                 id: "contextWindow",
                 label: "Context Window",
                 type: "select",
-                options: [{ id: "large", label: "Large", isDefault: true }],
+                options: [
+                  { id: "small", label: "Small" },
+                  { id: "large", label: "Large", isDefault: true },
+                ],
               },
             ],
           },
@@ -46,6 +51,7 @@ const manifest = (): ModelManifestData => ({
             claudeCode: {
               effortMap: { extreme: "high" },
               modelSuffixes: { contextWindow: { large: "[large]" } },
+              contextWindowTokens: { small: 200_000, large: 1_000_000 },
             },
           },
         },
@@ -111,6 +117,58 @@ describe("Claude model catalog", () => {
         model: "synthetic",
       }),
       "claude-synthetic-next[large]",
+    );
+  });
+
+  it("states the Claude Code 1M context window opt-out per selection", () => {
+    const catalog = resolveClaudeModelCatalog(manifest());
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    assert.deepStrictEqual(
+      resolveClaudeCatalogContextWindowEnv(
+        catalog,
+        createModelSelection(instanceId, "synthetic", [{ id: "contextWindow", value: "small" }]),
+      ),
+      { CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" },
+    );
+    assert.deepStrictEqual(
+      resolveClaudeCatalogContextWindowEnv(catalog, { instanceId, model: "synthetic" }),
+      { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
+    );
+    assert.strictEqual(resolveClaudeCatalogContextWindowEnv(catalog, undefined), undefined);
+  });
+
+  it("states the 1M context window opt-out for models with a fixed window", () => {
+    const base = manifest();
+    const claudeAgent = base.providers!.claudeAgent!;
+    const input: ModelManifestData = {
+      ...base,
+      providers: {
+        ...base.providers,
+        claudeAgent: {
+          ...claudeAgent,
+          profiles: {
+            ...claudeAgent.profiles,
+            fixed: { adapter: { claudeCode: { fixedContextWindowTokens: 1_000_000 } } },
+          },
+          models: [
+            ...claudeAgent.models,
+            {
+              slug: "claude-synthetic-fixed",
+              name: "Claude Synthetic Fixed",
+              status: "current",
+              profile: "fixed",
+            },
+          ],
+        },
+      },
+    };
+    const catalog = resolveClaudeModelCatalog(input);
+    assert.deepStrictEqual(
+      resolveClaudeCatalogContextWindowEnv(catalog, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-synthetic-fixed",
+      }),
+      { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
     );
   });
 

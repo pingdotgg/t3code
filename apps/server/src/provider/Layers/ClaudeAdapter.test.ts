@@ -63,6 +63,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   private failure: unknown | undefined;
 
   public readonly setModelCalls: Array<string | undefined> = [];
+  public readonly applyFlagSettingsCalls: Array<Record<string, unknown>> = [];
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
   public closeCalls = 0;
@@ -104,6 +105,10 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly setModel = async (model?: string): Promise<void> => {
     this.setModelCalls.push(model);
+  };
+
+  readonly applyFlagSettings = async (settings: Record<string, unknown>): Promise<void> => {
+    this.applyFlagSettingsCalls.push(settings);
   };
 
   readonly setPermissionMode = async (mode: PermissionMode): Promise<void> => {
@@ -555,7 +560,9 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.settings, undefined);
+      assert.deepEqual(createInput?.options.settings, {
+        env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -580,6 +587,7 @@ describe("ClaudeAdapterLive", () => {
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
         fastMode: true,
+        env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -603,7 +611,132 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.settings, undefined);
+      assert.deepEqual(createInput?.options.settings, {
+        env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("opts out of the 1M context window when the 200k window is selected", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          [{ id: "contextWindow", value: "standard" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, SYNTHETIC_CLAUDE_CAPABLE_MODEL);
+      assert.deepEqual(createInput?.options.settings, {
+        env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" },
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect(
+    "updates cached usage after a mid-thread context-window switch so streaming usage is not clamped to the old window",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.takeUntil(
+          adapter.streamEvents,
+          (event) => event.type === "thread.token-usage.updated",
+        ).pipe(Stream.runCollect, Effect.forkChild);
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+            [{ id: "contextWindow", value: "standard" }],
+          ),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+            [{ id: "contextWindow", value: "expanded" }],
+          ),
+          attachments: [],
+        });
+
+        harness.query.emit({
+          type: "stream_event",
+          session_id: "sdk-session-window-switch",
+          uuid: "stream-window-switch",
+          parent_tool_use_id: null,
+          event: {
+            type: "message_delta",
+            usage: {
+              input_tokens: 500_000,
+              output_tokens: 100,
+            },
+          },
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const usageEvent = runtimeEvents.find(
+          (event) => event.type === "thread.token-usage.updated",
+        );
+        assert.equal(usageEvent?.type, "thread.token-usage.updated");
+        if (usageEvent?.type === "thread.token-usage.updated") {
+          // Before the fix this clamped to the session's starting 200k
+          // window (usedTokens: 200000, maxTokens: 200000) because the
+          // model switch never refreshed the cache streaming usage reads.
+          assert.deepEqual(usageEvent.payload.usage, {
+            usedTokens: 500_100,
+            lastUsedTokens: 500_100,
+            inputTokens: 500_000,
+            outputTokens: 100,
+            maxTokens: 1_000_000,
+          });
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("opts back into the 1M context window when the expanded window is selected", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          [{ id: "contextWindow", value: "expanded" }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`);
+      assert.deepEqual(createInput?.options.settings, {
+        env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -691,15 +824,74 @@ describe("ClaudeAdapterLive", () => {
           `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`,
           SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
         ]);
+        assert.deepEqual(customHarness.query.applyFlagSettingsCalls, [
+          { env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" } },
+          { env: null },
+        ]);
         assert.equal(customPrompt, "keep this prompt literal");
 
         const builtInOptions = yield* start(builtInHarness, SYNTHETIC_CLAUDE_CAPABLE_MODEL);
         assert.equal(builtInOptions.model, `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`);
         assert.equal(builtInOptions.effort, "max");
-        assert.deepEqual(builtInOptions.settings, { fastMode: true });
+        assert.deepEqual(builtInOptions.settings, {
+          fastMode: true,
+          env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" },
+        });
       });
     },
   );
+
+  it.effect("leaves the 1M context window alone for models without the option", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_THINKING_MODEL,
+          [],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.settings, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("merges the 1M opt-out with other SDK settings", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          [
+            { id: "fastMode", value: true },
+            { id: "contextWindow", value: "standard" },
+          ],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.settings, {
+        fastMode: true,
+        env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" },
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
 
   it.effect("treats ultrathink as a prompt keyword instead of a session effort", () => {
     const harness = makeHarness();
@@ -4659,6 +4851,7 @@ describe("ClaudeAdapterLive", () => {
         });
 
         assert.deepEqual(harness.query.setModelCalls, []);
+        assert.deepEqual(harness.query.applyFlagSettingsCalls, []);
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
         Effect.provide(harness.layer),
@@ -4701,6 +4894,10 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(harness.query.setModelCalls, [
         `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`,
         SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+      ]);
+      assert.deepEqual(harness.query.applyFlagSettingsCalls, [
+        { env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" } },
+        { env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" } },
       ]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

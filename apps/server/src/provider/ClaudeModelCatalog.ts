@@ -240,3 +240,23 @@ export function resolveClaudeCatalogContextWindowTokens(
   const contextWindow = resolveClaudeCatalogContextWindow(catalog, modelSelection);
   return contextWindow ? entry.runtime.contextWindowTokens?.[contextWindow] : undefined;
 }
+
+/**
+ * Claude Code auto-enables the 1M-token context window for every model with a
+ * native 1M window, so a bare model slug does not select 200k — the CLI only
+ * holds a session at 200k when `CLAUDE_CODE_DISABLE_1M_CONTEXT` is set, and a
+ * user or project settings file may already set it (live-test finding). State
+ * the window the catalog resolved in both directions, so the session runs the
+ * window T3 displays — for a fixed-window model as much as for a picked option.
+ * Managed policy settings still outrank this; the CLI's own usage report then
+ * corrects the meter. Models without catalog token data are left to the
+ * user's configuration.
+ */
+export function resolveClaudeCatalogContextWindowEnv(
+  catalog: ClaudeModelCatalog,
+  modelSelection: ModelSelection | undefined,
+): Record<string, string> | undefined {
+  const tokens = resolveClaudeCatalogContextWindowTokens(catalog, modelSelection);
+  if (tokens === undefined) return undefined;
+  return { CLAUDE_CODE_DISABLE_1M_CONTEXT: tokens <= 200_000 ? "1" : "0" };
+}
