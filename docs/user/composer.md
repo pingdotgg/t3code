@@ -10,6 +10,17 @@ becomes available after every upload finishes. Failed uploads can be retried or 
 On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
 the composer or paste them into a message.
 
+## Suggested next prompt
+
+After a Claude turn finishes, T3 Code can show Claude's predicted next prompt as faded text in the
+empty composer. Press `Tab` to accept it into the composer, then edit or send it as usual. Start
+typing to ignore it. The suggestion disappears once you send a message or a new turn starts.
+
+Suggestions come from Claude Code itself and follow your Claude settings: turning off **Prompt
+suggestions** in Claude Code (`promptSuggestionEnabled: false` in `settings.json`, or the
+`CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` environment variable) turns them off in T3 Code too.
+Other providers do not offer suggestions yet.
+
 ## Commands and skills
 
 Type `/` to open the command menu. Type `$` to find and add a skill. Skill rows show their source,

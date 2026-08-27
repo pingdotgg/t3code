@@ -508,6 +508,23 @@ export function runtimeEventToActivities(
       ];
     }
 
+    case "turn.prompt-suggestion": {
+      // Predicted next user prompt for the turn that just completed. Clients
+      // read the newest row for the latest turn; the work log hides it.
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "prompt-suggestion",
+          summary: "Prompt suggestion",
+          payload: { suggestion: event.payload.suggestion },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "user-input.requested": {
       return [
         {

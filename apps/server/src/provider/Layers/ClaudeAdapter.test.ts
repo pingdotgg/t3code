@@ -349,6 +349,7 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
+      assert.equal(createInput?.options.promptSuggestions, true);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -846,6 +847,132 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect("emits turn.prompt-suggestion for the turn that just completed", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.prompt-suggestion",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-1",
+        uuid: "assistant-1",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-1",
+          content: [{ type: "text", text: "Hi" }],
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-1",
+        uuid: "result-1",
+      } as unknown as SDKMessage);
+      // The SDK delivers the suggestion after `result`, once the turn is closed.
+      harness.query.emit({
+        type: "prompt_suggestion",
+        suggestion: "  Now run the tests  ",
+        session_id: "sdk-session-1",
+        uuid: "ps-1",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const completedIndex = runtimeEvents.findIndex((event) => event.type === "turn.completed");
+      const suggestion = runtimeEvents.at(-1);
+      assert.notEqual(completedIndex, -1);
+      assert.equal(suggestion?.type, "turn.prompt-suggestion");
+      if (suggestion?.type === "turn.prompt-suggestion") {
+        assert.equal(suggestion.payload.suggestion, "Now run the tests");
+        assert.equal(String(suggestion.turnId), String(turn.turnId));
+      }
+      assert.isBelow(completedIndex, runtimeEvents.length - 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect(
+    "keeps a trailing suggestion on its own turn when the next turn already started",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        const firstTurn = yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          attachments: [],
+        });
+        const firstTurnCompleted = yield* Stream.takeUntil(
+          adapter.streamEvents,
+          (event) => event.type === "turn.completed",
+        ).pipe(Stream.runDrain, Effect.forkChild);
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "sdk-session-1",
+          uuid: "result-1",
+        } as unknown as SDKMessage);
+        yield* Fiber.join(firstTurnCompleted);
+
+        // The user sends again before the SDK delivers the first turn's
+        // suggestion; it must not be re-homed onto the new turn.
+        const secondTurn = yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "and again",
+          attachments: [],
+        });
+        const runtimeEventsFiber = yield* Stream.takeUntil(
+          adapter.streamEvents,
+          (event) => event.type === "turn.prompt-suggestion",
+        ).pipe(Stream.runCollect, Effect.forkChild);
+        harness.query.emit({
+          type: "prompt_suggestion",
+          suggestion: "Now run the tests",
+          session_id: "sdk-session-1",
+          uuid: "ps-1",
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const suggestion = runtimeEvents.at(-1);
+        assert.equal(suggestion?.type, "turn.prompt-suggestion");
+        if (suggestion?.type === "turn.prompt-suggestion") {
+          assert.equal(String(suggestion.turnId), String(firstTurn.turnId));
+          assert.notEqual(String(suggestion.turnId), String(secondTurn.turnId));
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect("maps Claude stream/runtime messages to canonical provider runtime events", () => {
     const harness = makeHarness();
@@ -2546,6 +2673,11 @@ describe("ClaudeAdapterLive", () => {
       yield* Effect.yieldNow;
 
       const warnings = runtimeEvents.filter((event) => event.type === "runtime.warning");
+      // A suggestion with no turn to attach to is dropped, not surfaced.
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "turn.prompt-suggestion"),
+        false,
+      );
       // Exactly one warning: the high-priority notification. Nothing else.
       assert.deepEqual(
         warnings.map((event) => event.payload.message),
