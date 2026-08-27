@@ -1,6 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, type ServerProviderModel } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ServerSettingsError,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
@@ -119,6 +123,25 @@ const serviceLayers = (input: {
     Layer.provideMerge(httpClientLayer(input.response)),
   );
 
+/**
+ * Settings that cannot be read at all. `getSettings` carries a typed
+ * `ServerSettingsError`, and the live implementation reaches disk and the
+ * secret store, so an unreadable secret or a corrupt settings file lands here.
+ */
+const unreadableSettingsLayer = Layer.effect(
+  ServerSettings.ServerSettingsService,
+  Effect.map(ServerSettings.ServerSettingsService, (base) => ({
+    ...base,
+    getSettings: Effect.fail(
+      new ServerSettingsError({
+        settingsPath: "/nonexistent/settings.json",
+        operation: "read-secret",
+        cause: new Error("settings unreadable"),
+      }),
+    ),
+  })),
+).pipe(Layer.provide(ServerSettings.layerTest({})));
+
 describe("ModelManifest service", () => {
   it.live("prefers a fetched manifest over the bundle and caches it to disk", () =>
     Effect.gen(function* () {
@@ -179,6 +202,35 @@ describe("ModelManifest service", () => {
           response: () => Response.json(REMOTE_MANIFEST),
           settings: { enableProviderUpdateChecks: false },
         }),
+      ),
+    ),
+  );
+
+  it.live("does not fetch when the opt-out setting cannot be read", () =>
+    Effect.gen(function* () {
+      let fetchCount = 0;
+      const service = yield* make.pipe(
+        Effect.provide(
+          httpClientLayer(() => {
+            fetchCount += 1;
+            return Response.json(REMOTE_MANIFEST);
+          }),
+        ),
+      );
+      assert.deepStrictEqual(yield* service.refresh, BUNDLED_MODEL_MANIFEST);
+      // `enableProviderUpdateChecks` is a don't-phone-home switch, so failing
+      // to read it has to resolve to not contacting the host.
+      assert.strictEqual(fetchCount, 0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "model-manifest-settings-unreadable-test",
+        }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(unreadableSettingsLayer),
+          Layer.provideMerge(httpClientLayer(() => Response.json(REMOTE_MANIFEST))),
+        ),
       ),
     ),
   );

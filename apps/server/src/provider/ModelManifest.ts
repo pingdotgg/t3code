@@ -185,10 +185,14 @@ export const make = Effect.gen(function* () {
     // fetches only: a manifest already cached on disk from an earlier fetch
     // stays in effect, since the setting is about phoning home, not about
     // discarding data the server already holds.
+    //
+    // Unreadable settings skip the fetch too. This is a don't-phone-home
+    // switch, so "we could not tell whether the user opted out" has to resolve
+    // to not making the request.
     const settings = yield* settingsService.getSettings.pipe(
       Effect.catchCause(() => Effect.succeed(null)),
     );
-    if (settings !== null && !settings.enableProviderUpdateChecks) return manifest;
+    if (settings === null || !settings.enableProviderUpdateChecks) return manifest;
 
     lastAttemptMs = now;
     const fetched = yield* httpClient.get(MODEL_MANIFEST_URL).pipe(
