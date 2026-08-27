@@ -5,10 +5,14 @@ interface MarkdownPosition {
   };
 }
 
-interface MarkdownAstNode {
-  readonly type: string;
+export interface MarkdownIndentationCandidate {
+  readonly type?: string;
   readonly value?: unknown;
   readonly position?: MarkdownPosition;
+}
+
+interface MarkdownAstNode extends MarkdownIndentationCandidate {
+  readonly type: string;
   children?: MarkdownAstNode[];
 }
 
@@ -27,9 +31,9 @@ interface RecoveredMarkdown {
 
 const INLINE_PARSE_PREFIX = "t3-markdown-inline-prefix:";
 
-function isSameLineOverIndentedCode(
-  node: MarkdownAstNode,
-  parent: MarkdownAstNode | undefined,
+export function isSameLineOverIndentedCode(
+  node: MarkdownIndentationCandidate,
+  parent: MarkdownIndentationCandidate | undefined,
   markdown: string,
 ): boolean {
   if (

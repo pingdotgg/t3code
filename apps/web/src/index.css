@@ -2129,7 +2129,7 @@ code {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--border) 78%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--contrast-border) 78%, transparent) transparent;
 }
 
 .chat-markdown :not(.katex-display) > .katex {
@@ -2149,7 +2149,7 @@ code {
 .chat-markdown .katex-display::-webkit-scrollbar-thumb,
 .chat-markdown :not(.katex-display) > .katex::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: color-mix(in srgb, var(--border) 78%, transparent);
+  background: color-mix(in srgb, var(--contrast-border) 78%, transparent);
 }
 
 .chat-markdown h1,

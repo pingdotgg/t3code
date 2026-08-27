@@ -4,9 +4,11 @@ import type { Options as ReactMarkdownOptions } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { describe, expect, it } from "vite-plus/test";
 
+import { remarkNormalizeListItemIndentation } from "./markdown-list-indentation";
 import {
   MARKDOWN_MATH_CODE_CLASS_NAMES,
   normalizeLatexMathDelimiters,
@@ -39,8 +41,10 @@ const SANITIZED_MATH_REHYPE_PLUGINS = [
 
 function renderMarkdown(source: string, sanitize = false): string {
   const remarkPlugins = [
+    remarkGfm,
     [remarkMath, { singleDollarTextMath: false }],
     [remarkPromoteBracketDisplayMath, { source }],
+    remarkNormalizeListItemIndentation,
   ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   return renderToStaticMarkup(
     createElement(
@@ -119,6 +123,17 @@ describe("normalizeLatexMathDelimiters", () => {
 
   it("continues to rewrite adjacent valid pairs", () => {
     expect(normalizeLatexMathDelimiters("\\(a\\) and \\[b\\]")).toBe("$$a$$ and $$b$$");
+  });
+
+  it("renders math recovered from over-indented list content", () => {
+    const source = "-       formula \\(a+b\\)";
+    expect(normalizeLatexMathDelimiters(source)).toBe("-       formula $$a+b$$");
+    expect(renderMarkdown(source)).toContain('class="katex"');
+  });
+
+  it("scans long backslash runs without repeatedly rescanning the prefix", () => {
+    const prefix = "\\".repeat(100_000);
+    expect(normalizeLatexMathDelimiters(`${prefix} then \\(a+b\\)`)).toBe(`${prefix} then $$a+b$$`);
   });
 
   it("leaves inline, fenced, quoted fenced, and indented code unchanged", () => {

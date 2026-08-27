@@ -2,6 +2,8 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
+import { isSameLineOverIndentedCode } from "./markdown-list-indentation";
+
 interface MarkdownNode {
   readonly type?: string;
   readonly value?: unknown;
@@ -51,22 +53,22 @@ export function normalizeLatexMathDelimiters(source: string): string {
   const replacements = new Map<number, string>();
   const tree = markdownParser.parse(source) as MarkdownNode;
 
-  const visit = (node: MarkdownNode, linkUrl: string | null) => {
+  const visit = (node: MarkdownNode, parent: MarkdownNode | undefined, linkUrl: string | null) => {
     const nextLinkUrl = node.type === "link" && typeof node.url === "string" ? node.url : linkUrl;
 
-    if (node.type === "text") {
+    if (node.type === "text" || isSameLineOverIndentedCode(node, parent, source)) {
       // Autolink labels are their destination. Treat them as URLs rather than
       // prose even though the Markdown AST represents them as text children.
-      if (!(nextLinkUrl !== null && node.value === nextLinkUrl)) {
+      if (node.type !== "text" || !(nextLinkUrl !== null && node.value === nextLinkUrl)) {
         collectTextNodeReplacements(source, node, replacements);
       }
       return;
     }
 
-    node.children?.forEach((child) => visit(child, nextLinkUrl));
+    node.children?.forEach((child) => visit(child, node, nextLinkUrl));
   };
 
-  visit(tree, null);
+  visit(tree, undefined, null);
   if (replacements.size === 0) return source;
 
   const output = source.split("");
@@ -143,11 +145,19 @@ function collectTextNodeReplacements(
   if (start === undefined || end === undefined) return;
 
   const delimiters: DelimiterMatch[] = [];
-  for (let index = start; index < end - 1; index += 1) {
-    if (source[index] !== "\\" || isEscapedBackslash(source, index)) continue;
-    const delimiter = source[index + 1];
+  let index = start;
+  while (index < end - 1) {
+    if (source[index] !== "\\") {
+      index += 1;
+      continue;
+    }
+
+    const runStart = index;
+    while (index < end && source[index] === "\\") index += 1;
+    const delimiter = source[index];
+    if ((index - runStart) % 2 === 0) continue;
     if (delimiter === "(" || delimiter === ")" || delimiter === "[" || delimiter === "]") {
-      delimiters.push({ index, delimiter });
+      delimiters.push({ index: index - 1, delimiter });
       index += 1;
     }
   }
@@ -169,12 +179,4 @@ function collectTextNodeReplacements(
     replacements.set(match.index, "$$");
     opener = null;
   }
-}
-
-function isEscapedBackslash(source: string, index: number): boolean {
-  let precedingBackslashes = 0;
-  for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1) {
-    precedingBackslashes += 1;
-  }
-  return precedingBackslashes % 2 === 1;
 }
