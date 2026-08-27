@@ -84,6 +84,9 @@ public final class FeatureRootModel {
     private var outboxDrainTask: Task<Void, Never>?
     private var outboxRetryAttempt = 0
     private var outboxGeneration: UInt64 = 0
+    private var lastPersistedSettings = FeatureSettings()
+    private var settingsWriteTask: Task<Void, Error>?
+    private var settingsWriteGeneration: UInt64 = 0
 
     public init(
         client: any FeatureClient,
@@ -814,16 +817,36 @@ public final class FeatureRootModel {
 
     @discardableResult
     public func saveSettings(_ settings: FeatureSettings) async -> Bool {
-        await perform {
-            try await client.saveSettings(settings)
-            let settlementChanged = snapshot.settings.autoSettleOnMerge
-                != settings.autoSettleOnMerge
-                || snapshot.settings.autoSettleAfterDays != settings.autoSettleAfterDays
-            snapshot.settings = settings
-            if settlementChanged {
+        let settlementChanged = settlementPreferencesDiffer(
+            snapshot.settings,
+            settings
+        )
+        snapshot.settings = settings
+        if settlementChanged {
+            homePresentationRevision &+= 1
+        }
+        let saved = await perform {
+            try await enqueueSettingsWrite(settings)
+        }
+        if !saved, snapshot.settings == settings {
+            let rollbackChangesSettlement = settlementPreferencesDiffer(
+                snapshot.settings,
+                lastPersistedSettings
+            )
+            snapshot.settings = lastPersistedSettings
+            if rollbackChangesSettlement {
                 homePresentationRevision &+= 1
             }
         }
+        return saved
+    }
+
+    private func settlementPreferencesDiffer(
+        _ lhs: FeatureSettings,
+        _ rhs: FeatureSettings
+    ) -> Bool {
+        lhs.autoSettleOnMerge != rhs.autoSettleOnMerge
+            || lhs.autoSettleAfterDays != rhs.autoSettleAfterDays
     }
 
     /// Applies appearance optimistically so selecting a theme updates every
@@ -831,25 +854,63 @@ public final class FeatureRootModel {
     /// settings snapshot. Other unsaved Settings edits remain drafts.
     @discardableResult
     public func saveAppearance(_ appearance: FeatureAppearance) async -> Bool {
-        let previous = snapshot.settings
-        guard previous.appearance != appearance else { return true }
+        await savePresentationPreference { $0.appearance = appearance }
+    }
 
+    @discardableResult
+    public func saveTextSizes(
+        textSize: FeatureTextSizeAdjustment,
+        codeSize: FeatureTextSizeAdjustment
+    ) async -> Bool {
+        await savePresentationPreference {
+            $0.textSize = textSize
+            $0.codeSize = codeSize
+        }
+    }
+
+    private func savePresentationPreference(
+        _ change: (inout FeatureSettings) -> Void
+    ) async -> Bool {
+        let previous = snapshot.settings
         var updated = previous
-        updated.appearance = appearance
+        change(&updated)
+        guard updated != previous else { return true }
         snapshot.settings = updated
 
         do {
-            try await client.saveSettings(updated)
+            try await enqueueSettingsWrite(updated)
             return true
         } catch {
             if snapshot.settings == updated {
-                snapshot.settings = previous
+                snapshot.settings = lastPersistedSettings
             }
             if !Self.isBenignCancellation(error) {
                 errorMessage = error.localizedDescription
             }
             return false
         }
+    }
+
+    /// Serializes full-snapshot writes. Only a successful write advances the
+    /// rollback point, so a failed optimistic predecessor is never restored.
+    private func enqueueSettingsWrite(_ settings: FeatureSettings) async throws {
+        let predecessor = settingsWriteTask
+        let write = Task { @MainActor [client] in
+            if let predecessor {
+                _ = await predecessor.result
+            }
+            try await client.saveSettings(settings)
+            lastPersistedSettings = settings
+        }
+        settingsWriteGeneration &+= 1
+        let generation = settingsWriteGeneration
+        settingsWriteTask = write
+        defer {
+            if settingsWriteGeneration == generation {
+                settingsWriteTask = nil
+            }
+        }
+        try await write.value
     }
 
     @discardableResult
@@ -1024,6 +1085,7 @@ public final class FeatureRootModel {
             threadCollectionRevision &+= 1
         }
         snapshot = value
+        lastPersistedSettings = value.settings
         if value.connection.state == .connected
             || value.environments.contains(where: { $0.connectionState == .connected }) {
             scheduleOutboxDrain()

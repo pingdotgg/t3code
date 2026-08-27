@@ -638,28 +638,31 @@ private struct MarkdownCodeBlockView: View {
                 .fill(T3Colors.separator)
                 .frame(height: 1)
 
-            if wrapsLines {
-                MarkdownInlineText(
-                    renderedCode,
-                    selectionContext: selectionContext,
-                    lineSpacing: 3,
-                    wrapsLines: true
-                )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(13)
-            } else {
-                ScrollView(.horizontal) {
+            Group {
+                if wrapsLines {
                     MarkdownInlineText(
                         renderedCode,
                         selectionContext: selectionContext,
                         lineSpacing: 3,
-                        wrapsLines: false
+                        wrapsLines: true
                     )
-                        .fixedSize(horizontal: true, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(13)
+                } else {
+                    ScrollView(.horizontal) {
+                        MarkdownInlineText(
+                            renderedCode,
+                            selectionContext: selectionContext,
+                            lineSpacing: 3,
+                            wrapsLines: false
+                        )
+                            .fixedSize(horizontal: true, vertical: true)
+                            .padding(13)
+                    }
+                    .scrollIndicators(.hidden)
                 }
-                .scrollIndicators(.hidden)
             }
+            .t3CodeTextSize()
         }
         .background(T3Colors.surfaceRaised)
         .clipShape(RoundedRectangle(cornerRadius: 10))

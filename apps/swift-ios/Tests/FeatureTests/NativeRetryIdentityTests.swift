@@ -4,6 +4,60 @@ import XCTest
 
 @MainActor
 final class NativeRetryIdentityTests: XCTestCase {
+    func testSavedSettingsSurviveAConnectionRepublish() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-native-settings-republish-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let environment = Environment(
+            id: "environment-settings-republish",
+            label: "Settings republish",
+            httpBaseURL: URL(string: "https://settings-republish.example")!,
+            webSocketBaseURL: URL(string: "wss://settings-republish.example")!
+        )
+        let store = EnvironmentStore(
+            fileURL: directory.appendingPathComponent("environments.json")
+        )
+        try await store.save([environment])
+        try await store.setActiveEnvironment(id: environment.id)
+        let transport = ConcurrentBootstrapHTTPTransport(shell: retryShellSnapshot())
+        let connection = ConcurrentBootstrapWebSocketConnection()
+        let runtime = EnvironmentRuntime(
+            environmentStore: store,
+            credentialStore: InMemoryCredentialStore(
+                credentials: [environment.id: EnvironmentCredential(accessToken: "token")]
+            ),
+            httpTransport: transport,
+            webSocketConnector: ConcurrentBootstrapWebSocketConnector(connection: connection)
+        )
+        let settingsSuite = "t3-native-settings-republish-\(UUID().uuidString)"
+        let settingsStore = UserDefaults(suiteName: settingsSuite)!
+        defer { settingsStore.removePersistentDomain(forName: settingsSuite) }
+        let client = NativeFeatureClient(runtime: runtime, settingsStore: settingsStore)
+        let initial = try await client.initialSnapshot()
+        await connection.waitUntilConnected()
+        var updated = initial.settings
+        updated.textSize = FeatureTextSizeAdjustment(steps: 2)
+        updated.codeSize = FeatureTextSizeAdjustment(steps: -1)
+        try await client.saveSettings(updated)
+        var events = client.events().makeAsyncIterator()
+
+        await connection.failReceive()
+
+        var receivedRepublish = false
+        while let event = await events.next() {
+            guard case let .snapshot(snapshot) = event,
+                  snapshot.connection.state == .reconnecting else {
+                continue
+            }
+            XCTAssertEqual(snapshot.settings.textSize.steps, 2)
+            XCTAssertEqual(snapshot.settings.codeSize.steps, -1)
+            receivedRepublish = true
+            break
+        }
+        XCTAssertTrue(receivedRepublish)
+        await client.disconnect()
+    }
+
     func testConcurrentBootstrapRetriesKeepIndependentStableIdentities() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-native-concurrent-retry-\(UUID().uuidString)")
@@ -290,6 +344,7 @@ private actor ConcurrentBootstrapWebSocketConnection: WebSocketConnection {
     private var connectionWaiters: [CheckedContinuation<Void, Never>] = []
     private var queuedResponses: [Data] = []
     private var receiver: CheckedContinuation<Data, Error>?
+    private var shouldFailNextReceive = false
 
     func send(_ data: Data) async throws {
         let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
@@ -324,6 +379,10 @@ private actor ConcurrentBootstrapWebSocketConnection: WebSocketConnection {
     }
 
     func receive() async throws -> Data {
+        if shouldFailNextReceive {
+            shouldFailNextReceive = false
+            throw URLError(.networkConnectionLost)
+        }
         if !queuedResponses.isEmpty {
             return queuedResponses.removeFirst()
         }
@@ -335,6 +394,16 @@ private actor ConcurrentBootstrapWebSocketConnection: WebSocketConnection {
     func close() {
         receiver?.resume(throwing: CancellationError())
         receiver = nil
+    }
+
+    func failReceive() {
+        let error = URLError(.networkConnectionLost)
+        if let receiver {
+            self.receiver = nil
+            receiver.resume(throwing: error)
+        } else {
+            shouldFailNextReceive = true
+        }
     }
 
     func waitUntilConnected() async {

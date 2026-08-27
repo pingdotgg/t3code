@@ -1910,6 +1910,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func saveSettings(_ settings: FeatureSettings) async throws {
         let data = try JSONEncoder().encode(settings)
         settingsStore.set(data, forKey: Self.settingsKey)
+        latestSnapshot?.settings = settings
     }
 
     var managesServerSessions: Bool {
