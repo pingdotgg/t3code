@@ -648,6 +648,11 @@ it.effect("proves WinGet ownership and updates through the mapped source name", 
         ],
       },
     });
+    const ascendingVersions = yield* resolve({
+      ...probes,
+      [showKey]: { stdout: "Version\n-------\n1.0.0\n1.1.0", stderr: "", exitCode: 0 },
+    });
+    expect(ascendingVersions.latestVersion).toBe("1.1.0");
     const failedShow = yield* resolve({
       ...probes,
       [showKey]: { stdout: "Error 1.9.0", stderr: "source unavailable", exitCode: 1 },

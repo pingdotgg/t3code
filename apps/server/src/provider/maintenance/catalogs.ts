@@ -15,7 +15,7 @@ import {
   type ResolvedInstallation,
   undetermined,
 } from "./definition.ts";
-import { normalizeMaintenanceVersion } from "./version.ts";
+import { compareMaintenanceVersions, normalizeMaintenanceVersion } from "./version.ts";
 
 export interface ProviderMaintenanceDefinitionInput {
   readonly provider: ProviderDriverKind;
@@ -150,15 +150,16 @@ const npmGlobalUpdateArgs = (packageName: string) => [
 ];
 
 function npmGlobalPrefix(context: InstallationContext, packageRoot: string) {
-  const normalizedRoot = normalize(context, packageRoot);
+  const slashRoot = packageRoot.replaceAll("\\", "/");
+  const comparableRoot = context.platform === "win32" ? slashRoot.toLowerCase() : slashRoot;
   if (context.platform === "win32") {
     const marker = "/node_modules/";
-    const markerIndex = normalizedRoot.lastIndexOf(marker);
-    return markerIndex > 0 ? packageRoot.replaceAll("\\", "/").slice(0, markerIndex) : null;
+    const markerIndex = comparableRoot.lastIndexOf(marker);
+    return markerIndex > 0 ? slashRoot.slice(0, markerIndex) : null;
   }
   const marker = "/lib/node_modules/";
-  const markerIndex = normalizedRoot.lastIndexOf(marker);
-  return markerIndex > 0 ? packageRoot.replaceAll("\\", "/").slice(0, markerIndex) : null;
+  const markerIndex = comparableRoot.lastIndexOf(marker);
+  return markerIndex > 0 ? slashRoot.slice(0, markerIndex) : null;
 }
 
 const nodeManagers = [
@@ -501,11 +502,12 @@ function scoopDefinition(input: ProviderMaintenanceDefinitionInput) {
     id: `${input.provider}-scoop`,
     detect: Effect.fn("detect-scoop")(function* (context) {
       if (context.platform !== "win32" || !context.resolvedCommandPath) return notMatched;
-      const observed = normalize(context, context.resolvedCommandPath);
+      const resolvedCommandPath = context.resolvedCommandPath.replaceAll("\\", "/");
+      const observed = resolvedCommandPath.toLowerCase();
       const marker = "/shims/";
       const index = observed.lastIndexOf(marker);
       if (index < 0) return notMatched;
-      const root = context.resolvedCommandPath.replaceAll("\\", "/").slice(0, index);
+      const root = resolvedCommandPath.slice(0, index);
       const shim = context.resolvedCommandPath.replace(/\.(?:exe|cmd|ps1)$/i, "") + ".shim";
       const target = (yield* context.readTextFile(shim))?.match(/^path\s*=\s*"([^"]+)"/m)?.[1];
       const targetPath = target ? normalize(context, target) : null;
@@ -532,11 +534,12 @@ function scoopDefinition(input: ProviderMaintenanceDefinitionInput) {
       if (!bucket) return undetermined("Scoop bucket provenance is unavailable.");
       const executable = yield* context.resolveCommand("scoop");
       if (!executable) return undetermined("Scoop is unavailable.");
-      const executablePath = normalize(context, executable);
+      const slashExecutable = executable.replaceAll("\\", "/");
+      const executablePath = slashExecutable.toLowerCase();
       const managerMarker = "/shims/";
       const managerIndex = executablePath.lastIndexOf(managerMarker);
       if (managerIndex < 0) return undetermined("The owning Scoop root is unavailable.");
-      const managerRoot = executable.replaceAll("\\", "/").slice(0, managerIndex);
+      const managerRoot = slashExecutable.slice(0, managerIndex);
       let global = !within(context, executable, root);
       if (global) {
         const globalProbe = yield* context.run(
@@ -751,9 +754,16 @@ function wingetDefinition(input: ProviderMaintenanceDefinitionInput) {
       );
       const latest =
         show && show.exitCode === 0
-          ? ((show.stdout.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/g) ?? [])
+          ? (show.stdout.match(/\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\b/g) ?? [])
               .map(normalizeMaintenanceVersion)
-              .find((value): value is string => value !== null) ?? null)
+              .filter((value): value is string => value !== null)
+              .reduce<string | null>(
+                (maximum, value) =>
+                  maximum === null || compareMaintenanceVersions(value, maximum) === 1
+                    ? value
+                    : maximum,
+                null,
+              )
           : null;
       return resolved(input, context, {
         kind: "winget",
