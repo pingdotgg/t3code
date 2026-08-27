@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - the server entrypoint owns Node runtime compatibility.
+import * as NodeNet from "node:net";
+
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -6,6 +9,7 @@ import { Argument, Command } from "effect/unstable/cli";
 import * as CliError from "effect/unstable/cli/CliError";
 
 import * as NetService from "@t3tools/shared/Net";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import packageJson from "../package.json" with { type: "json" };
 import { authCommand } from "./cli/auth.ts";
 import { connectCommand } from "./cli/connect.ts";
@@ -20,6 +24,42 @@ import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { triageCommand } from "./cli/triage.ts";
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+
+type SetTypeOfService = (this: NodeNet.Socket, typeOfService: number) => NodeNet.Socket;
+
+type SocketPrototypeWithTypeOfService = NodeNet.Socket & {
+  setTypeOfService?: SetTypeOfService;
+};
+
+export const guardSetTypeOfService = (setTypeOfService: SetTypeOfService): SetTypeOfService =>
+  function guardedSetTypeOfService(this: NodeNet.Socket, typeOfService: number): NodeNet.Socket {
+    try {
+      return setTypeOfService.call(this, typeOfService);
+    } catch (cause) {
+      // Node 24's bundled Undici applies best-effort QoS to every request. macOS
+      // can reject that socket option during reuse; the request itself remains valid.
+      if (
+        typeof cause === "object" &&
+        cause !== null &&
+        "code" in cause &&
+        cause.code === "EINVAL"
+      ) {
+        return this;
+      }
+      throw cause;
+    }
+  };
+
+const installNodeNetworkCompatibility = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
+  if (platform !== "darwin") return;
+
+  const socketPrototype = NodeNet.Socket.prototype as SocketPrototypeWithTypeOfService;
+  const setTypeOfService = socketPrototype.setTypeOfService;
+  if (typeof setTypeOfService !== "function") return;
+
+  socketPrototype.setTypeOfService = guardSetTypeOfService(setTypeOfService);
+});
 
 const connectPublicConfigMissingMessage =
   "T3 Connect commands are unavailable: this build is missing T3 Connect public configuration.";
@@ -71,7 +111,8 @@ if (
     runtimeMain: import.meta.main,
   })
 ) {
-  Command.run(cli, { version: packageJson.version }).pipe(
+  installNodeNetworkCompatibility.pipe(
+    Effect.andThen(Command.run(cli, { version: packageJson.version })),
     Effect.scoped,
     Effect.provide(CliRuntimeLayer),
     NodeRuntime.runMain,

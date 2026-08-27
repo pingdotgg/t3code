@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -25,7 +26,7 @@ import * as CliError from "effect/unstable/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
-import { cli, makeCli } from "./bin.ts";
+import { cli, guardSetTypeOfService, makeCli } from "./bin.ts";
 import * as ServerConfig from "./config.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
@@ -52,6 +53,47 @@ const runCli = (args: ReadonlyArray<string>, command = cli) =>
 const runConnectCli = (args: ReadonlyArray<string>) => runCli(args, connectCli);
 const runCliWithRuntime = (args: ReadonlyArray<string>) =>
   runCli(args).pipe(Effect.provide(CliRuntimeLayer));
+
+it("keeps setTypeOfService EINVAL from aborting HTTP requests", () => {
+  const socket = new NodeNet.Socket();
+  const invalidArgument = Object.assign(new Error("setTypeOfService EINVAL"), {
+    code: "EINVAL",
+    errno: -22,
+    syscall: "setTypeOfService",
+  });
+  const guarded = guardSetTypeOfService(function setTypeOfService(): never {
+    throw invalidArgument;
+  });
+
+  try {
+    assert.strictEqual(guarded.call(socket, 0), socket);
+  } finally {
+    socket.destroy();
+  }
+});
+
+it("preserves non-EINVAL setTypeOfService failures", () => {
+  const socket = new NodeNet.Socket();
+  const permissionDenied = Object.assign(new Error("setTypeOfService EPERM"), {
+    code: "EPERM",
+    errno: -1,
+    syscall: "setTypeOfService",
+  });
+  const guarded = guardSetTypeOfService(function setTypeOfService(): never {
+    throw permissionDenied;
+  });
+  let thrown: unknown;
+
+  try {
+    guarded.call(socket, 0);
+  } catch (error) {
+    thrown = error;
+  } finally {
+    socket.destroy();
+  }
+
+  assert.strictEqual(thrown, permissionDenied);
+});
 
 const captureStdout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
