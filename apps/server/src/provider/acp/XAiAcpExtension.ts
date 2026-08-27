@@ -311,7 +311,11 @@ function grokPlanSessionPrefixes(environment: NodeJS.ProcessEnv): ReadonlySet<st
 }
 
 const CANONICAL_HOME_GROK_SESSION_PATH =
-  /^(?:\/home\/[^/]+|\/Users\/[^/]+|[a-zA-Z]:\/Users\/[^/]+)\/\.grok\/sessions\/(?:[^/]+\/)+plan\.md$/i;
+  /^(?:\/home\/[^/]+|\/Users\/[^/]+|[a-zA-Z]:\/Users\/[^/]+)\/\.grok\/sessions\/(?:[^/]+\/)+plan\.md$/;
+const CASE_INSENSITIVE_CANONICAL_HOME_GROK_SESSION_PATH = new RegExp(
+  CANONICAL_HOME_GROK_SESSION_PATH.source,
+  "i",
+);
 
 /**
  * True when a path is Grok's session plan file under a Grok home
@@ -327,15 +331,15 @@ export function isGrokPlanMarkdownPath(
     return false;
   }
   const normalized = path.trim().replace(/\\/g, "/");
+  const win32 = host.platform === "win32";
+  const haystack = win32 ? normalized.toLowerCase() : normalized;
   if (
     normalized.length === 0 ||
-    !normalized.endsWith("/plan.md") ||
+    !haystack.endsWith("/plan.md") ||
     pathHasTraversalSegment(normalized)
   ) {
     return false;
   }
-  const win32 = host.platform === "win32";
-  const haystack = win32 ? normalized.toLowerCase() : normalized;
   for (const prefix of grokPlanSessionPrefixes(host.environment)) {
     const needle = win32 ? prefix.toLowerCase() : prefix;
     if (!haystack.startsWith(needle)) {
@@ -347,7 +351,9 @@ export function isGrokPlanMarkdownPath(
       return true;
     }
   }
-  return CANONICAL_HOME_GROK_SESSION_PATH.test(haystack);
+  return (
+    win32 ? CASE_INSENSITIVE_CANONICAL_HOME_GROK_SESSION_PATH : CANONICAL_HOME_GROK_SESSION_PATH
+  ).test(haystack);
 }
 
 /**

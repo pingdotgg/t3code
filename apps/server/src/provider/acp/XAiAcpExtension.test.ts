@@ -405,7 +405,13 @@ describe("XAiAcpExtension", () => {
       true,
     );
     expect(isGrokPlanMarkdownPath("/home/other/.grok/sessions/sess/plan.md", linuxHost)).toBe(true);
+    expect(isGrokPlanMarkdownPath("/HOME/other/.grok/sessions/sess/plan.md", linuxHost)).toBe(
+      false,
+    );
     expect(isGrokPlanMarkdownPath("C:/Users/other/.grok/sessions/id/plan.md", windowsHost)).toBe(
+      true,
+    );
+    expect(isGrokPlanMarkdownPath("c:/users/OTHER/.GROK/SESSIONS/id/PLAN.MD", windowsHost)).toBe(
       true,
     );
     expect(

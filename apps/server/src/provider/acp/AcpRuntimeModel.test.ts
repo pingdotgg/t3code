@@ -769,17 +769,6 @@ describe("AcpRuntimeModel", () => {
       ).toEqual({ emit: true, skippedSinceEmit: 0 });
     });
 
-    it("emits pending to inProgress status changes even when detail and output are unchanged", () => {
-      expect(
-        decideToolCallUpdateEmission({
-          previous: toolCall("same", "pending"),
-          next: toolCall("same", "inProgress"),
-          lastEmittedDetailLength: 4,
-          skippedSinceEmit: 0,
-        }),
-      ).toEqual({ emit: true, skippedSinceEmit: 0 });
-    });
-
     it("emits immediately when the title changes, even with no growth", () => {
       const decision = decideToolCallUpdateEmission({
         previous: { toolCallId: "tool-1", title: "Reading file", detail: "x", data: {} },

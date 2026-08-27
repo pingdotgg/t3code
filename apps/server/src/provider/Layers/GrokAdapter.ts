@@ -465,7 +465,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       }
       ctx.livenessUpdatesInFlight += 1;
       try {
-        const activityAtNanos = yield* Clock.currentTimeNanos;
+        const activityAtNanos = yield* Clock.monotonicTimeNanos;
         if (ctx.livenessTurnId !== turnId || ctx.interruptedTurnIds.has(turnId)) {
           return;
         }
@@ -516,7 +516,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       }
       // An approval or user-input wait can last longer than the watchdog.
       // Its resolution gives the provider a fresh window to resume output.
-      ctx.lastTurnActivityAtNanos = yield* Clock.currentTimeNanos;
+      ctx.lastTurnActivityAtNanos = yield* Clock.monotonicTimeNanos;
       yield* signalTurnLiveness(ctx, turnId);
     });
 
@@ -531,7 +531,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         ) {
           return;
         }
-        ctx.lastTurnActivityAtNanos = yield* Clock.currentTimeNanos;
+        ctx.lastTurnActivityAtNanos = yield* Clock.monotonicTimeNanos;
         yield* signalTurnLiveness(ctx, turnId);
       },
     );
@@ -731,7 +731,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           if (lastActivityAtNanos === undefined) {
             return;
           }
-          const nowNanos = yield* Clock.currentTimeNanos;
+          const nowNanos = yield* Clock.monotonicTimeNanos;
           if (
             ctx.interruptedTurnIds.has(turnId) ||
             !isLiveTurn(ctx, turnId) ||
@@ -782,7 +782,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             yield* Queue.take(ctx.livenessSignals);
             continue;
           }
-          const nowNanos = yield* Clock.currentTimeNanos;
+          const nowNanos = yield* Clock.monotonicTimeNanos;
           const remainingNanos = livenessTimeoutFor(ctx).nanos - (nowNanos - lastActivityAtNanos);
           if (remainingNanos <= 0n) {
             yield* settleStalledTurn(ctx, turnId);
