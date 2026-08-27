@@ -290,6 +290,64 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       }),
   );
 
+  it.effect("routes fragmented and coalesced JSONL frames", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio });
+      const notifications = yield* transport.incomingNotifications.pipe(
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      const fragmentedNotification = {
+        method: "item/agentMessage/delta",
+        params: {
+          delta: "fragmented",
+          itemId: "item-1",
+          threadId: "thread-1",
+          turnId: "turn-1",
+        },
+      };
+      const fragmentedFrame = encodeJsonl(fragmentedNotification);
+      yield* Queue.offer(input, fragmentedFrame.slice(0, 13));
+      yield* Queue.offer(input, fragmentedFrame.slice(13, fragmentedFrame.length - 1));
+      yield* Queue.offer(input, fragmentedFrame.slice(fragmentedFrame.length - 1));
+
+      const coalescedNotifications = [
+        {
+          method: "item/agentMessage/delta",
+          params: {
+            delta: "coalesced-1",
+            itemId: "item-2",
+            threadId: "thread-1",
+            turnId: "turn-1",
+          },
+        },
+        {
+          method: "item/agentMessage/delta",
+          params: {
+            delta: "coalesced-2",
+            itemId: "item-3",
+            threadId: "thread-1",
+            turnId: "turn-1",
+          },
+        },
+      ];
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString(coalescedNotifications[0])}\n${encodeUnknownJsonString(coalescedNotifications[1])}\n`,
+        ),
+      );
+
+      assert.deepEqual(yield* Fiber.join(notifications), [
+        fragmentedNotification,
+        ...coalescedNotifications,
+      ]);
+    }),
+  );
+
   it.effect("surfaces JSON encoding failures as protocol parse errors", () =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
