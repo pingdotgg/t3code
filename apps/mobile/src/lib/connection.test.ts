@@ -1,12 +1,18 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
 
 import {
   isRelayManagedConnection,
-  authClientMetadata,
   redactPairingCredential,
   toStableSavedRemoteConnection,
 } from "./connection";
+import { authClientMetadata } from "./authClientMetadata";
+
+const mobilePlatform = vi.hoisted(() => ({ OS: "ios" as "ios" | "android" }));
+const mobileDevice = vi.hoisted(() => ({
+  osVersion: "18.4.1",
+  modelName: "iPhone 15 Pro",
+}));
 
 vi.mock("./runtime", () => ({
   runtime: {
@@ -15,18 +21,38 @@ vi.mock("./runtime", () => ({
 }));
 
 vi.mock("react-native", () => ({
-  Platform: {
-    OS: "ios",
-  },
+  Platform: mobilePlatform,
 }));
 
+vi.mock("expo-device", () => mobileDevice);
+
 describe("mobile remote connection records", () => {
+  afterEach(() => {
+    mobilePlatform.OS = "ios";
+    mobileDevice.osVersion = "18.4.1";
+    mobileDevice.modelName = "iPhone 15 Pro";
+  });
+
   it("identifies mobile token exchanges for authorized-client presentation", () => {
     expect(authClientMetadata()).toEqual({
       label: "T3 Code Mobile",
       deviceType: "mobile",
       os: "iOS",
+      osMajorVersion: 18,
+      deviceModel: "iPhone 15 Pro",
       surface: "mobile",
+    });
+  });
+
+  it("includes only the Android major version and hardware model", () => {
+    mobilePlatform.OS = "android";
+    mobileDevice.osVersion = "15.2.1";
+    mobileDevice.modelName = "Pixel 9";
+
+    expect(authClientMetadata()).toMatchObject({
+      os: "Android",
+      osMajorVersion: 15,
+      deviceModel: "Pixel 9",
     });
   });
 

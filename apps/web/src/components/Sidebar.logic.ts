@@ -3,6 +3,7 @@ import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
+  activeThreadAnchorTimestampMs,
   getThreadSortTimestamp,
   sortThreads,
   toSortableTimestamp,
@@ -15,7 +16,7 @@ import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
-export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
+export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription. Each prewarmed
 // thread holds a live, fully hydrated detail subscription (all messages and
@@ -538,16 +539,23 @@ export function firstValidTimestamp(
   return null;
 }
 
-// Sidebar sort: static creation order, newest thread on top. Activity NEVER
-// reorders the list — a row holds its position from open until settled, so
-// the screen only moves at lifecycle transitions. Status (including pending
-// approval) is carried by each card's edge strip, not by position.
+// Sidebar sort: static order, newest anchor on top. Activity NEVER reorders
+// the list — a row holds its position between lifecycle transitions, so the
+// screen only moves when a thread enters or leaves the active list. The
+// anchor is creation time until an un-settle re-anchors it (see
+// activeThreadAnchorTimestampMs), so an un-settled thread surfaces at the
+// top instead of sinking back to its creation-order slot. Status (including
+// pending approval) is carried by each card's edge strip, not by position.
 export function sortThreadsForSidebar<
-  T extends { readonly id: string; readonly createdAt: string },
+  T extends {
+    readonly id: string;
+    readonly createdAt: string;
+    readonly unsettledAt?: string | null | undefined;
+  },
 >(threads: readonly T[]): T[] {
   return [...threads].toSorted(
     (left, right) =>
-      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
+      activeThreadAnchorTimestampMs(right) - activeThreadAnchorTimestampMs(left) ||
       left.id.localeCompare(right.id),
   );
 }

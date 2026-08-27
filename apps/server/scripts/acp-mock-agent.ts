@@ -19,7 +19,15 @@ const emitInterleavedAssistantToolCalls =
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const emitXAiExitPlanMode = process.env.T3_ACP_EMIT_XAI_EXIT_PLAN_MODE === "1";
+const emitXAiPlanMdWrite = process.env.T3_ACP_EMIT_XAI_PLAN_MD_WRITE === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
+const emitXAiRateLimitThenHang = process.env.T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG === "1";
+const emitXAiAskUserQuestionThenHang =
+  process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION_THEN_HANG === "1";
+const emitContentThenHang = process.env.T3_ACP_EMIT_CONTENT_THEN_HANG === "1";
+const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
+const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
@@ -39,12 +47,19 @@ const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
+const initialGrokReasoningEffort =
+  process.env.T3_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
   rejectOnce: process.env.T3_ACP_REJECT_ONCE_OPTION_ID ?? "reject-once",
 };
+const omitAllowAlways = process.env.T3_ACP_OMIT_ALLOW_ALWAYS === "1";
+const permissionRequestCount = Math.max(
+  1,
+  Number(process.env.T3_ACP_PERMISSION_REQUEST_COUNT ?? "1") || 1,
+);
 const sessionId = "mock-session-1";
 
 let currentModeId = "ask";
@@ -279,7 +294,13 @@ function modeState(): AcpSchema.SessionModeState {
 }
 
 const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
-  { modelId: "grok-build", name: "Grok Build" },
+  {
+    modelId: "grok-build",
+    name: "Grok Build",
+    ...(initialGrokReasoningEffort
+      ? { _meta: { reasoningEffort: initialGrokReasoningEffort } }
+      : {}),
+  },
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
 
@@ -522,6 +543,68 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
+      if (emitXAiRateLimitThenHang) {
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-rate-limit-prompt-1",
+          stopReason: "rate_limit",
+          agentResult: null,
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitContentThenHang) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "partial before stall" },
+          },
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitPlanThenHang) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "plan",
+            entries: [
+              {
+                content: "Wait for more ACP progress",
+                priority: "high",
+                status: "in_progress",
+              },
+            ],
+          },
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitActiveToolThenHang) {
+        const toolCallId = "tool-call-long-running-1";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "Long-running tool",
+            kind: "execute",
+            status: "pending",
+            rawInput: { command: ["long-running-tool"] },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "in_progress",
+          },
+        });
+        return yield* Effect.never;
+      }
+
       if (emitXAiPromptCompleteThenHang) {
         writeJsonRpcNotification("session/update", {
           sessionId: requestedSessionId,
@@ -656,37 +739,58 @@ const program = Effect.gen(function* () {
           },
         });
 
-        const permission = yield* agent.client.requestPermission({
-          sessionId: requestedSessionId,
-          toolCall: {
-            toolCallId,
-            title: "`cat server/package.json`",
-            kind: "execute",
-            status: "pending",
-            content: [
-              {
-                type: "content",
-                content: {
-                  type: "text",
-                  text: "Not in allowlist: cat server/package.json",
+        const permissionOptions: Array<AcpSchema.PermissionOption> = [
+          { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
+          ...(omitAllowAlways
+            ? []
+            : [
+                {
+                  optionId: permissionOptionIds.allowAlways,
+                  name: "Allow always",
+                  kind: "allow_always" as const,
                 },
-              },
-            ],
-          },
-          options: [
-            { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
-            {
-              optionId: permissionOptionIds.allowAlways,
-              name: "Allow always",
-              kind: "allow_always",
-            },
-            { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
-          ],
-        });
+              ]),
+          { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
+        ];
 
-        const cancelled =
-          cancelledSessions.delete(requestedSessionId) ||
-          permission.outcome.outcome === "cancelled";
+        let cancelled = cancelledSessions.delete(requestedSessionId);
+        for (let index = 0; index < permissionRequestCount; index++) {
+          const command =
+            index > 0
+              ? (process.env.T3_ACP_SECOND_PERMISSION_COMMAND ?? "cat server/package.json")
+              : "cat server/package.json";
+          const permission = yield* agent.client.requestPermission({
+            sessionId: requestedSessionId,
+            toolCall: {
+              toolCallId: index === 0 ? toolCallId : `${toolCallId}-${index + 1}`,
+              title: process.env.T3_ACP_PERMISSION_TITLE ?? `\`${command}\``,
+              kind: "execute",
+              status: "pending",
+              rawInput: {
+                variant: "Bash",
+                command,
+                description: index === 0 ? "Read package metadata" : "Read it again",
+              },
+              content: [
+                {
+                  type: "content",
+                  content: {
+                    type: "text",
+                    text: `Not in allowlist: ${command}`,
+                  },
+                },
+              ],
+            },
+            options: permissionOptions,
+          });
+          cancelled =
+            cancelled ||
+            cancelledSessions.delete(requestedSessionId) ||
+            permission.outcome.outcome === "cancelled";
+          if (cancelled) {
+            break;
+          }
+        }
 
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
@@ -773,7 +877,7 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
-      if (emitXAiAskUserQuestion) {
+      if (emitXAiAskUserQuestion || emitXAiAskUserQuestionThenHang) {
         const result = yield* agent.client.extRequest("_x.ai/ask_user_question", {
           method: "x.ai/ask_user_question",
           params: {
@@ -807,6 +911,84 @@ const program = Effect.gen(function* () {
           throw new Error("Expected accepted _x.ai/ask_user_question response answers.");
         }
 
+        if (emitXAiAskUserQuestionThenHang) {
+          return yield* Effect.never;
+        }
+
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitXAiPlanMdWrite) {
+        // Match Grok's real session layout so isGrokPlanMarkdownPath accepts it.
+        const planRoot = process.env.T3_ACP_PLAN_ROOT ?? "/tmp/mock-home/.grok";
+        const planPath = `${planRoot}/sessions/${requestedSessionId}/plan.md`;
+        const planBody = "# Mock plan\n\n- Write the feature\n- Add a test\n- Ship it\n";
+        // enter_plan_mode first so the adapter arms planModeActive.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "enter-plan-mode-1",
+            title: "enter_plan_mode",
+            kind: "other",
+            status: "completed",
+            rawInput: { variant: "EnterPlanMode" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "plan-md-write-1",
+            title: "write",
+            kind: "edit",
+            status: "pending",
+            rawInput: { file_path: planPath, content: planBody },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "plan-md-write-1",
+            kind: "edit",
+            status: "completed",
+            title: `Write \`${planPath}\``,
+            rawInput: { file_path: planPath, content: planBody },
+            content: [
+              {
+                type: "diff",
+                path: planPath,
+                oldText: "",
+                newText: planBody,
+              },
+            ],
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitXAiExitPlanMode) {
+        const result = yield* agent.client.extRequest("_x.ai/exit_plan_mode", {
+          method: "x.ai/exit_plan_mode",
+          params: {
+            sessionId: requestedSessionId,
+            toolCallId: "exit-plan-mode-tool-call-1",
+            planContent: "# Exit plan\n\n- Step one\n- Step two\n",
+          },
+        });
+        if (typeof result !== "object" || result === null || !("outcome" in result)) {
+          throw new Error("Expected _x.ai/exit_plan_mode response outcome.");
+        }
+        if (
+          result.outcome !== "abandoned" &&
+          result.outcome !== "approved" &&
+          result.outcome !== "request_changes"
+        ) {
+          throw new Error(
+            `Expected exit_plan_mode outcome abandoned|approved|request_changes, got ${String(result.outcome)}`,
+          );
+        }
         return { stopReason: "end_turn" };
       }
 

@@ -10,7 +10,6 @@ import {
   TerminalSquare,
   Volume2,
   VolumeOff,
-  X,
 } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
@@ -33,6 +32,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
@@ -823,29 +823,24 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                   )}
                 >
-                  <button
-                    type="button"
-                    className="cursor-pointer group/close relative flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
-                    aria-label={`Close ${title}`}
+                  <PanelTabCloseButton
+                    label={`Close ${title}`}
                     onClick={() => props.onCloseSurface(surface)}
                   >
-                    <span className="relative flex size-3 items-center justify-center group-hover/tab:hidden group-focus-visible/close:hidden">
-                      <SurfaceIcon
-                        surface={surface}
-                        sessions={props.previewSessions}
-                        desktopByTabId={props.desktopByTabId}
-                        theme={resolvedTheme}
-                        pullRequestStatuses={props.pullRequestStatuses}
+                    <SurfaceIcon
+                      surface={surface}
+                      sessions={props.previewSessions}
+                      desktopByTabId={props.desktopByTabId}
+                      theme={resolvedTheme}
+                      pullRequestStatuses={props.pullRequestStatuses}
+                    />
+                    {pending ? (
+                      <span
+                        className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
+                        aria-hidden
                       />
-                      {pending ? (
-                        <span
-                          className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
-                          aria-hidden
-                        />
-                      ) : null}
-                    </span>
-                    <X className="hidden size-3 group-hover/tab:block group-focus-visible/close:block" />
-                  </button>
+                    ) : null}
+                  </PanelTabCloseButton>
                   {audio === "none" || !audioRuntimeTabId ? null : (
                     <Tooltip>
                       <TooltipTrigger

@@ -28,6 +28,18 @@ Log in with Codex normally:
 codex login
 ```
 
+## Send feedback to OpenAI
+
+In an existing Codex thread, send `/feedback` or `/feedback` followed by a description of the
+issue. T3 Code uploads the thread and Codex logs to OpenAI and shows a thread ID that you can copy
+and share with OpenAI employees.
+
+## Approve access to other apps
+
+When a Codex tool needs access to an app such as Safari, T3 Code shows the app name and asks for
+approval. You can approve, decline, or cancel the request from the desktop app, web app, or mobile
+app. Some tools also offer approval for the current session or permanent approval.
+
 ## I Want Work And Personal Codex Accounts
 
 Use one real Codex home and one shadow home.

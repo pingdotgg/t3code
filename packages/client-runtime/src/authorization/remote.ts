@@ -44,6 +44,17 @@ export const appendClientConnectionParams = (
   if (clientMetadata?.appVersion) {
     url.searchParams.set("clientAppVersion", clientMetadata.appVersion);
   }
+  if (clientMetadata?.surface === "mobile") {
+    if (clientMetadata.os) {
+      url.searchParams.set("clientOs", clientMetadata.os);
+    }
+    if (clientMetadata.osMajorVersion !== undefined) {
+      url.searchParams.set("clientOsMajorVersion", String(clientMetadata.osMajorVersion));
+    }
+    if (clientMetadata.deviceModel) {
+      url.searchParams.set("clientDeviceModel", clientMetadata.deviceModel);
+    }
+  }
 };
 
 export const exchangeRemoteDpopAccessToken = Effect.fn(

@@ -53,6 +53,7 @@ describe("ComposerBannerStack", () => {
     expect(markup).not.toContain("data-composer-banner-stack-expanded-items");
     expect(markup).toContain("chat-composer-drawer-surface");
     expect(markup).toContain("chat-composer-drawer-attached");
+    expect(markup).not.toContain("before:mask-none");
     expect(markup).toContain("text-xs");
     expect(markup).toContain('data-composer-banner-drawer="true"');
     expect(markup).toContain('data-variant="warning"');
@@ -75,5 +76,33 @@ describe("ComposerBannerStack", () => {
 
     expect(markup).toContain("branch-surface");
     expect(markup).toContain("branch-actions");
+  });
+
+  it("renders a disabled compaction action on the shared accessible banner surface", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerBannerStack
+        items={[
+          {
+            id: "resume-compaction",
+            variant: "info",
+            icon: <span aria-hidden="true">!</span>,
+            title: "Resume with less context",
+            description: "250k tokens from an older session",
+            actions: (
+              <button type="button" disabled>
+                Compact
+              </button>
+            ),
+            dismissLabel: "Keep full history",
+            onDismiss: () => {},
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("chat-composer-drawer-attached");
+    expect(markup).toContain('disabled=""');
+    expect(markup).toContain('aria-label="Keep full history"');
   });
 });

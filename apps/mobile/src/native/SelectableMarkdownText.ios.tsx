@@ -8,6 +8,8 @@ import { highlightCodeSnippet } from "../features/review/shikiReviewHighlighter"
 type MobileSelectableMarkdownTextProps = Omit<SelectableMarkdownTextProps, "highlightCode">;
 
 export type {
+  MarkdownImageRenderer,
+  MarkdownImageRequest,
   NativeMarkdownTextStyle,
   SelectableMarkdownSkill,
 } from "@t3tools/mobile-markdown-text/types";

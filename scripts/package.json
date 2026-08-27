@@ -9,6 +9,7 @@
   "dependencies": {
     "@effect/platform-node": "catalog:",
     "@electron/asar": "^3.4.1",
+    "@electron/osx-sign": "2.7.0",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
