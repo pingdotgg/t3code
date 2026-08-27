@@ -12,4 +12,20 @@ export function urlWithoutReferralCode(url: URL): string {
   return `${next.pathname}${next.search}${next.hash}`;
 }
 
+export function captureReferralCodeFromUrl(
+  url: URL,
+  persist: (referralCode: string) => void,
+): { referralCode: string; cleanedUrl: string | null } | null {
+  const referralCode = referralCodeFromUrl(url);
+  if (!referralCode) return null;
+
+  try {
+    persist(referralCode);
+  } catch {
+    return { referralCode, cleanedUrl: null };
+  }
+
+  return { referralCode, cleanedUrl: urlWithoutReferralCode(url) };
+}
+
 export { buildReferralLink, normalizeReferralCode };

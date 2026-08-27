@@ -14,6 +14,7 @@ import {
 } from "../../cloud/managedRelayState";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import {
+  captureReferralCodeFromUrl,
   PENDING_REFERRAL_CODE_STORAGE_KEY,
   referralCodeFromUrl,
   urlWithoutReferralCode,
@@ -25,9 +26,7 @@ import { toastManager } from "../ui/toast";
 function clearPendingReferralCode(): void {
   try {
     window.localStorage.removeItem(PENDING_REFERRAL_CODE_STORAGE_KEY);
-  } catch {
-    // The referral query parameter still gets removed when storage is unavailable.
-  }
+  } catch {}
 }
 
 function readPendingReferralCode(): string | null {
@@ -40,15 +39,20 @@ function readPendingReferralCode(): string | null {
 
 function captureReferralCode(): string | null {
   const url = new URL(window.location.href);
-  const referralCode = referralCodeFromUrl(url);
-  if (!referralCode) return null;
-  try {
+  const captured = captureReferralCodeFromUrl(url, (referralCode) => {
     window.localStorage.setItem(PENDING_REFERRAL_CODE_STORAGE_KEY, referralCode);
-  } catch {
-    // Keep the code in component state for this tab when storage is unavailable.
+  });
+  if (!captured) return null;
+  if (captured.cleanedUrl) {
+    window.history.replaceState(window.history.state, "", captured.cleanedUrl);
   }
+  return captured.referralCode;
+}
+
+function clearReferralCodeFromUrl(): void {
+  const url = new URL(window.location.href);
+  if (!referralCodeFromUrl(url)) return;
   window.history.replaceState(window.history.state, "", urlWithoutReferralCode(url));
-  return referralCode;
 }
 
 function showClaimResult(result: RelayReferralClaimResult): void {
@@ -124,6 +128,7 @@ function ConfiguredReferralClaimCoordinator() {
         if (result._tag === "Success") {
           completedClaimRef.current = attemptKey;
           clearPendingReferralCode();
+          clearReferralCodeFromUrl();
           setPendingReferralCode(null);
           refreshManagedRelayReferralSummary();
           showClaimResult(result.value.result);
