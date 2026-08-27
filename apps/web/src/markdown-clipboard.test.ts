@@ -22,6 +22,7 @@ class FakeElement {
   constructor(
     readonly tagName: string,
     private readonly classNames: ReadonlyArray<string> = [],
+    private readonly attributes: Readonly<Record<string, string>> = {},
   ) {}
 
   get localName(): string {
@@ -37,12 +38,12 @@ class FakeElement {
     return this;
   }
 
-  getAttribute(): string | null {
-    return null;
+  getAttribute(name: string): string | null {
+    return this.attributes[name] ?? null;
   }
 
-  hasAttribute(): boolean {
-    return false;
+  hasAttribute(name: string): boolean {
+    return name in this.attributes;
   }
 
   closest(): FakeElement | null {
@@ -114,6 +115,20 @@ describe("serializeRenderedMarkdownFragment", () => {
     const container = new FakeElement("DIV").append(code);
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
+  });
+
+  it("keeps fences when a file chip sits alongside the code block", () => {
+    // The chip renders as a button, a skipped tag, but its data-markdown-copy
+    // still contributes markdown, so the block is not the only visible content.
+    const container = new FakeElement("DIV").append(
+      renderedCodeBlock(["pnpm test"]),
+      new FakeText("\n"),
+      new FakeElement("BUTTON", [], { "data-markdown-copy": "`src/foo.ts`" }),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "```\npnpm test\n```\n\n`src/foo.ts`",
+    );
   });
 
   it("omits fences when a selection past the last line drags in the whole code block", () => {

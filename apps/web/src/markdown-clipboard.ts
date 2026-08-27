@@ -274,7 +274,9 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
     }
     if (child.nodeType !== Node.ELEMENT_NODE) continue;
     const element = child as Element;
-    if (isSkippedElement(element)) continue;
+    // Mirrors serializeNode's order: an element carrying markdown of its own
+    // still contributes it even when its tag is otherwise skipped, as a file
+    // chip rendered as a button does.
     if (element.hasAttribute("data-markdown-details")) {
       scan.other = true;
       continue;
@@ -284,6 +286,7 @@ function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
       if (markdownCopy.trim().length > 0) scan.other = true;
       continue;
     }
+    if (isSkippedElement(element)) continue;
     if (element.tagName === "PRE") {
       if (scan.pre) scan.other = true;
       else scan.pre = element;
