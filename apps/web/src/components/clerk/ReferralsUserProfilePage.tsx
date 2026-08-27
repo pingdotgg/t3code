@@ -19,6 +19,7 @@ import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
+import { Card, CardContent } from "../ui/card";
 import { Input } from "../ui/input";
 import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
@@ -57,11 +58,11 @@ function claimResultMessage(result: RelayReferralClaimResult): {
 
 function ReferralMetric(props: { readonly label: string; readonly value: number }) {
   return (
-    <div className="min-w-0 px-3 py-4 first:pl-0 last:pr-0 sm:px-5">
+    <div className="min-w-0 rounded-lg px-3 py-3 sm:px-4">
       <dt className="text-[0.6875rem] leading-4 font-medium text-muted-foreground">
         {props.label}
       </dt>
-      <dd className="mt-0.5 text-[1.625rem] leading-8 font-semibold tracking-tight tabular-nums">
+      <dd className="mt-0.5 text-2xl leading-8 font-semibold tracking-tight tabular-nums">
         {props.value}
       </dd>
     </div>
@@ -188,125 +189,134 @@ export function ReferralsUserProfilePage() {
       }
     >
       {summaryState.error ? (
-        <div className="mb-4 border-t border-destructive/35 py-3 text-[0.8125rem]" role="alert">
+        <div className="mb-3 rounded-lg bg-destructive/8 px-3 py-2.5 text-[0.8125rem]" role="alert">
           <p className="font-medium text-destructive-foreground">Could not load referral points</p>
           <p className="mt-1 text-xs text-muted-foreground">{summaryState.error}</p>
         </div>
       ) : null}
 
       {isInitialLoad ? (
-        <div
-          className="grid grid-cols-3 divide-x border-y"
+        <Card
+          className="rounded-xl border-border/40 bg-muted/20 p-2 shadow-none before:hidden"
           aria-label="Loading referrals"
           role="status"
         >
-          <div className="py-5 pr-4">
-            <Skeleton className="h-11 rounded-lg" />
-          </div>
-          <div className="px-4 py-5">
-            <Skeleton className="h-11 rounded-lg" />
-          </div>
-          <div className="py-5 pl-4">
-            <Skeleton className="h-11 rounded-lg" />
-          </div>
-        </div>
-      ) : summary ? (
-        <div className="border-t">
-          <dl className="grid grid-cols-3 divide-x border-b">
-            <ReferralMetric label="Points" value={summary.points} />
-            <ReferralMetric label="Successful" value={summary.qualifiedReferrals} />
-            <ReferralMetric label="Pending" value={summary.pendingReferrals} />
-          </dl>
-
-          <section className="border-b py-5">
-            <ReferralSectionHeading
-              icon={<GiftIcon className="size-4" />}
-              title="Invite someone"
-              description="They need to claim your link before linking their first T3 Code environment."
-            />
-            <div className="mt-4 space-y-2 sm:ml-11">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="min-w-0 flex-1 rounded-lg border bg-muted/24 px-3 py-2.5">
-                  <div className="flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
-                    <LinkIcon className="size-3" aria-hidden="true" />
-                    Referral link
-                  </div>
-                  <p className="mt-0.5 truncate text-xs">{referralLink}</p>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="shrink-0 text-[0.8125rem]"
-                  disabled={!referralLink}
-                  onClick={() => void shareReferral()}
-                >
-                  {canShare ? (
-                    <Share2Icon className="size-3.5" aria-hidden="true" />
-                  ) : isLinkCopied ? (
-                    <CheckIcon className="size-3.5" aria-hidden="true" />
-                  ) : (
-                    <CopyIcon className="size-3.5" aria-hidden="true" />
-                  )}
-                  {canShare ? "Share" : isLinkCopied ? "Copied" : "Copy link"}
-                </Button>
-              </div>
-              <div className="flex items-center justify-between gap-3 px-1 py-1">
-                <div className="min-w-0">
-                  <span className="text-[0.6875rem] font-medium text-muted-foreground">
-                    Referral code
-                  </span>
-                  <code className="ml-2 text-xs tracking-[0.04em]">{summary.referralCode}</code>
-                </div>
-                <Button
-                  size="icon-xs"
-                  variant="ghost-muted"
-                  aria-label={isCodeCopied ? "Referral code copied" : "Copy referral code"}
-                  onClick={() => copyReferralCode(summary.referralCode)}
-                >
-                  {isCodeCopied ? (
-                    <CheckIcon className="size-3.5" aria-hidden="true" />
-                  ) : (
-                    <CopyIcon className="size-3.5" aria-hidden="true" />
-                  )}
-                </Button>
-              </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <div className="p-2">
+              <Skeleton className="h-11 rounded-lg" />
             </div>
-          </section>
+            <div className="p-2">
+              <Skeleton className="h-11 rounded-lg" />
+            </div>
+            <div className="p-2">
+              <Skeleton className="h-11 rounded-lg" />
+            </div>
+          </div>
+        </Card>
+      ) : summary ? (
+        <div className="space-y-3">
+          <Card className="rounded-xl border-border/40 bg-muted/20 p-2 shadow-none before:hidden">
+            <dl className="grid grid-cols-3 gap-1.5">
+              <ReferralMetric label="Points" value={summary.points} />
+              <ReferralMetric label="Successful" value={summary.qualifiedReferrals} />
+              <ReferralMetric label="Pending" value={summary.pendingReferrals} />
+            </dl>
+          </Card>
+
+          <Card className="rounded-xl border-border/40 bg-card/60 shadow-none before:hidden">
+            <CardContent className="p-4 sm:p-5">
+              <ReferralSectionHeading
+                icon={<GiftIcon className="size-4" />}
+                title="Invite someone"
+                description="They need to claim your link before linking their first T3 Code environment."
+              />
+              <div className="mt-4 space-y-2 sm:ml-11">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <div className="min-w-0 flex-1 rounded-lg bg-muted/40 px-3 py-2.5">
+                    <div className="flex items-center gap-1.5 text-[0.6875rem] font-medium text-muted-foreground">
+                      <LinkIcon className="size-3" aria-hidden="true" />
+                      Referral link
+                    </div>
+                    <p className="mt-0.5 truncate text-xs">{referralLink}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="shrink-0 text-[0.8125rem]"
+                    disabled={!referralLink}
+                    onClick={() => void shareReferral()}
+                  >
+                    {canShare ? (
+                      <Share2Icon className="size-3.5" aria-hidden="true" />
+                    ) : isLinkCopied ? (
+                      <CheckIcon className="size-3.5" aria-hidden="true" />
+                    ) : (
+                      <CopyIcon className="size-3.5" aria-hidden="true" />
+                    )}
+                    {canShare ? "Share" : isLinkCopied ? "Copied" : "Copy link"}
+                  </Button>
+                </div>
+                <div className="flex items-center justify-between gap-3 px-1 py-1">
+                  <div className="min-w-0">
+                    <span className="text-[0.6875rem] font-medium text-muted-foreground">
+                      Referral code
+                    </span>
+                    <code className="ml-2 text-xs tracking-[0.04em]">{summary.referralCode}</code>
+                  </div>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    aria-label={isCodeCopied ? "Referral code copied" : "Copy referral code"}
+                    onClick={() => copyReferralCode(summary.referralCode)}
+                  >
+                    {isCodeCopied ? (
+                      <CheckIcon className="size-3.5" aria-hidden="true" />
+                    ) : (
+                      <CopyIcon className="size-3.5" aria-hidden="true" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {!summary.hasClaimedReferral ? (
-            <section className="py-5">
-              <ReferralSectionHeading
-                icon={<TicketCheckIcon className="size-4" />}
-                title="Use a referral code"
-                description="Apply it before linking your first environment."
-              />
-              <div className="mt-4 flex flex-col gap-2 sm:ml-11 sm:flex-row">
-                <Input
-                  autoCapitalize="characters"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  nativeInput
-                  size="sm"
-                  spellCheck={false}
-                  value={referralCode}
-                  placeholder="ABCD1234EFAB5678"
-                  aria-label="Referral code"
-                  disabled={isClaiming}
-                  onChange={(event) => setReferralCode(event.currentTarget.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") void submitReferralCode();
-                  }}
+            <Card className="rounded-xl border-border/40 bg-card/60 shadow-none before:hidden">
+              <CardContent className="p-4 sm:p-5">
+                <ReferralSectionHeading
+                  icon={<TicketCheckIcon className="size-4" />}
+                  title="Use a referral code"
+                  description="Apply it before linking your first environment."
                 />
-                <Button
-                  size="sm"
-                  className="shrink-0 text-[0.8125rem]"
-                  disabled={isClaiming}
-                  onClick={() => void submitReferralCode()}
-                >
-                  {isClaiming ? "Applying..." : "Apply code"}
-                </Button>
-              </div>
-            </section>
+                <div className="mt-4 flex flex-col gap-2 sm:ml-11 sm:flex-row">
+                  <Input
+                    autoCapitalize="characters"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    className="border-border/45 bg-muted/28 shadow-none before:hidden dark:bg-muted/28"
+                    nativeInput
+                    size="sm"
+                    spellCheck={false}
+                    value={referralCode}
+                    placeholder="ABCD1234EFAB5678"
+                    aria-label="Referral code"
+                    disabled={isClaiming}
+                    onChange={(event) => setReferralCode(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") void submitReferralCode();
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    className="shrink-0 text-[0.8125rem]"
+                    disabled={isClaiming}
+                    onClick={() => void submitReferralCode()}
+                  >
+                    {isClaiming ? "Applying..." : "Apply code"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           ) : null}
         </div>
       ) : null}

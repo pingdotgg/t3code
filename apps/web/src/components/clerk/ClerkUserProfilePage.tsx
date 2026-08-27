@@ -50,7 +50,7 @@ export function ClerkUserProfileRefreshButton({
   return (
     <Button
       size="sm"
-      variant="outline"
+      variant="secondary"
       className={cn("text-[0.8125rem]", className)}
       disabled={disabled || isPending}
       onClick={onClick}
@@ -65,7 +65,7 @@ export function ClerkUserProfileIcon({ children }: { readonly children: ReactNod
   return (
     <div
       aria-hidden="true"
-      className="flex size-8 shrink-0 items-center justify-center rounded-lg border bg-muted/32 text-muted-foreground"
+      className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/55 text-muted-foreground"
     >
       {children}
     </div>
