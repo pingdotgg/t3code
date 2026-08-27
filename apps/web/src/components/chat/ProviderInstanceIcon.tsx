@@ -65,7 +65,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
             "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-[8px] font-semibold leading-none shadow-sm",
             props.accentColor
               ? "bg-[var(--provider-accent)] text-white"
-              : "bg-muted text-muted-foreground",
+              : "bg-card text-muted-foreground",
             props.badgeClassName,
           )}
           style={{ borderColor: indicatorBackground }}
