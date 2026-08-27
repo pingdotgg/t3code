@@ -3,6 +3,8 @@ import * as Schema from "effect/Schema";
 
 import * as CodexSchema from "./schema.ts";
 
+const isGetAccountResponse = Schema.is(CodexSchema.V2GetAccountResponse);
+
 it("accepts Codex 0.150 multi-agent values", () => {
   const schemas = [
     CodexSchema.ServerNotification__SubAgentActivityKind,
@@ -70,4 +72,27 @@ it("accepts Codex 0.150 multi-agent values", () => {
   };
 
   assert.equal(Schema.is(CodexSchema.V2ThreadResumeResponse)(resumeResponse), true);
+});
+
+it("accepts Codex 0.150 account plan values", () => {
+  const planTypes = [
+    "self_serve_business_prolite",
+    "ent26",
+    "enterprise_cbp_automation",
+    "edu_plus",
+    "edu_pro",
+  ];
+
+  for (const planType of planTypes) {
+    const accountResponse = {
+      account: {
+        email: "user@example.com",
+        planType,
+        type: "chatgpt",
+      },
+      requiresOpenaiAuth: true,
+    };
+
+    assert.equal(isGetAccountResponse(accountResponse), true);
+  }
 });

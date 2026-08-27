@@ -2411,11 +2411,16 @@ export type ServerNotification__PlanType =
   | "pro"
   | "prolite"
   | "team"
+  | "self_serve_business_prolite"
   | "self_serve_business_usage_based"
   | "business"
+  | "ent26"
+  | "enterprise_cbp_automation"
   | "enterprise_cbp_usage_based"
   | "enterprise"
   | "edu"
+  | "edu_plus"
+  | "edu_pro"
   | "unknown";
 export const ServerNotification__PlanType = Schema.Literals([
   "free",
@@ -2424,11 +2429,16 @@ export const ServerNotification__PlanType = Schema.Literals([
   "pro",
   "prolite",
   "team",
+  "self_serve_business_prolite",
   "self_serve_business_usage_based",
   "business",
+  "ent26",
+  "enterprise_cbp_automation",
   "enterprise_cbp_usage_based",
   "enterprise",
   "edu",
+  "edu_plus",
+  "edu_pro",
   "unknown",
 ]);
 
@@ -3248,11 +3258,16 @@ export type V2AccountRateLimitsUpdatedNotification__PlanType =
   | "pro"
   | "prolite"
   | "team"
+  | "self_serve_business_prolite"
   | "self_serve_business_usage_based"
   | "business"
+  | "ent26"
+  | "enterprise_cbp_automation"
   | "enterprise_cbp_usage_based"
   | "enterprise"
   | "edu"
+  | "edu_plus"
+  | "edu_pro"
   | "unknown";
 export const V2AccountRateLimitsUpdatedNotification__PlanType = Schema.Literals([
   "free",
@@ -3261,11 +3276,16 @@ export const V2AccountRateLimitsUpdatedNotification__PlanType = Schema.Literals(
   "pro",
   "prolite",
   "team",
+  "self_serve_business_prolite",
   "self_serve_business_usage_based",
   "business",
+  "ent26",
+  "enterprise_cbp_automation",
   "enterprise_cbp_usage_based",
   "enterprise",
   "edu",
+  "edu_plus",
+  "edu_pro",
   "unknown",
 ]);
 
@@ -3336,11 +3356,16 @@ export type V2AccountUpdatedNotification__PlanType =
   | "pro"
   | "prolite"
   | "team"
+  | "self_serve_business_prolite"
   | "self_serve_business_usage_based"
   | "business"
+  | "ent26"
+  | "enterprise_cbp_automation"
   | "enterprise_cbp_usage_based"
   | "enterprise"
   | "edu"
+  | "edu_plus"
+  | "edu_pro"
   | "unknown";
 export const V2AccountUpdatedNotification__PlanType = Schema.Literals([
   "free",
@@ -3349,11 +3374,16 @@ export const V2AccountUpdatedNotification__PlanType = Schema.Literals([
   "pro",
   "prolite",
   "team",
+  "self_serve_business_prolite",
   "self_serve_business_usage_based",
   "business",
+  "ent26",
+  "enterprise_cbp_automation",
   "enterprise_cbp_usage_based",
   "enterprise",
   "edu",
+  "edu_plus",
+  "edu_pro",
   "unknown",
 ]);
 
@@ -4140,11 +4170,16 @@ export type V2GetAccountRateLimitsResponse__PlanType =
   | "pro"
   | "prolite"
   | "team"
+  | "self_serve_business_prolite"
   | "self_serve_business_usage_based"
   | "business"
+  | "ent26"
+  | "enterprise_cbp_automation"
   | "enterprise_cbp_usage_based"
   | "enterprise"
   | "edu"
+  | "edu_plus"
+  | "edu_pro"
   | "unknown";
 export const V2GetAccountRateLimitsResponse__PlanType = Schema.Literals([
   "free",
@@ -4153,11 +4188,16 @@ export const V2GetAccountRateLimitsResponse__PlanType = Schema.Literals([
   "pro",
   "prolite",
   "team",
+  "self_serve_business_prolite",
   "self_serve_business_usage_based",
   "business",
+  "ent26",
+  "enterprise_cbp_automation",
   "enterprise_cbp_usage_based",
   "enterprise",
   "edu",
+  "edu_plus",
+  "edu_pro",
   "unknown",
 ]);
 
@@ -4228,11 +4268,16 @@ export type V2GetAccountResponse__PlanType =
   | "pro"
   | "prolite"
   | "team"
+  | "self_serve_business_prolite"
   | "self_serve_business_usage_based"
   | "business"
+  | "ent26"
+  | "enterprise_cbp_automation"
   | "enterprise_cbp_usage_based"
   | "enterprise"
   | "edu"
+  | "edu_plus"
+  | "edu_pro"
   | "unknown";
 export const V2GetAccountResponse__PlanType = Schema.Literals([
   "free",
@@ -4241,11 +4286,16 @@ export const V2GetAccountResponse__PlanType = Schema.Literals([
   "pro",
   "prolite",
   "team",
+  "self_serve_business_prolite",
   "self_serve_business_usage_based",
   "business",
+  "ent26",
+  "enterprise_cbp_automation",
   "enterprise_cbp_usage_based",
   "enterprise",
   "edu",
+  "edu_plus",
+  "edu_pro",
   "unknown",
 ]);
 
