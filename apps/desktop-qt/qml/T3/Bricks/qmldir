@@ -12,10 +12,13 @@ ShellMenuItem 1.0 ShellMenuItem.qml
 ShellMenu 1.0 ShellMenu.qml
 ShellComboBox 1.0 ShellComboBox.qml
 ShellButton 1.0 ShellButton.qml
+ShellIcon 1.0 ShellIcon.qml
+ShellSplitButton 1.0 ShellSplitButton.qml
 ShellChevron 1.0 ShellChevron.qml
 Sidebar 1.0 Sidebar.qml
 SidebarThreadRow 1.0 SidebarThreadRow.qml
 TitleBar 1.0 TitleBar.qml
 WebSurface 1.0 WebSurface.qml
+WindowControls 1.0 WindowControls.qml
 Workspace 1.0 Workspace.qml
 singleton WebProfile 1.0 WebProfile.qml

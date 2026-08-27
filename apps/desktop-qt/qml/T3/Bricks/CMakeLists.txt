@@ -19,6 +19,8 @@ qt_add_qml_module(t3bricks
     ShellButton.qml
     ShellChevron.qml
     ShellComboBox.qml
+    ShellIcon.qml
+    ShellSplitButton.qml
     ShellMenu.qml
     ShellMenuItem.qml
     ShellTextField.qml
@@ -27,7 +29,9 @@ qt_add_qml_module(t3bricks
     TitleBar.qml
     WebProfile.qml
     WebSurface.qml
+    WindowControls.qml
     Workspace.qml
+    js/lucide.js
   RESOURCES
     qmldir
     js/shell-connect.js
