@@ -575,11 +575,13 @@ function Toasts({ position, onlyRich = false }: { position: ToastPosition; onlyR
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
   const isTop = position.startsWith("top");
-  const visibleToasts = toasts.filter(
-    (toast) =>
-      shouldRenderThreadScopedToast(toast.data, activeThreadRef) &&
-      (!onlyRich || !isShellMirrorableToast(toast)),
+  const scopedToasts = toasts.filter((toast) =>
+    shouldRenderThreadScopedToast(toast.data, activeThreadRef),
   );
+  const visibleToasts = scopedToasts.filter((toast) => !onlyRich || !isShellMirrorableToast(toast));
+  // Base UI only drops a closed toast once its root finishes leaving, so the
+  // ones the shell renders still need a (hidden) root here or they never go.
+  const mirroredToasts = onlyRich ? scopedToasts.filter(isShellMirrorableToast) : [];
   const visibleToastLayout = buildVisibleToastLayout(visibleToasts);
 
   useEffect(() => {
@@ -612,6 +614,9 @@ function Toasts({ position, onlyRich = false }: { position: ToastPosition; onlyR
           } as CSSProperties
         }
       >
+        {mirroredToasts.map((toast) => (
+          <Toast.Root key={toast.id} toast={toast} className="hidden" data-shell-mirrored="" />
+        ))}
         {visibleToastLayout.items.map(({ toast, visibleIndex, offsetY }) => {
           const hideCollapsedContent = shouldHideCollapsedToastContent(
             visibleIndex,
