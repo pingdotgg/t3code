@@ -1,5 +1,6 @@
 import {
   CodexSettings,
+  GrokSettings,
   type EditImageInput,
   type GenerateImageInput,
   type GenerateImageResult,
@@ -16,27 +17,21 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
-import { inferImageExtension } from "../imageMime.ts";
 import {
   copyGeneratedImage,
   createGeneratedImageId,
   parseGeneratedImageId,
   resolveGeneratedImagePath,
-  writeGeneratedImage,
 } from "../imageStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { generateCodexImage } from "./CodexImageCli.ts";
-import {
-  editGrokImage,
-  generateGrokImage,
-  grokImagineOptionsFromToolInput,
-} from "./GrokImagine.ts";
+import { editGrokImage, generateGrokImage } from "./GrokImageCli.ts";
 
 const decodeCodexSettings = Schema.decodeUnknownSync(CodexSettings);
+const decodeGrokSettings = Schema.decodeUnknownSync(GrokSettings);
 
 export interface ImageGenerationServiceShape {
   readonly generate: (
@@ -64,57 +59,8 @@ export class ImageGenerationService extends Context.Service<
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const processRunner = yield* ProcessRunner.ProcessRunner;
-      const httpClient = yield* HttpClient.HttpClient;
       const clock = yield* Clock.Clock;
       const runLock = yield* Semaphore.make(1);
-
-      const persistBytes = Effect.fn("ImageGenerationService.persistBytes")(function* (input: {
-        readonly bytes: Uint8Array;
-        readonly mimeType: string;
-        readonly provider: GeneratedImageRef["provider"];
-        readonly model?: string;
-      }): Effect.fn.Return<GenerateImageResult, ImageGenerationUnavailableError> {
-        const extension = inferImageExtension({ mimeType: input.mimeType });
-        const imageId = createGeneratedImageId(extension);
-        if (!imageId) {
-          return yield* new ImageGenerationUnavailableError({
-            reason: "provider-error",
-            provider: input.provider,
-            detail: "Could not allocate an image id.",
-          });
-        }
-        const stored = yield* Effect.try({
-          try: () =>
-            writeGeneratedImage({
-              imagesDir: serverConfig.imagesDir,
-              imageId,
-              bytes: input.bytes,
-            }),
-          catch: () =>
-            new ImageGenerationUnavailableError({
-              reason: "provider-error",
-              provider: input.provider,
-              detail: "Could not save the generated image to the T3 Code images directory.",
-            }),
-        });
-        if (!stored) {
-          return yield* new ImageGenerationUnavailableError({
-            reason: "provider-error",
-            provider: input.provider,
-            detail: "Could not save the generated image to the T3 Code images directory.",
-          });
-        }
-        return {
-          image: {
-            imageId,
-            filename: imageId,
-            mimeType: input.mimeType,
-            provider: input.provider,
-            ...(input.model ? { model: input.model } : {}),
-          },
-          path: stored,
-        };
-      });
 
       const requireEnabled = Effect.fn("ImageGenerationService.requireEnabled")(function* () {
         const settings = yield* settingsService.getSettings.pipe(
@@ -144,25 +90,64 @@ export class ImageGenerationService extends Context.Service<
           settings.imageGenerationProvider,
         );
         if (provider === "grok") {
-          const options = grokImagineOptionsFromToolInput(input);
-          const image = yield* generateGrokImage({
-            prompt: input.prompt,
-            model: settings.imageGenerationGrokModel,
-            aspectRatio: options.aspectRatio,
-            resolution: options.resolution,
-            ...(options.quality ? { quality: options.quality } : {}),
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, path),
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.provideService(Clock.Clock, clock),
-          );
-          return yield* persistBytes({
-            bytes: image.bytes,
-            mimeType: image.mimeType,
-            provider: "grok",
-            model: settings.imageGenerationGrokModel,
+          const imageId = createGeneratedImageId(".jpg");
+          if (!imageId) {
+            return yield* new ImageGenerationUnavailableError({
+              reason: "provider-error",
+              provider: "grok",
+              detail: "Could not allocate an image id.",
+            });
+          }
+          const destinationPath = resolveGeneratedImagePath({
+            imagesDir: serverConfig.imagesDir,
+            imageId,
           });
+          if (!destinationPath) {
+            return yield* new ImageGenerationUnavailableError({
+              reason: "provider-error",
+              provider: "grok",
+              detail: "Could not resolve the T3 Code images directory.",
+            });
+          }
+          const generated = yield* runLock.withPermits(1)(
+            generateGrokImage({
+              settings: decodeGrokSettings(settings.providers.grok),
+              generate: input,
+              destinationPath,
+              model: settings.imageGenerationGrokModel,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+              Effect.provideService(Clock.Clock, clock),
+              Effect.timeout(Duration.minutes(5)),
+              Effect.mapError((cause) =>
+                cause._tag === "TimeoutError"
+                  ? new ImageGenerationUnavailableError({
+                      reason: "provider-error",
+                      provider: "grok",
+                      detail: "Grok image generation timed out after 5 minutes.",
+                    })
+                  : cause._tag === "ImageGenerationUnavailableError"
+                    ? cause
+                    : new ImageGenerationUnavailableError({
+                        reason: "provider-error",
+                        provider: "grok",
+                        detail: "Grok did not start. Check the Grok binary path in Settings.",
+                      }),
+              ),
+            ),
+          );
+          return {
+            image: {
+              imageId,
+              filename: imageId,
+              mimeType: "image/jpeg",
+              provider: "grok",
+              model: settings.imageGenerationGrokModel,
+            },
+            path: generated.path,
+          };
         }
 
         const imageId = createGeneratedImageId(".png");
@@ -223,24 +208,6 @@ export class ImageGenerationService extends Context.Service<
         };
       });
 
-      const readSourceBytes = Effect.fn("ImageGenerationService.readSourceBytes")(function* (
-        imagePath: string,
-      ) {
-        const fromLibrary = parseGeneratedImageId(imagePath)
-          ? resolveGeneratedImagePath({ imagesDir: serverConfig.imagesDir, imageId: imagePath })
-          : null;
-        const sourcePath = fromLibrary ?? imagePath;
-        return yield* fileSystem.readFile(sourcePath).pipe(
-          Effect.mapError(
-            () =>
-              new ImageGenerationUnavailableError({
-                reason: "invalid-input",
-                detail: `Could not read the source image at ${imagePath}.`,
-              }),
-          ),
-        );
-      });
-
       const edit: ImageGenerationServiceShape["edit"] = Effect.fn("ImageGenerationService.edit")(
         function* (input) {
           const settings = yield* requireEnabled();
@@ -256,27 +223,77 @@ export class ImageGenerationService extends Context.Service<
                 "Image editing is available with Grok. Ask to edit with Grok, switch the provider in Settings → Integrations, or generate a new image.",
             });
           }
-          const source = yield* readSourceBytes(input.imagePath);
-          const options = grokImagineOptionsFromToolInput(input);
-          const image = yield* editGrokImage({
-            prompt: input.prompt,
-            model: settings.imageGenerationGrokModel,
-            aspectRatio: options.aspectRatio,
-            resolution: options.resolution,
-            sourceImage: source,
-            ...(options.quality ? { quality: options.quality } : {}),
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, path),
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.provideService(Clock.Clock, clock),
-          );
-          return yield* persistBytes({
-            bytes: image.bytes,
-            mimeType: image.mimeType,
-            provider: "grok",
-            model: settings.imageGenerationGrokModel,
+          const sourcePath = parseGeneratedImageId(input.imagePath)
+            ? resolveGeneratedImagePath({
+                imagesDir: serverConfig.imagesDir,
+                imageId: input.imagePath,
+              })
+            : input.imagePath;
+          if (!sourcePath) {
+            return yield* new ImageGenerationUnavailableError({
+              reason: "invalid-input",
+              detail: `Could not read the source image at ${input.imagePath}.`,
+            });
+          }
+          const imageId = createGeneratedImageId(".jpg");
+          if (!imageId) {
+            return yield* new ImageGenerationUnavailableError({
+              reason: "provider-error",
+              provider: "grok",
+              detail: "Could not allocate an image id.",
+            });
+          }
+          const destinationPath = resolveGeneratedImagePath({
+            imagesDir: serverConfig.imagesDir,
+            imageId,
           });
+          if (!destinationPath) {
+            return yield* new ImageGenerationUnavailableError({
+              reason: "provider-error",
+              provider: "grok",
+              detail: "Could not resolve the T3 Code images directory.",
+            });
+          }
+          const generated = yield* runLock.withPermits(1)(
+            editGrokImage({
+              settings: decodeGrokSettings(settings.providers.grok),
+              edit: input,
+              sourcePath,
+              destinationPath,
+              model: settings.imageGenerationGrokModel,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+              Effect.provideService(Clock.Clock, clock),
+              Effect.timeout(Duration.minutes(5)),
+              Effect.mapError((cause) =>
+                cause._tag === "TimeoutError"
+                  ? new ImageGenerationUnavailableError({
+                      reason: "provider-error",
+                      provider: "grok",
+                      detail: "Grok image editing timed out after 5 minutes.",
+                    })
+                  : cause._tag === "ImageGenerationUnavailableError"
+                    ? cause
+                    : new ImageGenerationUnavailableError({
+                        reason: "provider-error",
+                        provider: "grok",
+                        detail: "Grok did not start. Check the Grok binary path in Settings.",
+                      }),
+              ),
+            ),
+          );
+          return {
+            image: {
+              imageId,
+              filename: imageId,
+              mimeType: "image/jpeg",
+              provider: "grok",
+              model: settings.imageGenerationGrokModel,
+            },
+            path: generated.path,
+          };
         },
       );
 
@@ -326,5 +343,5 @@ export class ImageGenerationService extends Context.Service<
 
       return ImageGenerationService.of({ generate, edit, importFile });
     }),
-  ).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(FetchHttpClient.layer));
+  ).pipe(Layer.provide(ProcessRunner.layer));
 }

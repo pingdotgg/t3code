@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { grokImagineOptionsFromToolInput } from "./GrokImagine.ts";
+import { grokImagineOptionsFromToolInput } from "./GrokImageCli.ts";
 
 describe("grokImagineOptionsFromToolInput", () => {
   it("defaults aspect ratio to auto and resolution to 1k", () => {
