@@ -292,10 +292,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
   // Mobile has no hover, so the ring's numbers toggle open under the composer.
-  const [showsContextWindowDetail, setShowsContextWindowDetail] = useState(false);
+  // Keyed by thread: split view swaps the selected thread without remounting
+  // the composer, and a breakdown opened on one thread must not carry over.
+  const [contextWindowDetailThreadId, setContextWindowDetailThreadId] = useState<
+    OrchestrationThreadShell["id"] | null
+  >(null);
+  const showsContextWindowDetail = contextWindowDetailThreadId === props.selectedThread.id;
+  const selectedThreadId = props.selectedThread.id;
   const toggleContextWindowDetail = useCallback(() => {
-    setShowsContextWindowDetail((shown) => !shown);
-  }, []);
+    setContextWindowDetailThreadId((open) => (open === selectedThreadId ? null : selectedThreadId));
+  }, [selectedThreadId]);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
   // Opening and presentation count as active so the composer stays expanded
   // while focus moves between its native editor and the settings picker.
