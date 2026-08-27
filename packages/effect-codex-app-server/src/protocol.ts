@@ -157,7 +157,6 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const incomingRequests = yield* Queue.unbounded<CodexAppServerIncomingRequest>();
     const pending = yield* Ref.make(new Map<string, CodexAppServerPendingRequest>());
     const nextRequestId = yield* Ref.make(1);
-    const pendingLineParts: Array<string> = [];
     const terminationHandled = yield* Ref.make(false);
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
@@ -353,48 +352,18 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
 
     yield* options.stdio.stdin.pipe(
       Stream.decodeText(),
-      Stream.runForEach((chunk) =>
-        Effect.gen(function* () {
-          let start = 0;
-          let newline = chunk.indexOf("\n");
-
-          while (newline !== -1) {
-            let line = chunk.slice(start, newline);
-            if (pendingLineParts.length > 0) {
-              pendingLineParts.push(line);
-              line = pendingLineParts.join("");
-              pendingLineParts.length = 0;
-            }
-            if (line.endsWith("\r")) {
-              line = line.slice(0, -1);
-            }
-            yield* handleLine(line);
-            start = newline + 1;
-            newline = chunk.indexOf("\n", start);
-          }
-
-          if (start < chunk.length) {
-            pendingLineParts.push(chunk.slice(start));
-          }
-        }),
-      ),
+      Stream.splitLines,
+      Stream.runForEach(handleLine),
       Effect.matchEffect({
         onFailure: (error) =>
           handleTermination(() =>
             Effect.succeed(normalizeIncomingError(error, "read-input-stream")),
           ),
         onSuccess: () =>
-          Effect.sync(() => pendingLineParts.join("")).pipe(
-            Effect.flatMap((line) => (line.trim().length === 0 ? Effect.void : handleLine(line))),
-            Effect.matchEffect({
-              onFailure: (error) => handleTermination(() => Effect.succeed(error)),
-              onSuccess: () =>
-                handleTermination(
-                  () =>
-                    options.terminationError ??
-                    Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})),
-                ),
-            }),
+          handleTermination(
+            () =>
+              options.terminationError ??
+              Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})),
           ),
       }),
       Effect.forkScoped,
