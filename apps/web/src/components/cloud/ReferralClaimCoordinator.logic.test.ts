@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { claimReferralWithRetry } from "./ReferralClaimCoordinator.logic";
+import { claimReferralWithRetry, referralClaimLoadState } from "./ReferralClaimCoordinator.logic";
+
+describe("referralClaimLoadState", () => {
+  it("only prompts sign-in for a referral captured on the current load", () => {
+    expect(referralClaimLoadState("FROM_URL", "FROM_STORAGE")).toEqual({
+      referralCode: "FROM_URL",
+      shouldPromptSignIn: true,
+    });
+    expect(referralClaimLoadState(null, "FROM_STORAGE")).toEqual({
+      referralCode: "FROM_STORAGE",
+      shouldPromptSignIn: false,
+    });
+  });
+});
 
 describe("claimReferralWithRetry", () => {
   it("retries transient failures with bounded backoff", async () => {

@@ -4,6 +4,16 @@ function waitForRetry(delay: number): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, delay));
 }
 
+export function referralClaimLoadState(
+  capturedCode: string | null,
+  storedCode: string | null,
+): { referralCode: string | null; shouldPromptSignIn: boolean } {
+  return {
+    referralCode: capturedCode ?? storedCode,
+    shouldPromptSignIn: capturedCode !== null,
+  };
+}
+
 export async function claimReferralWithRetry<Result>({
   claim,
   shouldRetry,

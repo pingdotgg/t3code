@@ -22,7 +22,7 @@ import {
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { toastManager } from "../ui/toast";
-import { claimReferralWithRetry } from "./ReferralClaimCoordinator.logic";
+import { claimReferralWithRetry, referralClaimLoadState } from "./ReferralClaimCoordinator.logic";
 
 function clearPendingReferralCode(): void {
   try {
@@ -98,13 +98,20 @@ function ConfiguredReferralClaimCoordinator() {
   const activeClaimRef = useRef<string | null>(null);
   const completedClaimRef = useRef<string | null>(null);
   const promptedSignInRef = useRef<string | null>(null);
+  const shouldPromptSignInRef = useRef(false);
 
   useEffect(() => {
-    setPendingReferralCode(captureReferralCode() ?? readPendingReferralCode());
+    const capturedCode = captureReferralCode();
+    const initial = referralClaimLoadState(
+      capturedCode,
+      capturedCode ? null : readPendingReferralCode(),
+    );
+    shouldPromptSignInRef.current = initial.shouldPromptSignIn;
+    setPendingReferralCode(initial.referralCode);
   }, []);
 
   useEffect(() => {
-    if (!isLoaded || isSignedIn || !pendingReferralCode) return;
+    if (!isLoaded || isSignedIn || !pendingReferralCode || !shouldPromptSignInRef.current) return;
     if (promptedSignInRef.current === pendingReferralCode) return;
     promptedSignInRef.current = pendingReferralCode;
     toastManager.add({
