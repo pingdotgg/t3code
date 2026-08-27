@@ -418,6 +418,11 @@ public struct WorkspaceView: View {
                     Text("Code")
                         .fontWeight(.medium)
                         .foregroundStyle(T3Colors.textSecondary)
+                    if let suffix = PersonalBuildChannel.current.titleSuffix {
+                        Text(suffix)
+                            .fontWeight(.bold)
+                            .foregroundStyle(PersonalBuildChannel.current.color)
+                    }
                     Image(systemName: "chevron.down")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(T3Colors.textTertiary)
@@ -428,7 +433,7 @@ public struct WorkspaceView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("T3 Code. Manage environments")
+            .accessibilityLabel(PersonalBuildChannel.current.homeAccessibilityLabel)
             .accessibilityIdentifier("sidebar-environments-button")
         }
     }

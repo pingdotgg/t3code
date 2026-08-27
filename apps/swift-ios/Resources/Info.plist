@@ -34,6 +34,8 @@
             </dict>
         </dict>
     </dict>
+    <key>T3BuildChannel</key>
+    <string>$(T3_BUILD_CHANNEL)</string>
     <key>T3GitCommit</key>
     <string>$(T3_GIT_COMMIT)</string>
     <key>T3ConnectClerkJWTTemplate</key>

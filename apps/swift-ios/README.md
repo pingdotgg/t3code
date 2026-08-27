@@ -71,6 +71,7 @@ Info.plist:
 | `T3CODE_CLERK_PUBLISHABLE_KEY` | T3 Connect only | Clerk publishable key.                          |
 | `T3CODE_CLERK_JWT_TEMPLATE`    | No              | Relay JWT template; defaults to `t3-relay`.     |
 | `T3CODE_RELAY_URL`             | T3 Connect only | Relay base URL using HTTPS.                     |
+| `T3_BUILD_CHANNEL`             | No              | Home title marker: `dev` or `test`.             |
 | `DEVELOPMENT_TEAM`             | Device/archive  | Apple Developer team used by automatic signing. |
 | `MARKETING_VERSION`            | Release         | User-facing version.                            |
 | `CURRENT_PROJECT_VERSION`      | Release         | Monotonically increasing build number.          |
