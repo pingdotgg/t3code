@@ -1017,8 +1017,9 @@ const makeWsRpcLayer = (
             if (bootstrap?.prepareWorktree) {
               let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
               // "Start from origin" is a stored default; repos without an
-              // origin remote fall back to the local base branch instead of
-              // failing the whole bootstrap on `git fetch origin`.
+              // origin remote fall back to the local base branch. When origin
+              // exists, use the local origin/<base> commit, fetching only that
+              // branch if the tracking ref is missing.
               const startFromOrigin =
                 bootstrap.prepareWorktree.startFromOrigin === true &&
                 (yield* gitWorkflow.remoteExists({
@@ -1026,15 +1027,24 @@ const makeWsRpcLayer = (
                   remoteName: "origin",
                 }));
               if (startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                });
-                const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                const originBase = {
                   cwd: bootstrap.prepareWorktree.projectCwd,
                   refName: bootstrap.prepareWorktree.baseBranch,
                   fallbackRemoteName: "origin",
-                });
+                } as const;
+                const existingOriginCommit = yield* gitWorkflow
+                  .resolveRemoteTrackingCommit(originBase)
+                  .pipe(Effect.option);
+                if (Option.isNone(existingOriginCommit)) {
+                  yield* gitWorkflow.fetchRemoteTrackingBranch({
+                    cwd: originBase.cwd,
+                    remoteName: originBase.fallbackRemoteName,
+                    remoteBranch: originBase.refName,
+                  });
+                }
+                const resolvedRemoteBase = Option.isSome(existingOriginCommit)
+                  ? existingOriginCommit.value
+                  : yield* gitWorkflow.resolveRemoteTrackingCommit(originBase);
                 worktreeBaseRef = resolvedRemoteBase.commitSha;
               }
               const worktree = yield* gitWorkflow.createWorktree({
