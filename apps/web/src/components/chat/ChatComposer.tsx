@@ -4741,8 +4741,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, []);
   // With the editor and footer native, the frame only earns its space when a
   // banner, attachment, context or validation message is visible.
+  const hasShoulderTab = showTasksTab || (!isComposerApprovalState && stashQueue.length > 0);
   const shellFrameEmpty =
     hideEditorForShell &&
+    !hasShoulderTab &&
     composerImages.length === 0 &&
     composerTerminalContexts.length === 0 &&
     composerElementContexts.length === 0 &&
