@@ -299,6 +299,58 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect("uses the version-gated native update command for supported provider versions", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        version: "0.128.0",
+      });
+      const fallback = makeProviderMaintenanceCapabilities({
+        provider: CODEX_DRIVER,
+        packageName: "@openai/codex",
+        updateExecutable: "npm",
+        updateArgs: ["install", "-g", "@openai/codex@latest"],
+        updateLockKey: "npm-global",
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed({
+            ...fallback,
+            versionedUpdate: {
+              minimumVersion: "0.128.0",
+              update: {
+                command: "codex update",
+                executable: "/opt/codex/bin/codex",
+                args: ["update"],
+                lockKey: "codex-native",
+              },
+            },
+          }),
+      });
+
+      yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, [
+        {
+          command: "/opt/codex/bin/codex",
+          args: ["update"],
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.128.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect(
     "runs update commands through Effect ChildProcess when no test runner is injected",
     () => {

@@ -65,6 +65,14 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   npmPackageName: "@openai/codex",
   homebrewFormula: "codex",
   nativeUpdate: null,
+  versionedNativeUpdate: {
+    // `codex update` first shipped in stable Codex 0.128.0. Older CLIs
+    // still need the package-manager command selected by maintenance.
+    minimumVersion: "0.128.0",
+    executable: "codex",
+    args: ["update"],
+    lockKey: "codex-native",
+  },
 });
 
 /**

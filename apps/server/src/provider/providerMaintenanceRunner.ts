@@ -23,7 +23,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
-import { enrichProviderSnapshotWithVersionAdvisory } from "./providerMaintenance.ts";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  resolveProviderMaintenanceUpdate,
+} from "./providerMaintenance.ts";
 import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
@@ -297,7 +300,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       instanceId,
       provider,
     );
-    const update = capabilities.update;
+    const currentProvider = (yield* providerRegistry.getProviders).find(
+      (candidate) => candidate.instanceId === instanceId && candidate.driver === provider,
+    );
+    const update = resolveProviderMaintenanceUpdate(capabilities, currentProvider?.version ?? null);
     if (!update) {
       return yield* new ServerProviderUpdateError({
         provider,

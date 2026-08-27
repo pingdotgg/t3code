@@ -40,7 +40,10 @@ const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(()
 export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
+  /** Update path for versions that predate a provider-owned updater. */
   readonly update: ProviderMaintenanceCommandAction | null;
+  /** Preferred update path once the installed provider reaches its minimum version. */
+  readonly versionedUpdate?: ProviderMaintenanceVersionedCommandAction;
 }
 
 export interface ProviderMaintenanceCommandAction {
@@ -48,6 +51,11 @@ export interface ProviderMaintenanceCommandAction {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly lockKey: string;
+}
+
+export interface ProviderMaintenanceVersionedCommandAction {
+  readonly minimumVersion: string;
+  readonly update: ProviderMaintenanceCommandAction;
 }
 
 export interface ProviderMaintenanceCapabilityResolutionOptions {
@@ -73,6 +81,12 @@ export interface PackageManagedProviderMaintenanceDefinition {
     readonly lockKey: string;
     readonly isCommandPath: (commandPath: string) => boolean;
   } | null;
+  readonly versionedNativeUpdate?: {
+    readonly minimumVersion: string;
+    readonly executable: string;
+    readonly args: ReadonlyArray<string>;
+    readonly lockKey: string;
+  };
 }
 
 export interface ProviderVersionCacheEntry {
@@ -278,12 +292,35 @@ export function resolvePackageManagedProviderMaintenance(
   options?: ProviderMaintenanceCapabilityResolutionOptions,
 ): ProviderMaintenanceCapabilities {
   const binaryPath = nonEmptyString(options?.binaryPath);
-  if (!binaryPath) {
-    return makeNpmGlobalProviderMaintenanceCapabilities(definition);
-  }
-
   const resolvedCommandPath =
-    options?.resolvedCommandPath ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
+    options?.resolvedCommandPath ??
+    (binaryPath && hasPathSeparator(binaryPath) ? binaryPath : null);
+  const withVersionedUpdate = (
+    capabilities: ProviderMaintenanceCapabilities,
+  ): ProviderMaintenanceCapabilities => {
+    const versionedNativeUpdate = definition.versionedNativeUpdate;
+    if (!versionedNativeUpdate) {
+      return capabilities;
+    }
+
+    const commandExecutable = binaryPath ?? versionedNativeUpdate.executable;
+    return {
+      ...capabilities,
+      versionedUpdate: {
+        minimumVersion: versionedNativeUpdate.minimumVersion,
+        update: {
+          command: [commandExecutable, ...versionedNativeUpdate.args].join(" "),
+          executable: resolvedCommandPath ?? commandExecutable,
+          args: versionedNativeUpdate.args,
+          lockKey: versionedNativeUpdate.lockKey,
+        },
+      },
+    };
+  };
+
+  if (!binaryPath) {
+    return withVersionedUpdate(makeNpmGlobalProviderMaintenanceCapabilities(definition));
+  }
 
   if (resolvedCommandPath) {
     const commandPaths = [
@@ -296,36 +333,53 @@ export function resolvePackageManagedProviderMaintenance(
       nativeUpdate &&
       commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))
     ) {
-      return (
+      return withVersionedUpdate(
         makeNativeProviderMaintenanceCapabilities(definition) ??
-        makeNpmGlobalProviderMaintenanceCapabilities(definition)
+          makeNpmGlobalProviderMaintenanceCapabilities(definition),
       );
     }
     if (commandPaths.some(isVitePlusGlobalCommandPath)) {
-      return makeVitePlusGlobalProviderMaintenanceCapabilities(definition);
+      return withVersionedUpdate(makeVitePlusGlobalProviderMaintenanceCapabilities(definition));
     }
     if (commandPaths.some(isBunGlobalCommandPath)) {
-      return makeBunGlobalProviderMaintenanceCapabilities(definition);
+      return withVersionedUpdate(makeBunGlobalProviderMaintenanceCapabilities(definition));
     }
     if (commandPaths.some(isPnpmGlobalCommandPath)) {
-      return makePnpmGlobalProviderMaintenanceCapabilities(definition);
+      return withVersionedUpdate(makePnpmGlobalProviderMaintenanceCapabilities(definition));
     }
     if (commandPaths.some(isNpmGlobalCommandPath)) {
-      return makeNpmGlobalProviderMaintenanceCapabilities(definition);
+      return withVersionedUpdate(makeNpmGlobalProviderMaintenanceCapabilities(definition));
     }
     if (commandPaths.some(isHomebrewCommandPath)) {
-      return makeHomebrewProviderMaintenanceCapabilities(definition);
+      return withVersionedUpdate(makeHomebrewProviderMaintenanceCapabilities(definition));
     }
   }
 
   if (!hasPathSeparator(binaryPath)) {
-    return makeNpmGlobalProviderMaintenanceCapabilities(definition);
+    return withVersionedUpdate(makeNpmGlobalProviderMaintenanceCapabilities(definition));
   }
 
-  return makeManualOnlyProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.npmPackageName,
-  });
+  return withVersionedUpdate(
+    makeManualOnlyProviderMaintenanceCapabilities({
+      provider: definition.provider,
+      packageName: definition.npmPackageName,
+    }),
+  );
+}
+
+export function resolveProviderMaintenanceUpdate(
+  capabilities: ProviderMaintenanceCapabilities,
+  currentVersion: string | null,
+): ProviderMaintenanceCommandAction | null {
+  const versionedUpdate = capabilities.versionedUpdate;
+  if (
+    versionedUpdate &&
+    currentVersion &&
+    compareSemverVersions(currentVersion, versionedUpdate.minimumVersion) >= 0
+  ) {
+    return versionedUpdate.update;
+  }
+  return capabilities.update;
 }
 
 export function makePackageManagedProviderMaintenanceResolver(
@@ -413,6 +467,7 @@ export function createProviderVersionAdvisory(input: {
 }): ServerProviderVersionAdvisory {
   const capabilities =
     input.maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(input.driver);
+  const update = resolveProviderMaintenanceUpdate(capabilities, input.currentVersion);
   const latestVersion = input.latestVersion ?? null;
   const advisory = deriveVersionAdvisory({
     currentVersion: input.currentVersion,
@@ -423,8 +478,8 @@ export function createProviderVersionAdvisory(input: {
     status: advisory.status,
     currentVersion: input.currentVersion,
     latestVersion,
-    updateCommand: capabilities.update?.command ?? null,
-    canUpdate: capabilities.update !== null,
+    updateCommand: update?.command ?? null,
+    canUpdate: update !== null,
     checkedAt: input.checkedAt ?? null,
     message: advisory.message,
   };

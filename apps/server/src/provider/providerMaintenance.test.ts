@@ -59,6 +59,18 @@ const scopedPackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
     isCommandPath: isNativeTestCommandPath("/.scoped-package-tool/bin/scoped-package-tool"),
   },
 });
+const versionedPackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
+  provider: driver("versionedPackageTool"),
+  npmPackageName: "@example/versioned-package-tool",
+  homebrewFormula: "versioned-package-tool",
+  nativeUpdate: null,
+  versionedNativeUpdate: {
+    minimumVersion: "2.0.0",
+    executable: "versioned-package-tool",
+    args: ["update"],
+    lockKey: "versioned-package-tool-native",
+  },
+});
 const staticToolUpdate = makeStaticProviderMaintenanceResolver(
   makeProviderMaintenanceCapabilities({
     provider: driver("staticTool"),
@@ -180,6 +192,78 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         "npm install -g --allow-scripts=@example/native-package-tool @example/native-package-tool@latest",
       canUpdate: true,
       message: "Install the update now or review provider settings.",
+    });
+  });
+
+  it("uses the resolved native updater once the installed version supports it", () => {
+    const capabilities = versionedPackageToolUpdate.resolve({
+      binaryPath: "versioned-package-tool",
+      resolvedCommandPath: "/opt/versioned/bin/versioned-package-tool",
+    });
+
+    expect(capabilities.versionedUpdate?.update).toMatchObject({
+      command: "versioned-package-tool update",
+      executable: "/opt/versioned/bin/versioned-package-tool",
+      args: ["update"],
+      lockKey: "versioned-package-tool-native",
+    });
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("versionedPackageTool"),
+        currentVersion: "2.0.0",
+        latestVersion: "2.1.0",
+        maintenanceCapabilities: capabilities,
+      }),
+    ).toMatchObject({
+      updateCommand: "versioned-package-tool update",
+      canUpdate: true,
+    });
+  });
+
+  it("keeps the package-manager fallback for versions without the native updater", () => {
+    const capabilities = versionedPackageToolUpdate.resolve({
+      binaryPath: "versioned-package-tool",
+      resolvedCommandPath: "/usr/local/lib/node_modules/@example/versioned-package-tool/bin.js",
+    });
+
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("versionedPackageTool"),
+        currentVersion: "1.9.9",
+        latestVersion: "2.1.0",
+        maintenanceCapabilities: capabilities,
+      }),
+    ).toMatchObject({
+      updateCommand:
+        "npm install -g --allow-scripts=@example/versioned-package-tool @example/versioned-package-tool@latest",
+      canUpdate: true,
+    });
+  });
+
+  it("only enables standalone updates when the installed version supports the native updater", () => {
+    const capabilities = versionedPackageToolUpdate.resolve({
+      binaryPath: "/opt/versioned/bin/versioned-package-tool",
+      resolvedCommandPath: "/opt/versioned/bin/versioned-package-tool",
+    });
+
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("versionedPackageTool"),
+        currentVersion: "1.9.9",
+        latestVersion: "2.1.0",
+        maintenanceCapabilities: capabilities,
+      }),
+    ).toMatchObject({ updateCommand: null, canUpdate: false });
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("versionedPackageTool"),
+        currentVersion: "2.0.0",
+        latestVersion: "2.1.0",
+        maintenanceCapabilities: capabilities,
+      }),
+    ).toMatchObject({
+      updateCommand: "/opt/versioned/bin/versioned-package-tool update",
+      canUpdate: true,
     });
   });
 
