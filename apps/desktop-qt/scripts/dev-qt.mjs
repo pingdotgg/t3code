@@ -101,7 +101,9 @@ function pairWithDevServer() {
   });
   const url = findPairingUrl(`${result.stdout}\n${result.stderr}`);
   if (url !== undefined) return url;
-  process.stderr.write(result.stderr);
+  // `pair` logs its "No running T3 Code server" report (with the state paths it
+  // checked) through the Effect logger, i.e. on stdout.
+  process.stderr.write(`${result.stdout}${result.stderr}`.trim() + "\n");
   return fail(
     "no running dev server to attach to. Start `vp run dev` in another terminal first (same T3CODE_HOME), or pass --url <pairing url>.",
   );
