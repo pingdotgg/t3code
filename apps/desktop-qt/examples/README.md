@@ -9,12 +9,12 @@ and the app reloads on save:
 cp examples/glass/*.* ~/.t3/shell/
 ```
 
-| Example     | Idea                                                                |
-| ----------- | ------------------------------------------------------------------- |
-| `minimal`   | The default layout with the title bar moved to the bottom.          |
-| `dashboard` | Warm light theme, tab strip on top, every brick in a rounded card.  |
-| `glass`     | Transparent window for compositor blur, big clock, floating panels. |
-| `terminal`  | Status bar with clock and counts, mono type, sharp corners.         |
+| Example     | Idea                                                                                                                                                                             |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `minimal`   | The default layout with the title bar moved to the bottom.                                                                                                                       |
+| `dashboard` | Rosé light theme, icon rail, tab notch on top, and a Dashboard tab that pulls a widget drawer over the page: today, the month, the open workspace, thread meters, and the agent. |
+| `glass`     | Transparent window for compositor blur, big clock, floating panels.                                                                                                              |
+| `terminal`  | Status bar with clock and counts, mono type, sharp corners.                                                                                                                      |
 
 What you can reach from `shell.qml`: the bricks (`TitleBar`, `Sidebar`,
 `SettingsNav`, `Workspace`, `GitActions`, `WebSurface`, `Composer`,
