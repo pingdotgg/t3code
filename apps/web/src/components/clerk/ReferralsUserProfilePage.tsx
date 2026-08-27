@@ -3,7 +3,6 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { RelayReferralClaimResult } from "@t3tools/contracts/relay";
-import { REFERRAL_SHARE_TEXT, REFERRAL_SHARE_TITLE } from "@t3tools/shared/referral";
 import { CheckIcon, CopyIcon, GiftIcon, LinkIcon, Share2Icon, TicketCheckIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
@@ -11,7 +10,11 @@ import {
   claimManagedRelayReferralCommand,
   useManagedRelayReferralSummary,
 } from "../../cloud/managedRelayState";
-import { buildReferralLink, normalizeReferralCode } from "../../cloud/referralLinks";
+import {
+  buildReferralLink,
+  buildReferralShareData,
+  normalizeReferralCode,
+} from "../../cloud/referralLinks";
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -158,11 +161,7 @@ export function ReferralsUserProfilePage() {
     }
 
     try {
-      await navigator.share({
-        title: REFERRAL_SHARE_TITLE,
-        text: REFERRAL_SHARE_TEXT,
-        url: referralLink,
-      });
+      await navigator.share(buildReferralShareData(referralLink));
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") return;
       toastManager.add({

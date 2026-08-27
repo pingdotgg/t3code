@@ -276,7 +276,12 @@ export const ApiLive = Api.make(
             ),
           ),
         ),
-        Effect.withSpan("relay.cron.prune_expired_state"),
+        Effect.andThen(
+          ReferralProgram.ReferralProgram.pipe(
+            Effect.flatMap((referrals) => referrals.recoverPendingAwards()),
+          ),
+        ),
+        Effect.withSpan("relay.cron.maintenance"),
         Effect.provide(runtimeLayer),
       ),
     );

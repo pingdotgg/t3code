@@ -1,4 +1,9 @@
-import { buildReferralLink, normalizeReferralCode } from "@t3tools/shared/referral";
+import {
+  buildReferralLink,
+  buildReferralShareMessage,
+  normalizeReferralCode,
+  REFERRAL_SHARE_TITLE,
+} from "@t3tools/shared/referral";
 
 export const PENDING_REFERRAL_CODE_STORAGE_KEY = "t3code.pending-referral-code";
 
@@ -26,6 +31,14 @@ export function captureReferralCodeFromUrl(
   }
 
   return { referralCode, cleanedUrl: urlWithoutReferralCode(url) };
+}
+
+export function buildReferralShareData(referralLink: string) {
+  return {
+    title: REFERRAL_SHARE_TITLE,
+    text: buildReferralShareMessage(referralLink),
+    url: referralLink,
+  };
 }
 
 export { buildReferralLink, normalizeReferralCode };

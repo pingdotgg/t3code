@@ -76,6 +76,25 @@ function makeFakeDb(state: FakeReferralState) {
               return Effect.succeed([{ referrals }]);
             }
 
+            if (
+              hasSelection(selection, "userId") &&
+              query.sql.includes('"qualified_at" is null') &&
+              query.sql.includes('from "relay_environment_links"')
+            ) {
+              const referrerUserId = query.sql.includes('"referrer_user_id" =') ? value : null;
+              return Effect.succeed(
+                [...state.accounts.values()]
+                  .filter(
+                    (row) =>
+                      row.referrerUserId !== null &&
+                      row.qualifiedAt === null &&
+                      state.environmentUsers.has(row.userId) &&
+                      (referrerUserId === null || row.referrerUserId === referrerUserId),
+                  )
+                  .map((row) => ({ userId: row.userId })),
+              );
+            }
+
             const account = hasSelection(selection, "userId")
               ? [...state.accounts.values()].find((row) => row.referralCode === value)
               : state.accounts.get(value);
@@ -299,12 +318,9 @@ describe("ReferralProgram", () => {
       });
 
       delete state.pointInsertFailure;
-      expect(
-        (yield* referrals.claim({
-          userId: "referred",
-          referralCode: referrer.referralCode,
-        })).result,
-      ).toBe("already_claimed");
+      expect(yield* referrals.recoverPendingAwards({ referrerUserId: "someone-else" })).toBe(0);
+      expect(yield* referrals.recoverPendingAwards({ referrerUserId: "referrer" })).toBe(1);
+      expect(yield* referrals.recoverPendingAwards()).toBe(0);
       expect(yield* referrals.getSummary({ userId: "referrer" })).toMatchObject({
         points: 67,
         qualifiedReferrals: 1,

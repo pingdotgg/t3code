@@ -32,6 +32,7 @@ export class ReferralProgramPersistenceError extends Schema.TaggedErrorClass<Ref
       "load-summary",
       "claim-referral",
       "qualify-referral",
+      "recover-referrals",
     ]),
     userId: Schema.String,
     cause: Schema.optionalKey(Schema.Defect()),
@@ -57,6 +58,9 @@ export class ReferralProgram extends Context.Service<
     readonly qualify: (input: {
       readonly userId: string;
     }) => Effect.Effect<boolean, ReferralProgramPersistenceError>;
+    readonly recoverPendingAwards: (input?: {
+      readonly referrerUserId?: string;
+    }) => Effect.Effect<number, ReferralProgramPersistenceError>;
   }
 >()("t3code-relay/referrals/ReferralProgram") {}
 
@@ -297,6 +301,53 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const recoverPendingAwards = Effect.fn("relay.referrals.recover_pending_awards")(
+    function* (input?: { readonly referrerUserId?: string }) {
+      const pending = yield* db
+        .select({ userId: relayReferralAccounts.userId })
+        .from(relayReferralAccounts)
+        .where(
+          and(
+            isNotNull(relayReferralAccounts.referrerUserId),
+            isNull(relayReferralAccounts.qualifiedAt),
+            input?.referrerUserId
+              ? eq(relayReferralAccounts.referrerUserId, input.referrerUserId)
+              : undefined,
+            sql`exists (
+            select 1 from ${relayEnvironmentLinks}
+            where ${relayEnvironmentLinks.userId} = ${relayReferralAccounts.userId}
+          )`,
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ReferralProgramPersistenceError({
+                operation: "recover-referrals",
+                userId: "system",
+                cause,
+              }),
+          ),
+        );
+      const recovered = yield* Effect.forEach(
+        pending,
+        ({ userId }) =>
+          qualify({ userId }).pipe(
+            Effect.tapError((error) =>
+              Effect.logWarning("pending referral award recovery failed", {
+                errorTag: error._tag,
+                operation: error.operation,
+                userId,
+              }),
+            ),
+            Effect.orElseSucceed(() => false),
+          ),
+        { concurrency: 4 },
+      );
+      return recovered.filter(Boolean).length;
+    },
+  );
+
   const claim = Effect.fn("relay.referrals.claim")(function* (input: {
     readonly userId: string;
     readonly referralCode: string;
@@ -387,7 +438,7 @@ export const make = Effect.gen(function* () {
     } satisfies RelayReferralClaimResponse;
   });
 
-  return ReferralProgram.of({ getSummary, claim, qualify });
+  return ReferralProgram.of({ getSummary, claim, qualify, recoverPendingAwards });
 });
 
 export const layer = Layer.effect(ReferralProgram, make);

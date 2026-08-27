@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildReferralShareData,
   captureReferralCodeFromUrl,
   referralCodeFromUrl,
   urlWithoutReferralCode,
@@ -26,5 +27,16 @@ describe("referralLinks", () => {
       referralCode: "ABCD1234EFAB5678",
       cleanedUrl: "/#thread",
     });
+  });
+
+  it("embeds the claim URL in web share text even when a share target drops the url field", () => {
+    const referralLink = "https://app.t3.codes/?ref=ABCD1234EFAB5678";
+    const shareData = buildReferralShareData(referralLink);
+
+    expect(shareData).toMatchObject({
+      title: "T3 Code referral",
+      url: referralLink,
+    });
+    expect(shareData.text).toContain(referralLink);
   });
 });

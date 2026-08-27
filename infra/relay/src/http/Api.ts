@@ -554,6 +554,7 @@ export const clientApi = HttpApiBuilder.group(
         "getReferralSummary",
         Effect.fn("relay.api.client.getReferralSummary")(function* () {
           const { userId } = yield* RelayClientPrincipal;
+          yield* referrals.recoverPendingAwards({ referrerUserId: userId });
           return yield* referrals.getSummary({ userId });
         }, mapRelayCommonApiErrors("not_authorized")),
       )
