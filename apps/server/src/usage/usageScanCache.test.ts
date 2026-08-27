@@ -42,12 +42,21 @@ describe("scan cache round trip", () => {
       ["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5" })]],
       ["/b.jsonl", 200, [record({ sessionId: "session-b", reportedCostUsd: 1.5 })]],
     ]);
+    original.set("/grok.jsonl", {
+      size: 40,
+      mtimeMs: 300,
+      provider: "grok",
+      records: [
+        record({ provider: "grok", model: "grok-4.5-build", dedupeKey: "s:p:grok-4.5-build" }),
+      ],
+    });
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
 
-    expect(restored.size).toBe(2);
+    expect(restored.size).toBe(3);
     expect(restored.get("/a.jsonl")).toEqual(original.get("/a.jsonl"));
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
+    expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
   });
 
   it("interns repeated model and session strings", () => {
