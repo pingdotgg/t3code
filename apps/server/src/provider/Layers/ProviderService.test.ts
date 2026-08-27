@@ -74,9 +74,11 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
+const posthogCloudInstanceId = ProviderInstanceId.make("posthogCloud");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const POSTHOG_CLOUD_DRIVER = ProviderDriverKind.make("posthogCloud");
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -287,10 +289,12 @@ function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
+  const cloud = makeFakeCodexAdapter(POSTHOG_CLOUD_DRIVER);
   const registry = makeAdapterRegistryMock({
     [ProviderDriverKind.make("codex")]: codex.adapter,
     [ProviderDriverKind.make("claudeAgent")]: claude.adapter,
     [ProviderDriverKind.make("cursor")]: cursor.adapter,
+    [ProviderDriverKind.make("posthogCloud")]: cloud.adapter,
   });
 
   const providerAdapterLayer = Layer.succeed(
@@ -328,6 +332,7 @@ function makeProviderServiceLayer() {
     codex,
     claude,
     cursor,
+    cloud,
     layer,
   };
 }
@@ -1145,7 +1150,28 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const imageOnlyInput = routing.codex.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
       assert.equal(imageOnlyInput.input?.startsWith('[Attached image "screenshot.png"'), true);
 
+      const cloudSession = yield* provider.startSession(asThreadId("thread-cloud-attach"), {
+        provider: POSTHOG_CLOUD_DRIVER,
+        providerInstanceId: posthogCloudInstanceId,
+        threadId: asThreadId("thread-cloud-attach"),
+        cwd: "/tmp/project",
+        runtimeMode: "full-access",
+      });
+      routing.cloud.sendTurn.mockClear();
+      yield* provider.sendTurn({
+        threadId: cloudSession.threadId,
+        input: "use this screenshot",
+        attachments: [attachment],
+      });
+      const cloudInput = routing.cloud.sendTurn.mock.calls[0]?.[0] as ProviderSendTurnInput;
+      assert.equal(cloudInput.input, "use this screenshot");
+      assert.equal(
+        cloudInput.resolvedAttachments?.[0]?.path.endsWith(`${attachment.id}.png`),
+        true,
+      );
+
       yield* provider.stopSession({ threadId: session.threadId });
+      yield* provider.stopSession({ threadId: cloudSession.threadId });
     }),
   );
 

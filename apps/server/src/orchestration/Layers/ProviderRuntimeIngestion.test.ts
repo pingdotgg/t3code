@@ -47,7 +47,7 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
-import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import { cloudThreadMetadata, ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
 import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
@@ -66,6 +66,29 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+
+describe("cloudThreadMetadata", () => {
+  it("maps Cloud Task branch and GitHub pull request metadata", () => {
+    expect(
+      cloudThreadMetadata(
+        {
+          branch: "posthog/cloud-task",
+          repository: "posthog/t3code",
+          prUrl: "https://github.com/posthog/t3code/pull/42",
+        },
+        asProjectId("project-1"),
+      ),
+    ).toEqual({
+      branch: "posthog/cloud-task",
+      linkedPullRequest: {
+        projectId: asProjectId("project-1"),
+        repository: "posthog/t3code",
+        number: 42,
+        url: "https://github.com/posthog/t3code/pull/42",
+      },
+    });
+  });
+});
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;

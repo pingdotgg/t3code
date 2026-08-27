@@ -9,6 +9,14 @@
 import {
   type PostHogCurrentUserInput,
   type PostHogCurrentUserResult,
+  PostHogCloudCommandResult,
+  PostHogCloudModel,
+  PostHogCloudRun,
+  PostHogCloudRunArtifact,
+  type PostHogCloudRunId,
+  type PostHogCloudStreamEvent,
+  PostHogCloudTask,
+  type PostHogCloudTaskId,
   PostHogNotConfiguredError,
   PostHogReport,
   PostHogReportArtefact,
@@ -32,10 +40,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { POSTHOG_API_KEY_SECRET_NAME, ServerSettingsService } from "../serverSettings.ts";
+import { decodePostHogSse } from "./PostHogSse.ts";
 
 const DEFAULT_LIST_LIMIT = 50;
 const ARTEFACTS_LIST_LIMIT = 200;
@@ -66,6 +76,54 @@ const CurrentUserBody = Schema.Struct({
 });
 const decodeCurrentUser = Schema.decodeUnknownEffect(CurrentUserBody);
 const decodeArtefact = Schema.decodeUnknownEffect(PostHogReportArtefact);
+const CloudModelsBody = Schema.Struct({ models: Schema.Array(PostHogCloudModel) });
+const decodeCloudModels = Schema.decodeUnknownEffect(CloudModelsBody);
+const decodeCloudTask = Schema.decodeUnknownEffect(PostHogCloudTask);
+const decodeCloudRun = Schema.decodeUnknownEffect(PostHogCloudRun);
+const decodeCloudCommandResult = Schema.decodeUnknownEffect(PostHogCloudCommandResult);
+const CloudArtifactsBody = Schema.Struct({ artifacts: Schema.Array(PostHogCloudRunArtifact) });
+const decodeCloudArtifacts = Schema.decodeUnknownEffect(CloudArtifactsBody);
+
+interface CreateCloudTaskInput {
+  readonly title: string;
+  readonly description: string;
+  readonly repository?: string;
+  readonly signalReportId?: string;
+}
+
+interface RunCloudTaskInput {
+  readonly taskId: PostHogCloudTaskId;
+  readonly message: string;
+  readonly resumeFromRunId?: PostHogCloudRunId;
+  readonly runtimeAdapter: "claude" | "codex";
+  readonly model: string;
+  readonly reasoningEffort?: string;
+  readonly artifactIds?: ReadonlyArray<string>;
+}
+
+interface CloudRunInput {
+  readonly taskId: PostHogCloudTaskId;
+  readonly runId: PostHogCloudRunId;
+}
+
+interface CloudCommandInput extends CloudRunInput {
+  readonly method: string;
+  readonly params?: Readonly<Record<string, unknown>>;
+  readonly id?: string;
+}
+
+interface CloudArtifactUploadInput extends CloudRunInput {
+  readonly artifacts: ReadonlyArray<{
+    readonly name: string;
+    readonly contentType: string;
+    readonly base64: string;
+  }>;
+}
+
+interface CloudStreamInput extends CloudRunInput {
+  readonly lastEventId?: string;
+  readonly startLatest?: boolean;
+}
 
 export class PostHogClient extends Context.Service<
   PostHogClient,
@@ -88,6 +146,30 @@ export class PostHogClient extends Context.Service<
     readonly setReviewers: (
       input: PostHogSetReviewersInput,
     ) => Effect.Effect<PostHogSetReviewersResult, PostHogRpcError>;
+    readonly listCloudModels: () => Effect.Effect<
+      ReadonlyArray<PostHogCloudModel>,
+      PostHogRpcError
+    >;
+    readonly createCloudTask: (
+      input: CreateCloudTaskInput,
+    ) => Effect.Effect<PostHogCloudTask, PostHogRpcError>;
+    readonly runCloudTask: (
+      input: RunCloudTaskInput,
+    ) => Effect.Effect<PostHogCloudTask, PostHogRpcError>;
+    readonly getCloudRun: (input: CloudRunInput) => Effect.Effect<PostHogCloudRun, PostHogRpcError>;
+    readonly commandCloudRun: (
+      input: CloudCommandInput,
+    ) => Effect.Effect<PostHogCloudCommandResult, PostHogRpcError>;
+    readonly cancelCloudRun: (
+      input: CloudRunInput,
+    ) => Effect.Effect<PostHogCloudRun, PostHogRpcError>;
+    readonly uploadCloudRunArtifacts: (
+      input: CloudArtifactUploadInput,
+    ) => Effect.Effect<ReadonlyArray<PostHogCloudRunArtifact>, PostHogRpcError>;
+    readonly readCloudRunLogs: (input: CloudRunInput) => Effect.Effect<string, PostHogRpcError>;
+    readonly streamCloudRun: (
+      input: CloudStreamInput,
+    ) => Effect.Effect<Stream.Stream<PostHogCloudStreamEvent, PostHogRpcError>, PostHogRpcError>;
   }
 >()("t3/posthog/PostHogClient") {}
 
@@ -96,6 +178,9 @@ interface PostHogConnection {
   readonly projectId: string;
   readonly apiKey: string;
 }
+
+const cloudRunPath = (input: CloudRunInput, suffix = "") =>
+  `/tasks/${encodeURIComponent(input.taskId)}/runs/${encodeURIComponent(input.runId)}/${suffix}`;
 
 export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
@@ -340,6 +425,217 @@ export const make = Effect.gen(function* () {
     return { artefact };
   });
 
+  const listCloudModels: PostHogClient["Service"]["listCloudModels"] = Effect.fn(
+    "PostHogClient.listCloudModels",
+  )(function* () {
+    const connection = yield* resolveConnection;
+    const body = yield* getJson(connection, "/tasks/models/", {});
+    const decoded = yield* decodeCloudModels(body).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({
+            message: "PostHog returned an unexpected model catalogue.",
+            cause,
+          }),
+      ),
+    );
+    return decoded.models;
+  });
+
+  const createCloudTask: PostHogClient["Service"]["createCloudTask"] = Effect.fn(
+    "PostHogClient.createCloudTask",
+  )(function* (input) {
+    const connection = yield* resolveConnection;
+    const body = yield* sendJson(connection, "post", "/tasks/", {
+      title: input.title,
+      description: input.description,
+      origin_product: input.signalReportId ? "signal_report" : "user_created",
+      ...(input.repository && !input.signalReportId ? { repository: input.repository } : {}),
+      ...(input.signalReportId
+        ? { signal_report: input.signalReportId, signal_report_task_relationship: "discussion" }
+        : {}),
+    });
+    return yield* decodeCloudTask(body).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({ message: "PostHog returned an unexpected Task.", cause }),
+      ),
+    );
+  });
+
+  const runCloudTask: PostHogClient["Service"]["runCloudTask"] = Effect.fn(
+    "PostHogClient.runCloudTask",
+  )(function* (input) {
+    const connection = yield* resolveConnection;
+    const body = yield* sendJson(
+      connection,
+      "post",
+      `/tasks/${encodeURIComponent(input.taskId)}/run/`,
+      {
+        mode: "interactive",
+        pending_user_message: input.message,
+        runtime_adapter: input.runtimeAdapter,
+        model: input.model,
+        auto_publish: false,
+        ...(input.resumeFromRunId ? { resume_from_run_id: input.resumeFromRunId } : {}),
+        ...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
+        ...(input.artifactIds && input.artifactIds.length > 0
+          ? { pending_user_artifact_ids: input.artifactIds }
+          : {}),
+      },
+    );
+    return yield* decodeCloudTask(body).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({ message: "PostHog returned an unexpected Task run.", cause }),
+      ),
+    );
+  });
+
+  const getCloudRun: PostHogClient["Service"]["getCloudRun"] = Effect.fn(
+    "PostHogClient.getCloudRun",
+  )(function* (input) {
+    const connection = yield* resolveConnection;
+    const body = yield* getJson(connection, cloudRunPath(input), {});
+    return yield* decodeCloudRun(body).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({ message: "PostHog returned an unexpected TaskRun.", cause }),
+      ),
+    );
+  });
+
+  const commandCloudRun: PostHogClient["Service"]["commandCloudRun"] = Effect.fn(
+    "PostHogClient.commandCloudRun",
+  )(function* (input) {
+    const connection = yield* resolveConnection;
+    const body = yield* sendJson(connection, "post", cloudRunPath(input, "command/"), {
+      jsonrpc: "2.0",
+      method: input.method,
+      params: input.params ?? {},
+      ...(input.id ? { id: input.id } : {}),
+    });
+    return yield* decodeCloudCommandResult(body).pipe(
+      Effect.orElseSucceed(() => ({ response: body })),
+    );
+  });
+
+  const cancelCloudRun: PostHogClient["Service"]["cancelCloudRun"] = Effect.fn(
+    "PostHogClient.cancelCloudRun",
+  )(function* (input) {
+    const connection = yield* resolveConnection;
+    const body = yield* sendJson(connection, "post", cloudRunPath(input, "cancel/"), {});
+    return yield* decodeCloudRun(body).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({
+            message: "PostHog returned an unexpected cancelled TaskRun.",
+            cause,
+          }),
+      ),
+    );
+  });
+
+  const uploadCloudRunArtifacts: PostHogClient["Service"]["uploadCloudRunArtifacts"] = Effect.fn(
+    "PostHogClient.uploadCloudRunArtifacts",
+  )(function* (input) {
+    const connection = yield* resolveConnection;
+    const body = yield* sendJson(connection, "post", cloudRunPath(input, "artifacts/"), {
+      artifacts: input.artifacts.map((artifact) => ({
+        name: artifact.name,
+        type: "user_attachment",
+        source: "t3code",
+        content: artifact.base64,
+        content_encoding: "base64",
+        content_type: artifact.contentType,
+      })),
+    });
+    const decoded = yield* decodeCloudArtifacts(body).pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({
+            message: "PostHog returned unexpected Cloud Task artifacts.",
+            cause,
+          }),
+      ),
+    );
+    return decoded.artifacts;
+  });
+
+  const readCloudRunLogs: PostHogClient["Service"]["readCloudRunLogs"] = Effect.fn(
+    "PostHogClient.readCloudRunLogs",
+  )(function* (input) {
+    const connection = yield* resolveConnection;
+    const url = `${connection.host}/api/projects/${encodeURIComponent(connection.projectId)}${cloudRunPath(input, "logs/")}`;
+    const response = yield* httpClient
+      .execute(
+        HttpClientRequest.get(url).pipe(
+          HttpClientRequest.setHeaders({ authorization: `Bearer ${connection.apiKey}` }),
+        ),
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PostHogRequestError({ message: `PostHog request failed: ${cause.message}`, cause }),
+        ),
+      );
+    if (response.status === 401 || response.status === 403) {
+      return yield* new PostHogUnauthorizedError({ status: response.status });
+    }
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new PostHogRequestError({
+        message: `PostHog answered ${response.status} while reading Cloud Task logs.`,
+        status: response.status,
+      });
+    }
+    return yield* response.text.pipe(
+      Effect.mapError(
+        (cause) =>
+          new PostHogRequestError({
+            message: "PostHog returned unreadable Cloud Task logs.",
+            cause,
+          }),
+      ),
+    );
+  });
+
+  const streamCloudRun: PostHogClient["Service"]["streamCloudRun"] = Effect.fn(
+    "PostHogClient.streamCloudRun",
+  )(function* (input) {
+    const connection = yield* resolveConnection;
+    const url = `${connection.host}/api/projects/${encodeURIComponent(connection.projectId)}${cloudRunPath(input, "stream/")}`;
+    const request = HttpClientRequest.get(url).pipe(
+      HttpClientRequest.setUrlParams(input.startLatest ? { start: "latest" } : {}),
+      HttpClientRequest.setHeaders({
+        accept: "text/event-stream",
+        authorization: `Bearer ${connection.apiKey}`,
+        ...(input.lastEventId ? { "last-event-id": input.lastEventId } : {}),
+      }),
+    );
+    const response = yield* httpClient
+      .execute(request)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PostHogRequestError({ message: `PostHog stream failed: ${cause.message}`, cause }),
+        ),
+      );
+    if (response.status === 401 || response.status === 403) {
+      return yield* new PostHogUnauthorizedError({ status: response.status });
+    }
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new PostHogRequestError({
+        message: `PostHog answered ${response.status} while opening a Cloud Task stream.`,
+        status: response.status,
+      });
+    }
+    return decodePostHogSse(response.stream).pipe(
+      Stream.mapError(
+        (cause) => new PostHogRequestError({ message: "PostHog Cloud Task stream failed.", cause }),
+      ),
+    );
+  });
+
   return {
     listReports,
     listReportArtefacts,
@@ -347,6 +643,15 @@ export const make = Effect.gen(function* () {
     setReportState,
     getCurrentUser,
     setReviewers,
+    listCloudModels,
+    createCloudTask,
+    runCloudTask,
+    getCloudRun,
+    commandCloudRun,
+    cancelCloudRun,
+    uploadCloudRunArtifacts,
+    readCloudRunLogs,
+    streamCloudRun,
   } satisfies PostHogClient["Service"];
 });
 

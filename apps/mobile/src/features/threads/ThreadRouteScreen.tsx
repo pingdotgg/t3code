@@ -1,4 +1,4 @@
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
   useFocusEffect,
@@ -13,7 +13,7 @@ import {
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useEnvironmentQuery } from "../../state/query";
@@ -192,6 +192,7 @@ function ThreadRouteContent(
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
+  const isCloudThread = String(selectedThread?.modelSelection.instanceId ?? "") === "posthogCloud";
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   // "Load earlier turns" header state for windowed (paginated) thread loads.
@@ -214,6 +215,7 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "Cloud run stop");
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -226,6 +228,9 @@ function ThreadRouteContent(
   );
   const inspectorMode = (() => {
     if (inspectorSelection?.routeThreadIdentity === routeThreadIdentity) {
+      if (isCloudThread && inspectorSelection.mode !== "route") {
+        return null;
+      }
       if (inspectorSelection.mode === "files" && selectedThreadCwd === null) {
         return null;
       }
@@ -236,7 +241,7 @@ function ThreadRouteContent(
   useEffect(() => {
     if (
       fileInspector.supported &&
-      selectedThreadCwd === null &&
+      (selectedThreadCwd === null || isCloudThread) &&
       inspectorMode === null &&
       panes.auxiliaryPaneVisible
     ) {
@@ -245,6 +250,7 @@ function ThreadRouteContent(
   }, [
     fileInspector.supported,
     inspectorMode,
+    isCloudThread,
     panes.auxiliaryPaneVisible,
     selectedThreadCwd,
     toggleAuxiliaryPane,
@@ -496,6 +502,28 @@ function ThreadRouteContent(
       },
     });
   }, [interruptThreadTurn, selectedThread]);
+  const canStopCloudRun =
+    isCloudThread && selectedThread?.session != null && selectedThread.session.status !== "stopped";
+  const handleStopCloudRun = useCallback(() => {
+    if (!selectedThread || !canStopCloudRun) return;
+    Alert.alert(
+      "Stop run?",
+      "This shuts down its sandbox. You can resume the thread in a new run.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Stop run",
+          style: "destructive",
+          onPress: () => {
+            void stopThreadSession({
+              environmentId: selectedThread.environmentId,
+              input: { threadId: selectedThread.id },
+            });
+          },
+        },
+      ],
+    );
+  }, [canStopCloudRun, selectedThread, stopThreadSession]);
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -612,23 +640,29 @@ function ThreadRouteContent(
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
     auxiliaryPaneControl:
-      !layout.usesSplitView && fileInspector.supported && selectedThreadCwd !== null
+      !isCloudThread &&
+      !layout.usesSplitView &&
+      fileInspector.supported &&
+      selectedThreadCwd !== null
         ? {
             accessibilityLabel: "Toggle inspector",
             onPress: handleToggleInspector,
           }
         : undefined,
     onOpenFilesInspector:
-      fileInspector.supported && selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
-    onOpenGitInspector: fileInspector.supported ? handleOpenGitInspector : undefined,
-    currentBranch: selectedThread?.branch ?? null,
+      !isCloudThread && fileInspector.supported && selectedThreadCwd !== null
+        ? handleOpenFilesInspector
+        : undefined,
+    onOpenGitInspector:
+      !isCloudThread && fileInspector.supported ? handleOpenGitInspector : undefined,
+    currentBranch: isCloudThread ? null : (selectedThread?.branch ?? null),
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: Boolean(selectedThreadProject?.workspaceRoot),
-    canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
-    projectScripts: selectedThreadProject?.scripts ?? [],
-    terminalSessions: terminalMenuSessions,
-    showDirectFileControl: layout.usesSplitView,
+    canOpenTerminal: !isCloudThread && Boolean(selectedThreadProject?.workspaceRoot),
+    canOpenFiles: !isCloudThread && Boolean(selectedThreadProject?.workspaceRoot),
+    projectScripts: isCloudThread ? [] : (selectedThreadProject?.scripts ?? []),
+    terminalSessions: isCloudThread ? [] : terminalMenuSessions,
+    showDirectFileControl: !isCloudThread && layout.usesSplitView,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,
@@ -637,6 +671,21 @@ function ThreadRouteContent(
   };
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(threadGitControlProps);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(threadGitControlProps);
+  const cloudRunHeaderItems = useMemo<NativeHeaderItems>(
+    () =>
+      canStopCloudRun
+        ? [
+            withNativeGlassHeaderItem({
+              accessibilityLabel: "Stop run",
+              icon: { name: "stop.fill", type: "sfSymbol" as const },
+              identifier: "thread-cloud-stop-run",
+              onPress: handleStopCloudRun,
+              type: "button" as const,
+            }),
+          ]
+        : [],
+    [canStopCloudRun, handleStopCloudRun],
+  );
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       {
@@ -689,6 +738,16 @@ function ThreadRouteContent(
         onPress: props.onReturnToThread,
       });
     }
+    if (isCloudThread) {
+      if (canStopCloudRun) {
+        actions.push({
+          accessibilityLabel: "Stop run",
+          icon: "stop",
+          onPress: handleStopCloudRun,
+        });
+      }
+      return actions;
+    }
     if (selectedThreadCwd !== null) {
       actions.push({
         accessibilityLabel: "Open files",
@@ -717,11 +776,14 @@ function ThreadRouteContent(
     }
     return actions;
   }, [
+    canStopCloudRun,
     fileInspector.supported,
     handleOpenFilesInspector,
     handleOpenTerminal,
     handleOpenGitInspector,
+    handleStopCloudRun,
     handleToggleInspector,
+    isCloudThread,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
@@ -761,9 +823,24 @@ function ThreadRouteContent(
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
-      <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
+      {isCloudThread ? (
+        showActionControls && canStopCloudRun ? (
+          <NativeHeaderToolbar placement="right">
+            <NativeHeaderToolbar.Button
+              accessibilityLabel="Stop run"
+              icon="stop.fill"
+              onPress={handleStopCloudRun}
+              separateBackground
+            />
+          </NativeHeaderToolbar>
+        ) : null
+      ) : (
+        <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
+      )}
 
-      <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
+      {!isCloudThread ? (
+        <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
+      ) : null}
 
       <View className="flex-1 bg-screen">
         <ThreadDetailScreen
@@ -786,8 +863,10 @@ function ThreadRouteContent(
           threadSyncStatus={selectedThreadDetailState.status}
           loadEarlier={loadEarlierTurns}
           environmentId={selectedThread.environmentId}
-          projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
-          threadCwd={selectedThreadCwd}
+          projectWorkspaceRoot={
+            isCloudThread ? null : (selectedThreadProject?.workspaceRoot ?? null)
+          }
+          threadCwd={isCloudThread ? null : selectedThreadCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
@@ -845,7 +924,12 @@ function ThreadRouteContent(
           // reserved for future breadcrumbs/status).
           unstable_headerRightItems:
             Platform.OS === "ios"
-              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
+              ? () =>
+                  isCloudThread
+                    ? cloudRunHeaderItems
+                    : layout.usesSplitView
+                      ? threadCenterHeaderItems
+                      : compactRightHeaderItems
               : undefined,
           unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
         }}

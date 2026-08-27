@@ -54,7 +54,7 @@ export function ReportHeader({
   readonly environmentId: EnvironmentId;
   readonly reportId: string;
   readonly threadId: ThreadId;
-  readonly onOpenTerminal: () => void;
+  readonly onOpenTerminal?: () => void;
 }) {
   const reportsQuery = usePostHogQuery(reportsListAtom(environmentId));
   const report = useMemo(
@@ -120,7 +120,7 @@ export function ReportHeader({
         >
           <ExternalLinkIcon className="size-3.5" />
         </Button>
-        {worktreePath ? (
+        {worktreePath && onOpenTerminal ? (
           <DropdownMenu>
             <DropdownMenuTrigger
               render={

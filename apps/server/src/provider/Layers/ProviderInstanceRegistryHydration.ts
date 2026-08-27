@@ -91,6 +91,13 @@ export const deriveProviderInstanceConfigMap = (
     const legacyKey = driver.driverKind as keyof ServerSettings["providers"];
     const legacyConfig = settings.providers[legacyKey];
     if (legacyConfig === undefined) {
+      if (driver.driverKind !== "posthogCloud") {
+        continue;
+      }
+      merged[instanceId] = {
+        driver: driver.driverKind,
+        config: driver.defaultConfig(),
+      };
       continue;
     }
 

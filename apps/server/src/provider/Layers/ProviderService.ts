@@ -24,6 +24,7 @@ import {
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type TurnId,
 } from "@t3tools/contracts";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as DateTime from "effect/DateTime";
@@ -136,14 +137,22 @@ function toRuntimePayloadFromSession(
   session: ProviderSession,
   extra?: {
     readonly modelSelection?: unknown;
+    readonly activeTurnId?: TurnId;
     readonly lastRuntimeEvent?: string;
     readonly lastRuntimeEventAt?: string;
   },
 ): Record<string, unknown> {
+  const providerPayload =
+    session.runtimePayload !== null &&
+    typeof session.runtimePayload === "object" &&
+    !Array.isArray(session.runtimePayload)
+      ? session.runtimePayload
+      : {};
   return {
+    ...providerPayload,
     cwd: session.cwd ?? null,
     model: session.model ?? null,
-    activeTurnId: session.activeTurnId ?? null,
+    activeTurnId: extra?.activeTurnId ?? session.activeTurnId ?? null,
     lastError: session.lastError ?? null,
     ...(extra?.modelSelection !== undefined ? { modelSelection: extra.modelSelection } : {}),
     ...(extra?.lastRuntimeEvent !== undefined ? { lastRuntimeEvent: extra.lastRuntimeEvent } : {}),
@@ -461,6 +470,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           providerInstanceId: bindingInstanceId,
           ...(persistedCwd ? { cwd: persistedCwd } : {}),
           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
+          ...(input.binding.runtimePayload !== null
+            ? { runtimePayload: input.binding.runtimePayload }
+            : {}),
           ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
         })
@@ -745,6 +757,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ? []
         : [`[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachmentPath}]`];
     });
+    const resolvedAttachments = attachments.flatMap((attachment) => {
+      const path = resolveAttachmentPath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        attachment,
+      });
+      return path === null ? [] : [{ ...attachment, path }];
+    });
     const inputTextWithAttachmentPaths =
       attachmentPathLines.length === 0
         ? parsed.input
@@ -758,6 +777,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         ? { input: inputTextWithAttachmentPaths }
         : {}),
       attachments,
+      resolvedAttachments,
     };
     yield* Effect.annotateCurrentSpan({
       "provider.operation": "send-turn",
@@ -779,25 +799,43 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.kind": routed.adapter.provider,
         ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
       });
+      const adapterInput =
+        String(routed.adapter.provider) === "posthogCloud"
+          ? { ...parsed, attachments, resolvedAttachments }
+          : input;
       // A turn is the clearest sign a session is still alive. The MCP
       // credential is minted once at session start and cannot be rotated into
       // an already-spawned agent process, so we keep the existing token valid
       // rather than issuing a new one: sessions that go a long time between
       // browser tool calls used to lose the toolkit outright.
       yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
-      const turn = yield* routed.adapter.sendTurn(input);
+      const turn = yield* routed.adapter.sendTurn(adapterInput);
+      const activeSession = (yield* routed.adapter.listSessions()).find(
+        (session) => session.threadId === input.threadId,
+      );
       yield* directory.upsert({
         threadId: input.threadId,
         provider: routed.adapter.provider,
         providerInstanceId: routed.instanceId,
         status: "running",
         ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
-        runtimePayload: {
-          ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-          activeTurnId: turn.turnId,
-          lastRuntimeEvent: "provider.sendTurn",
-          lastRuntimeEventAt: yield* nowIso,
-        },
+        runtimePayload: activeSession
+          ? toRuntimePayloadFromSession(activeSession, {
+              activeTurnId: turn.turnId,
+              ...(input.modelSelection !== undefined
+                ? { modelSelection: input.modelSelection }
+                : {}),
+              lastRuntimeEvent: "provider.sendTurn",
+              lastRuntimeEventAt: yield* nowIso,
+            })
+          : {
+              ...(input.modelSelection !== undefined
+                ? { modelSelection: input.modelSelection }
+                : {}),
+              activeTurnId: turn.turnId,
+              lastRuntimeEvent: "provider.sendTurn",
+              lastRuntimeEventAt: yield* nowIso,
+            },
       });
       yield* analytics.record("provider.turn.sent", {
         provider: routed.adapter.provider,

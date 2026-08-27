@@ -22,6 +22,7 @@ export type ThreadActionMenuId =
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
+  | "stop-run"
   | "archive"
   | "delete";
 
@@ -34,6 +35,7 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an active turn, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
+  readonly canStopRun: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly snooze: boolean;
@@ -124,6 +126,17 @@ export function buildThreadActionMenuItems(
     // (stays visible in the Settled shelf) and Delete (clears history for
     // good), so it sits beside Delete without borrowing its destructive
     // styling.
+    ...(state.canStopRun
+      ? [
+          {
+            id: "stop-run" as const,
+            label: "Stop run",
+            destructive: true,
+            icon: "square",
+            separatorBefore: true,
+          },
+        ]
+      : []),
     {
       id: "archive",
       label: "Archive thread",

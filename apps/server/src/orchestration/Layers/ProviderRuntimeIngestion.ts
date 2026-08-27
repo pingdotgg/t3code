@@ -49,6 +49,46 @@ import { canReplaceThreadTitle } from "../threadTitles.ts";
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
 
+export function cloudThreadMetadata(
+  input: unknown,
+  projectId: OrchestrationThread["projectId"],
+): {
+  readonly branch?: string;
+  readonly linkedPullRequest?: NonNullable<OrchestrationThread["linkedPullRequest"]>;
+} {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return {};
+  const metadata = input as Record<string, unknown>;
+  const branch =
+    typeof metadata.branch === "string" && metadata.branch.trim()
+      ? metadata.branch.trim()
+      : undefined;
+  if (typeof metadata.prUrl !== "string") return branch ? { branch } : {};
+  try {
+    const url = new URL(metadata.prUrl);
+    const parts = url.pathname.split("/").filter(Boolean);
+    const number = Number(parts[3]);
+    if (
+      url.hostname !== "github.com" ||
+      parts.length < 4 ||
+      parts[2] !== "pull" ||
+      !Number.isSafeInteger(number) ||
+      number <= 0
+    ) {
+      return branch ? { branch } : {};
+    }
+    const repository =
+      typeof metadata.repository === "string" && metadata.repository.trim()
+        ? metadata.repository.trim()
+        : `${parts[0]}/${parts[1]}`;
+    return {
+      ...(branch ? { branch } : {}),
+      linkedPullRequest: { projectId, repository, number, url: metadata.prUrl },
+    };
+  } catch {
+    return branch ? { branch } : {};
+  }
+}
+
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
 // task.started/task.progress activities for the task are persisted with it.
@@ -1912,13 +1952,22 @@ const make = Effect.gen(function* () {
         }
       }
 
-      if (event.type === "thread.metadata.updated" && event.payload.name) {
-        if (canReplaceThreadTitle(thread.title)) {
+      if (event.type === "thread.metadata.updated") {
+        const providerMetadata = cloudThreadMetadata(event.payload.metadata, thread.projectId);
+        const title =
+          event.payload.name && canReplaceThreadTitle(thread.title)
+            ? event.payload.name
+            : undefined;
+        if (title || providerMetadata.branch || providerMetadata.linkedPullRequest) {
           yield* orchestrationEngine.dispatch({
             type: "thread.meta.update",
             commandId: yield* providerCommandId(event, "thread-meta-update"),
             threadId: thread.id,
-            title: event.payload.name,
+            ...(title ? { title } : {}),
+            ...(providerMetadata.branch ? { branch: providerMetadata.branch } : {}),
+            ...(providerMetadata.linkedPullRequest
+              ? { linkedPullRequest: providerMetadata.linkedPullRequest }
+              : {}),
           });
         }
       }
