@@ -1,5 +1,3 @@
-import * as NodeOS from "node:os";
-
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -15,6 +13,7 @@ import { buildRemoteNodeEnvScript } from "@t3tools/ssh/tunnel";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopNetworkInterfaces from "../backend/DesktopNetworkInterfaces.ts";
 import { parseWslDistroList, type WslDistro } from "./wslPathParsing.ts";
 
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
@@ -723,7 +722,7 @@ export const parseDistroIpCandidates = (stdout: string): ReadonlyArray<string> =
 
 export interface WindowsIpv4Interface {
   readonly address: string;
-  readonly netmask: string;
+  readonly netmask: string | undefined;
 }
 
 const ipv4ToInt = (ip: string): number | null => {
@@ -759,15 +758,19 @@ export const pickDistroIp = (
   for (const candidate of candidates) {
     for (const iface of windowsInterfaces) {
       if (candidate === iface.address) return candidate;
-      if (inSameSubnet(candidate, iface.address, iface.netmask)) return candidate;
+      if (iface.netmask !== undefined && inSameSubnet(candidate, iface.address, iface.netmask)) {
+        return candidate;
+      }
     }
   }
   return candidates[0] ?? null;
 };
 
-const windowsIpv4Interfaces = (): ReadonlyArray<WindowsIpv4Interface> => {
-  const interfaces: WindowsIpv4Interface[] = [];
-  for (const list of Object.values(NodeOS.networkInterfaces())) {
+export const windowsIpv4Interfaces = (
+  interfaces: DesktopNetworkInterfaces.NetworkInterfaces,
+): ReadonlyArray<WindowsIpv4Interface> => {
+  const flattened: WindowsIpv4Interface[] = [];
+  for (const list of Object.values(interfaces)) {
     if (!list) continue;
     for (const entry of list) {
       // Same family normalization as isLocalHostIpv4 in
@@ -775,15 +778,16 @@ const windowsIpv4Interfaces = (): ReadonlyArray<WindowsIpv4Interface> => {
       // "IPv4", some Node builds report the numeric 4.
       const family = String(entry.family);
       if (family === "IPv4" || family === "4") {
-        interfaces.push({ address: entry.address, netmask: entry.netmask });
+        flattened.push({ address: entry.address, netmask: entry.netmask });
       }
     }
   }
-  return interfaces;
+  return flattened;
 };
 
 const getDistroIpImpl = (
   distro: string | null,
+  readNetworkInterfaces: Effect.Effect<DesktopNetworkInterfaces.NetworkInterfaces>,
 ): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -805,7 +809,8 @@ const getDistroIpImpl = (
       if ((exitCode as unknown as number) !== 0) return Option.none<string>();
       const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
       const candidates = parseDistroIpCandidates(raw);
-      const chosen = pickDistroIp(candidates, windowsIpv4Interfaces());
+      const interfaces = yield* readNetworkInterfaces;
+      const chosen = pickDistroIp(candidates, windowsIpv4Interfaces(interfaces));
       yield* Effect.log(
         `[wsl] distro IP probe chose ${chosen ?? "none"} from candidates [${candidates.join(", ")}]`,
       );
@@ -914,6 +919,7 @@ export const layer = Layer.effect(
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
+    const networkInterfaces = yield* DesktopNetworkInterfaces.DesktopNetworkInterfaces;
     const windir = process.env.WINDIR ?? "C:\\Windows";
 
     const provideSpawner = <A, E>(
@@ -960,7 +966,9 @@ export const layer = Layer.effect(
       }).pipe(Effect.withSpan("desktop.wsl.getUserHome"));
 
     const getDistroIp = (distro: string | null) =>
-      provideSpawner(getDistroIpImpl(distro)).pipe(Effect.withSpan("desktop.wsl.getDistroIp"));
+      provideSpawner(getDistroIpImpl(distro, networkInterfaces.read)).pipe(
+        Effect.withSpan("desktop.wsl.getDistroIp"),
+      );
 
     const probeDistros = provideSpawner(probeWslDistros).pipe(
       Effect.withSpan("desktop.wsl.probeDistros"),

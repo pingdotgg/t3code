@@ -22,6 +22,7 @@ import {
   parseToolchainReport,
   pickDistroIp,
   probeWslDistros,
+  windowsIpv4Interfaces,
 } from "./DesktopWslEnvironment.ts";
 
 const encoder = new TextEncoder();
@@ -149,6 +150,24 @@ describe("pickDistroIp", () => {
 
   it("returns null with no candidates", () => {
     expect(pickDistroIp([], [wslVEthernet])).toBeNull();
+  });
+});
+
+describe("windowsIpv4Interfaces", () => {
+  it("flattens IPv4 entries across adapters, accepting string and numeric family", () => {
+    expect(
+      windowsIpv4Interfaces({
+        "vEthernet (WSL)": [
+          { address: "172.27.0.1", family: "IPv4", internal: false, netmask: "255.255.240.0" },
+          { address: "fe80::1", family: "IPv6", internal: false, netmask: "ffff:ffff:ffff:ffff::" },
+        ],
+        "Wi-Fi": [{ address: "192.168.1.219", family: 4, internal: false }],
+        Disconnected: undefined,
+      }),
+    ).toEqual([
+      { address: "172.27.0.1", netmask: "255.255.240.0" },
+      { address: "192.168.1.219", netmask: undefined },
+    ]);
   });
 });
 
