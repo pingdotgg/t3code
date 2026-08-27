@@ -7,5 +7,5 @@ Architecture, setup, and the QML/theme contracts: `docs/internals/desktop-qt.md`
 
 ```sh
 vp run dev                      # terminal 1: server + web
-pnpm dev:qt                     # terminal 2: build the shell, pair, launch
+vp run dev:qt                   # terminal 2: build the shell, pair, launch
 ```

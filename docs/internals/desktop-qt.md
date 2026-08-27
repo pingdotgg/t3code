@@ -34,7 +34,7 @@ WebEngineView ◄─── WebChannel ───► QML bricks
   same channel; the TypeScript-owned parts stay on the Node side.
 
 Attach mode (`--url <pairing url>`) skips the host entirely and loads a
-running dev server; this is what `pnpm dev:qt` uses.
+running dev server; this is what `vp run dev:qt` uses.
 
 ## Source layout
 
@@ -68,7 +68,7 @@ Requirements: CMake ≥ 3.21, Ninja, a C++20 compiler, Qt ≥ 6.9 with
 
 ```sh
 vp run dev        # terminal 1: server + web (single origin)
-pnpm dev:qt       # terminal 2: cmake configure/build, `t3 pair`, launch with --url
+vp run dev:qt     # terminal 2: cmake configure/build, `t3 pair`, launch with --url
 ```
 
 `dev:qt` pairs with whatever server `t3 pair` discovers (worktree `.t3` first,
