@@ -2,6 +2,8 @@ import { ShellAction, type ShellGitState } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useRef } from "react";
 
+import { useShellPublish } from "./useShellPublish";
+
 import {
   getMenuActionDisabledReason,
   requestVcsStatusRefresh,
@@ -76,16 +78,7 @@ export function ShellGitBridge({ git, gitCwd, onOpenPublish }: ShellGitBridgePro
     };
   }, [git, gitCwd, status]);
 
-  useEffect(() => {
-    if (!shell) return;
-    void shell.publish("git", state);
-  }, [shell, state]);
-  useEffect(() => {
-    if (!shell) return;
-    return () => {
-      void shell.publish("git", null);
-    };
-  }, [shell]);
+  useShellPublish("git", state);
 
   const latest = useRef({ git, gitCwd, onOpenPublish });
   latest.current = { git, gitCwd, onOpenPublish };

@@ -3,6 +3,8 @@ import { type PreviewSessionSnapshot, ShellAction, type ScopedThreadRef } from "
 import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useRef } from "react";
 
+import { useShellPublish } from "./useShellPublish";
+
 import { surfaceTitle } from "../components/RightPanelTabs";
 import type { RightPanelSurface } from "../rightPanelStore";
 import { buildShellRightPanelState } from "./shellRightPanelState";
@@ -57,17 +59,7 @@ export function ShellRightPanelBridge(props: ShellRightPanelBridgeProps) {
     [props],
   );
 
-  useEffect(() => {
-    if (!shell) return;
-    void shell.publish("rightPanel", state);
-  }, [shell, state]);
-  // Leaving the route (settings, no thread) must not leave stale chrome behind.
-  useEffect(() => {
-    if (!shell) return;
-    return () => {
-      void shell.publish("rightPanel", null);
-    };
-  }, [shell]);
+  useShellPublish("rightPanel", state);
 
   const latest = useRef(props);
   latest.current = props;

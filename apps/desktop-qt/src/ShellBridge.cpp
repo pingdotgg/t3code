@@ -21,6 +21,12 @@ QUrl ShellBridge::webChannelScriptUrl() const {
 }
 
 void ShellBridge::publish(const QString& key, const QVariant& value) {
+  // Every brick binds to `state`, so an unchanged republish would re-evaluate
+  // all of them for nothing.
+  const auto existing = m_state.constFind(key);
+  if (existing != m_state.constEnd() && existing.value() == value) {
+    return;
+  }
   m_state.insert(key, value);
   emit stateEntryChanged(key, value);
   emit stateChanged();

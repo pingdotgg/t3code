@@ -11,6 +11,8 @@ import {
 import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useShellPublish } from "./useShellPublish";
+
 import type { EnvMode } from "../components/BranchToolbar.logic";
 import { type DraftId } from "../composerDraftStore";
 import { resolveAndPersistPreferredEditor, usePreferredEditor } from "../editorPreferences";
@@ -80,12 +82,15 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
     currentTitle: props.threadTitleForRename,
   });
   // A sidebar row's "Rename" navigates here first, then asks for the editor.
+  const threadKey = scopedThreadKey(props.threadRef);
+  const onRenameRequestedRef = useRef(props.onRenameRequested);
+  onRenameRequestedRef.current = props.onRenameRequested;
   useEffect(
     () =>
-      subscribeShellRenameRequests((threadKey) => {
-        if (threadKey === scopedThreadKey(props.threadRef)) props.onRenameRequested();
+      subscribeShellRenameRequests((key) => {
+        if (key === threadKey) onRenameRequestedRef.current();
       }),
-    [props],
+    [threadKey],
   );
   const branchSelection = useThreadBranchSelection({
     environmentId: props.threadRef.environmentId,
@@ -150,17 +155,7 @@ export function ShellWorkspaceBridge(props: ShellWorkspaceBridgeProps) {
     ],
   );
 
-  useEffect(() => {
-    if (!shell) return;
-    void shell.publish("workspace", state);
-  }, [shell, state]);
-  // Leaving the route (settings, no thread) must not leave stale chrome behind.
-  useEffect(() => {
-    if (!shell) return;
-    return () => {
-      void shell.publish("workspace", null);
-    };
-  }, [shell]);
+  useShellPublish("workspace", state);
 
   const latest = useRef({
     props,

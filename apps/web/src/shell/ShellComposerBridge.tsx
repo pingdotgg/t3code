@@ -13,6 +13,8 @@ import {
 import * as Schema from "effect/Schema";
 import { useEffect, useMemo, useRef } from "react";
 
+import { useShellPublish } from "./useShellPublish";
+
 import type { ComposerCommandItem } from "../components/chat/ComposerCommandMenu";
 import {
   normalizeTerminalContextSelection,
@@ -172,17 +174,7 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
     [optionDescriptors, props],
   );
 
-  useEffect(() => {
-    if (!shell) return;
-    void shell.publish("composer", state);
-  }, [shell, state]);
-  // Leaving the route (settings, no thread) must not leave stale chrome behind.
-  useEffect(() => {
-    if (!shell) return;
-    return () => {
-      void shell.publish("composer", null);
-    };
-  }, [shell]);
+  useShellPublish("composer", state);
 
   // One subscription for the component's lifetime; handlers read live props.
   const latest = useRef({ props, optionDescriptors, setProviderModelOptions });
