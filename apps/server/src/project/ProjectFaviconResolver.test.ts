@@ -91,6 +91,21 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("uses a saved project favicon outside the workspace", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        const pictures = yield* makeTempDir;
+        yield* writeTextFile(pictures, "custom.png", "image");
+        const externalPath = path.join(pictures, "custom.png");
+
+        const resolved = yield* resolver.resolvePath(cwd, externalPath);
+
+        expect(resolved).toBe(externalPath);
+      }),
+    );
+
     it.effect("falls back when a saved override is missing from a checkout", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;

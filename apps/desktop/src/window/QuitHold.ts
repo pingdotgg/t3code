@@ -2,7 +2,8 @@
 
 // Chrome-style hold-to-quit. The quit accelerator is intercepted in
 // before-input-event (which runs before the native menu accelerator), and the
-// app only quits once the shortcut has been held for QUIT_HOLD_DURATION_MS.
+// app only quits after the shortcut has been held for QUIT_HOLD_DURATION_MS
+// and released.
 // A quick tap just shows the renderer's "Hold to Quit" hint, and a second tap
 // within QUIT_DOUBLE_TAP_MS quits immediately. Quitting from the application
 // menu itself is untouched and quits immediately.
@@ -10,11 +11,11 @@ export const QUIT_HOLD_DURATION_MS = 1200;
 // A second quick tap of the shortcut is the user insisting: quit immediately.
 export const QUIT_DOUBLE_TAP_MS = 500;
 // "Still held" is proven by auto-repeat keydowns, not by the absence of a
-// release: macOS suppresses a letter's keyUp while the command key is down, so
-// a tap's release can go completely unseen and a release-based timer would
-// quit anyway. The press is treated as released once no key event has arrived
-// for QUIT_HOLD_RELEASE_GRACE_MS past the hold duration. Keyboards with
-// auto-repeat disabled cannot hold-to-quit and fall back to the menu's Quit.
+// release: macOS suppresses a letter keyUp while the command key is down, so a
+// tap release can go completely unseen and a release-based timer would quit
+// anyway. Once held, quitting waits for Q keyUp or a quiet grace period after
+// modifier keyUp so repeats cannot reach the next app. Keyboards with
+// auto-repeat disabled fall back to the application menu Quit action.
 export const QUIT_HOLD_RELEASE_GRACE_MS = 600;
 
 export type QuitHoldState = "down" | "up";
@@ -42,8 +43,9 @@ export function makeQuitHoldHandler(
   const modifierKey = options.platform === "darwin" ? "meta" : "control";
   let watchdog: NodeJS.Timeout | undefined;
   let holding = false;
-  // Set once isEnabled resolves true; auto-repeats may only quit when armed.
+  // Set once isEnabled resolves true; auto-repeats may only complete the hold when armed.
   let armed = false;
+  let quitOnRelease = false;
   let heldSince = 0;
   let lastPressAt = 0;
   // Incremented on every new press and every release/quit so a pending
@@ -60,14 +62,16 @@ export function makeQuitHoldHandler(
 
   const release = () => {
     if (!holding) return;
+    const shouldNotify = armed || quitOnRelease;
     generation += 1;
     holding = false;
     armed = false;
+    quitOnRelease = false;
     clearWatchdog();
-    options.notify("up");
+    if (shouldNotify) options.notify("up");
   };
 
-  // Dismisses the overlay first: if the quit is cancelled downstream the
+  // Dismisses any overlay first: if the quit is cancelled downstream the
   // renderer must not be left with a stuck "Hold to Quit" hint.
   const quitNow = () => {
     release();
@@ -77,10 +81,26 @@ export function makeQuitHoldHandler(
   return (event, input) => {
     const key = input.key.toLowerCase();
     if (input.type === "keyUp") {
-      if (key === "q" || key === modifierKey) release();
+      if (key === "q") {
+        const shouldQuit = quitOnRelease;
+        release();
+        if (shouldQuit) options.quit();
+      } else if (key === modifierKey) {
+        if (!quitOnRelease) {
+          release();
+        } else {
+          watchdog = setTimeout(quitNow, QUIT_HOLD_RELEASE_GRACE_MS);
+        }
+      }
       return;
     }
     if (input.type !== "keyDown") return;
+
+    if (quitOnRelease && input.isAutoRepeat && key === "q") {
+      event.preventDefault();
+      clearWatchdog();
+      return;
+    }
 
     const modifierDown = options.platform === "darwin" ? input.meta : input.control;
     if (!modifierDown || input.alt || input.shift || key !== "q") {
@@ -101,7 +121,9 @@ export function makeQuitHoldHandler(
 
     if (input.isAutoRepeat) {
       if (armed && Date.now() - heldSince >= QUIT_HOLD_DURATION_MS) {
-        quitNow();
+        armed = false;
+        quitOnRelease = true;
+        clearWatchdog();
       }
       return;
     }
@@ -121,7 +143,6 @@ export function makeQuitHoldHandler(
     const pressGeneration = generation;
     holding = true;
     heldSince = now;
-    options.notify("down");
     void options.isEnabled().then(
       (enabled) => {
         if (generation !== pressGeneration) return;
@@ -131,6 +152,7 @@ export function makeQuitHoldHandler(
           return;
         }
         armed = true;
+        options.notify("down");
         // No auto-repeat by then means the key was released (possibly with a
         // suppressed keyUp) or repeat is disabled; either way, don't quit.
         watchdog = setTimeout(() => {

@@ -405,4 +405,25 @@ describe("AzureDevOpsCli.layer", () => {
       );
     }).pipe(Effect.provide(layer)),
   );
+
+  it.effect("preserves rate-limit failures as a distinct error", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        cwd: "/repo",
+        argumentCount: 2,
+        exitCode: 1,
+        detail: "API rate limit exceeded.",
+        failureKind: "rate-limited",
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const error = yield* az.execute({ cwd: "/repo", args: ["repos", "list"] }).pipe(Effect.flip);
+
+      assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsCliRateLimitError);
+      assert.strictEqual(error.cause, cause);
+    }).pipe(Effect.provide(layer)),
+  );
 });

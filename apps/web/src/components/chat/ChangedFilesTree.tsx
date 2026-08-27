@@ -66,7 +66,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
         className={cn(
           "flex items-center justify-between gap-2 rounded-xl",
           expanded &&
-            "sticky top-2 z-10 mb-2 bg-secondary dark:bg-[color-mix(in_srgb,var(--foreground)_2.5%,var(--background))]",
+            "sticky top-2 z-10 mb-2 bg-secondary dark:bg-[color-mix(in_srgb,var(--contrast-foreground)_2.5%,var(--background))]",
         )}
       >
         <button
@@ -174,21 +174,26 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             {previewFiles.map((file) => (
-              <button
-                key={file.path}
-                type="button"
-                title={file.path}
-                className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={() => onOpenTurnDiff(turnId, file.path)}
-              >
-                <PierreEntryIcon
-                  pathValue={file.path}
-                  kind="file"
-                  theme={resolvedTheme}
-                  className="size-3 shrink-0 text-muted-foreground/70"
-                />
-                <span className="truncate">{changedFileName(file.path)}</span>
-              </button>
+              <Tooltip key={file.path}>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="inline-flex max-w-48 items-center gap-1 rounded-md border border-border/70 bg-background/45 px-1.5 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => onOpenTurnDiff(turnId, file.path)}
+                    />
+                  }
+                >
+                  <PierreEntryIcon
+                    pathValue={file.path}
+                    kind="file"
+                    theme={resolvedTheme}
+                    className="size-3 shrink-0 text-muted-foreground/70"
+                  />
+                  <span className="truncate">{changedFileName(file.path)}</span>
+                </TooltipTrigger>
+                <TooltipPopup side="top">{file.path}</TooltipPopup>
+              </Tooltip>
             ))}
             <button
               type="button"

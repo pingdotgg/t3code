@@ -1,29 +1,41 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
-import { Frame, MousePointerClick, Paintbrush, PenLine, X } from "lucide-react";
+import { Frame, MousePointerClick, Paintbrush, PenLine, RotateCcw, X } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
+import {
+  formatAttachmentUploadProgress,
+  type AttachmentUploadState,
+} from "~/lib/attachmentUploadState";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface ComposerPreviewAnnotationCardsProps {
   annotations: ReadonlyArray<PreviewAnnotationPayload>;
   images: ReadonlyArray<ComposerImageAttachment>;
   onRemove: (annotationId: string) => void;
   onExpandImage: (imageId: string) => void;
+  uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
+  onRetryUpload?: (image: ComposerImageAttachment) => void;
   className?: string;
 }
 
 function TargetStat(props: { icon: ReactNode; count: number; label: string }) {
+  const tooltipText = `${props.count} ${props.label}${props.count === 1 ? "" : "s"}`;
   return (
-    <span
-      className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground"
-      title={`${props.count} ${props.label}${props.count === 1 ? "" : "s"}`}
-    >
-      {props.icon}
-      {props.count}
-    </span>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
+            {props.icon}
+            {props.count}
+          </span>
+        }
+      />
+      <TooltipPopup side="top">{tooltipText}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -32,6 +44,8 @@ export function ComposerPreviewAnnotationCards({
   images,
   onRemove,
   onExpandImage,
+  uploadsByImageId,
+  onRetryUpload,
   className,
 }: ComposerPreviewAnnotationCardsProps) {
   if (annotations.length === 0) return null;
@@ -41,6 +55,7 @@ export function ComposerPreviewAnnotationCards({
     <div className={cn("flex flex-wrap gap-1.5", className)}>
       {annotations.map((annotation) => {
         const image = imagesById.get(annotation.id);
+        const upload = image ? uploadsByImageId?.[image.id] : undefined;
         const elementLabels = annotation.elements.flatMap((target) => {
           const context = normalizeElementContextSelection(target.element);
           return context ? [{ id: target.id, label: formatElementContextLabel(context) }] : [];
@@ -125,6 +140,28 @@ export function ComposerPreviewAnnotationCards({
                       count={annotation.styleChanges.length}
                       label="style change"
                     />
+                  ) : null}
+                  {upload?.status === "uploading" ? (
+                    <span className="text-[10px] text-secondary-label">
+                      {formatAttachmentUploadProgress(upload.progress)}
+                    </span>
+                  ) : null}
+                  {upload?.status === "failed" && image && onRetryUpload ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            size="icon-micro"
+                            variant="ghost-muted"
+                            aria-label={`Retry upload for ${image.name}`}
+                            onClick={() => onRetryUpload(image)}
+                          />
+                        }
+                      >
+                        <RotateCcw className="size-3" />
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">{upload.reason}</TooltipPopup>
+                    </Tooltip>
                   ) : null}
                 </div>
               </div>

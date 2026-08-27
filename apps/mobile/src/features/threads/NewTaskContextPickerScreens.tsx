@@ -13,7 +13,6 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  Switch,
   TextInput,
   View,
 } from "react-native";
@@ -22,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { useFontFamily } from "../../lib/useFontFamily";
 import { useThemeColor } from "../../lib/useThemeColor";
@@ -97,7 +97,7 @@ function ToggleRow(props: {
       <Text className="min-w-0 flex-1 text-base font-t3-medium text-foreground" numberOfLines={1}>
         {props.title}
       </Text>
-      <Switch
+      <ThemedSwitch
         accessibilityLabel={props.title}
         onValueChange={props.onValueChange}
         value={props.value}

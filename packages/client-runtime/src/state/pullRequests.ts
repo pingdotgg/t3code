@@ -1,4 +1,9 @@
-import { WS_METHODS, type PullRequestDiffInput } from "@t3tools/contracts";
+import {
+  WS_METHODS,
+  type PullRequestDetail,
+  type PullRequestDiffInput,
+  type VcsStatusResult,
+} from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -20,6 +25,32 @@ export { PullRequestDiffLoader, pullRequestDiffLoaderLayer } from "./pullRequest
 export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
   "EnvironmentHttpConnectionNotReadyError",
 )<{ readonly message: string }> {}
+
+/** Refresh a linked PR while its thread is visible so merges update the sidebar. */
+export function createLinkedPullRequestDetailAtomFamily<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+) {
+  return createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:linked-detail",
+    tag: WS_METHODS.pullRequestsDetail,
+    staleTimeMs: 15_000,
+    refreshIntervalMs: 30_000,
+  });
+}
+
+export function pullRequestDetailToVcsStatus(
+  detail: PullRequestDetail,
+): NonNullable<VcsStatusResult["pr"]> {
+  return {
+    number: detail.number,
+    title: detail.title,
+    url: detail.url,
+    baseRef: detail.baseBranch,
+    headRef: detail.headBranch,
+    state: detail.state,
+    updatedAt: detail.updatedAt,
+  };
+}
 
 /**
  * Every read shells out to the GitHub CLI, so results are reused for a short while and
@@ -60,6 +91,16 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:activity",
       tag: WS_METHODS.pullRequestsActivity,
       staleTimeMs: 15_000,
+    }),
+    threadComments: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:thread-comments",
+      tag: WS_METHODS.pullRequestsThreadComments,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.cursor]),
+      },
     }),
     diff: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:diff",

@@ -42,6 +42,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/unstable/http";
 
+import { APP_VERSION } from "../branding";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
 import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import {
@@ -120,6 +121,8 @@ function clientMetadata() {
     label: desktop ? "T3 Code Desktop" : "T3 Code Web",
     deviceType: "desktop" as const,
     ...(platform === "" ? {} : { os: platform }),
+    surface: desktop ? ("desktop" as const) : ("web" as const),
+    ...(APP_VERSION === "0.0.0" ? {} : { appVersion: APP_VERSION }),
   };
 }
 

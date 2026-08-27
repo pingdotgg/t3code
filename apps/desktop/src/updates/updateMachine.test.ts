@@ -55,6 +55,57 @@ describe("updateMachine", () => {
     expect(state.canRetry).toBe(true);
   });
 
+  it("preserves an already-downloaded update while checking the feed", () => {
+    const downloadedState = {
+      ...createInitialDesktopUpdateState("1.0.0", runtimeInfo, "latest"),
+      enabled: true,
+      status: "downloaded" as const,
+      availableVersion: "1.1.0",
+      downloadedVersion: "1.1.0",
+      releaseNotes: [{ version: "1.1.0", items: ["fix: queued update"] }],
+      downloadPercent: 100,
+    };
+    const checking = reduceDesktopUpdateStateOnCheckStart(
+      downloadedState,
+      "2026-03-04T00:00:00.000Z",
+    );
+    const failed = reduceDesktopUpdateStateOnCheckFailure(
+      checking,
+      "network unavailable",
+      "2026-03-04T00:00:01.000Z",
+    );
+
+    expect(checking.status).toBe("checking");
+    expect(checking.downloadedVersion).toBe("1.1.0");
+    expect(checking.releaseNotes).toEqual(downloadedState.releaseNotes);
+    expect(failed.status).toBe("downloaded");
+    expect(failed.downloadedVersion).toBe("1.1.0");
+    expect(failed.releaseNotes).toEqual(downloadedState.releaseNotes);
+    expect(failed.message).toBeNull();
+  });
+
+  it("keeps the installer when the feed still offers its version", () => {
+    const releaseNotes = [{ version: "1.1.0", items: ["fix: queued update"] }];
+    const state = reduceDesktopUpdateStateOnUpdateAvailable(
+      {
+        ...createInitialDesktopUpdateState("1.0.0", runtimeInfo, "latest"),
+        enabled: true,
+        status: "downloaded",
+        availableVersion: "1.1.0",
+        downloadedVersion: "1.1.0",
+        releaseNotes,
+        downloadPercent: 100,
+      },
+      "1.1.0",
+      "2026-03-04T00:00:00.000Z",
+    );
+
+    expect(state.status).toBe("downloaded");
+    expect(state.downloadedVersion).toBe("1.1.0");
+    expect(state.releaseNotes).toEqual(releaseNotes);
+    expect(state.downloadPercent).toBe(100);
+  });
+
   it("preserves available version on download failure for retry", () => {
     const state = reduceDesktopUpdateStateOnDownloadFailure(
       {
@@ -95,7 +146,8 @@ describe("updateMachine", () => {
     expect(failedInstall.canRetry).toBe(true);
   });
 
-  it("clears stale download state when no update is available", () => {
+  it("preserves a downloaded update when no update is available", () => {
+    const releaseNotes = [{ version: "1.1.0", items: ["fix: queued update"] }];
     const state = reduceDesktopUpdateStateOnNoUpdate(
       {
         ...createInitialDesktopUpdateState("1.0.0", runtimeInfo, "latest"),
@@ -103,6 +155,32 @@ describe("updateMachine", () => {
         status: "error",
         availableVersion: "1.1.0",
         downloadedVersion: "1.1.0",
+        releaseNotes,
+        message: "old failure",
+        errorContext: "download",
+        canRetry: true,
+      },
+      "2026-03-04T00:00:00.000Z",
+    );
+
+    expect(state.status).toBe("downloaded");
+    expect(state.availableVersion).toBe("1.1.0");
+    expect(state.downloadedVersion).toBe("1.1.0");
+    expect(state.releaseNotes).toBe(releaseNotes);
+    expect(state.downloadPercent).toBe(100);
+    expect(state.message).toBeNull();
+    expect(state.errorContext).toBeNull();
+    expect(state.canRetry).toBe(true);
+  });
+
+  it("clears stale available state when no update is available", () => {
+    const state = reduceDesktopUpdateStateOnNoUpdate(
+      {
+        ...createInitialDesktopUpdateState("1.0.0", runtimeInfo, "latest"),
+        enabled: true,
+        status: "error",
+        availableVersion: "1.1.0",
+        releaseNotes: [{ version: "1.1.0", items: ["fix: stale update"] }],
         message: "old failure",
         errorContext: "download",
         canRetry: true,
@@ -113,6 +191,7 @@ describe("updateMachine", () => {
     expect(state.status).toBe("up-to-date");
     expect(state.availableVersion).toBeNull();
     expect(state.downloadedVersion).toBeNull();
+    expect(state.releaseNotes).toEqual([]);
     expect(state.message).toBeNull();
     expect(state.errorContext).toBeNull();
   });

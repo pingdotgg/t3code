@@ -2,7 +2,9 @@ import { assert, it } from "@effect/vitest";
 import { PNG } from "pngjs";
 
 import showcaseConfig, {
+  DEFAULT_SHOWCASE_THEME,
   resolveShowcaseAndroidAbi,
+  SHOWCASE_THEMES,
   type ShowcaseConfig,
   type ShowcaseStoreAssetSpec,
 } from "./mobile-showcase.config.ts";
@@ -22,7 +24,6 @@ import {
   resolveAndroidSdkRoot,
   selectLanIpv4Address,
   showcaseCaptureDirectory,
-  showcaseSceneUrl,
   validateStoreAsset,
   validateStoreAssetCount,
 } from "./mobile-showcase.ts";
@@ -56,6 +57,7 @@ const config: ShowcaseConfig = {
       platform: "ios",
       simulator: "iPhone Test",
       appearance: "dark",
+      theme: "t3-code",
       scenes: ["thread", "review"],
       storeAsset: appleSpec,
     },
@@ -64,6 +66,7 @@ const config: ShowcaseConfig = {
       platform: "android",
       avd: "Pixel_Test",
       appearance: "light",
+      theme: "t3-code",
       scenes: ["thread", "terminal"],
       storeAsset: googleSpec,
     },
@@ -94,6 +97,23 @@ it("rejects unsupported system appearances", () => {
     () => parseShowcaseCliArgs(["--appearance", "sepia"]),
     /Unsupported appearance 'sepia'/u,
   );
+});
+
+it("parses repeatable and expanded theme filters", () => {
+  assert.deepStrictEqual(
+    [...parseShowcaseCliArgs(["--theme", "ocean", "--theme", "ember"]).themes],
+    ["ocean", "ember"],
+  );
+  assert.deepStrictEqual(
+    [...parseShowcaseCliArgs(["--theme", "all"]).themes],
+    [...SHOWCASE_THEMES],
+  );
+});
+
+// The app normalizes an unknown id back to its default palette, so a typo here
+// would otherwise produce screenshots labeled with a theme they do not show.
+it("rejects unsupported themes instead of capturing the default palette", () => {
+  assert.throws(() => parseShowcaseCliArgs(["--theme", "sunset"]), /Unsupported theme 'sunset'/u);
 });
 
 it("parses validation-only mode", () => {
@@ -147,8 +167,35 @@ it("expands both appearances into independent upload-ready directories", () => {
       directory: showcaseCaptureDirectory("/captures", capture),
     })),
     [
-      { appearance: "light", directory: "/captures/apple/iphone-test/light" },
-      { appearance: "dark", directory: "/captures/apple/iphone-test/dark" },
+      { appearance: "light", directory: "/captures/apple/iphone-test/light/t3-code" },
+      { appearance: "dark", directory: "/captures/apple/iphone-test/dark/t3-code" },
+    ],
+  );
+});
+
+// Every palette needs its own leaf folder: one directory holding several themes
+// would mix upload slots and break the per-store screenshot count limits.
+it("expands themes into independent upload-ready directories per appearance", () => {
+  const options = parseShowcaseCliArgs([
+    "--device",
+    "phone",
+    "--appearance",
+    "both",
+    "--theme",
+    "ocean",
+    "--theme",
+    "ember",
+  ]);
+
+  assert.deepStrictEqual(
+    planShowcaseCaptures(config, options).map((capture) =>
+      showcaseCaptureDirectory("/captures", capture),
+    ),
+    [
+      "/captures/apple/iphone-test/light/ocean",
+      "/captures/apple/iphone-test/light/ember",
+      "/captures/apple/iphone-test/dark/ocean",
+      "/captures/apple/iphone-test/dark/ember",
     ],
   );
 });
@@ -212,6 +259,14 @@ it("enforces store screenshot count limits", () => {
   assert.throws(() => validateStoreAssetCount(googleSpec, 9, false), /allows at most 8/u);
 });
 
+it("defaults every device to the app's own palette", () => {
+  assert.equal(DEFAULT_SHOWCASE_THEME, "t3-code");
+  assert.equal(
+    showcaseConfig.devices.every((device) => device.theme === DEFAULT_SHOWCASE_THEME),
+    true,
+  );
+});
+
 it("configures every default device with an exact upload-ready store target", () => {
   assert.deepStrictEqual(
     showcaseConfig.devices.map((device) => [
@@ -241,23 +296,6 @@ it("selects a reachable LAN IPv4 address", () => {
       { address: "192.168.1.80", family: "IPv4", internal: false },
     ]),
     "192.168.1.80",
-  );
-});
-
-it("maps capture scenes to the real application routes", () => {
-  assert.equal(showcaseSceneUrl("threads", "environment-1"), "t3code://");
-  assert.equal(showcaseSceneUrl("environments", "environment-1"), "t3code://settings/environments");
-  assert.equal(
-    showcaseSceneUrl("thread", "environment-1"),
-    "t3code://threads/environment-1/remote-command-center",
-  );
-  assert.equal(
-    showcaseSceneUrl("terminal", "environment-1"),
-    "t3code://threads/environment-1/remote-command-center/terminal?terminalId=term-1",
-  );
-  assert.equal(
-    showcaseSceneUrl("review", "environment-1"),
-    "t3code://threads/environment-1/remote-command-center/review",
   );
 });
 

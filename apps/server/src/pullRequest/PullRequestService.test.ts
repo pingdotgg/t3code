@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
   ProjectId,
@@ -11,6 +12,7 @@ import type {
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
@@ -169,6 +171,7 @@ function makeService(input: {
               updatedAt: "2026-07-01T00:00:00Z",
             }),
         }),
+        SourceControlRateLimit.layer,
       ),
     ),
   );
@@ -1339,6 +1342,97 @@ it.effect("reports repositories on a host that could not be read", () =>
   }),
 );
 
+it.effect("stops new reads after a rate limit while leaving manual actions available", () =>
+  Effect.gen(function* () {
+    let listCalls = 0;
+    let actionCalls = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "cloud", workspaceRoot: "/cloud", repository: "acme/web" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: () =>
+            Effect.sync(() => {
+              listCalls += 1;
+            }).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new PullRequestProviderError({
+                    provider: "github",
+                    operation: "listChangeRequests",
+                    reason: "rate-limited",
+                    detail: "GitHub API rate limit exceeded.",
+                  }),
+                ),
+              ),
+            ),
+          runAction: () =>
+            Effect.sync(() => {
+              actionCalls += 1;
+            }),
+        }),
+      ],
+    });
+
+    const first = yield* service.list({ state: "open", involvement: "all" });
+    const paused = yield* service.list({ state: "open", involvement: "authored" });
+    yield* service.runAction({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      action: "close",
+    });
+
+    assert.strictEqual(listCalls, 1);
+    assert.strictEqual(actionCalls, 1);
+    assert.lengthOf(first.errors, 1);
+    assert.lengthOf(paused.errors, 1);
+  }),
+);
+
+it.effect("uses a manual rate limit to pause later reads", () =>
+  Effect.gen(function* () {
+    let listCalls = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "cloud", workspaceRoot: "/cloud", repository: "acme/web" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: () =>
+            Effect.sync(() => {
+              listCalls += 1;
+              return { items: [], truncated: false, continues: true };
+            }),
+          runAction: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: "github",
+                operation: "runAction",
+                reason: "rate-limited",
+                detail: "GitHub API rate limit exceeded.",
+              }),
+            ),
+        }),
+      ],
+    });
+
+    yield* Effect.flip(
+      service.runAction({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        action: "close",
+      }),
+    );
+    const error = yield* Effect.flip(service.list({ state: "open", involvement: "all" }));
+
+    assert.strictEqual(listCalls, 0);
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+  }),
+);
+
 it.effect("flags a review request for the viewer but not on their own change request", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
@@ -2196,6 +2290,42 @@ it.effect("answers a repeated listing from cache, and concurrent readers share o
     // A different filter is a different answer, not a cache hit.
     yield* service.list({ state: "all" });
     assert.strictEqual(hostCalls, 2);
+  }),
+);
+
+it.effect("returns the refreshed listing on the first read after its cache expires", () =>
+  Effect.gen(function* () {
+    let hostCalls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: () => {
+            hostCalls += 1;
+            return Effect.succeed({
+              items: [changeRequest(hostCalls, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            });
+          },
+        }),
+      ],
+    });
+
+    const first = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(
+      first.entries.map((entry) => entry.number),
+      [1],
+    );
+
+    yield* TestClock.adjust("31 seconds");
+    const refreshed = yield* service.list({ state: "open" });
+
+    assert.strictEqual(hostCalls, 2);
+    assert.deepStrictEqual(
+      refreshed.entries.map((entry) => entry.number),
+      [2],
+    );
   }),
 );
 
