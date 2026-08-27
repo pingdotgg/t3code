@@ -18,7 +18,11 @@ import {
 } from "./linkEnvironmentAtoms";
 import { usePrimaryCloudLinkState } from "./primaryCloudLinkState";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
-import { clearPendingReferralCode, readPendingReferralCode } from "./referralLinks";
+import {
+  clearPendingReferralCode,
+  clearReferralCodeFromCurrentUrl,
+  readPendingReferralCode,
+} from "./referralLinks";
 
 export interface CloudLinkDesiredState {
   readonly managedTunnel: boolean;
@@ -129,10 +133,12 @@ export function useCloudLinkController() {
           if (!isAtomCommandInterrupted(linkResult)) {
             const cause = squashAtomCommandFailure(linkResult);
             if (
+              referralCode &&
               cause instanceof CloudEnvironmentLinkError &&
               cause.referralClaimResult !== undefined
             ) {
               clearPendingReferralCode();
+              clearReferralCodeFromCurrentUrl(referralCode);
             }
             reportUpdateFailure(cause);
           }

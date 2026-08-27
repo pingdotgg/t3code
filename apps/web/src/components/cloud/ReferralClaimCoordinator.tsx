@@ -16,10 +16,10 @@ import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { referralClaimMessage } from "../../cloud/referralClaimResult";
 import {
   captureReferralCodeFromUrl,
+  clearReferralCodeFromCurrentUrl,
   clearPendingReferralCode,
   persistPendingReferralCode,
   readPendingReferralCode,
-  urlWithoutMatchingReferralCode,
 } from "../../cloud/referralLinks";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
@@ -39,13 +39,6 @@ function captureReferralCode(): string | null {
     window.history.replaceState(window.history.state, "", captured.cleanedUrl);
   }
   return captured.referralCode;
-}
-
-function clearReferralCodeFromUrl(referralCode: string): void {
-  const url = new URL(window.location.href);
-  const cleanedUrl = urlWithoutMatchingReferralCode(url, referralCode);
-  if (!cleanedUrl) return;
-  window.history.replaceState(window.history.state, "", cleanedUrl);
 }
 
 export function ReferralClaimCoordinator() {
@@ -123,7 +116,7 @@ function ConfiguredReferralClaimCoordinator() {
           completedClaimRef.current = attemptKey;
           closeRetryToast();
           clearPendingReferralCode();
-          clearReferralCodeFromUrl(referralCode);
+          clearReferralCodeFromCurrentUrl(referralCode);
           setPendingReferralCode(null);
           refreshManagedRelayReferralSummary();
           if (result.value.result !== "already_claimed") {

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   buildReferralShareData,
   captureReferralCodeFromUrl,
+  clearReferralCodeFromCurrentUrl,
   clearPendingReferralCode,
   PENDING_REFERRAL_CODE_STORAGE_KEY,
   persistPendingReferralCode,
@@ -89,6 +90,18 @@ describe("referralLinks", () => {
 
     expect(urlWithoutMatchingReferralCode(currentUrl, "AAAAAAAAAAAAAAAA")).toBeNull();
     expect(urlWithoutMatchingReferralCode(currentUrl, "bbbbbbbbbbbbbbbb")).toBe("/#thread");
+  });
+
+  it("removes a rejected referral from the current URL", () => {
+    const replaceUrl = vi.fn();
+
+    clearReferralCodeFromCurrentUrl(
+      "abcd1234efab5678",
+      () => new URL("https://app.t3.codes/?channel=nightly&ref=ABCD1234EFAB5678#thread"),
+      replaceUrl,
+    );
+
+    expect(replaceUrl).toHaveBeenCalledWith("/?channel=nightly#thread");
   });
 
   it("embeds the claim URL in web share text even when a share target drops the url field", () => {

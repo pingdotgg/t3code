@@ -67,6 +67,16 @@ export function urlWithoutMatchingReferralCode(
   return urlWithoutReferralCode(url);
 }
 
+export function clearReferralCodeFromCurrentUrl(
+  referralCode: string,
+  getUrl: () => URL = () => new URL(window.location.href),
+  replaceUrl: (url: string) => void = (url) =>
+    window.history.replaceState(window.history.state, "", url),
+): void {
+  const cleanedUrl = urlWithoutMatchingReferralCode(getUrl(), referralCode);
+  if (cleanedUrl) replaceUrl(cleanedUrl);
+}
+
 export function captureReferralCodeFromUrl(
   url: URL,
   persist: (referralCode: string) => boolean | void,
