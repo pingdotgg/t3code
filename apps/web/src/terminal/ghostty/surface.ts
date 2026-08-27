@@ -885,6 +885,12 @@ export class GhosttyTerminalSurface {
     this.input.focus({ preventScroll: true });
   }
 
+  paste(data: string): void {
+    if (this.disposed || data.length === 0) return;
+    this.pasteShortcutToken += 1;
+    this.options.onData(this.core.encodePaste(data));
+  }
+
   /**
    * Pastes clipboard text read by the host (context menu) with the same
    * bracketed-paste encoding as a native paste event. The read joins the same
@@ -899,12 +905,7 @@ export class GhosttyTerminalSurface {
     const token = ++this.pasteShortcutToken;
     const text = await readText();
     if (this.disposed || this.pasteShortcutToken !== token || !isCurrent()) return;
-    // As in every paste path, delivering bumps the token so a clipboard read
-    // still in flight cannot land after this text reaches the shell.
-    this.pasteShortcutToken += 1;
-    if (text.length === 0) return;
-    const encoded = this.core.encodePaste(text);
-    if (encoded.length > 0) this.options.onData(encoded);
+    this.paste(text);
   }
 
   hasSelection(): boolean {
@@ -1077,8 +1078,7 @@ export class GhosttyTerminalSurface {
         void clipboard.readText().then(
           (text) => {
             if (this.disposed || this.pasteShortcutToken !== token) return;
-            this.pasteShortcutToken += 1;
-            if (text.length > 0) this.options.onData(this.core.encodePaste(text));
+            this.paste(text);
           },
           () => {
             // Clipboard read denied; the native paste event remains the path.
@@ -1187,8 +1187,7 @@ export class GhosttyTerminalSurface {
     if (data.length === 0) return;
     // The native paste won the race with actual text; a pending clipboard read
     // must not double. An empty native paste leaves the read as the only path.
-    this.pasteShortcutToken += 1;
-    this.options.onData(this.core.encodePaste(data));
+    this.paste(data);
   };
 
   private readonly onCompositionStart = () => {
