@@ -5,7 +5,7 @@ import type {
   DesktopPreviewTabState,
 } from "@t3tools/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 
@@ -34,6 +34,16 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       return null;
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
+  },
+  getPathForFile: (file: File) => {
+    try {
+      const filePath = webUtils.getPathForFile(file);
+      return filePath.length > 0 ? filePath : null;
+    } catch {
+      // Files synthesised in the renderer (clipboard, generated blobs) have
+      // no path on disk; the caller falls back to attaching or reporting.
+      return null;
+    }
   },
   getSystemLocale: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);

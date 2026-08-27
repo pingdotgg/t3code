@@ -27,3 +27,9 @@ message. Up to 8 files per message; images over 10 MB are compressed to fit, vid
 25 MB. Attached videos play inline in the conversation. Coding agents cannot watch video directly,
 so the agent receives the saved file's path and can work on it with its tools. Video attachments in
 an unsent draft are not persisted across a reload.
+
+Files the agent can't read inline — a CSV, PDF, archive, or an oversized or
+unusual media file — are not rejected: dropping one adds its full path to your
+message so the agent can open it from disk with its own tools. Paths are only
+available in the desktop app, since browsers hide the location of dropped
+files.

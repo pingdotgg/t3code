@@ -16,7 +16,15 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronRight, Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
+import {
+  ChevronRight,
+  Code2,
+  Eye,
+  FileQuestionIcon,
+  FolderTree,
+  Globe2,
+  LoaderCircle,
+} from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -1050,6 +1058,15 @@ export default function FilePreviewPanel({
               alt={relativePath}
               kind={mediaKind}
             />
+          ) : relativePath && file.failure === "binary_file" && file.data === null ? (
+            // An expected outcome, not a failure: binary files simply have no
+            // text preview, and listing hidden/ignored files surfaces plenty.
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
+              <FileQuestionIcon className="size-5 text-muted-foreground" aria-hidden />
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                No preview available for this file type.
+              </p>
+            </div>
           ) : relativePath && file.error && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
               {file.error}

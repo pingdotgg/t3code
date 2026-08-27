@@ -25,6 +25,8 @@ function optimisticFileAtom(environmentId: EnvironmentId, cwd: string, relativeP
 interface ProjectQueryState<A> {
   readonly data: A | null;
   readonly error: string | null;
+  /** Structured failure tag from the server, when it sent one. */
+  readonly failure: string | null;
   readonly isPending: boolean;
   readonly refresh: () => void;
 }
@@ -129,6 +131,18 @@ function errorMessage<A>(result: AsyncResult.AsyncResult<A, unknown>): string | 
   return cause instanceof Error ? cause.message : "Workspace query failed.";
 }
 
+/**
+ * The server's structured failure tag (e.g. `binary_file`), so callers can
+ * render an expected outcome as its own state instead of a generic error.
+ */
+function errorFailure<A>(result: AsyncResult.AsyncResult<A, unknown>): string | null {
+  if (result._tag !== "Failure") return null;
+  const cause: unknown = Cause.squash(result.cause);
+  if (typeof cause !== "object" || cause === null || !("failure" in cause)) return null;
+  const failure = (cause as { readonly failure?: unknown }).failure;
+  return typeof failure === "string" ? failure : null;
+}
+
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
@@ -141,6 +155,7 @@ export function useProjectEntriesQuery(
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
     error: errorMessage(result),
+    failure: errorFailure(result),
     isPending: result.waiting,
     refresh,
   };
@@ -202,6 +217,7 @@ export function useProjectFileQuery(
   return {
     data: optimisticFile?.data ?? data,
     error: errorMessage(result),
+    failure: errorFailure(result),
     isPending: result.waiting,
     refresh,
   };

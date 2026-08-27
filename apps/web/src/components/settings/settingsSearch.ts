@@ -107,6 +107,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "sidebar-side",
+    title: "Sidebar side",
+    to: "/settings/appearance",
+  },
+  {
     id: "word-wrap",
     title: "Word wrap",
     to: "/settings/appearance",

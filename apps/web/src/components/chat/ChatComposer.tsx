@@ -13,13 +13,10 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import {
-  isProviderSendTurnSupportedImageMimeType,
-  isProviderSendTurnSupportedVideoMimeType,
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-  PROVIDER_SEND_TURN_MAX_VIDEO_BYTES,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -226,6 +223,8 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { isElectron } from "~/env";
+import { isInlineAttachableFile } from "./composerFileIntake";
 import {
   BotIcon,
   CircleAlertIcon,
@@ -2474,6 +2473,42 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     terminalOpen,
   ]);
 
+  /**
+   * Appends the on-disk paths of files the agent can't receive inline, and
+   * returns the names of files whose path could not be resolved (browser
+   * builds, or clipboard-synthesised files with no path).
+   */
+  const insertDroppedFilePaths = (droppedFiles: readonly File[]): string[] => {
+    const resolvedPaths: string[] = [];
+    const unresolvedNames: string[] = [];
+    for (const file of droppedFiles) {
+      const filePath = window.desktopBridge?.getPathForFile?.(file) ?? null;
+      if (filePath) {
+        resolvedPaths.push(filePath);
+      } else {
+        unresolvedNames.push(`'${file.name}'`);
+      }
+    }
+    if (resolvedPaths.length === 0) {
+      return unresolvedNames;
+    }
+    // Quoted so paths containing spaces survive being pasted into a shell
+    // command, and newline-separated so several drops stay readable.
+    const insertion = resolvedPaths.map((filePath) => `"${filePath}"`).join("\n");
+    if (!insertComposerTextAtEnd(insertion, { ensureLeadingBoundary: true })) {
+      return [...unresolvedNames, ...resolvedPaths.map((filePath) => `'${filePath}'`)];
+    }
+    toastManager.add({
+      type: "success",
+      title:
+        resolvedPaths.length === 1
+          ? "Added the file path to your message."
+          : `Added ${resolvedPaths.length} file paths to your message.`,
+      description: "The agent can read these files from disk.",
+    });
+    return unresolvedNames;
+  };
+
   // ------------------------------------------------------------------
   // Callbacks: images
   // ------------------------------------------------------------------
@@ -2498,21 +2533,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     let reservedCount = composerImagesRef.current.length + pendingCount;
     const acceptedFiles: File[] = [];
     let error: string | null = null;
+    // Files the agent cannot receive inline (CSV, PDF, archives, oversized or
+    // exotic media) are referenced by their path instead of rejected, so the
+    // agent can open them with its own tools.
+    const pathOnlyFiles: File[] = [];
     for (const file of files) {
-      if (file.type.startsWith("video/")) {
-        if (!isProviderSendTurnSupportedVideoMimeType(file.type)) {
-          error = `'${file.name}' is not a supported video type. Attach MP4, MOV, or WebM videos.`;
-          continue;
-        }
-        if (file.size === 0 || file.size > PROVIDER_SEND_TURN_MAX_VIDEO_BYTES) {
-          error = `'${file.name}' is too large to attach. Videos can be up to ${Math.floor(PROVIDER_SEND_TURN_MAX_VIDEO_BYTES / (1024 * 1024))} MB.`;
-          continue;
-        }
-      } else if (!file.type.startsWith("image/")) {
-        error = `Unsupported file type for '${file.name}'. Please attach image or video files only.`;
-        continue;
-      } else if (!isProviderSendTurnSupportedImageMimeType(file.type)) {
-        error = `'${file.name}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
+      if (!isInlineAttachableFile(file)) {
+        pathOnlyFiles.push(file);
         continue;
       }
       if (reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
@@ -2521,6 +2548,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       acceptedFiles.push(file);
       reservedCount += 1;
+    }
+
+    if (pathOnlyFiles.length > 0) {
+      const unresolvedNames = insertDroppedFilePaths(pathOnlyFiles);
+      if (unresolvedNames.length > 0) {
+        error = isElectron
+          ? `Could not resolve a file path for ${unresolvedNames.join(", ")}.`
+          : `${unresolvedNames.join(", ")} can't be attached here. Open the desktop app to reference files by path, or attach GIF, JPEG, PNG, or WebP images.`;
+      }
     }
     setThreadError(threadId, error);
     if (acceptedFiles.length === 0) return;

@@ -39,6 +39,7 @@ const clientSettings: ClientSettings = {
   showSkillsInSlashMenu: false,
   providerModelPreferences: {},
   rightPanelSide: "right",
+  appSidebarSide: "left",
   sidebarAutoSettleAfterDays: 3,
   sidebarAutoSettleOnMerge: true,
   sidebarProjectGroupingMode: "repository_path",

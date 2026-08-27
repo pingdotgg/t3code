@@ -1196,6 +1196,43 @@ export function AppearanceSettingsPanel() {
             </Select>
           }
         />
+
+        <SettingsRow
+          {...searchableSetting("sidebar-side")}
+          description="Choose which side the projects and threads sidebar docks on."
+          resetAction={
+            settings.appSidebarSide !== DEFAULT_UNIFIED_SETTINGS.appSidebarSide ? (
+              <SettingResetButton
+                label="sidebar side"
+                onClick={() =>
+                  updateSettings({ appSidebarSide: DEFAULT_UNIFIED_SETTINGS.appSidebarSide })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.appSidebarSide}
+              onValueChange={(value) => {
+                if (value === "left" || value === "right") {
+                  updateSettings({ appSidebarSide: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar side">
+                <SelectValue>{settings.appSidebarSide === "right" ? "Right" : "Left"}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="left">
+                  Left
+                </SelectItem>
+                <SelectItem hideIndicator value="right">
+                  Right
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
       </SettingsSection>
 
       <TypographySection />

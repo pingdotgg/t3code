@@ -146,6 +146,12 @@ export const RightPanelSide = Schema.Literals(["left", "right"]);
 export type RightPanelSide = typeof RightPanelSide.Type;
 export const DEFAULT_RIGHT_PANEL_SIDE: RightPanelSide = "right";
 
+// Which side the app sidebar (projects and threads nav) docks on. Independent
+// of the tool panel, so either column can sit beside the chat.
+export const AppSidebarSide = Schema.Literals(["left", "right"]);
+export type AppSidebarSide = typeof AppSidebarSide.Type;
+export const DEFAULT_APP_SIDEBAR_SIDE: AppSidebarSide = "left";
+
 export const ClientSettingsSchema = Schema.Struct({
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
@@ -239,6 +245,9 @@ export const ClientSettingsSchema = Schema.Struct({
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   rightPanelSide: RightPanelSide.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RIGHT_PANEL_SIDE)),
+  ),
+  appSidebarSide: AppSidebarSide.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_APP_SIDEBAR_SIDE)),
   ),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
@@ -926,6 +935,7 @@ export const ClientSettingsPatch = Schema.Struct({
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   rightPanelSide: Schema.optionalKey(RightPanelSide),
+  appSidebarSide: Schema.optionalKey(AppSidebarSide),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
