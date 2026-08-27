@@ -80,7 +80,13 @@ Rectangle {
     }
 
     function submit(intent) {
-        if (!composer.ready || !composer.model.canSend) {
+        if (!composer.ready) {
+            return;
+        }
+        // canSend reflects the text the page has seen, which lags this input by
+        // the debounce; with local text, let the page validate the send (it
+        // echoes the prompt back if it declines).
+        if (!composer.model.canSend && input.text.trim().length === 0) {
             return;
         }
         textDebounce.stop();
