@@ -102,7 +102,7 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          META_MODEL_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         with:
           model: openrouter/z-ai/glm-5.3-flash
           use_github_token: true
@@ -167,7 +167,7 @@ jobs:
               --body "$(cat <<'EOF'
           Automated upstream sync from `${{ env.UPSTREAM_REPOSITORY }}`:`${{ env.UPSTREAM_BRANCH }}`.
 
-          - Auto-merge failed — conflicts were resolved by opencode (model: \`z-ai/glm-5.3-flash\`, logic based on \`opencode-review.yml\`).
+          - Auto-merge failed — conflicts were resolved by opencode (model: \`openrouter/z-ai/glm-5.3-flash\`, logic based on \`opencode-review.yml\`).
           - Please review the resolution before merging. CI must pass.
 
           Upstream commits:
