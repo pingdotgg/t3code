@@ -214,7 +214,13 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
           case "composer.attach": {
             const files: File[] = [];
             for (const entry of candidate.files) {
-              const bytes = Uint8Array.from(atob(entry.base64), (char) => char.charCodeAt(0));
+              let bytes: Uint8Array<ArrayBuffer>;
+              try {
+                bytes = Uint8Array.from(atob(entry.base64), (char) => char.charCodeAt(0));
+              } catch {
+                console.warn("[shell] dropped attachment with malformed base64:", entry.name);
+                continue;
+              }
               files.push(new File([bytes], entry.name, { type: entry.mimeType }));
             }
             if (files.length > 0) current.onAttachFiles(files);
