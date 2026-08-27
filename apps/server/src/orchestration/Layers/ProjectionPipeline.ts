@@ -1727,6 +1727,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             Stream.runForEach(
               eventStore.readFromSequence(
                 Option.isSome(stateRow) ? stateRow.value.lastAppliedSequence : 0,
+                Number.MAX_SAFE_INTEGER,
               ),
               (event) => runProjectorForEvent(projector, event),
             ),
