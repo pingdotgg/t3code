@@ -1774,6 +1774,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   "-c",
                   `mcp_servers.t3-code.tool_timeout_sec=${McpProviderSession.T3_MCP_TOOL_TIMEOUT_SECONDS}`,
                 ],
+                mcpCapabilities: mcpSession.capabilities,
               }
             : {}),
         };

@@ -9,14 +9,19 @@
 import {
   DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
   DEFAULT_BROWSER_VIEWPORT,
+  DEFAULT_GROK_IMAGE_MODEL,
+  DEFAULT_IMAGE_GENERATION_PROVIDER,
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_UNIFIED_SETTINGS,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   FILL_PREVIEW_VIEWPORT,
+  GROK_IMAGE_MODELS,
   PREVIEW_VIEWPORT_MAX_AREA,
   PREVIEW_VIEWPORT_MAX_DIMENSION,
   PREVIEW_VIEWPORT_MIN_DIMENSION,
   PREVIEW_ZOOM_LEVELS,
+  type GrokImageModel,
+  type ImageGenerationProvider,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
@@ -355,6 +360,141 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
   );
 }
 
+const PROVIDER_LABELS: Record<ImageGenerationProvider, string> = {
+  codex: "Codex",
+  grok: "Grok",
+};
+
+const GROK_MODEL_LABELS: Record<GrokImageModel, string> = {
+  "grok-imagine-image-2.0": "Imagine 2.0",
+  "grok-imagine-image-quality": "Imagine Quality",
+  "grok-imagine-image": "Imagine",
+};
+
+function ImageGenerationEnabledSetting() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("image-generation-enabled")}
+      description="Let agents generate and edit images through T3 Code. When off, image generation is blocked in new sessions."
+      status={
+        settings.enableImageGeneration
+          ? undefined
+          : "Applies to sessions started from now on; a running agent keeps the tools it was given."
+      }
+      resetAction={
+        settings.enableImageGeneration !== DEFAULT_UNIFIED_SETTINGS.enableImageGeneration ? (
+          <SettingResetButton
+            label="image generation"
+            onClick={() =>
+              updateSettings({
+                enableImageGeneration: DEFAULT_UNIFIED_SETTINGS.enableImageGeneration,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={settings.enableImageGeneration}
+          onCheckedChange={(checked) => updateSettings({ enableImageGeneration: Boolean(checked) })}
+          aria-label="Allow image generation"
+        />
+      }
+    />
+  );
+}
+
+function ImageGenerationProviderSetting() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const disabled = !settings.enableImageGeneration;
+
+  return (
+    <SettingsRow
+      {...searchableSetting("image-generation-provider")}
+      description="Codex uses your existing Codex CLI login. Grok uses Imagine through your Grok login, with a model you can pick."
+      resetAction={
+        !disabled && settings.imageGenerationProvider !== DEFAULT_IMAGE_GENERATION_PROVIDER ? (
+          <SettingResetButton
+            label="image provider"
+            onClick={() =>
+              updateSettings({ imageGenerationProvider: DEFAULT_IMAGE_GENERATION_PROVIDER })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Select
+          disabled={disabled}
+          value={settings.imageGenerationProvider}
+          onValueChange={(value) => {
+            if (value === "codex" || value === "grok") {
+              updateSettings({ imageGenerationProvider: value });
+            }
+          }}
+        >
+          <SelectTrigger className="w-full sm:w-40" aria-label="Image generation provider">
+            <SelectValue>{PROVIDER_LABELS[settings.imageGenerationProvider]}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
+              <SelectItem hideIndicator key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
+
+function ImageGenerationGrokModelSetting() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const disabled = !settings.enableImageGeneration || settings.imageGenerationProvider !== "grok";
+
+  return (
+    <SettingsRow
+      {...searchableSetting("image-generation-grok-model")}
+      description="Imagine model used when Grok is the image provider."
+      resetAction={
+        !disabled && settings.imageGenerationGrokModel !== DEFAULT_GROK_IMAGE_MODEL ? (
+          <SettingResetButton
+            label="Grok image model"
+            onClick={() => updateSettings({ imageGenerationGrokModel: DEFAULT_GROK_IMAGE_MODEL })}
+          />
+        ) : null
+      }
+      control={
+        <Select
+          disabled={disabled}
+          value={settings.imageGenerationGrokModel}
+          onValueChange={(value) => {
+            if (GROK_IMAGE_MODELS.includes(value as GrokImageModel)) {
+              updateSettings({ imageGenerationGrokModel: value as GrokImageModel });
+            }
+          }}
+        >
+          <SelectTrigger className="w-full sm:w-48" aria-label="Grok Imagine model">
+            <SelectValue>{GROK_MODEL_LABELS[settings.imageGenerationGrokModel]}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {GROK_IMAGE_MODELS.map((value) => (
+              <SelectItem hideIndicator key={value} value={value}>
+                {GROK_MODEL_LABELS[value]}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
+
 function AgentBrowserAccessSetting() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -467,6 +607,11 @@ export function IntegrationsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <SettingsSection id="image-generation" title="Image generation">
+        <ImageGenerationEnabledSetting />
+        <ImageGenerationProviderSetting />
+        <ImageGenerationGrokModelSetting />
+      </SettingsSection>
       <SettingsSection id="browser" title="Browser">
         {/* Server-authoritative, so it stays editable on every client and sits
             outside the block covering the desktop-only defaults. */}

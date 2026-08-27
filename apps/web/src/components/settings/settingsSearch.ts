@@ -270,6 +270,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/providers",
   },
   {
+    id: "image-generation-enabled",
+    title: "Image generation",
+    to: "/settings/integrations",
+    targetId: "image-generation",
+  },
+  {
+    id: "image-generation-provider",
+    title: "Image provider",
+    to: "/settings/integrations",
+    targetId: "image-generation",
+  },
+  {
+    id: "image-generation-grok-model",
+    title: "Grok Imagine model",
+    to: "/settings/integrations",
+    targetId: "image-generation",
+  },
+  {
     id: "agent-browser-access",
     title: "Agent browser access",
     to: "/settings/integrations",

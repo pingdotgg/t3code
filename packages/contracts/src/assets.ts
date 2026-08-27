@@ -17,6 +17,9 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   }),
+  Schema.TaggedStruct("generated-image", {
+    imageId: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
+  }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     // A cache-key hint only. The server reads the authoritative path from the

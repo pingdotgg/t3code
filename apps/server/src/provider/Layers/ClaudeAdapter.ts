@@ -82,6 +82,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { OPERATOR_PROVIDER_INSTRUCTIONS } from "../../operator/OperatorInstructions.ts";
+import { T3_CODE_IMAGE_GENERATION_INSTRUCTIONS } from "../CodexDeveloperInstructions.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -4377,13 +4378,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           : {}),
       };
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-      // The attachments dir grant lets the agent Read/copy pasted images at
-      // the paths ProviderService injects into the turn text, without an
-      // approval prompt. It is a leaf directory holding only attachment
-      // files; siblings like secrets/ and state.sqlite stay ungranted.
+      // The attachments and images dir grants let the agent Read/copy pasted
+      // and generated images without an approval prompt. Both are leaf
+      // directories; siblings like secrets/ and state.sqlite stay ungranted.
       const additionalDirectories = [
         ...(input.cwd ? [input.cwd] : []),
         serverConfig.attachmentsDir,
+        serverConfig.imagesDir,
       ];
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -4392,7 +4393,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: OPERATOR_PROVIDER_INSTRUCTIONS,
+          append: `${OPERATOR_PROVIDER_INSTRUCTIONS}${T3_CODE_IMAGE_GENERATION_INSTRUCTIONS}`,
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is

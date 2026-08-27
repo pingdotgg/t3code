@@ -12,6 +12,10 @@ import type {
   TurnId,
   UserInputQuestion,
 } from "@t3tools/contracts";
+import {
+  extractGeneratedImage,
+  type GeneratedImageRef,
+} from "@t3tools/client-runtime/generated-image";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 import * as Arr from "effect/Array";
@@ -65,6 +69,7 @@ export interface ThreadFeedActivity {
     | "zap";
   readonly toolLike: boolean;
   readonly status: "success" | "failure" | "neutral" | null;
+  readonly generatedImage?: GeneratedImageRef;
 }
 
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
@@ -86,6 +91,7 @@ interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   toolData?: unknown;
+  generatedImage?: GeneratedImageRef;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {
@@ -427,11 +433,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (title) {
     entry.toolTitle = title;
   }
-  if (itemType === "mcp_tool_call") {
-    const data = asRecord(payload?.data);
-    if (data?.item !== undefined) {
-      entry.toolData = data.item;
-    }
+  const data = asRecord(payload?.data);
+  if (itemType === "mcp_tool_call" && data?.item !== undefined) {
+    entry.toolData = data.item;
+  }
+  const generatedImage = extractGeneratedImage(data) ?? extractGeneratedImage(data?.item);
+  if (generatedImage) {
+    entry.generatedImage = generatedImage;
   }
   if (itemType) {
     entry.itemType = itemType;
@@ -516,6 +524,7 @@ function mergeDerivedWorkLogEntries(
   const collapseKey = next.collapseKey ?? previous.collapseKey;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  const generatedImage = next.generatedImage ?? previous.generatedImage;
   return {
     ...previous,
     ...next,
@@ -529,6 +538,7 @@ function mergeDerivedWorkLogEntries(
     ...(collapseKey ? { collapseKey } : {}),
     ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(generatedImage !== undefined ? { generatedImage } : {}),
   };
 }
 
@@ -1597,6 +1607,7 @@ export function buildThreadFeed(
               icon: workEntryIcon(entry),
               toolLike: workLogEntryIsToolLike(entry),
               status: workEntryStatus(entry),
+              ...(entry.generatedImage ? { generatedImage: entry.generatedImage } : {}),
             },
           };
         }),

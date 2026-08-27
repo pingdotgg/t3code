@@ -11,6 +11,13 @@ import {
 } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import {
+  DEFAULT_ENABLE_IMAGE_GENERATION,
+  DEFAULT_GROK_IMAGE_MODEL,
+  DEFAULT_IMAGE_GENERATION_PROVIDER,
+  GrokImageModel,
+  ImageGenerationProvider,
+} from "./imageGeneration.ts";
+import {
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   FILL_PREVIEW_VIEWPORT,
@@ -673,16 +680,30 @@ export const ServerSettings = Schema.Struct({
   ),
   /**
    * Whether agents may drive the in-app preview browser. Turning this off
-   * withholds the MCP credential, so the `t3-code` server (and with it every
-   * `preview_*` tool) is never attached to a provider session, and the prompt
-   * text describing those tools is dropped along with them. The user's own
-   * browser panel is unaffected — this gates agent access only.
+   * withholds the preview capability from new `t3-code` MCP sessions, so
+   * `preview_*` tools fail closed. Operator and thread-reference stay attached.
+   * The user's own browser panel is unaffected. This gates agent access only.
    *
    * Server-authoritative rather than client-local: tool injection and prompt
    * construction both happen on the server, and the answer must not differ
    * between a desktop window and a phone attached to the same server.
    */
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Whether agents may call T3 Code image generation. When off, the
+   * `generate_image` / `edit_image` tools are withheld from new sessions.
+   * Generation still runs on the environment host through the selected
+   * provider, Codex CLI or Grok Imagine.
+   */
+  enableImageGeneration: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENABLE_IMAGE_GENERATION)),
+  ),
+  imageGenerationProvider: ImageGenerationProvider.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_IMAGE_GENERATION_PROVIDER)),
+  ),
+  imageGenerationGrokModel: GrokImageModel.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_GROK_IMAGE_MODEL)),
+  ),
   autoContinueAfterUsageLimitReset: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -905,6 +926,9 @@ export const ServerSettingsPatch = Schema.Struct({
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  enableImageGeneration: Schema.optionalKey(Schema.Boolean),
+  imageGenerationProvider: Schema.optionalKey(ImageGenerationProvider),
+  imageGenerationGrokModel: Schema.optionalKey(GrokImageModel),
   autoContinueAfterUsageLimitReset: Schema.optionalKey(Schema.Boolean),
   vibeProxy: Schema.optionalKey(
     Schema.Struct({

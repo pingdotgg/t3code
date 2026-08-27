@@ -37,6 +37,7 @@ import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { OPERATOR_PROVIDER_INSTRUCTIONS } from "../../operator/OperatorInstructions.ts";
+import { T3_CODE_IMAGE_GENERATION_INSTRUCTIONS } from "../CodexDeveloperInstructions.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
@@ -487,7 +488,7 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.systemPrompt, {
         type: "preset",
         preset: "claude_code",
-        append: OPERATOR_PROVIDER_INSTRUCTIONS,
+        append: `${OPERATOR_PROVIDER_INSTRUCTIONS}${T3_CODE_IMAGE_GENERATION_INSTRUCTIONS}`,
       });
       assert.match(OPERATOR_PROVIDER_INSTRUCTIONS, /top-level T3 Code sidebar task/);
       assert.match(OPERATOR_PROVIDER_INSTRUCTIONS, /operator_resume/);
@@ -509,6 +510,7 @@ describe("ClaudeAdapterLive", () => {
         providerInstanceId: ProviderInstanceId.make("claudeAgent"),
         endpoint: "http://127.0.0.1:4567/mcp",
         authorizationHeader: "Bearer test-token",
+        capabilities: new Set(["preview", "thread-reference", "image-generation"]),
       });
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({

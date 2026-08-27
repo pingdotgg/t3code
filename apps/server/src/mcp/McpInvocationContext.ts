@@ -1,5 +1,6 @@
 import {
   type EnvironmentId,
+  ImageGenerationUnavailableError,
   PreviewAutomationUnavailableError,
   type ProviderInstanceId,
   type ThreadId,
@@ -7,7 +8,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview" | "thread-reference";
+export type McpCapability = "preview" | "thread-reference" | "image-generation";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
@@ -38,3 +39,16 @@ export const requireMcpCapability = Effect.fn("mcp.requireCapability")(function*
   }
   return invocation;
 });
+
+export const requireImageGenerationCapability = Effect.fn("mcp.requireImageGeneration")(
+  function* () {
+    const invocation = yield* McpInvocationContext;
+    if (!invocation.capabilities.has("image-generation")) {
+      return yield* new ImageGenerationUnavailableError({
+        reason: "missing-capability",
+        detail: "Image generation is turned off in Settings → Integrations.",
+      });
+    }
+    return invocation;
+  },
+);

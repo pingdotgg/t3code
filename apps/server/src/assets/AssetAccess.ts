@@ -39,6 +39,7 @@ import {
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import { resolveGeneratedImagePath } from "../imageStore.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
@@ -79,6 +80,12 @@ const AssetClaimsSchema = Schema.Union([
     version: Schema.Literal(1),
     kind: Schema.Literal("attachment"),
     attachmentId: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("generated-image"),
+    imageId: Schema.String,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -295,6 +302,26 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = path.basename(attachmentPath);
       break;
     }
+    case "generated-image": {
+      const config = yield* ServerConfig.ServerConfig;
+      const imagePath = resolveGeneratedImagePath({
+        imagesDir: config.imagesDir,
+        imageId: input.resource.imageId,
+      });
+      if (!imagePath) {
+        return yield* new AssetAttachmentNotFoundError({
+          resource: input.resource,
+        });
+      }
+      claims = {
+        version: 1,
+        kind: "generated-image",
+        imageId: input.resource.imageId,
+        expiresAt,
+      };
+      fileName = path.basename(imagePath);
+      break;
+    }
     case "project-favicon": {
       const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(input.resource.cwd).pipe(
         Effect.mapError(
@@ -444,6 +471,22 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const claims = decodeClaims(encodedPayload);
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+
+  if (claims.kind === "generated-image") {
+    const config = yield* ServerConfig.ServerConfig;
+    const imagePath = resolveGeneratedImagePath({
+      imagesDir: config.imagesDir,
+      imageId: claims.imageId,
+    });
+    if (!imagePath) return null;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const info = yield* optionOnNotFound(fileSystem.stat(imagePath)).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    return Option.isSome(info) && info.value.type === "File"
+      ? ({ kind: "file", path: imagePath } satisfies ResolvedAsset)
+      : null;
+  }
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;
