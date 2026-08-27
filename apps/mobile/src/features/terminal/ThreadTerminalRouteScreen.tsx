@@ -6,6 +6,7 @@ import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/Stac
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import {
   KeyboardController,
   KeyboardEvents,
@@ -66,6 +67,7 @@ import {
   type TerminalMenuSession,
 } from "./terminalMenu";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
+import { encodeTerminalPaste } from "./encodeTerminalPaste";
 
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
@@ -78,6 +80,7 @@ type HostPlatform = "mac" | "linux" | "windows" | "unknown";
 type TerminalToolbarAction =
   | { readonly kind: "send"; readonly key: string; readonly label: string; readonly data: string }
   | { readonly kind: "clear"; readonly key: string; readonly label: string }
+  | { readonly kind: "paste"; readonly key: string; readonly label: string }
   | {
       readonly kind: "modifier";
       readonly key: string;
@@ -488,6 +491,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       { kind: "send", key: "esc", label: "esc", data: "\u001b" },
       ...modifierActions,
       { kind: "send", key: "tab", label: "tab", data: "\t" },
+      { kind: "paste", key: "paste", label: "paste" },
       { kind: "clear", key: "clear", label: "clear" },
       { kind: "send", key: "up", label: "↑", data: "\u001b[A" },
       { kind: "send", key: "down", label: "↓", data: "\u001b[B" },
@@ -1003,6 +1007,29 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     });
   }, [clearTerminal, selectedThread, terminalId]);
 
+  const handlePasteFromClipboard = useCallback(() => {
+    setPendingModifierState({ terminalId, value: null });
+    void (async () => {
+      let text: string;
+      try {
+        text = await Clipboard.getStringAsync();
+      } catch {
+        return;
+      }
+      if (text.length === 0) {
+        return;
+      }
+      // Bracketed paste (DECSET 2004) is not exposed from the mobile native
+      // surface yet, so encode like Ghostty with bracketed=false: sanitize and
+      // map newlines to CR without wrapping ESC[200~/ESC[201~.
+      const encoded = encodeTerminalPaste(text);
+      if (encoded.length === 0) {
+        return;
+      }
+      writeInput(encoded);
+    })();
+  }, [terminalId, writeInput]);
+
   const handleToolbarActionPress = useCallback(
     (action: TerminalToolbarAction) => {
       if (action.kind === "modifier") {
@@ -1021,6 +1048,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         return;
       }
 
+      if (action.kind === "paste") {
+        handlePasteFromClipboard();
+        return;
+      }
+
       setPendingModifierState({ terminalId, value: null });
       if (pendingModifier === "ctrl") {
         writeInput(applyCtrlModifier(action.data));
@@ -1030,7 +1062,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         writeInput(action.data);
       }
     },
-    [handleClearTerminal, pendingModifier, terminalId, writeInput],
+    [handleClearTerminal, handlePasteFromClipboard, pendingModifier, terminalId, writeInput],
   );
 
   const handleDismissKeyboard = useCallback(() => {
