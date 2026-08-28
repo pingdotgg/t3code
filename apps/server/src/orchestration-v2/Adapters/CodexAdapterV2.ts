@@ -5008,6 +5008,30 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     }),
               ),
             ),
+          uploadFeedback: (feedbackInput) =>
+            Effect.gen(function* () {
+              const threadId = yield* getNativeThreadId(feedbackInput.providerThread);
+              const response = yield* ensureInitialized.pipe(
+                Effect.andThen(
+                  client.request("feedback/upload", {
+                    classification: "bug",
+                    includeLogs: true,
+                    ...(feedbackInput.reason ? { reason: feedbackInput.reason } : {}),
+                    threadId,
+                  }),
+                ),
+              );
+              return { feedbackId: response.threadId };
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterProtocolError({
+                    driver: CODEX_PROVIDER,
+                    detail: "Failed to upload Codex thread feedback.",
+                    payload: cause,
+                  }),
+              ),
+            ),
           readThreadSnapshot: (threadInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.providerThread);

@@ -81,6 +81,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import { ProviderSessionManagerV2 } from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
@@ -473,6 +474,7 @@ const makeWsRpcLayer = (
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+      const providerSessionsV2 = yield* ProviderSessionManagerV2;
       const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
       const enrichProjectShells = Effect.fn("ws.orchestrationV2.enrichProjectShells")(
         (projects: ReadonlyArray<OrchestrationProjectShell>) =>
@@ -1414,11 +1416,51 @@ const makeWsRpcLayer = (
         [WS_METHODS.providerUploadFeedback]: (input) =>
           observeRpcEffect(
             WS_METHODS.providerUploadFeedback,
-            Effect.fail(
-              new ProviderUploadFeedbackError({
-                threadId: input.threadId,
-                cause: new Error("Thread feedback upload is not wired to the v2 runtime yet."),
-              }),
+            Effect.gen(function* () {
+              const projection = yield* threadManagement.getThreadProjection(input.threadId);
+              const providerThread =
+                projection.providerThreads.find(
+                  (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+                ) ?? projection.providerThreads.at(-1);
+              const providerSessionId = providerThread?.providerSessionId ?? null;
+              if (providerThread === undefined || providerSessionId === null) {
+                return yield* Effect.fail(
+                  new ProviderUploadFeedbackError({
+                    threadId: input.threadId,
+                    cause: "No provider session has run in this thread yet.",
+                  }),
+                );
+              }
+              const runtime = Option.getOrNull(yield* providerSessionsV2.get(providerSessionId));
+              if (runtime === null) {
+                return yield* Effect.fail(
+                  new ProviderUploadFeedbackError({
+                    threadId: input.threadId,
+                    cause: "The provider session is no longer running. Send a message first.",
+                  }),
+                );
+              }
+              if (runtime.uploadFeedback === undefined) {
+                return yield* Effect.fail(
+                  new ProviderUploadFeedbackError({
+                    threadId: input.threadId,
+                    cause: `Provider '${runtime.driver}' does not support feedback uploads.`,
+                  }),
+                );
+              }
+              return yield* runtime.uploadFeedback({
+                providerThread,
+                ...(input.reason === undefined ? {} : { reason: input.reason }),
+              });
+            }).pipe(
+              Effect.mapError((cause) =>
+                Schema.is(ProviderUploadFeedbackError)(cause)
+                  ? cause
+                  : new ProviderUploadFeedbackError({
+                      threadId: input.threadId,
+                      cause,
+                    }),
+              ),
             ),
             { "rpc.aggregate": "provider" },
           ),
