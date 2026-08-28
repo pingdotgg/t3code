@@ -6,6 +6,8 @@ import {
   applyGrokAcpModelSelection,
   buildGrokAcpSpawnInput,
   grokAcpRuntimeProcessOwnership,
+  grokAcpSpawnArgs,
+  isValidGrokReasoningEffortToken,
   resolveGrokAcpBaseModelId,
 } from "./GrokAcpSupport.ts";
 
@@ -40,6 +42,35 @@ describe("resolveGrokAcpBaseModelId", () => {
   });
 });
 
+describe("grokAcpSpawnArgs", () => {
+  it("inherits the Grok CLI config when no T3 runtime mode is set", () => {
+    expect(grokAcpSpawnArgs()).toEqual(["agent", "stdio"]);
+  });
+
+  it("forces Grok to ask when T3 is Supervised", () => {
+    expect(grokAcpSpawnArgs("approval-required")).toEqual([
+      "--permission-mode",
+      "default",
+      "agent",
+      "stdio",
+    ]);
+  });
+
+  it("maps Full access to Grok always-approve", () => {
+    expect(grokAcpSpawnArgs("full-access")).toEqual(["agent", "--always-approve", "stdio"]);
+  });
+
+  it("maps Auto-accept edits and Auto onto Grok permission modes", () => {
+    expect(grokAcpSpawnArgs("auto-accept-edits")).toEqual([
+      "--permission-mode",
+      "acceptEdits",
+      "agent",
+      "stdio",
+    ]);
+    expect(grokAcpSpawnArgs("auto")).toEqual(["--permission-mode", "auto", "agent", "stdio"]);
+  });
+});
+
 describe("buildGrokAcpSpawnInput", () => {
   it("passes the T3 Code referrer through Grok OAuth env", () => {
     const spawn = buildGrokAcpSpawnInput({ binaryPath: "/usr/local/bin/grok" }, "/tmp/project", {
@@ -57,15 +88,38 @@ describe("buildGrokAcpSpawnInput", () => {
       },
     });
   });
+
+  it("puts Supervised on the Grok argv so config always-approve cannot win", () => {
+    const spawn = buildGrokAcpSpawnInput(
+      { binaryPath: "/usr/local/bin/grok" },
+      "/tmp/project",
+      undefined,
+      "approval-required",
+    );
+    expect(spawn.args).toEqual(["--permission-mode", "default", "agent", "stdio"]);
+  });
+});
+
+describe("isValidGrokReasoningEffortToken", () => {
+  it("accepts future ACP tokens and rejects malformed metadata values", () => {
+    expect(isValidGrokReasoningEffortToken("xhigh")).toBe(true);
+    expect(isValidGrokReasoningEffortToken("turbo_v2")).toBe(true);
+    expect(isValidGrokReasoningEffortToken("not a token")).toBe(false);
+    expect(isValidGrokReasoningEffortToken("-leading-dash")).toBe(false);
+    expect(isValidGrokReasoningEffortToken("x".repeat(33))).toBe(false);
+  });
 });
 
 describe("applyGrokAcpModelSelection", () => {
   const makeRecordingRuntime = (failure?: EffectAcpErrors.AcpError) => {
-    const modelCalls: Array<string> = [];
+    const modelCalls: Array<{
+      modelId: string;
+      meta?: { readonly [key: string]: unknown } | null;
+    }> = [];
     const runtime = {
-      setSessionModel: (modelId: string) =>
+      setSessionModel: (modelId: string, meta?: { readonly [key: string]: unknown } | null) =>
         Effect.gen(function* () {
-          modelCalls.push(modelId);
+          modelCalls.push(meta === undefined ? { modelId } : { modelId, meta });
           if (failure) return yield* failure;
           return {};
         }),
@@ -82,8 +136,55 @@ describe("applyGrokAcpModelSelection", () => {
         requestedModelId: "grok-mock-alt",
         mapError: (cause) => cause.message,
       });
-      expect(modelCalls).toEqual(["grok-mock-alt"]);
+      expect(modelCalls).toEqual([{ modelId: "grok-mock-alt" }]);
       expect(result).toBe("grok-mock-alt");
+    }),
+  );
+
+  it.effect("applies reasoning effort through session/set_model metadata", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-4.6",
+        currentReasoningEffort: "high",
+        requestedModelId: "grok-4.6",
+        requestedReasoningEffort: "xhigh",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([{ modelId: "grok-4.6", meta: { reasoningEffort: "xhigh" } }]);
+      expect(result).toBe("grok-4.6");
+    }),
+  );
+
+  it.effect("does not clear reasoning when same-model selection omits effort", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      const result = yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-4.6",
+        currentReasoningEffort: "high",
+        requestedModelId: "grok-4.6",
+        requestedReasoningEffort: undefined,
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([]);
+      expect(result).toBe("grok-4.6");
+    }),
+  );
+
+  it.effect("drops malformed effort metadata instead of sending it", () =>
+    Effect.gen(function* () {
+      const { runtime, modelCalls } = makeRecordingRuntime();
+      yield* applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: "grok-4.6",
+        currentReasoningEffort: "high",
+        requestedModelId: "grok-4.6",
+        requestedReasoningEffort: "not a token",
+        mapError: (cause) => cause.message,
+      });
+      expect(modelCalls).toEqual([{ modelId: "grok-4.6" }]);
     }),
   );
 
