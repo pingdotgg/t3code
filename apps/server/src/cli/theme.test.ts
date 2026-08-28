@@ -151,6 +151,57 @@ describe("t3 theme", () => {
     }),
   );
 
+  // set means set: a publish that rode along with a failed default write is
+  // rolled back rather than left mutating the environment's theme set. The
+  // userdata directory is made read-only while themes stays writable, so the
+  // failure lands after the publish -- the case the rollback exists for.
+  it.effect("rolls back a publish when the default cannot be written", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      writeSettings(baseDir, {});
+      const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
+      const themesDir = NodePath.join(userdataDir, "themes");
+      NodeFS.mkdirSync(themesDir, { recursive: true });
+      const themeFile = NodePath.join(baseDir, "nightfall.json");
+      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+
+      NodeFS.chmodSync(userdataDir, 0o555);
+      try {
+        const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
+          Effect.flip,
+        );
+        assert.include(String(failure), "Could not write");
+        assert.equal(NodeFS.existsSync(NodePath.join(themesDir, "nightfall.json")), false);
+      } finally {
+        NodeFS.chmodSync(userdataDir, 0o755);
+      }
+    }),
+  );
+
+  it.effect("restores the previous theme when a re-publish fails to set", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      writeSettings(baseDir, {});
+      const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
+      const themesDir = NodePath.join(userdataDir, "themes");
+      NodeFS.mkdirSync(themesDir, { recursive: true });
+      const publishedPath = NodePath.join(themesDir, "nightfall.json");
+      const previous =
+        '{ "name": "Old Nightfall", "appearance": "dark", "canvas": "#000000", "accent": "#ffffff" }\n';
+      NodeFS.writeFileSync(publishedPath, previous);
+      const themeFile = NodePath.join(baseDir, "nightfall.json");
+      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+
+      NodeFS.chmodSync(userdataDir, 0o555);
+      try {
+        yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(Effect.flip);
+        assert.equal(NodeFS.readFileSync(publishedPath, "utf8"), previous);
+      } finally {
+        NodeFS.chmodSync(userdataDir, 0o755);
+      }
+    }),
+  );
+
   // A typo'd id written as the theme would silently never resolve anywhere;
   // the id branch is as strict as the filename rule.
   it.effect("rejects an id no client could resolve", () =>

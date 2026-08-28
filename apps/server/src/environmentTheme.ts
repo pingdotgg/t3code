@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - the guarded file read needs open
+// flags (O_NOFOLLOW, O_NONBLOCK) the FileSystem service does not expose.
 /**
  * EnvironmentTheme - palettes this machine publishes for clients to follow.
  *
@@ -12,6 +14,8 @@
  *
  * @module EnvironmentTheme
  */
+import * as NodeFS from "node:fs";
+
 import {
   EnvironmentTheme,
   EnvironmentThemeFile,
@@ -27,8 +31,6 @@ import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -87,6 +89,42 @@ export class EnvironmentThemeService extends Context.Service<
 >()("t3/environmentTheme/EnvironmentThemeService") {}
 
 /**
+ * Reads a theme file through one opened handle, so every check binds to the
+ * file actually read rather than to a path that may have been swapped since:
+ * O_NOFOLLOW rejects a symlink outright (a symlinked themes directory stays
+ * usable, a symlinked file inside it does not), O_NONBLOCK keeps a FIFO from
+ * blocking the open, and the fstat type and size gate examines the open
+ * descriptor. Returns null for anything that is not a small regular file.
+ */
+export const readThemeFileGuarded = (filePath: string, maxBytes: number): string | null => {
+  let fd: number;
+  try {
+    fd = NodeFS.openSync(
+      filePath,
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
+    );
+  } catch {
+    return null;
+  }
+  try {
+    const info = NodeFS.fstatSync(fd);
+    if (!info.isFile() || info.size > maxBytes) return null;
+    const contents = Buffer.alloc(info.size);
+    let offset = 0;
+    while (offset < contents.length) {
+      const read = NodeFS.readSync(fd, contents, offset, contents.length - offset, offset);
+      if (read <= 0) break;
+      offset += read;
+    }
+    return contents.subarray(0, offset).toString("utf8");
+  } catch {
+    return null;
+  } finally {
+    NodeFS.closeSync(fd);
+  }
+};
+
+/**
  * Every theme the directory actually publishes. A file that is missing,
  * unreadable, malformed, colorless, or misnamed is simply skipped; the rest of
  * the set is unaffected. The one place that decides what "published" means, so
@@ -94,15 +132,9 @@ export class EnvironmentThemeService extends Context.Service<
  */
 export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const entries = yield* fs
     .readDirectory(themesDir)
     .pipe(Effect.orElseSucceed((): Array<string> => []));
-
-  // Resolved once: every entry is compared against the directory's own real
-  // path, so a symlinked themes directory stays usable while a symlinked file
-  // inside it does not.
-  const resolvedDir = yield* fs.realPath(themesDir).pipe(Effect.option);
 
   const themes: Array<EnvironmentTheme> = [];
   let examined = 0;
@@ -115,7 +147,7 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     if (!isEnvironmentThemeId(id) || UNPUBLISHABLE_THEME_IDS.has(id)) continue;
 
     // Counts files examined, not themes accepted: capping the output would
-    // let a directory of malformed files be stat'd, read, and decoded in full
+    // let a directory of malformed files be opened, read, and decoded in full
     // on every refresh and every client connect.
     examined += 1;
     if (examined > MAX_THEME_FILES) {
@@ -127,28 +159,14 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     }
 
     const filePath = `${themesDir}/${entry}`;
-    // fs.stat follows symlinks, so a type check alone would happily read a
-    // link pointing anywhere on the machine. Requiring the resolved target to
-    // stay in this directory is what actually confines it; the type check then
-    // stops a FIFO or device node from blocking the read forever.
-    const resolved = yield* fs.realPath(filePath).pipe(Effect.option);
-    const info = yield* fs.stat(filePath).pipe(Effect.option);
-    const usable =
-      Option.isSome(resolvedDir) &&
-      Option.isSome(resolved) &&
-      resolved.value === path.join(resolvedDir.value, entry) &&
-      Option.isSome(info) &&
-      info.value.type === "File" &&
-      Number(info.value.size) <= MAX_THEME_FILE_BYTES;
-    if (!usable) {
+    const raw = readThemeFileGuarded(filePath, MAX_THEME_FILE_BYTES);
+    if (raw === null) {
       yield* Effect.logWarning("ignoring unusable environment theme file", {
         path: filePath,
         limit: MAX_THEME_FILE_BYTES,
       });
       continue;
     }
-
-    const raw = yield* fs.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
     if (raw.trim().length === 0) continue;
 
     const decoded = decodeEnvironmentThemeFileJsonExit(raw);
@@ -191,7 +209,6 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
 const make = Effect.gen(function* () {
   const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
-  const pathService = yield* Path.Path;
   /**
    * Sliding with capacity 1: every update carries the complete set, so a
    * subscriber that stops consuming holds at most the newest set rather than
@@ -218,7 +235,6 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const themes = yield* readPublishedThemes(environmentThemesDir).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, pathService),
       );
       // Structural equality over the whole decoded value: a hand-rolled field
       // list here silently drops republishes for any field it forgets.

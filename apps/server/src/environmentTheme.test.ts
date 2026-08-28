@@ -186,6 +186,23 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
+  // A symlinked themes directory stays usable, but a symlinked file inside it
+  // must not publish whatever it points at.
+  it.effect("ignores a symlinked theme file", () =>
+    withEnvironmentThemes(
+      {},
+      Effect.gen(function* () {
+        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const outside = path.join(environmentThemesDir, "..", "outside.json");
+        yield* fs.writeFileString(outside, encodeThemeFile(NIGHTFALL_THEME));
+        yield* fs.symlink(outside, path.join(environmentThemesDir, "nightfall.json"));
+        assert.deepEqual(yield* currentThemes, []);
+      }),
+    ),
+  );
+
   // The aggregate size cap charges only accepted themes, so a pile of
   // malformed files cannot spend the budget and hide a valid theme sorted
   // after them.

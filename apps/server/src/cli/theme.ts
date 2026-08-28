@@ -32,7 +32,11 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
-import { MAX_THEME_FILE_BYTES, readPublishedThemes } from "../environmentTheme.ts";
+import {
+  MAX_THEME_FILE_BYTES,
+  readPublishedThemes,
+  readThemeFileGuarded,
+} from "../environmentTheme.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
 
@@ -282,8 +286,8 @@ const publishThemeFile = Effect.fn(function* (input: {
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // Checked before reading, not after: a FIFO or device node would block the
-  // command forever, and a huge file would be pulled into memory first.
+  // A preflight for error quality only: it tells a FIFO from an oversized
+  // file. Enforcement happens at the guarded read below.
   const info = yield* fs
     .stat(input.filePath)
     .pipe(
@@ -298,11 +302,13 @@ const publishThemeFile = Effect.fn(function* (input: {
     );
   }
 
-  const raw = yield* fs
-    .readFileString(input.filePath)
-    .pipe(
-      Effect.mapError((cause) => new ThemeFileUnreadableError({ filePath: input.filePath, cause })),
-    );
+  // The stat above is diagnostic, naming the failure precisely. The read goes
+  // through one opened handle, so its type and size checks bind to the file
+  // actually read even if the path was swapped since the stat.
+  const raw = readThemeFileGuarded(input.filePath, MAX_THEME_FILE_BYTES);
+  if (raw === null) {
+    return yield* Effect.fail(new ThemeFileUnreadableError({ filePath: input.filePath }));
+  }
 
   const decoded = decodeThemeFileJsonExit(raw);
   if (decoded._tag === "Failure") {
@@ -322,13 +328,25 @@ const publishThemeFile = Effect.fn(function* (input: {
     return yield* Effect.fail(new ThemeFileIdInvalidError({ themeId, filePath: input.filePath }));
   }
 
+  const destinationPath = path.join(input.themesDir, `${themeId}.json`);
+  // Captured for rollback: publish-and-set is one command, so a failure after
+  // this write must put the directory back rather than leave a half-applied
+  // publish, or a clobbered previous theme, behind.
+  const previous = readThemeFileGuarded(destinationPath, MAX_THEME_FILE_BYTES);
   // Written verbatim: appending so much as a newline could push a file at
   // the size limit past it and have the watcher skip what was just accepted.
   yield* writeFileStringAtomically({
-    filePath: path.join(input.themesDir, `${themeId}.json`),
+    filePath: destinationPath,
     contents: raw,
   }).pipe(Effect.mapError((cause) => new ThemePublishError({ themesDir: input.themesDir, cause })));
-  return themeId;
+
+  const revert =
+    previous === null
+      ? fs.remove(destinationPath).pipe(Effect.ignore)
+      : writeFileStringAtomically({ filePath: destinationPath, contents: previous }).pipe(
+          Effect.ignore,
+        );
+  return { themeId, revert };
 });
 
 /**
@@ -380,16 +398,20 @@ const themeSetCommand = Command.make("set", {
       const targetIsFile =
         looksLikePath && (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false)));
       let themeId: string;
+      let revertPublish: Effect.Effect<void, never, FileSystem.FileSystem | Path.Path> =
+        Effect.void;
       if (targetIsFile) {
         // Settings are preflighted before publishing, so a settings file the
         // set step cannot read or parse fails the command before it mutates
         // the themes directory.
         yield* readSettingsObject(paths.settingsPath);
-        themeId = yield* publishThemeFile({
+        const published = yield* publishThemeFile({
           themesDir: paths.themesDir,
           filePath: target,
           explicitId: flags.id,
         });
+        themeId = published.themeId;
+        revertPublish = published.revert;
       } else if (looksLikePath) {
         return yield* Effect.fail(new ThemeFileUnreadableError({ filePath: target }));
       } else if (isEnvironmentThemeId(target)) {
@@ -402,7 +424,12 @@ const themeSetCommand = Command.make("set", {
         return yield* Effect.fail(new ThemeIdInvalidError({ themeId: target }));
       }
 
-      yield* writeDefaultTheme({ settingsPath: paths.settingsPath, themeId });
+      // set means set: if the default cannot be written, the publish that
+      // rode along with it is undone rather than left as a side effect of a
+      // command that reported failure.
+      yield* writeDefaultTheme({ settingsPath: paths.settingsPath, themeId }).pipe(
+        Effect.onError(() => revertPublish),
+      );
       yield* Console.log(
         targetIsFile
           ? `Published ${target} as "${themeId}" and set it as the environment theme.\n`

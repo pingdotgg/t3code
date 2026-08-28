@@ -58,6 +58,29 @@ function readStoredThemeHalves(): ThemeHalves | null {
   }
 }
 
+/**
+ * The stored mix as written, without resolvability pruning. An environment
+ * published id resolves only once its set has streamed in, so a write that
+ * merged over the pruned parse would silently erase that half whenever the
+ * other one changed before the set arrived.
+ */
+function readStoredThemeHalvesRaw(): { light?: string; dark?: string } {
+  try {
+    const value: unknown = JSON.parse(
+      window.localStorage.getItem(THEME_HALVES_STORAGE_KEY) ?? "null",
+    );
+    if (value === null || typeof value !== "object") return {};
+    const halves: { light?: string; dark?: string } = {};
+    for (const appearance of ["light", "dark"] as const) {
+      const themeId = (value as Record<string, unknown>)[appearance];
+      if (typeof themeId === "string") halves[appearance] = themeId;
+    }
+    return halves;
+  } catch {
+    return {};
+  }
+}
+
 function themeHalvesSignature(halves: ThemeHalves | null): string {
   return `${halves?.light ?? ""}|${halves?.dark ?? ""}`;
 }
@@ -558,7 +581,7 @@ export function useTheme() {
     (appearance: ThemeAppearance, themeId: string | null): boolean => {
       if (typeof window === "undefined") return false;
       try {
-        const current = readStoredThemeHalves() ?? {};
+        const current = readStoredThemeHalvesRaw();
         const next: { light?: string; dark?: string } = { ...current };
         if (themeId === null) delete next[appearance];
         else next[appearance] = themeId;
