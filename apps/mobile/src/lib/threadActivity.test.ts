@@ -324,6 +324,38 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("drops runtime warnings with no displayable content", () => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-noise"),
+      projectId: ProjectId.make("project-1"),
+      title: "Warning noise thread",
+      activities: [
+        makeActivity({
+          id: EventId.make("activity-noise"),
+          kind: "runtime.warning",
+          summary: "Claude system message 'background_tasks_changed' (no displayable text content)",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId: TurnId.make("turn-1"),
+        }),
+        makeActivity({
+          id: EventId.make("activity-signal"),
+          kind: "runtime.warning",
+          summary: "Reconnecting... 2/5",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId: TurnId.make("turn-1"),
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed).toMatchObject([
+      {
+        type: "activity-group",
+        activities: [{ id: "activity-signal" }],
+      },
+    ]);
+  });
+
   it("collapses matching tool lifecycle rows like desktop", () => {
     const thread = makeThread({
       id: ThreadId.make("thread-2"),
