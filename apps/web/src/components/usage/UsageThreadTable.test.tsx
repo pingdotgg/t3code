@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({ useUsageThreads: vi.fn() }));
 
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../../state/usage", () => ({ useUsageThreads: testState.useUsageThreads }));
 vi.mock("../ui/tooltip", async () => {
   const React = await import("react");
@@ -117,6 +118,7 @@ describe("UsageThreadTable", () => {
     expect(markup).toContain('<button type="button" aria-expanded="false"');
     expect(markup).toContain('data-slot="badge"');
     expect(markup).toContain("1 subagent");
+    expect(markup).toContain('aria-label="Open thread"');
     expect(markup).not.toContain('title="Fix the flaky test"');
   });
 });

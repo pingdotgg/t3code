@@ -3,7 +3,8 @@ import type {
   UsageThreadBreakdownInput,
   UsageThreadDayCost,
 } from "@t3tools/contracts";
-import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { ArrowUpRightIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import {
@@ -17,6 +18,7 @@ import type { EnvironmentProviderContribution } from "@t3tools/shared/usageMerge
 
 import { useUsageThreads, type UsageThreadRowWithEnvironment } from "../../state/usage";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
@@ -150,36 +152,63 @@ function ThreadRowGroup({
   readonly onToggle: () => void;
 }) {
   const Chevron = open ? ChevronDownIcon : ChevronRightIcon;
+  const navigate = useNavigate();
+  const threadId = row.threadId;
   return (
     <>
       <tr className="border-b border-border/50 transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50">
         <td className="py-2 text-foreground">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  onClick={onToggle}
-                  aria-expanded={open}
-                  className="flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              }
-            >
-              <Chevron className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <ProviderMark provider={row.provider} />
-              <span className="truncate">{row.title}</span>
-              {row.agents.length > 0 ? (
-                <Badge
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0 font-normal text-muted-foreground"
+          <div className="flex min-w-0 items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    onClick={onToggle}
+                    aria-expanded={open}
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                }
+              >
+                <Chevron className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <ProviderMark provider={row.provider} />
+                <span className="truncate">{row.title}</span>
+                {row.agents.length > 0 ? (
+                  <Badge
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 font-normal text-muted-foreground"
+                  >
+                    {row.agents.length === 1 ? "1 subagent" : `${row.agents.length} subagents`}
+                  </Badge>
+                ) : null}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{row.title}</TooltipPopup>
+            </Tooltip>
+            {threadId === null ? null : (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-micro"
+                      variant="ghost-muted"
+                      aria-label="Open thread"
+                      className="shrink-0"
+                      onClick={() => {
+                        void navigate({
+                          to: "/$environmentId/$threadId",
+                          params: { environmentId: row.environmentId, threadId },
+                        });
+                      }}
+                    />
+                  }
                 >
-                  {row.agents.length === 1 ? "1 subagent" : `${row.agents.length} subagents`}
-                </Badge>
-              ) : null}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{row.title}</TooltipPopup>
-          </Tooltip>
+                  <ArrowUpRightIcon aria-hidden />
+                </TooltipTrigger>
+                <TooltipPopup side="top">Open thread</TooltipPopup>
+              </Tooltip>
+            )}
+          </div>
         </td>
         <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
         <td className="py-2 text-right text-muted-foreground tabular-nums">

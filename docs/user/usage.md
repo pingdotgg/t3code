@@ -22,6 +22,7 @@ Expanding a row shows its daily estimated cost, along with any Claude subagents 
 Each connected environment contributes at most 40 rows, reserving room to group
 lower-cost rows under **Other threads** by provider and project. Those grouped rows stay in the
 totals, so the thread view still adds up to the selected project or full summary.
+Rows that map to a thread carry a link that opens it.
 
 Usage is attributed to the project whose folder a session ran in, including sessions driven
 outside T3 Code. The breakdown's **Project** view ranks projects by spend, and the project picker
