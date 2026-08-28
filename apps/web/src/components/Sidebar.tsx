@@ -192,12 +192,7 @@ import {
   ComboboxTrigger,
   useComboboxFilter,
 } from "./ui/combobox";
-import {
-  Menu,
-  MenuCheckboxItem,
-  MenuPopup,
-  MenuTrigger,
-} from "./ui/menu";
+import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
@@ -3784,11 +3779,12 @@ export default function Sidebar() {
                             onCheckedChange={(checked) =>
                               handleToggleEnvironment(environment.environmentId, checked)
                             }
+                            className="[&>span:last-child]:min-w-0"
                           >
-                            <span className="flex min-w-0 items-center gap-2">
-                              <span className="min-w-0 flex-1 truncate">{environment.label}</span>
+                            <span className="flex min-w-0 flex-col">
+                              <span className="truncate">{environment.label}</span>
                               {environment.displayUrl ? (
-                                <span className="min-w-0 shrink truncate text-xs text-muted-foreground">
+                                <span className="truncate text-xs text-muted-foreground">
                                   {environment.displayUrl}
                                 </span>
                               ) : null}
