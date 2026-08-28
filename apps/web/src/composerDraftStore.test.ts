@@ -470,7 +470,10 @@ describe("composerDraftStore terminal contexts", () => {
     expect(draft?.terminalContexts.map((context) => context.id)).toEqual(["ctx-2", "ctx-1"]);
   });
 
-  it("omits terminal context text from persisted drafts", () => {
+  it("does not persist terminal context chips", () => {
+    useComposerDraftStore
+      .getState()
+      .setPrompt(threadRef, `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} keep this`);
     useComposerDraftStore
       .getState()
       .addTerminalContext(threadRef, makeTerminalContext({ id: "ctx-persist" }));
@@ -481,27 +484,19 @@ describe("composerDraftStore terminal contexts", () => {
       };
     };
     const persistedState = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
-      draftsByThreadKey?: Record<string, { terminalContexts?: Array<Record<string, unknown>> }>;
+      draftsByThreadKey?: Record<
+        string,
+        { prompt?: string; terminalContexts?: Array<Record<string, unknown>> }
+      >;
     };
+    const persistedDraft =
+      persistedState.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)];
 
-    expect(
-      persistedState.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
-        ?.terminalContexts?.[0],
-      "Expected terminal context metadata to be persisted.",
-    ).toMatchObject({
-      id: "ctx-persist",
-      terminalId: "default",
-      terminalLabel: "Terminal 1",
-      lineStart: 4,
-      lineEnd: 5,
-    });
-    expect(
-      persistedState.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
-        ?.terminalContexts?.[0]?.text,
-    ).toBeUndefined();
+    expect(persistedDraft?.terminalContexts).toBeUndefined();
+    expect(persistedDraft?.prompt).toBe(" keep this");
   });
 
-  it("hydrates persisted terminal contexts without in-memory snapshot text", () => {
+  it("drops persisted terminal context chips on hydrate", () => {
     const persistApi = useComposerDraftStore.persist as unknown as {
       getOptions: () => {
         merge: (
@@ -514,7 +509,7 @@ describe("composerDraftStore terminal contexts", () => {
       {
         draftsByThreadId: {
           [threadId]: {
-            prompt: INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+            prompt: `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} keep this`,
             attachments: [],
             terminalContexts: [
               {
@@ -535,16 +530,9 @@ describe("composerDraftStore terminal contexts", () => {
       useComposerDraftStore.getInitialState(),
     );
 
-    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.terminalContexts).toMatchObject([
-      {
-        id: "ctx-rehydrated",
-        terminalId: "default",
-        terminalLabel: "Terminal 1",
-        lineStart: 4,
-        lineEnd: 5,
-        text: "",
-      },
-    ]);
+    const hydrated = mergedState.draftsByThreadKey[threadKeyFor(threadId)];
+    expect(hydrated?.terminalContexts).toEqual([]);
+    expect(hydrated?.prompt).toBe(" keep this");
   });
 
   it("sanitizes malformed persisted drafts during merge", () => {
