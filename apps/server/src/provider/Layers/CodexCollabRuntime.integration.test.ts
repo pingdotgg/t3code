@@ -50,14 +50,26 @@ function buildScript() {
       method: "item/completed",
       params: {
         threadId: ROOT,
+        turnId: "root-turn-error",
+        completedAtMs: 0,
         item: {
           type: "collabAgentToolCall",
           id: "call_fixture_wait",
           tool: "wait",
           status: "completed",
           senderThreadId: ROOT,
-          receiverThreadIds: [CHILD_A, CHILD_B],
+          receiverThreadIds: [ROOT, CHILD_A, CHILD_B],
+          agentsStates: {},
         },
+      },
+    },
+    {
+      method: "error",
+      params: {
+        threadId: ROOT,
+        turnId: "root-turn-error",
+        error: { message: "root error must stay visible" },
+        willRetry: false,
       },
     },
     // Child terminal lifecycle AFTER the receiver map knows the children —
@@ -119,6 +131,13 @@ describe("CodexSessionRuntime collab integration", () => {
       assert.include(methods, "collabAgent/activity");
       assert.include(methods, "collabAgent/turnCompleted");
       assert.include(methods, "collabAgent/closed");
+      const rootError = events.find(
+        (event) =>
+          event.method === "error" &&
+          (event.payload as { error?: { message?: string } }).error?.message ===
+            "root error must stay visible",
+      );
+      assert.isDefined(rootError, "receiver bookkeeping must not suppress a root error");
 
       const childTurnCompleted = events.find(
         (event) =>
@@ -158,6 +177,269 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("replays only retrying pre-registration child turns after errors", () =>
+    Effect.gen(function* () {
+      const byIndex = wireFixture.notifications;
+      const turnStartedA = byIndex.find(
+        (entry) =>
+          entry.method === "turn/started" &&
+          (entry.params as { threadId?: string }).threadId === CHILD_A,
+      );
+      const turnStartedB = byIndex.find(
+        (entry) =>
+          entry.method === "turn/started" &&
+          (entry.params as { threadId?: string }).threadId === CHILD_B,
+      );
+      const registrationA = byIndex.find((entry) => {
+        const item = (entry.params as { item?: { type?: string; agentThreadId?: string } }).item;
+        return item?.type === "subAgentActivity" && item.agentThreadId === CHILD_A;
+      });
+      const rootThreadStarted = byIndex.find((entry) => entry.method === "thread/started");
+      const registrationB = byIndex.find((entry) => {
+        const item = (entry.params as { item?: { type?: string; agentThreadId?: string } }).item;
+        return item?.type === "subAgentActivity" && item.agentThreadId === CHILD_B;
+      });
+      assert.isDefined(turnStartedA);
+      assert.isDefined(turnStartedB);
+      assert.isDefined(registrationA);
+      assert.isDefined(registrationB);
+      assert.isDefined(rootThreadStarted);
+      const turnIdA = (turnStartedA.params as { turn: { id: string } }).turn.id;
+      const turnIdB = (turnStartedB.params as { turn: { id: string } }).turn.id;
+      const childC = "child-terminal-thread-first";
+      const threadRegistrationA = {
+        ...rootThreadStarted,
+        params: {
+          thread: {
+            ...rootThreadStarted.params.thread,
+            id: CHILD_A,
+            sessionId: CHILD_A,
+            parentThreadId: ROOT,
+            source: {
+              subAgent: {
+                thread_spawn: {
+                  agent_nickname: "alpha",
+                  agent_path: "/root/alpha",
+                  depth: 1,
+                  parent_thread_id: ROOT,
+                },
+              },
+            },
+          },
+        },
+      };
+      const turnStartedC = {
+        ...turnStartedA,
+        params: {
+          ...turnStartedA.params,
+          threadId: childC,
+          turn: { ...turnStartedA.params.turn, id: `${childC}-turn` },
+        },
+      };
+      const threadRegistrationC = {
+        ...threadRegistrationA,
+        params: {
+          thread: {
+            ...threadRegistrationA.params.thread,
+            id: childC,
+            sessionId: childC,
+            source: {
+              subAgent: {
+                thread_spawn: {
+                  agent_nickname: "gamma",
+                  depth: 1,
+                  parent_thread_id: ROOT,
+                },
+              },
+            },
+          },
+        },
+      };
+      const registrationC = {
+        ...registrationA,
+        params: {
+          ...registrationA.params,
+          item: {
+            ...registrationA.params.item,
+            agentThreadId: childC,
+            agentPath: "/root/gamma",
+          },
+        },
+      };
+
+      const script = {
+        rootThreadId: ROOT,
+        notifications: [
+          turnStartedA,
+          {
+            method: "error",
+            params: {
+              threadId: CHILD_A,
+              turnId: turnIdA,
+              error: { message: "child failed before registration" },
+              willRetry: false,
+            },
+          },
+          registrationA,
+          threadRegistrationA,
+          {
+            method: "thread/status/changed",
+            params: { threadId: CHILD_A, status: { type: "idle" } },
+          },
+          {
+            method: "turn/completed",
+            params: {
+              threadId: CHILD_A,
+              turn: { id: turnIdA, status: "completed", items: [] },
+            },
+          },
+          { method: "thread/closed", params: { threadId: CHILD_A } },
+          turnStartedC,
+          {
+            method: "error",
+            params: {
+              threadId: childC,
+              turnId: `${childC}-turn`,
+              error: { message: "thread-first child failed before registration" },
+              willRetry: false,
+            },
+          },
+          threadRegistrationC,
+          registrationC,
+          turnStartedB,
+          {
+            method: "error",
+            params: {
+              threadId: CHILD_B,
+              turnId: turnIdB,
+              error: { message: "child will retry before registration" },
+              willRetry: true,
+            },
+          },
+          {
+            ...registrationB,
+            params: {
+              ...registrationB.params,
+              item: { ...registrationB.params.item, kind: "interacted" },
+            },
+          },
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-terminal-before-registration"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const eventsFiber = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "error before registration" });
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const startedThreadIds = events
+        .filter((event) => event.method === "collabAgent/turnStarted")
+        .map((event) => (event.payload as { agentThreadId?: string }).agentThreadId);
+      const childARegistrationEvents = events.filter(
+        (event) =>
+          (event.method === "collabAgent/started" || event.method === "collabAgent/activity") &&
+          (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
+      );
+      const childAFailures = events.filter(
+        (event) =>
+          event.method === "collabAgent/statusChanged" &&
+          (event.payload as { agentThreadId?: string; status?: { type?: string } })
+            .agentThreadId === CHILD_A &&
+          (event.payload as { status?: { type?: string } }).status?.type === "systemError",
+      );
+      const childATerminalOverrides = events.filter((event) => {
+        if (!event.payload || typeof event.payload !== "object") {
+          return false;
+        }
+        const payload = event.payload as {
+          agentThreadId?: string;
+          status?: { type?: string };
+        };
+        return (
+          payload.agentThreadId === CHILD_A &&
+          (event.method === "collabAgent/turnCompleted" ||
+            event.method === "collabAgent/closed" ||
+            (event.method === "collabAgent/statusChanged" &&
+              payload.status?.type !== "systemError"))
+        );
+      });
+      const childCFailures = events.filter(
+        (event) =>
+          event.method === "collabAgent/statusChanged" &&
+          (event.payload as { agentThreadId?: string; status?: { type?: string } })
+            .agentThreadId === childC &&
+          (event.payload as { status?: { type?: string } }).status?.type === "systemError",
+      );
+
+      assert.notInclude(
+        startedThreadIds,
+        CHILD_A,
+        "a terminal child turn must not replay as live when activity registers it later",
+      );
+      assert.deepEqual(
+        childARegistrationEvents.map((event) => event.method),
+        ["collabAgent/started"],
+        "a failed child needs one start anchor, but later registration must not duplicate it",
+      );
+      assert.lengthOf(
+        childAFailures,
+        2,
+        "late thread metadata must enrich the terminal state without restarting the child",
+      );
+      const terminalMetadataFailure = childAFailures.at(-1);
+      assert.isDefined(terminalMetadataFailure);
+      assert.equal(
+        (terminalMetadataFailure.payload as { parentThreadId?: string }).parentThreadId,
+        ROOT,
+        "the terminal metadata patch must preserve parent linkage from thread registration",
+      );
+      assert.deepEqual(
+        childATerminalOverrides.map((event) => event.method),
+        [],
+        "trailing lifecycle must not overwrite a terminal child error",
+      );
+      assert.lengthOf(
+        childCFailures,
+        2,
+        "late activity identity must enrich a thread-first terminal child",
+      );
+      const childCMetadataFailure = childCFailures.at(-1);
+      assert.isDefined(childCMetadataFailure);
+      assert.equal(
+        (childCMetadataFailure.payload as { agentPath?: string }).agentPath,
+        "/root/gamma",
+        "the terminal metadata patch must preserve a path learned from late activity",
+      );
+      assert.include(
+        startedThreadIds,
+        CHILD_B,
+        "a retrying child turn must remain live when activity registers it later",
+      );
+      assert.notInclude(
+        events.map((event) => event.method),
+        "error",
+        "pre-registration child errors must not leak onto the parent event stream",
+      );
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   // it.live: the runtime talks to a real child process; under it.effect's
   // TestClock the internal timers freeze and the join never completes.
   it.live("Stop interrupts every live child regardless of registration timing", () =>
@@ -191,6 +473,13 @@ describe("CodexSessionRuntime collab integration", () => {
       assert.isDefined(registrationA);
       assert.isDefined(registrationB);
       assert.isDefined(rootThreadStarted);
+      const interactedRegistrationA = {
+        ...registrationA,
+        params: {
+          ...registrationA.params,
+          item: { ...registrationA.params.item, kind: "interacted" },
+        },
+      };
       const memoryThreadStarted = {
         ...rootThreadStarted,
         params: {
@@ -217,7 +506,7 @@ describe("CodexSessionRuntime collab integration", () => {
         hangInterruptFor: CHILD_A,
         notifications: [
           turnStartedA,
-          registrationA,
+          interactedRegistrationA,
           memoryThreadStarted,
           memoryTurnStarted,
           registrationB,
@@ -243,26 +532,38 @@ describe("CodexSessionRuntime collab integration", () => {
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
 
-      // Wait for both children's turnStarted signals to be processed before
-      // stopping (B via the registered-child path; A only produces live-turn
-      // bookkeeping, so key on B's synthetic event).
-      const childBStartedFiber = yield* runtime.events.pipe(
+      // Wait for both children's synthetic turnStarted signals before
+      // stopping. B arrives through the registered-child path; A is replayed
+      // when its later activity registration finds the pre-registration live
+      // turn recorded by the foreign-notification suppressor.
+      const childrenStartedFiber = yield* runtime.events.pipe(
         Stream.filter(
           (event) =>
             event.method === "collabAgent/turnStarted" &&
-            (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_B,
+            [CHILD_A, CHILD_B].includes(
+              (event.payload as { agentThreadId?: string }).agentThreadId ?? "",
+            ),
         ),
-        Stream.take(1),
+        Stream.take(2),
         Stream.runCollect,
         Effect.forkScoped,
       );
 
       yield* runtime.start();
       yield* runtime.sendTurn({ input: "fan out and hang" });
-      const childBStarted = yield* Fiber.join(childBStartedFiber).pipe(
+      const childrenStarted = yield* Fiber.join(childrenStartedFiber).pipe(
         Effect.timeoutOption("15 seconds"),
       );
-      assert.isTrue(childBStarted._tag === "Some", "child B turnStarted never arrived");
+      assert.isTrue(childrenStarted._tag === "Some", "child turnStarted replay never arrived");
+      if (childrenStarted._tag === "Some") {
+        const startedThreadIds = new Set(
+          Array.from(childrenStarted.value).map(
+            (event) => (event.payload as { agentThreadId?: string }).agentThreadId,
+          ),
+        );
+        assert.isTrue(startedThreadIds.has(CHILD_A), "child A start must replay on registration");
+        assert.isTrue(startedThreadIds.has(CHILD_B), "child B start must flow after registration");
+      }
 
       // Stop everything. A's interrupt hangs forever — the bounded child
       // deadline must expire and the parent interrupt must still be sent.

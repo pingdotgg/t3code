@@ -618,6 +618,44 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("preserves parent linkage on terminal child metadata patches", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-child-failed-metadata"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collabAgent/statusChanged",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          agentThreadId: "child-1",
+          agentPath: "/root/audit",
+          parentThreadId: "workflow-1",
+          status: { type: "systemError" },
+        },
+      });
+
+      const event = yield* Fiber.join(eventFiber);
+      NodeAssert.equal(event._tag, "Some");
+      if (event._tag === "Some") {
+        NodeAssert.equal(event.value.type, "task.updated");
+        NodeAssert.deepStrictEqual(event.value.payload, {
+          taskId: "child-1",
+          status: "failed",
+          role: "audit",
+          title: "audit",
+          agentPath: "/root/audit",
+          parentAgentId: "workflow-1",
+          timelineBypass: true,
+        });
+      }
+    }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
