@@ -4,6 +4,7 @@ import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { resolveMobileAutoSettlePreferences } from "../../persistence/mobile-preferences";
 import { SymbolView } from "../../components/AppSymbol";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -45,6 +46,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { mobileAutoSettleModeLabel } from "./SettingsAutoSettleRouteScreen";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
 
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
@@ -528,19 +530,18 @@ function ConfiguredSettingsRouteScreen() {
 
 function GeneralSettingsSection() {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const autoSettleOnMerge =
-    !AsyncResult.isSuccess(preferencesResult) ||
-    preferencesResult.value.autoSettleOnMerge !== false;
+  const autoSettlePreferences = resolveMobileAutoSettlePreferences(
+    AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value : {},
+  );
 
   return (
     <SettingsSection title="General">
       <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
-      <SettingsSwitchRow
+      <SettingsRow
         icon="arrow.triangle.branch"
-        label="Auto-settle merged threads"
-        value={autoSettleOnMerge}
-        onValueChange={(value) => savePreferences({ autoSettleOnMerge: value })}
+        label="Thread Settling"
+        value={mobileAutoSettleModeLabel(autoSettlePreferences.autoSettleMode)}
+        target="SettingsAutoSettle"
       />
       <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
     </SettingsSection>
