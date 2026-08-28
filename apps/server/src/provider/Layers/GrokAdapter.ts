@@ -1665,7 +1665,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         const promptFailureMessageRef = yield* Ref.make<string | undefined>(undefined);
 
         return yield* Effect.gen(function* () {
-          const promptFiber = yield* prepared.promptLifecycle.withPermit(
+          const promptStart = yield* prepared.promptLifecycle.withPermit(
             Effect.gen(function* () {
               const liveCtx = sessions.get(input.threadId);
               const interrupted = liveCtx?.interruptedTurnIds.has(prepared.turnId) === true;
@@ -1675,18 +1675,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 prepared.promptEpoch < liveCtx.discardBeforeEpoch ||
                 interrupted
               ) {
-                yield* settlePromptInFlight(
-                  input.threadId,
-                  prepared.turnId,
-                  prepared.acpSessionId,
-                  interrupted
-                    ? {
-                        completedStopReason: "cancelled",
-                        settleAllPrompts: true,
-                      }
-                    : { emitTurnCompletion: false },
-                );
-                return Option.none();
+                return { _tag: "Skipped" as const, interrupted };
               }
               if (prepared.steeringTurnId !== undefined) {
                 yield* Effect.ignore(
@@ -1698,16 +1687,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 );
               }
               if (liveCtx.interruptedTurnIds.has(prepared.turnId)) {
-                yield* settlePromptInFlight(
-                  input.threadId,
-                  prepared.turnId,
-                  prepared.acpSessionId,
-                  {
-                    completedStopReason: "cancelled",
-                    settleAllPrompts: true,
-                  },
-                );
-                return Option.none();
+                return { _tag: "Skipped" as const, interrupted: true };
               }
               const fiber = yield* liveCtx.acp
                 .prompt({
@@ -1719,10 +1699,26 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
                 yield* Effect.yieldNow;
               }
-              return Option.some(fiber);
+              return { _tag: "Started" as const, fiber };
             }),
           );
-          if (Option.isNone(promptFiber)) {
+          if (promptStart._tag === "Skipped") {
+            // Settle after releasing promptLifecycle. Holding both locks
+            // deadlocks the next sendTurn, which takes the thread lock first.
+            yield* withThreadLock(
+              input.threadId,
+              settlePromptInFlight(
+                input.threadId,
+                prepared.turnId,
+                prepared.acpSessionId,
+                promptStart.interrupted
+                  ? {
+                      completedStopReason: "cancelled",
+                      settleAllPrompts: true,
+                    }
+                  : { emitTurnCompletion: false },
+              ),
+            );
             yield* Ref.set(promptSettled, true);
             const liveCtx = sessions.get(input.threadId);
             return {
@@ -1732,7 +1728,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             };
           }
 
-          const result = yield* Fiber.join(promptFiber.value).pipe(
+          const result = yield* Fiber.join(promptStart.fiber).pipe(
             Effect.tap((promptResult) =>
               Effect.all(
                 [
