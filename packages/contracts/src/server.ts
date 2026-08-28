@@ -444,9 +444,14 @@ export type EnvironmentThemeId = typeof EnvironmentThemeId.Type;
  * Role colors as published. Values are any CSS color the client's theme
  * parser accepts (exported theme files use oklch), canonicalized client-side;
  * roles a build does not know are dropped there, so a machine may publish
- * roles a newer client added without breaking an older one.
+ * roles a newer client added without breaking an older one. Keys must still
+ * be role-shaped and values color-sized, so the record stays open to future
+ * vocabulary without being an arbitrary-payload channel.
  */
-const EnvironmentThemeColors = Schema.Record(Schema.String, TrimmedNonEmptyString);
+const EnvironmentThemeColors = Schema.Record(
+  Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/)),
+  TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+);
 
 const environmentThemeFields = {
   /**

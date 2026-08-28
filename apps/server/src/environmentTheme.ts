@@ -199,7 +199,8 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
 
     // Counted only once accepted: the cap bounds what travels to clients, so
     // a skipped file must not eat the budget of valid themes sorted after it.
-    totalBytes += raw.length;
+    // Bytes, not string length -- the cap describes wire weight.
+    totalBytes += Buffer.byteLength(raw);
     if (totalBytes > MAX_THEME_TOTAL_BYTES) {
       yield* Effect.logWarning("ignoring environment themes past the total size limit", {
         path: themesDir,
