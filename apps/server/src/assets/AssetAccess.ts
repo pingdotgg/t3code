@@ -1,4 +1,5 @@
 import type { AssetResource } from "@t3tools/contracts";
+import * as NodeOS from "node:os";
 import {
   AssetAttachmentNotFoundError,
   AssetPreviewTypeValidationError,
@@ -6,6 +7,7 @@ import {
   AssetProjectFaviconNotFoundError,
   AssetProjectFaviconResolutionError,
   AssetSigningKeyLoadError,
+  AssetVisualizationUnavailableError,
   AssetWorkspaceAssetInspectionError,
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceContextNotFoundError,
@@ -48,6 +50,7 @@ const SIGNING_SECRET_NAME = "asset-access-signing-key";
 const ASSET_TOKEN_TTL_MS = 60 * 60 * 1000;
 const PROJECT_FAVICON_TOKEN_BUCKET_MS = 30 * 60 * 1000;
 const PROJECT_FAVICON_VERSION_PREFIX = "v";
+export const VISUALIZATION_FRAGMENT_MAX_BYTES = 1024 * 1024;
 const PREVIEW_ASSET_EXTENSIONS = new Set([
   ...WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   ...WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
@@ -83,6 +86,13 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    kind: Schema.Literal("visualization"),
+    path: Schema.String,
+    revision: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     kind: Schema.Literal("project-favicon"),
     workspaceRoot: Schema.String,
     relativePath: Schema.NullOr(Schema.String),
@@ -101,7 +111,72 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = { readonly kind: "file"; readonly path: string };
+export type ResolvedAsset =
+  | { readonly kind: "file"; readonly path: string }
+  | { readonly kind: "text"; readonly body: string };
+
+interface VisualizationFile {
+  readonly body: string;
+  readonly bytes: Uint8Array;
+  readonly canonicalPath: string;
+}
+
+const readVisualizationFile = Effect.fn("AssetAccess.readVisualizationFile")(function* (
+  filePath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const file = yield* fileSystem.open(filePath);
+      const info = yield* file.stat;
+      if (
+        info.type !== "File" ||
+        info.size > BigInt(VISUALIZATION_FRAGMENT_MAX_BYTES) ||
+        !Option.contains(info.nlink, 1)
+      )
+        return null;
+
+      const canonicalPath = yield* fileSystem.realPath(filePath);
+      if (!/\.(?:html?|xhtml)$/iu.test(canonicalPath)) return null;
+      const pathInfo = yield* fileSystem.stat(canonicalPath);
+      if (
+        pathInfo.dev !== info.dev ||
+        Option.isNone(pathInfo.ino) ||
+        Option.isNone(info.ino) ||
+        pathInfo.ino.value !== info.ino.value ||
+        !Option.contains(pathInfo.nlink, 1)
+      ) {
+        return null;
+      }
+      const canonicalRoots = yield* Effect.forEach([NodeOS.tmpdir(), "/tmp"], (root) =>
+        optionOnNotFound(fileSystem.realPath(root)),
+      );
+      const isWithinAllowedRoot = canonicalRoots.some((root) => {
+        if (Option.isNone(root)) return false;
+        const relative = path.relative(root.value, canonicalPath);
+        return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+      });
+      if (!isWithinAllowedRoot) return null;
+
+      const content = yield* file.readAlloc(info.size);
+      if (Option.isSome(yield* file.readAlloc(1))) return null;
+      const bytes = Option.getOrElse(content, () => new Uint8Array());
+      return {
+        body: new TextDecoder().decode(bytes),
+        bytes,
+        canonicalPath,
+      } satisfies VisualizationFile;
+    }),
+  );
+});
+
+const visualizationRevision = Effect.fn("AssetAccess.visualizationRevision")(function* (
+  bytes: Uint8Array,
+) {
+  const crypto = yield* Crypto.Crypto;
+  return yield* crypto.digest("SHA-256", bytes).pipe(Effect.map(Encoding.encodeHex));
+});
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -273,6 +348,33 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             expiresAt,
           };
       fileName = path.basename(resolved.relativePath);
+      break;
+    }
+    case "visualization": {
+      if (
+        !path.isAbsolute(input.resource.path) ||
+        !/\.(?:html?|xhtml)$/iu.test(input.resource.path)
+      ) {
+        return yield* new AssetVisualizationUnavailableError({ resource: input.resource });
+      }
+      const file = yield* readVisualizationFile(input.resource.path).pipe(
+        Effect.mapError(
+          (cause) => new AssetVisualizationUnavailableError({ resource: input.resource, cause }),
+        ),
+      );
+      if (!file) return yield* new AssetVisualizationUnavailableError({ resource: input.resource });
+      claims = {
+        version: 1,
+        kind: "visualization",
+        path: file.canonicalPath,
+        revision: yield* visualizationRevision(file.bytes).pipe(
+          Effect.mapError(
+            (cause) => new AssetVisualizationUnavailableError({ resource: input.resource, cause }),
+          ),
+        ),
+        expiresAt,
+      };
+      fileName = path.basename(file.canonicalPath);
       break;
     }
     case "attachment": {
@@ -466,6 +568,18 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     return Option.isSome(info) && info.value.type === "File"
       ? ({ kind: "file", path: attachmentPath } satisfies ResolvedAsset)
       : null;
+  }
+
+  if (claims.kind === "visualization") {
+    const file = yield* readVisualizationFile(claims.path).pipe(Effect.orElseSucceed(() => null));
+    if (
+      !file ||
+      (yield* visualizationRevision(file.bytes).pipe(Effect.orElseSucceed(() => null))) !==
+        claims.revision
+    ) {
+      return null;
+    }
+    return { kind: "text", body: file.body } satisfies ResolvedAsset;
   }
 
   if (claims.kind === "project-favicon") {

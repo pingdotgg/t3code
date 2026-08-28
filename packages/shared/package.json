@@ -203,6 +203,10 @@
       "types": "./src/chatList.ts",
       "import": "./src/chatList.ts"
     },
+    "./inlineVisualization": {
+      "types": "./src/inlineVisualization.ts",
+      "import": "./src/inlineVisualization.ts"
+    },
     "./hostProcess": {
       "types": "./src/hostProcess.ts",
       "import": "./src/hostProcess.ts"

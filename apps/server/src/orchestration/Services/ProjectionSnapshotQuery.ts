@@ -170,6 +170,12 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
 
+  /** Check one path against assistant messages without hydrating the thread. */
+  readonly hasAssistantVisualizationReference: (
+    threadId: ThreadId,
+    path: string,
+  ) => Effect.Effect<boolean, ProjectionRepositoryError>;
+
   /**
    * Read a single active thread detail together with the projection snapshot
    * sequence in one consistent transaction, so the returned `snapshotSequence`

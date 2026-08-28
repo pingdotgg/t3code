@@ -90,7 +90,7 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     "style-src 'self' 'unsafe-inline'",
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",
-    "frame-src 'self' https://challenges.cloudflare.com",
+    "frame-src 'self' blob: https://challenges.cloudflare.com",
     "form-action 'self'",
   ].join("; ");
 }
