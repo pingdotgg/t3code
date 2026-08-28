@@ -147,6 +147,40 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
 
+    it.effect("keeps standard a/ and b/ prefixes when noprefix diff config is enabled", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        // Checkpoint diffs feed the diff panel's patch parser, which only
+        // recognizes `a/`/`b/` prefixes; repo config like diff.noprefix must
+        // not leak bare `diff --git <path> <path>` headers into the patch.
+        yield* git(tmp, ["config", "diff.noprefix", "true"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-checkpoint-store-noprefix");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: fromCheckpointRef,
+        });
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# changed\n");
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: toCheckpointRef,
+        });
+
+        const diff = yield* checkpointStore.diffCheckpoints({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+          ignoreWhitespace: false,
+        });
+
+        expect(diff).toContain("diff --git a/README.md b/README.md");
+      }),
+    );
+
     it.effect("can hide indentation churn when changes wrap existing lines", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();

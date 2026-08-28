@@ -819,6 +819,29 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("keeps standard a/ and b/ prefixes when mnemonic diff config is enabled", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // The diff panel's patch parser only recognizes `a/`/`b/` prefixes; a
+        // repo config like diff.mnemonicPrefix must not leak `c/`/`w/` (tracked
+        // files) or `1/`/`2/` (untracked files) into review patches.
+        yield* git(cwd, ["config", "diff.mnemonicPrefix", "true"]);
+        yield* writeTextFile(cwd, "README.md", "# changed\n");
+        yield* writeTextFile(cwd, "notes/new-file.txt", "untracked\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+
+        const workingTree = preview.sources.find((source) => source.kind === "working-tree");
+        assert.ok(workingTree);
+        assert.include(workingTree.diff, "diff --git a/README.md b/README.md");
+        assert.include(workingTree.diff, "diff --git a/notes/new-file.txt b/notes/new-file.txt");
+        assert.notInclude(workingTree.diff, "diff --git c/");
+        assert.notInclude(workingTree.diff, "diff --git 1/");
+      }),
+    );
+
     it.effect("loads full file contents for working-tree diff expansion", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

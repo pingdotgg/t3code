@@ -273,6 +273,16 @@ function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
   return worktreePaths;
 }
 
+/**
+ * Diff-review patches are parsed by surfaces that only recognize the standard
+ * `a/`/`b/` prefixes, so patch-producing commands pin them instead of inheriting
+ * user config like `diff.mnemonicPrefix` (which emits `c/`/`w/`, `i/`/`w/`, or
+ * `1/`/`2/`) or `diff.noprefix` (which emits bare paths).
+ */
+export function standardDiffPatchArgs(...args: ReadonlyArray<string>): string[] {
+  return ["-c", "diff.mnemonicprefix=false", "-c", "diff.noprefix=false", ...args];
+}
+
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
   const parts = input.split("\0");
   if (parts.length === 0) return [];
@@ -1862,7 +1872,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const stagedPatch = yield* runGitStdoutWithOptions(
         "GitVcsDriver.prepareCommitContext.stagedPatch",
         cwd,
-        ["diff", "--no-ext-diff", "--cached", "--patch", "--minimal"],
+        standardDiffPatchArgs("diff", "--no-ext-diff", "--cached", "--patch", "--minimal"),
         {
           maxOutputBytes: PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES,
           appendTruncationMarker: true,
@@ -2159,7 +2169,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         runGitStdoutWithOptions(
           "GitVcsDriver.readRangeContext.diffPatch",
           cwd,
-          ["diff", "--no-ext-diff", "--patch", "--minimal", range],
+          standardDiffPatchArgs("diff", "--no-ext-diff", "--patch", "--minimal", range),
           {
             maxOutputBytes: RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES,
             appendTruncationMarker: true,
@@ -2197,7 +2207,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         executeGit(
           "GitVcsDriver.readUntrackedReviewDiffs.diff",
           cwd,
-          [
+          standardDiffPatchArgs(
             "diff",
             "--no-index",
             "--patch",
@@ -2208,7 +2218,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             "--",
             "/dev/null",
             relativePath,
-          ],
+          ),
           {
             allowNonZeroExit: true,
             maxOutputBytes: REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES,
@@ -2250,7 +2260,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const dirtyTrackedResult = yield* executeGit(
       "GitVcsDriver.getReviewDiffPreview.dirtyTracked",
       input.cwd,
-      [
+      standardDiffPatchArgs(
         "diff",
         "--patch",
         "--no-color",
@@ -2260,7 +2270,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
         "HEAD",
         "--",
-      ],
+      ),
       {
         maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
         appendTruncationMarker: true,
@@ -2286,7 +2296,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ? yield* executeGit(
             "GitVcsDriver.getReviewDiffPreview.base",
             input.cwd,
-            [
+            standardDiffPatchArgs(
               "diff",
               "--patch",
               "--no-color",
@@ -2295,7 +2305,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               "--minimal",
               ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
               `${baseRef}...HEAD`,
-            ],
+            ),
             {
               maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
               appendTruncationMarker: true,
