@@ -151,18 +151,6 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     const raw = yield* fs.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
     if (raw.trim().length === 0) continue;
 
-    totalBytes += raw.length;
-
-    if (totalBytes > MAX_THEME_TOTAL_BYTES) {
-      yield* Effect.logWarning("ignoring environment themes past the total size limit", {
-        path: themesDir,
-
-        limit: MAX_THEME_TOTAL_BYTES,
-      });
-
-      break;
-    }
-
     const decoded = decodeEnvironmentThemeFileJsonExit(raw);
     if (decoded._tag === "Failure") {
       yield* Effect.logWarning("ignoring invalid environment theme", {
@@ -176,6 +164,18 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
       yield* Effect.logWarning("ignoring environment theme without colors", { path: filePath });
       continue;
     }
+
+    // Counted only once accepted: the cap bounds what travels to clients, so
+    // a skipped file must not eat the budget of valid themes sorted after it.
+    totalBytes += raw.length;
+    if (totalBytes > MAX_THEME_TOTAL_BYTES) {
+      yield* Effect.logWarning("ignoring environment themes past the total size limit", {
+        path: themesDir,
+        limit: MAX_THEME_TOTAL_BYTES,
+      });
+      break;
+    }
+
     themes.push({ id, ...file });
   }
   return themes;
@@ -193,12 +193,15 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   /**
-   * Every observed set carries a sequence number, so a subscriber can drop
-   * queued events that predate the snapshot it started from. Without it a
-   * publish landing between subscribing and reading replays after the newer
-   * value and walks clients backwards onto stale colors.
+   * Sliding with capacity 1: every update carries the complete set, so a
+   * subscriber that stops consuming holds at most the newest set rather than
+   * an unbounded backlog. Every observed set carries a sequence number, so a
+   * subscriber can drop queued events that predate the snapshot it started
+   * from. Without it a publish landing between subscribing and reading
+   * replays after the newer value and walks clients backwards onto stale
+   * colors.
    */
-  const changes = yield* PubSub.unbounded<PublishedThemes>();
+  const changes = yield* PubSub.sliding<PublishedThemes>(1);
   const published = yield* Ref.make<PublishedThemes>({ seq: 0, themes: [] });
   /**
    * Guards the whole read/compare/publish, not just the state update. The

@@ -99,7 +99,10 @@ export function useDefaultThemeAdoption(): void {
     // theme on a light client is recorded as applied while nothing changes.
     if (!setTheme(defaultTheme)) return;
     const half = singleAppearanceOf(definition);
-    if (half !== null) setAppearanceMode(half);
+    // Recorded only once both land: marking the generation applied while the
+    // appearance switch failed would leave a dark-only theme rendering its
+    // light half with no retry.
+    if (half !== null && !setAppearanceMode(half)) return;
     writeAppliedGeneration(storageKey, generation);
   }, [
     environmentId,

@@ -185,6 +185,26 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
       }),
     ),
   );
+
+  // The aggregate size cap charges only accepted themes, so a pile of
+  // malformed files cannot spend the budget and hide a valid theme sorted
+  // after them.
+  it.effect("does not charge skipped files against the total size limit", () =>
+    withEnvironmentThemes(
+      {
+        ...Object.fromEntries(
+          Array.from({ length: 7 }, (_, index) => [`junk-${index}.json`, "{".repeat(30_000)]),
+        ),
+        "zz-valid.json": encodeThemeFile(NIGHTFALL_THEME),
+      },
+      Effect.gen(function* () {
+        assert.deepEqual(
+          (yield* currentThemes).map((theme) => theme.id),
+          ["zz-valid"],
+        );
+      }),
+    ),
+  );
 });
 
 // The feature's headline claim: rewrite a file and connected clients retint
