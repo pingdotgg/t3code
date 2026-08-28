@@ -1966,6 +1966,56 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("vp lint");
   });
 
+  it("renders an inline task-progress chip for todo-list plans", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "item-todo",
+            kind: "turn-plan",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            turnPlan: {
+              id: "turn-plan:plan-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              runId: null,
+              plan: {
+                createdAt: "2026-03-17T19:12:28.000Z",
+                runId: null,
+                explanation: null,
+                steps: [
+                  { step: "Resolve triage instances", status: "inProgress" },
+                  { step: "Show instance badges", status: "pending" },
+                  { step: "Verify the shared dev stack", status: "pending" },
+                ],
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Resolve triage instances");
+    expect(markup).toContain("0/3");
+    expect(markup).toContain('aria-expanded="false"');
+  });
+
+  it("labels the working row with the active plan step", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
+        workingStepLabel="Resolve triage instances"
+        timelineEntries={[]}
+      />,
+    );
+
+    expect(markup).toContain("Working for");
+    expect(markup).toContain("· Resolve triage instances");
+  });
+
   it("renders a failure marker for failed tool lifecycle entries", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
