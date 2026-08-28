@@ -38,6 +38,13 @@ function makeThread(
 
 const NOW = "2026-06-02T00:00:00.000Z";
 
+const linkedPullRequest = {
+  projectId: ProjectId.make("project-1"),
+  repository: "pingdotgg/t3code",
+  number: 42,
+  url: "https://github.com/pingdotgg/t3code/pull/42",
+};
+
 describe("resolveThreadListV2SnoozeMenuSelection", () => {
   it("accepts a displayed evening preset while its wake time is still future", () => {
     const menuOpenedAt = new Date(2026, 4, 8, 16, 59, 30);
@@ -325,6 +332,111 @@ describe("buildThreadListV2Items", () => {
     expect(layout.hiddenSettledCount).toBe(0);
     expect(layout.snoozedCount).toBe(0);
     expect(layout.nextSnoozeWakeAt).toBeNull();
+  });
+
+  it("ignores the previous pull request state after a different pull request is linked", () => {
+    const thread = makeThread({
+      id: ThreadId.make("linked"),
+      title: "Linked pull request",
+      linkedPullRequest,
+    });
+    const layout = buildThreadListV2Items({
+      threads: [thread],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestByKey: new Map([
+        [
+          `${environmentId}:${thread.id}`,
+          {
+            state: "merged" as const,
+            linkedPullRequestKey: '["project-1","pingdotgg/t3code",41]',
+          },
+        ],
+      ]),
+      now: NOW,
+    });
+
+    expect(layout.settledCount).toBe(0);
+    expect(layout.items[0]?.variant).toBe("card");
+  });
+
+  it("moves pinned threads to the settled shelf when their pull request merges", () => {
+    const merged = makeThread({
+      id: ThreadId.make("pinned-merged"),
+      title: "Pinned merged pull request",
+      pinnedAt: "2026-06-01T12:00:00.000Z",
+    });
+    const layout = buildThreadListV2Items({
+      threads: [makeThread({ id: ThreadId.make("active"), title: "Active" }), merged],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestByKey: new Map([
+        [`${environmentId}:${merged.id}`, { state: "merged", updatedAt: NOW }],
+      ]),
+      autoSettleMode: "change-request",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "pinned-merged"]);
+    expect(layout.items.map((item) => item.variant)).toEqual(["card", "slim"]);
+    expect(layout.items[1]?.thread.pinnedAt).toBe("2026-06-01T12:00:00.000Z");
+    expect(layout.settledCount).toBe(1);
+  });
+
+  it("moves inactive pinned threads to the settled shelf", () => {
+    const inactive = makeThread({
+      id: ThreadId.make("pinned-inactive"),
+      title: "Pinned inactive thread",
+      createdAt: "2026-05-20T00:00:00.000Z",
+      pinnedAt: "2026-05-21T00:00:00.000Z",
+      latestRun: {
+        runId: RunId.make("run-inactive"),
+        status: "completed",
+        requestedAt: "2026-05-21T00:00:00.000Z",
+        startedAt: "2026-05-21T00:00:01.000Z",
+        completedAt: "2026-05-21T00:00:02.000Z",
+        assistantMessageId: null,
+      },
+    });
+    const layout = buildThreadListV2Items({
+      threads: [inactive],
+      environmentId: null,
+      searchQuery: "",
+      autoSettleMode: "inactivity",
+      now: NOW,
+    });
+
+    expect(layout.items[0]).toMatchObject({
+      thread: { id: "pinned-inactive" },
+      variant: "slim",
+      pinned: false,
+    });
+    expect(layout.settledCount).toBe(1);
+  });
+
+  it("keeps pinned merged threads pinned when automatic settling is off", () => {
+    const merged = makeThread({
+      id: ThreadId.make("pinned-merged"),
+      title: "Pinned merged pull request",
+      pinnedAt: "2026-06-01T12:00:00.000Z",
+    });
+    const layout = buildThreadListV2Items({
+      threads: [merged],
+      environmentId: null,
+      searchQuery: "",
+      changeRequestByKey: new Map([
+        [`${environmentId}:${merged.id}`, { state: "merged", updatedAt: NOW }],
+      ]),
+      autoSettleMode: "never",
+      now: NOW,
+    });
+
+    expect(layout.items[0]).toMatchObject({
+      thread: { id: "pinned-merged" },
+      variant: "card",
+      pinned: true,
+    });
+    expect(layout.settledCount).toBe(0);
   });
 
   it("keeps a merged thread active when automatic settling is off", () => {
