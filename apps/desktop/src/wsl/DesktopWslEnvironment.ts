@@ -34,18 +34,13 @@ export interface EnsureWslNodePtyOptions {
   readonly nodeEngineRange?: string | null;
 }
 
-// The packaged WSL runtime archive plus the identity the build recorded for
-// it. `sha256` is the digest of the archive bytes and gates the install;
-// `contentId` is the canonical hash of the runtime tree the archive carries,
-// and `runtimeId` is the cache key derived from it. Keying on content rather
-// than app version lets an upgrade reuse a runtime it did not install, and is
-// only trustworthy because the install verifies the bytes against `sha256` and
-// the extracted tree's own manifest against `contentId` before promoting it.
+// The packaged WSL runtime archive plus the SHA-256 identity the build recorded
+// for it. The cache key derives from the same digest, and installation verifies
+// the bytes before promoting the extracted tree.
 export interface WslRuntimeArchive {
   readonly windowsPath: string;
   readonly runtimeId: string;
   readonly sha256: string;
-  readonly contentId: string;
 }
 
 export type PrepareWslRuntimeResult =
@@ -265,28 +260,22 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")
 // here; the digest is what lets a later launch prove the entry still is what
 // that install wrote.
 const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
-// Written into the archive root by stageWslRuntimeArchive (see
-// scripts/build-desktop-artifact.ts, which owns the matching constant).
-const WSL_RUNTIME_CONTENT_ID_MANIFEST = ".t3code-wsl-runtime-content-id";
 
 export const sanitizeWslRuntimeId = (value: string): string =>
   value.replace(/[^A-Za-z0-9._-]/g, "_");
 
-// `archiveSha256` is the digest the build recorded alongside the archive and
-// `contentId` is the canonical hash of the tree inside it. The install verifies
-// the bytes before extracting and the extracted tree's manifest before
-// promoting, so an archive can never be promoted into the cache under an
-// identity that does not describe its contents.
+// `archiveSha256` is the digest the build recorded alongside the archive. The
+// install verifies the bytes before extracting, so an archive can never be
+// promoted under an identity that does not describe it.
 export const buildWslRuntimeInstallScript = (
   linuxArchivePath: string,
   runtimeId: string,
   archiveSha256: string,
-  contentId: string,
 ): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    'runtime_parent="$HOME/.t3/runtime"',
+    'runtime_parent="$HOME/.t3/wsl-runtime"',
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,
     // The native payload is the part of the tree the WSL backend actually
@@ -388,16 +377,7 @@ export const buildWslRuntimeInstallScript = (
     `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp"`,
     'test -f "$runtime_tmp/apps/server/dist/bin.mjs"',
     'test -f "$runtime_tmp/node_modules/node-pty/package.json"',
-    // The cache directory is named for the content it is supposed to hold, so
-    // check the archive agrees before promoting it under that name. Reading one
-    // small file costs nothing next to re-hashing the extracted tree, and it is
-    // the only check that can catch a build which labelled an archive with an
-    // id that does not describe it.
-    `extracted_content_id=$(cat "$runtime_tmp/${WSL_RUNTIME_CONTENT_ID_MANIFEST}" 2>/dev/null | tr -d '[:space:]')`,
-    `if [ "$extracted_content_id" != ${shellQuote(contentId)} ]; then`,
-    `  printf 'WSL runtime archive does not match its recorded content id (expected %s, got %s)\\n' ${shellQuote(contentId)} "$extracted_content_id" >&2`,
-    "  exit 1",
-    "fi",
+
     // Never write the ready marker over a tree that is missing the native
     // payload. Failing here drops out to the mounted-tree fallback, which is
     // recoverable; promoting it would mark the defect ready and cache it.
@@ -405,10 +385,9 @@ export const buildWslRuntimeInstallScript = (
     "  printf 'WSL runtime archive is missing its Linux node-pty binary\\n' >&2",
     "  exit 1",
     "fi",
-    // The archive's bytes were verified against archiveSha256 above and the
-    // extracted tree against its content-id manifest, so the digest recorded
-    // here describes content this install proved. Every later warm reuse checks
-    // the entry against it.
+    // The archive's bytes were verified against archiveSha256 above, so the
+    // digest recorded here describes content this install proved. Every later
+    // warm reuse checks the entry against it.
     'installed_entry_digest=$(runtime_server_entry_digest "$runtime_tmp")',
     'if [ -z "$installed_entry_digest" ]; then',
     "  printf 'Could not hash the WSL runtime server entry\\n' >&2",
@@ -436,24 +415,22 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
     "set -eu",
-    'runtime_parent="$HOME/.t3/runtime"',
+    'runtime_parent="$HOME/.t3/wsl-runtime"',
     `current_runtime="$runtime_parent/${safeRuntimeId}"`,
     '[ -d "$runtime_parent" ] || exit 0',
+    // Serialize the whole retention decision so two backends cannot select
+    // different "previous" caches and delete around one another.
+    'prune_lock="$runtime_parent/.prune.lock"',
+    'exec 8> "$prune_lock"',
+    "flock -x 8",
     // Without a way to see the distro's processes we cannot tell which caches
     // are load-bearing, and the retention rules below are not safe on their own.
-    // Skipping the sweep only costs disk; guessing costs another backend its
-    // runtime mid-session.
     "[ -d /proc/1 ] || exit 0",
-    // A backend launched from a cache has that cache's path in its argv (the
-    // entry is `<runtime>/apps/server/dist/bin.mjs`), so the running process is
-    // itself the lease and it is released by exiting. The trailing slash keeps
-    // one runtime id from matching another that merely starts with it. This
-    // pruner reads its own script from stdin, so it cannot match itself.
     "runtime_in_use() {",
     '  grep -qF -- "$1/" /proc/[0-9]*/cmdline 2>/dev/null',
     "}",
     'previous_runtime=""',
-    'for candidate in "$runtime_parent"/*; do',
+    'for candidate in "$runtime_parent"/sha256-*; do',
     '  [ -d "$candidate" ] || continue',
     '  [ "$candidate" != "$current_runtime" ] || continue',
     `  [ -f "$candidate/${WSL_RUNTIME_READY_MARKER}" ] || continue`,
@@ -461,23 +438,23 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     '    previous_runtime="$candidate"',
     "  fi",
     "done",
-    'for candidate in "$runtime_parent"/*; do',
+    // Only this desktop-owned prefix is eligible. Markerless roots are broken
+    // caches left by invalidation and must not become permanent disk leaks.
+    'for candidate in "$runtime_parent"/sha256-*; do',
     '  [ -d "$candidate" ] || continue',
     '  [ "$candidate" != "$current_runtime" ] || continue',
     '  [ "$candidate" != "$previous_runtime" ] || continue',
-    `  [ -f "$candidate/${WSL_RUNTIME_READY_MARKER}" ] || continue`,
-    // The newest-previous rule alone picks the wrong survivor whenever two
-    // versions run at once: the other live backend loses its slot to any newer
-    // idle cache, and each side then deletes the other.
     '  ! runtime_in_use "$candidate" || continue',
+    "  candidate_name=${candidate##*/}",
+    '  candidate_lock="$runtime_parent/.${candidate_name}.install.lock"',
+    '  exec 9> "$candidate_lock"',
+    // A held lock means another launch is installing or repairing this cache.
+    // Skip instead of waiting or deleting underneath it.
+    "  flock -n 9 || continue",
     '  rm -rf -- "$candidate"',
+    "  flock -u 9",
     "done",
-    // Both loops skip dot entries and require the ready marker, so scratch
-    // directories left by installs that died before promotion (SIGKILL,
-    // `wsl --shutdown`, power loss) are invisible to them, and nothing else ever
-    // removes them. Sweep the ones too old to belong to a live install. Prune
-    // failures are only logged, so a distro without findutils keeps the previous
-    // behavior instead of failing a launch.
+    // Interrupted installs use dot-prefixed names under this dedicated parent.
     `find "$runtime_parent" -maxdepth 1 -type d \\( -name '.*.tmp.*' -o -name '.*.stale.*' \\) -mmin +${String(ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES)} -exec rm -rf -- {} +`,
   ].join("\n");
 };
@@ -491,9 +468,10 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
 // place: the install script moves an unready root aside before extracting.
 export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
-  return ["set -eu", `rm -f "$HOME/.t3/runtime/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`].join(
-    "\n",
-  );
+  return [
+    "set -eu",
+    `rm -f "$HOME/.t3/wsl-runtime/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`,
+  ].join("\n");
 };
 
 export const parseWslRuntimeRoot = (stdout: string): string | null => {
@@ -877,12 +855,7 @@ const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(functi
 
   const install = yield* runWslShell(
     distro,
-    buildWslRuntimeInstallScript(
-      linuxArchivePath.value,
-      archive.runtimeId,
-      archive.sha256,
-      archive.contentId,
-    ),
+    buildWslRuntimeInstallScript(linuxArchivePath.value, archive.runtimeId, archive.sha256),
     RUNTIME_INSTALL_TIMEOUT,
     { resolveNode: false },
   );

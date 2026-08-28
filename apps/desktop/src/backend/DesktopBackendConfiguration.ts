@@ -241,7 +241,6 @@ interface WslPreflightFailure {
 const WSL_TRANSIENT_PREFLIGHT_RETRY_LIMIT = 12;
 const WSL_RUNTIME_ARCHIVE_NAME = "wsl-runtime.tar.gz";
 const WSL_RUNTIME_ARCHIVE_HASH_NAME = `${WSL_RUNTIME_ARCHIVE_NAME}.sha256`;
-const WSL_RUNTIME_CONTENT_ID_NAME = `${WSL_RUNTIME_ARCHIVE_NAME}.content-id`;
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
 
 export const parseWslRuntimeArchiveHash = (value: string): string | null => {
@@ -369,6 +368,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
         nodePtyOptions,
       );
       if (stagedNodePty.ok) {
+        yield* wslServerTree.cleanupLegacy;
         return {
           _tag: "Ready",
           runningDistro,
@@ -579,10 +579,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     environment.resourcesPath,
     WSL_RUNTIME_ARCHIVE_HASH_NAME,
   );
-  const contentIdPath = environment.path.join(
-    environment.resourcesPath,
-    WSL_RUNTIME_CONTENT_ID_NAME,
-  );
+
   const hasArchive = environment.isPackaged
     ? yield* fileSystem.exists(archivePath).pipe(Effect.orElseSucceed(() => false))
     : false;
@@ -592,38 +589,26 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
         Effect.orElseSucceed(() => null),
       )
     : null;
-  // The content id keys the distro-local cache; the archive digest gates the
-  // install. Both have to be present and well-formed before the archive is
-  // usable, so a partial resource set falls back rather than guessing an
-  // identity for bytes it cannot vouch for.
-  const contentId = hasArchive
-    ? yield* fileSystem.readFileString(contentIdPath).pipe(
-        Effect.map(parseWslRuntimeArchiveHash),
-        Effect.orElseSucceed(() => null),
-      )
-    : null;
-  if (hasArchive && (archiveHash === null || contentId === null)) {
+  if (hasArchive && archiveHash === null) {
     yield* Effect.logWarning(
-      "Ignoring the WSL runtime archive because its recorded identity is missing or invalid; launching from the mounted server tree instead.",
-      { hashPath: archiveHashPath, contentIdPath },
+      "Ignoring the WSL runtime archive because its SHA-256 identity is missing or invalid; launching from the mounted server tree instead.",
+      { hashPath: archiveHashPath },
     );
   }
 
   const preflight = yield* runWslPreflight({
     distro: input.distro,
     runtimeArchive:
-      archiveHash === null || contentId === null
+      archiveHash === null
         ? null
         : {
             windowsPath: archivePath,
-            // Keyed purely by verified runtime content, so a release that did
-            // not change the server payload reuses the runtime an earlier
-            // release already installed instead of extracting an identical
-            // tree under a new version-and-arch name. The digest already
-            // distinguishes different target payloads, architecture included.
-            runtimeId: `sha256-${contentId}`,
+            // The verified archive bytes are the cache identity. Release builds
+            // embed the release version and pnpm install metadata, so the
+            // archive changes on every update even when application logic does
+            // not. Later launches of that update still reuse this directory.
+            runtimeId: `sha256-${archiveHash}`,
             sha256: archiveHash,
-            contentId,
           },
     // Packaged builds ship a prebuilt Linux node-pty (built on Linux in CI and
     // attached to the Windows artifact — see build-desktop-artifact.ts), so the

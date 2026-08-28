@@ -1,9 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off - the content-id fixtures reproduce the digest the build computes with node:crypto.
-import * as NodeCrypto from "node:crypto";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { systemError } from "effect/PlatformError";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
@@ -12,13 +8,12 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   BundleNotSelfContainedError,
   BuildCommandFailedError,
   buildWslRuntimeArchiveArgs,
-  computeWslRuntimeContentId,
   DesktopDmgBackgroundSourceMissingError,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
@@ -71,20 +66,17 @@ import {
   WINDOWS_SERVER_ASAR_RESOURCE,
   WINDOWS_SERVER_ASAR_UNPACK_GLOB,
   WINDOWS_SERVER_RESOURCE_SOURCE_DIR,
-  WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS,
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_NAME,
   WSL_RUNTIME_ARCHIVE_NAME,
-  WSL_RUNTIME_CONTENT_ID_EXTRA_RESOURCE,
   WSL_RUNTIME_EXTRA_RESOURCES,
   wslRuntimeArchiveTarTarget,
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
-// A minimal stand-in for the staged sidecar: just enough of the two roots the
-// archive ships for the content id to have something to walk.
+// A minimal stand-in for the staged sidecar roots packed into the WSL archive.
 const stageWslRuntimeTreeFixture = Effect.fn("stageWslRuntimeTreeFixture")(function* (
   root: string,
   serverSource: string,
@@ -105,158 +97,6 @@ const stageWslRuntimeTreeFixture = Effect.fn("stageWslRuntimeTreeFixture")(funct
     "pty",
   );
 });
-
-// A staged tree described rather than created, so the cases the host filesystem
-// cannot express — an executable bit on Windows, an unprivileged symlink — are
-// still testable. Directories are implied by the paths.
-type WslRuntimeTreeFixture = Record<
-  string,
-  | { readonly kind: "file"; readonly contents: string; readonly mode: number }
-  | { readonly kind: "link"; readonly target: string }
-  // Only needed where a directory's own mode is the subject; every other
-  // directory is implied by the paths below it and reports 0o755.
-  | { readonly kind: "directory"; readonly mode: number }
->;
-
-const FIXTURE_ROOT = "/wsl-runtime-fixture";
-
-const wslRuntimeTreeFixtureLayer = (
-  tree: WslRuntimeTreeFixture,
-  ownership: { readonly uid: number } = { uid: 0 },
-) => {
-  // path.join hands back backslashes on Windows; the fixture is keyed posix.
-  const toRelativeKey = (candidate: string) => {
-    const normalized = candidate.replaceAll("\\", "/");
-    if (normalized === FIXTURE_ROOT) return "";
-    return normalized.startsWith(`${FIXTURE_ROOT}/`)
-      ? normalized.slice(FIXTURE_ROOT.length + 1)
-      : null;
-  };
-  const makeInfo = (type: "File" | "Directory", mode: number): FileSystem.File.Info => ({
-    type,
-    mtime: Option.none(),
-    atime: Option.none(),
-    birthtime: Option.none(),
-    dev: 0,
-    ino: Option.none(),
-    mode,
-    nlink: Option.none(),
-    uid: Option.some(ownership.uid),
-    gid: Option.some(ownership.uid),
-    rdev: Option.none(),
-    size: FileSystem.Size(0),
-    blksize: Option.none(),
-    blocks: Option.none(),
-  });
-  // stat and readFile see through links, exactly as a real filesystem does.
-  // That is what makes reading the link first load-bearing rather than
-  // decorative: without it the walk records a link as a copy of its target.
-  const followLinks = (relative: string) => {
-    let current = relative;
-    for (let hops = 0; hops < 8; hops += 1) {
-      const entry = tree[current];
-      if (entry === undefined || entry.kind === "directory") return null;
-      if (entry.kind === "file") return entry;
-      const segments = current.split("/").slice(0, -1);
-      for (const segment of entry.target.split("/")) {
-        if (segment === "..") segments.pop();
-        else if (segment !== ".") segments.push(segment);
-      }
-      current = segments.join("/");
-    }
-    return null;
-  };
-  const missing = (method: string, candidate: string) =>
-    Effect.fail(
-      systemError({
-        _tag: "NotFound",
-        module: "FileSystem",
-        method,
-        pathOrDescriptor: candidate,
-      }),
-    );
-
-  return FileSystem.layerNoop({
-    readDirectory: (candidate) => {
-      const relative = toRelativeKey(candidate);
-      if (relative === null) return missing("readDirectory", candidate);
-      const prefix = relative === "" ? "" : `${relative}/`;
-      const names = new Set<string>();
-      for (const key of Object.keys(tree)) {
-        if (!key.startsWith(prefix)) continue;
-        names.add(key.slice(prefix.length).split("/")[0]!);
-      }
-      return Effect.succeed([...names].sort());
-    },
-    stat: (candidate) => {
-      const relative = toRelativeKey(candidate);
-      if (relative === null) return missing("stat", candidate);
-      const target = followLinks(relative);
-      if (target !== null) return Effect.succeed(makeInfo("File", target.mode));
-      const described = tree[relative];
-      if (described?.kind === "directory") {
-        return Effect.succeed(makeInfo("Directory", described.mode));
-      }
-      return Object.keys(tree).some((key) => key.startsWith(`${relative}/`))
-        ? Effect.succeed(makeInfo("Directory", 0o755))
-        : missing("stat", candidate);
-    },
-    readLink: (candidate) => {
-      const relative = toRelativeKey(candidate);
-      const entry = relative === null ? undefined : tree[relative];
-      return entry?.kind === "link" ? Effect.succeed(entry.target) : missing("readLink", candidate);
-    },
-    readFile: (candidate) => {
-      const relative = toRelativeKey(candidate);
-      const target = relative === null ? null : followLinks(relative);
-      return target === null
-        ? missing("readFile", candidate)
-        : Effect.succeed(new TextEncoder().encode(target.contents));
-    },
-  });
-};
-
-// The id as it was before modes and entry types reached it: posix path and
-// followed bytes, nothing else. Tests pair it against the current id to show
-// which trees the old one could not tell apart.
-const legacyWslRuntimeContentId = (tree: WslRuntimeTreeFixture) => {
-  const resolveContents = (key: string): string => {
-    const entry = tree[key];
-    if (entry === undefined) throw new Error(`fixture has no entry at ${key}`);
-    if (entry.kind === "file") return entry.contents;
-    if (entry.kind === "directory") throw new Error(`fixture links at ${key} point at a directory`);
-    const segments = key.split("/").slice(0, -1);
-    for (const segment of entry.target.split("/")) {
-      if (segment === "..") segments.pop();
-      else if (segment !== ".") segments.push(segment);
-    }
-    return resolveContents(segments.join("/"));
-  };
-
-  const directories = new Set<string>();
-  // The walk started inside the content roots, so the roots themselves and
-  // their ancestors never became directory lines, and no directory line
-  // carried a mode.
-  const belowARoot = (candidate: string) =>
-    WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS.some((root) => candidate.startsWith(`${root}/`));
-  for (const [key, entry] of Object.entries(tree)) {
-    if (entry.kind === "directory" && belowARoot(key)) directories.add(key);
-    const segments = key.split("/");
-    for (let depth = 1; depth < segments.length; depth += 1) {
-      const candidate = segments.slice(0, depth).join("/");
-      if (belowARoot(candidate)) directories.add(candidate);
-    }
-  }
-
-  const hash = NodeCrypto.createHash("sha256");
-  for (const directory of [...directories].sort()) hash.update(`d\0${directory}\0\n`);
-  for (const key of Object.keys(tree).sort()) {
-    if (tree[key]?.kind === "directory") continue;
-    const contents = NodeCrypto.createHash("sha256").update(resolveContents(key)).digest("hex");
-    hash.update(`f\0${key}\0${contents}\n`);
-  }
-  return hash.digest("hex");
-};
 
 function mockProcess(exitCode: number) {
   return ChildProcessSpawner.makeHandle({
@@ -646,7 +486,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/windows-server/**/*",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
-      "!apps/desktop/prod-resources/wsl-runtime.tar.gz.content-id",
     ]);
     assert.equal(WINDOWS_SERVER_RESOURCE_SOURCE_DIR, "apps/desktop/prod-resources/windows-server");
     assert.deepStrictEqual(WINDOWS_SERVER_EXTRA_RESOURCES, [
@@ -1508,8 +1347,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "-czf",
       "apps/desktop/prod-resources/wsl-runtime.tar.gz",
       "--exclude=node_modules/@anthropic-ai/claude-agent-sdk-*",
-      "--exclude=node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-*",
-      ".t3code-wsl-runtime-content-id",
+      "--exclude=node_modules/.bin*",
+      "--exclude=node_modules/.pnpm*",
+      "--exclude=node_modules/.modules.yaml*",
+      "--exclude=node_modules/.pnpm-workspace-state-v1.json*",
+      "--exclude=node_modules/node-pty/prebuilds/darwin-*",
+      "--exclude=node_modules/node-pty/prebuilds/win32-*",
+      "--exclude=node_modules/node-pty/build*",
+      "--exclude=node_modules/node-pty/third_party/conpty*",
+      "--exclude=node_modules/@ff-labs/fff-bin-win32-*",
+      "--exclude=node_modules/@yuuang/ffi-rs-win32-*",
+      "--exclude=node_modules/@msgpackr-extract/msgpackr-extract-win32-*",
       "apps/server/dist",
       "node_modules",
     ]);
@@ -1546,7 +1394,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const stageAppDir = path.join(stageRoot, "app");
         const archivePath = path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from);
         const hashPath = path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE.from);
-        const contentIdPath = path.join(stageAppDir, WSL_RUNTIME_CONTENT_ID_EXTRA_RESOURCE.from);
         yield* stageWslRuntimeTreeFixture(sourceDir, "export const serve = 1;\n");
 
         const spawnerLayer = Layer.succeed(
@@ -1561,7 +1408,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           }),
         );
 
-        yield* stageWslRuntimeArchive({ sourceDir, archivePath, hashPath, contentIdPath }).pipe(
+        yield* stageWslRuntimeArchive({ sourceDir, archivePath, hashPath }).pipe(
           Effect.provide(spawnerLayer),
         );
 
@@ -1576,244 +1423,96 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.equal(path.resolve(sourceDir, target), archivePath);
         assert.isTrue(yield* fs.exists(archivePath));
 
-        // One sidecar gates the install (archive bytes), the other names the
-        // cache directory (runtime content). The manifest rides inside the
-        // archive so the install can prove the tree matches the name.
+        // The archive digest both gates installation and names the cache.
         const hash = yield* fs.readFileString(hashPath);
         assert.match(hash.trim(), /^[0-9a-f]{64}$/);
-        const contentId = yield* fs.readFileString(contentIdPath);
-        assert.match(contentId.trim(), /^[0-9a-f]{64}$/);
-        assert.equal(
-          (yield* fs.readFileString(path.join(sourceDir, ".t3code-wsl-runtime-content-id"))).trim(),
-          contentId.trim(),
-        );
-        assert.equal(
-          contentId.trim(),
-          yield* computeWslRuntimeContentId(sourceDir),
-          "the shipped id must describe the tree that was archived",
-        );
       }),
     );
   });
 
-  // Cross-release reuse only pays off if the identity ignores whatever the
-  // staging filesystem happened to record. Two stages holding the same payload
-  // have to agree even when their timestamps do not — plain `tar -czf` output
-  // would not, because gzip stores a timestamp and tar stores each file's mtime.
-  it.effect("derives one content id from equivalent trees with different file metadata", () =>
+  it.effect("ships only Linux runtime members in the WSL archive", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-content-id-" });
-        const first = path.join(root, "first");
-        const second = path.join(root, "second");
-        yield* stageWslRuntimeTreeFixture(first, "export const serve = 1;\n");
-        yield* stageWslRuntimeTreeFixture(second, "export const serve = 1;\n");
-        // Incidental metadata only: same bytes and same layout, different times.
-        // utimes takes seconds.
-        const earlier = 1_000_000_000;
-        const later = 1_700_000_000;
-        yield* fs.utimes(path.join(first, "apps/server/dist/bin.mjs"), earlier, earlier);
-        yield* fs.utimes(path.join(second, "apps/server/dist/bin.mjs"), later, later);
-        yield* fs.utimes(path.join(first, "node_modules/node-pty/package.json"), earlier, earlier);
-        yield* fs.utimes(path.join(second, "node_modules/node-pty/package.json"), later, later);
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-runtime-members-" });
+        const sourceDir = path.join(root, "server");
+        const archivePath = path.join(root, "wsl-runtime.tar.gz");
+        const hashPath = `${archivePath}.sha256`;
+        yield* stageWslRuntimeTreeFixture(sourceDir, "export const serve = 1;\n");
 
-        // Without this the test could pass on a platform that quietly ignored
-        // utimes, proving nothing about metadata insensitivity.
-        assert.notDeepEqual(
-          (yield* fs.stat(path.join(first, "apps/server/dist/bin.mjs"))).mtime,
-          (yield* fs.stat(path.join(second, "apps/server/dist/bin.mjs"))).mtime,
+        const members = [
+          "node_modules/node-pty/prebuilds/darwin-x64/pty.node",
+          "node_modules/node-pty/prebuilds/win32-x64/pty.node",
+          "node_modules/node-pty/build/Release/pty.node",
+          "node_modules/node-pty/third_party/conpty/win10-x64/conpty.dll",
+          "node_modules/@ff-labs/fff-bin-win32-x64/fff.dll",
+          "node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff.so",
+          "node_modules/@yuuang/ffi-rs-win32-x64-msvc/ffi.dll",
+          "node_modules/@yuuang/ffi-rs-linux-x64-gnu/libffi.so",
+          "node_modules/@msgpackr-extract/msgpackr-extract-win32-x64/addon.node",
+          "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64/addon.node",
+          "node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/index.js",
+          "node_modules/.bin/tool",
+          "node_modules/.pnpm/lock.yaml",
+          "node_modules/.modules.yaml",
+          "node_modules/.pnpm-workspace-state-v1.json",
+        ] as const;
+        yield* Effect.forEach(
+          members,
+          (member) =>
+            Effect.gen(function* () {
+              const memberPath = path.join(sourceDir, member);
+              yield* fs.makeDirectory(path.dirname(memberPath), { recursive: true });
+              yield* fs.writeFileString(memberPath, member);
+            }),
+          { discard: true },
         );
 
-        assert.equal(
-          yield* computeWslRuntimeContentId(first),
-          yield* computeWslRuntimeContentId(second),
+        yield* stageWslRuntimeArchive({ sourceDir, archivePath, hashPath });
+        const process = yield* spawner.spawn(
+          ChildProcess.make("tar", ["-tzf", archivePath], {
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+          }),
         );
+        const listing = yield* process.stdout.pipe(
+          Stream.decodeText(),
+          Stream.runFold(
+            () => "",
+            (output, chunk) => output + chunk,
+          ),
+        );
+        assert.equal(Number(yield* process.exitCode), 0);
+
+        assert.include(listing, "apps/server/dist/bin.mjs");
+        assert.include(listing, "node_modules/node-pty/prebuilds/linux-x64/pty.node");
+        assert.include(listing, "node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff.so");
+        assert.include(listing, "node_modules/@yuuang/ffi-rs-linux-x64-gnu/libffi.so");
+        assert.include(
+          listing,
+          "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64/addon.node",
+        );
+        for (const excluded of [
+          "prebuilds/darwin-",
+          "prebuilds/win32-",
+          "node-pty/build",
+          "third_party/conpty",
+          "fff-bin-win32-",
+          "ffi-rs-win32-",
+          "msgpackr-extract-win32-",
+          "claude-agent-sdk-",
+          "node_modules/.bin",
+          "node_modules/.pnpm",
+          "node_modules/.modules.yaml",
+          "node_modules/.pnpm-workspace-state-v1.json",
+        ]) {
+          assert.notInclude(listing, excluded);
+        }
       }),
     ),
-  );
-
-  it.effect("changes the content id when shipped server content changes", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-content-id-" });
-        const before = path.join(root, "before");
-        const after = path.join(root, "after");
-        yield* stageWslRuntimeTreeFixture(before, "export const serve = 1;\n");
-        yield* stageWslRuntimeTreeFixture(after, "export const serve = 2;\n");
-
-        assert.notEqual(
-          yield* computeWslRuntimeContentId(before),
-          yield* computeWslRuntimeContentId(after),
-        );
-
-        // The agent SDK is installed and then excluded from the archive, so
-        // bumping it changes the stage but not the shipped runtime, and must
-        // not invalidate every cache already installed. One list drives both the
-        // tar flags and this walk, which is what keeps the two in step.
-        const stageExcluded = (root: string, version: string, body: string) =>
-          Effect.gen(function* () {
-            yield* stageWslRuntimeTreeFixture(root, "export const serve = 1;\n");
-            const sdkDir = path.join(
-              root,
-              `node_modules/@anthropic-ai/claude-agent-sdk-${version}`,
-            );
-            yield* fs.makeDirectory(sdkDir, { recursive: true });
-            yield* fs.writeFileString(path.join(sdkDir, "index.js"), body);
-          });
-        const oldSdk = path.join(root, "old-sdk");
-        const newSdk = path.join(root, "new-sdk");
-        yield* stageExcluded(oldSdk, "1.2.3", "module.exports = {};\n");
-        yield* stageExcluded(newSdk, "4.5.6", "module.exports = { next: true };\n");
-
-        assert.equal(
-          yield* computeWslRuntimeContentId(oldSdk),
-          yield* computeWslRuntimeContentId(newSdk),
-        );
-      }),
-    ),
-  );
-
-  // Windows cannot express an executable bit or create a symlink without
-  // privileges, so these run the walk against a described tree instead of a
-  // staged one. Each case pairs the legacy path-and-bytes digest, which is what
-  // the id used to be, against the current one: equal legacy id, different
-  // content id is the regression.
-  it.effect("separates trees that differ only in a file's executable bit", () =>
-    Effect.gen(function* () {
-      const nonExecutable = {
-        "apps/server/dist/bin.mjs": { kind: "file", contents: "serve", mode: 0o644 },
-        "node_modules/pkg/tool": { kind: "file", contents: "#!/bin/sh\nexec node", mode: 0o644 },
-      } as const satisfies WslRuntimeTreeFixture;
-      const executable = {
-        ...nonExecutable,
-        "node_modules/pkg/tool": { kind: "file", contents: "#!/bin/sh\nexec node", mode: 0o755 },
-      } as const satisfies WslRuntimeTreeFixture;
-
-      assert.equal(
-        legacyWslRuntimeContentId(nonExecutable),
-        legacyWslRuntimeContentId(executable),
-        "the tree the old id described is identical, which is how the defect hid",
-      );
-      assert.notEqual(
-        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
-          Effect.provide(wslRuntimeTreeFixtureLayer(nonExecutable)),
-        ),
-        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
-          Effect.provide(wslRuntimeTreeFixtureLayer(executable)),
-        ),
-      );
-    }),
-  );
-
-  // tar names the content roots as members, so their permissions ship too. The
-  // walk seeds them rather than discovering them, which is how they slipped out
-  // of the id: a stage whose apps/server/dist lost its search bit looked
-  // identical to one that never had the problem.
-  it.effect("separates trees that differ only in a content root's mode", () =>
-    Effect.gen(function* () {
-      const searchable = {
-        "apps/server/dist": { kind: "directory", mode: 0o755 },
-        "apps/server/dist/bin.mjs": { kind: "file", contents: "serve", mode: 0o644 },
-        "node_modules/pkg/tool": { kind: "file", contents: "run", mode: 0o755 },
-      } as const satisfies WslRuntimeTreeFixture;
-      const unsearchable = {
-        ...searchable,
-        "apps/server/dist": { kind: "directory", mode: 0o644 },
-      } as const satisfies WslRuntimeTreeFixture;
-
-      assert.equal(
-        legacyWslRuntimeContentId(searchable),
-        legacyWslRuntimeContentId(unsearchable),
-        "the old id never recorded a root directory at all",
-      );
-      assert.notEqual(
-        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
-          Effect.provide(wslRuntimeTreeFixtureLayer(searchable)),
-        ),
-        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
-          Effect.provide(wslRuntimeTreeFixtureLayer(unsearchable)),
-        ),
-      );
-    }),
-  );
-
-  it.effect("separates a symlink from a regular file holding the same bytes", () =>
-    Effect.gen(function* () {
-      const linked = {
-        "apps/server/dist/bin.mjs": { kind: "file", contents: "serve", mode: 0o644 },
-        "node_modules/pkg/real.js": { kind: "file", contents: "module.exports = 1;", mode: 0o644 },
-        "node_modules/.bin/pkg": { kind: "link", target: "../pkg/real.js" },
-      } as const satisfies WslRuntimeTreeFixture;
-      const copied = {
-        ...linked,
-        "node_modules/.bin/pkg": { kind: "file", contents: "module.exports = 1;", mode: 0o644 },
-      } as const satisfies WslRuntimeTreeFixture;
-
-      // The old walk stat'd through the link, so it saw two identical files.
-      // tar stores a link, and a link is not a copy: retargeting or replacing
-      // one has to reach the id.
-      assert.equal(legacyWslRuntimeContentId(linked), legacyWslRuntimeContentId(copied));
-      assert.notEqual(
-        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
-          Effect.provide(wslRuntimeTreeFixtureLayer(linked)),
-        ),
-        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
-          Effect.provide(wslRuntimeTreeFixtureLayer(copied)),
-        ),
-      );
-    }),
-  );
-
-  it.effect("separates links that point at different targets", () =>
-    Effect.gen(function* () {
-      const base = {
-        "apps/server/dist/bin.mjs": { kind: "file", contents: "serve", mode: 0o644 },
-        "node_modules/pkg/one.js": { kind: "file", contents: "one", mode: 0o644 },
-        "node_modules/pkg/two.js": { kind: "file", contents: "one", mode: 0o644 },
-      } as const satisfies WslRuntimeTreeFixture;
-      const toOne = {
-        ...base,
-        "node_modules/.bin/pkg": { kind: "link", target: "../pkg/one.js" },
-      } as const satisfies WslRuntimeTreeFixture;
-      const toTwo = {
-        ...base,
-        "node_modules/.bin/pkg": { kind: "link", target: "../pkg/two.js" },
-      } as const satisfies WslRuntimeTreeFixture;
-
-      assert.notEqual(
-        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
-          Effect.provide(wslRuntimeTreeFixtureLayer(toOne)),
-        ),
-        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
-          Effect.provide(wslRuntimeTreeFixtureLayer(toTwo)),
-        ),
-      );
-    }),
-  );
-
-  // The other half of the contract: mode and type are semantic, whoever owned
-  // the staging directory is not. Timestamps are covered against a real
-  // filesystem above, where utimes can prove the stage actually differed.
-  it.effect("still ignores ownership", () =>
-    Effect.gen(function* () {
-      const tree = {
-        "apps/server/dist/bin.mjs": { kind: "file", contents: "serve", mode: 0o644 },
-        "node_modules/pkg/tool": { kind: "file", contents: "run", mode: 0o755 },
-      } as const satisfies WslRuntimeTreeFixture;
-
-      assert.equal(
-        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
-          Effect.provide(wslRuntimeTreeFixtureLayer(tree, { uid: 0 })),
-        ),
-        yield* computeWslRuntimeContentId(FIXTURE_ROOT).pipe(
-          Effect.provide(wslRuntimeTreeFixtureLayer(tree, { uid: 501 })),
-        ),
-      );
-    }),
   );
 
   it("promotes target fff binaries to direct staged dependencies", () => {

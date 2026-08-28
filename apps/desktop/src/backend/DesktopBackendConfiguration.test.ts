@@ -188,6 +188,7 @@ describe("DesktopBackendConfiguration", () => {
                 DesktopWslServerTree.DesktopWslServerTree,
                 DesktopWslServerTree.DesktopWslServerTree.of({
                   ensure: Effect.die("Windows primary must not extract the WSL server tree"),
+                  cleanupLegacy: Effect.die("Windows primary must not clean the WSL server tree"),
                 }),
               ),
             ),
@@ -294,8 +295,6 @@ describe("DesktopBackendConfiguration", () => {
       const archiveHash = "a".repeat(64);
       yield* fileSystem.writeFileString(archivePath, "archive");
       yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
-      const contentId = "1".repeat(64);
-      yield* fileSystem.writeFileString(`${archivePath}.content-id`, `${contentId}\n`);
 
       const observedArchives: Array<{
         windowsArchivePath: string;
@@ -303,7 +302,8 @@ describe("DesktopBackendConfiguration", () => {
         sha256: string;
       }> = [];
       const observedNodePtyRoots: string[] = [];
-      const linuxAppRoot = "/home/test/.t3/runtime/1.2.3-x64";
+      let legacyCleanupCount = 0;
+      const linuxAppRoot = "/home/test/.t3/wsl-runtime/1.2.3-x64";
       const config = yield* Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
@@ -317,6 +317,9 @@ describe("DesktopBackendConfiguration", () => {
                 DesktopWslServerTree.DesktopWslServerTree,
                 DesktopWslServerTree.DesktopWslServerTree.of({
                   ensure: Effect.die("A valid WSL archive must not extract the Windows fallback"),
+                  cleanupLegacy: Effect.sync(() => {
+                    legacyCleanupCount += 1;
+                  }),
                 }),
               ),
             ),
@@ -354,96 +357,20 @@ describe("DesktopBackendConfiguration", () => {
       assert.deepEqual(observedArchives, [
         {
           windowsArchivePath: archivePath,
-          runtimeId: `sha256-${contentId}`,
+          runtimeId: `sha256-${archiveHash}`,
           sha256: archiveHash,
         },
       ]);
       assert.deepEqual(observedNodePtyRoots, [linuxAppRoot]);
       assert.equal(config.entryPath, path.join(baseDir, "server.asar/apps/server/dist/bin.mjs"));
       assert.include(config.args, `${linuxAppRoot}/apps/server/dist/bin.mjs`);
-      assert.equal(config.wslRuntimeId, `sha256-${contentId}`);
+      assert.equal(config.wslRuntimeId, `sha256-${archiveHash}`);
+      assert.equal(legacyCleanupCount, 1);
       assert.isTrue(Option.isNone(config.preflightFailure));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  // The point of keying on content alone: shipping a new desktop release whose
-  // server payload did not change must land on the directory the previous
-  // release already installed, instead of extracting an identical tree under a
-  // new name and leaving the old one to be pruned.
-  it.effect("resolveWsl reuses one cache id across app versions with the same runtime", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-backend-config-test-",
-      });
-      const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
-      const contentId = "a".repeat(64);
-      const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
-      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
-      yield* fileSystem.writeFileString(entryPath, "");
-      yield* fileSystem.writeFileString(archivePath, "archive");
-      yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${"b".repeat(64)}\n`);
-      yield* fileSystem.writeFileString(`${archivePath}.content-id`, `${contentId}\n`);
-
-      const resolveForAppVersion = (appVersion: string) =>
-        Effect.gen(function* () {
-          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-          return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
-        }).pipe(
-          Effect.provide(
-            DesktopBackendConfiguration.layer.pipe(
-              Layer.provideMerge(serverExposureLayer),
-              Layer.provideMerge(DesktopAppSettings.layerTest()),
-              Layer.provideMerge(
-                DesktopWslServerTree.layerTest({
-                  result: { ok: true, root: path.join(baseDir, "app.asar.unpacked") },
-                }),
-              ),
-              Layer.provideMerge(
-                DesktopWslEnvironment.layerTest({
-                  isAvailable: true,
-                  distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
-                  windowsToWslPath: () => Option.some("/mnt/c/app.asar.unpacked"),
-                  prepareRuntime: (_distro, archive) => ({
-                    ok: true,
-                    linuxAppRoot: `/home/test/.t3/runtime/${archive.runtimeId}`,
-                  }),
-                  ensureNodePty: () => ({
-                    ok: true,
-                    nodePath: "/usr/bin/node",
-                    resolvedPath: "/usr/bin:/bin",
-                  }),
-                  getDistroIp: () => Option.some("172.27.0.99"),
-                }),
-              ),
-              Layer.provideMerge(
-                makeEnvironmentLayer(baseDir, {
-                  appPath: baseDir,
-                  platform: "win32",
-                  resourcesPath: baseDir,
-                  appVersion,
-                }),
-              ),
-            ),
-          ),
-        );
-
-      const older = yield* resolveForAppVersion("1.2.3");
-      const newer = yield* resolveForAppVersion("9.9.9");
-
-      assert.equal(older.wslRuntimeId, `sha256-${contentId}`);
-      assert.equal(newer.wslRuntimeId, older.wslRuntimeId);
-      // Same directory, so the upgrade launches from the runtime that is
-      // already on disk rather than paying for a cold install.
-      assert.include(
-        newer.args,
-        `/home/test/.t3/runtime/sha256-${contentId}/apps/server/dist/bin.mjs`,
-      );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("resolveWsl reinstalls under a new cache id when the runtime content changes", () =>
+  it.effect("resolveWsl changes the cache id when the packaged archive changes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -452,25 +379,21 @@ describe("DesktopBackendConfiguration", () => {
       });
       const archivePath = path.join(baseDir, "wsl-runtime.tar.gz");
       const hashPath = `${archivePath}.sha256`;
-      const contentIdPath = `${archivePath}.content-id`;
       const entryPath = path.join(baseDir, "app.asar.unpacked/apps/server/dist/bin.mjs");
-      const firstContentId = "a".repeat(64);
-      const secondContentId = "b".repeat(64);
+      const firstHash = "a".repeat(64);
+      const secondHash = "b".repeat(64);
       yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
       yield* fileSystem.writeFileString(entryPath, "");
       yield* fileSystem.writeFileString(archivePath, "archive");
-      // The archive digest stays put across both resolves: it gates the
-      // install, but it is the content id that names the cache directory.
-      yield* fileSystem.writeFileString(hashPath, "c".repeat(64));
-      yield* fileSystem.writeFileString(contentIdPath, firstContentId);
+      yield* fileSystem.writeFileString(hashPath, firstHash);
 
       const observedRuntimeIds: string[] = [];
       const [first, second, invalidIdentity] = yield* Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         const first = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
-        yield* fileSystem.writeFileString(contentIdPath, secondContentId);
+        yield* fileSystem.writeFileString(hashPath, secondHash);
         const second = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
-        yield* fileSystem.writeFileString(contentIdPath, "not-a-sha256");
+        yield* fileSystem.writeFileString(hashPath, "not-a-sha256");
         const invalidIdentity = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
         return [first, second, invalidIdentity] as const;
       }).pipe(
@@ -511,12 +434,7 @@ describe("DesktopBackendConfiguration", () => {
         ),
       );
 
-      // Changed server content is a different runtime, so it installs under its
-      // own directory instead of being served from the one already cached.
-      assert.deepEqual(observedRuntimeIds, [
-        `sha256-${firstContentId}`,
-        `sha256-${secondContentId}`,
-      ]);
+      assert.deepEqual(observedRuntimeIds, [`sha256-${firstHash}`, `sha256-${secondHash}`]);
       assert.equal(first.wslRuntimeId, observedRuntimeIds[0]);
       assert.equal(second.wslRuntimeId, observedRuntimeIds[1]);
       assert.isUndefined(invalidIdentity.wslRuntimeId);
@@ -538,8 +456,6 @@ describe("DesktopBackendConfiguration", () => {
       yield* fileSystem.writeFileString(entryPath, "");
       yield* fileSystem.writeFileString(archivePath, "corrupt archive");
       yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
-      const contentId = "2".repeat(64);
-      yield* fileSystem.writeFileString(`${archivePath}.content-id`, `${contentId}\n`);
 
       const mountedAppRoot = "/mnt/c/app.asar.unpacked";
       const observedNodePtyRoots: string[] = [];
@@ -602,10 +518,8 @@ describe("DesktopBackendConfiguration", () => {
       yield* fileSystem.writeFileString(entryPath, "");
       yield* fileSystem.writeFileString(archivePath, "archive");
       yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
-      const contentId = "3".repeat(64);
-      yield* fileSystem.writeFileString(`${archivePath}.content-id`, `${contentId}\n`);
 
-      const stagedAppRoot = `/home/test/.t3/runtime/sha256-${contentId}`;
+      const stagedAppRoot = `/home/test/.t3/wsl-runtime/sha256-${archiveHash}`;
       const mountedAppRoot = "/mnt/c/app.asar.unpacked";
       const observedNodePtyRoots: string[] = [];
       const invalidatedRuntimeIds: string[] = [];
@@ -661,7 +575,7 @@ describe("DesktopBackendConfiguration", () => {
       assert.isTrue(Option.isNone(config.preflightFailure));
       // Without this the broken cache stays ready and every later launch
       // repeats the failed probe instead of reinstalling.
-      assert.deepEqual(invalidatedRuntimeIds, [`sha256-${contentId}`]);
+      assert.deepEqual(invalidatedRuntimeIds, [`sha256-${archiveHash}`]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -679,8 +593,6 @@ describe("DesktopBackendConfiguration", () => {
       yield* fileSystem.writeFileString(entryPath, "");
       yield* fileSystem.writeFileString(archivePath, "archive");
       yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
-      const contentId = "4".repeat(64);
-      yield* fileSystem.writeFileString(`${archivePath}.content-id`, `${contentId}\n`);
 
       const invalidatedRuntimeIds: string[] = [];
       yield* Effect.gen(function* () {
@@ -709,7 +621,10 @@ describe("DesktopBackendConfiguration", () => {
                 isAvailable: true,
                 distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
                 windowsToWslPath: () => Option.some("/mnt/c/app.asar.unpacked"),
-                prepareRuntime: () => ({ ok: true, linuxAppRoot: "/home/test/.t3/runtime/cache" }),
+                prepareRuntime: () => ({
+                  ok: true,
+                  linuxAppRoot: "/home/test/.t3/wsl-runtime/cache",
+                }),
                 invalidateRuntime: (_distro, runtimeId) =>
                   Effect.sync(() => {
                     invalidatedRuntimeIds.push(runtimeId);
@@ -717,7 +632,7 @@ describe("DesktopBackendConfiguration", () => {
                 ensureNodePty: (_distro, root) => ({
                   ok: false,
                   reason:
-                    root === "/home/test/.t3/runtime/cache"
+                    root === "/home/test/.t3/wsl-runtime/cache"
                       ? "unsupported CPU architecture or incompatible system libraries"
                       : "mounted tree is broken in some other way",
                   fatal: true,
@@ -752,10 +667,8 @@ describe("DesktopBackendConfiguration", () => {
       yield* fileSystem.writeFileString(entryPath, "");
       yield* fileSystem.writeFileString(archivePath, "archive");
       yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
-      const contentId = "5".repeat(64);
-      yield* fileSystem.writeFileString(`${archivePath}.content-id`, `${contentId}\n`);
 
-      const stagedAppRoot = "/home/test/.t3/runtime/cache";
+      const stagedAppRoot = "/home/test/.t3/wsl-runtime/cache";
       const invalidatedRuntimeIds: string[] = [];
       yield* Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
@@ -824,8 +737,6 @@ describe("DesktopBackendConfiguration", () => {
       const archiveHash = "e".repeat(64);
       yield* fileSystem.writeFileString(archivePath, "archive");
       yield* fileSystem.writeFileString(`${archivePath}.sha256`, `${archiveHash}\n`);
-      const contentId = "6".repeat(64);
-      yield* fileSystem.writeFileString(`${archivePath}.content-id`, `${contentId}\n`);
 
       const invalidatedRuntimeIds: string[] = [];
       yield* Effect.gen(function* () {
@@ -849,6 +760,9 @@ describe("DesktopBackendConfiguration", () => {
                   // A transport failure says nothing about the staged tree, so
                   // the retry belongs on the cache, not on the mounted copy.
                   ensure: Effect.die("A transient probe failure must not extract the fallback"),
+                  cleanupLegacy: Effect.die(
+                    "A transient probe failure must not clean the fallback tree",
+                  ),
                 }),
               ),
             ),
@@ -857,7 +771,10 @@ describe("DesktopBackendConfiguration", () => {
                 isAvailable: true,
                 distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
                 windowsToWslPath: () => Option.some("/mnt/c/app.asar.unpacked"),
-                prepareRuntime: () => ({ ok: true, linuxAppRoot: "/home/test/.t3/runtime/cache" }),
+                prepareRuntime: () => ({
+                  ok: true,
+                  linuxAppRoot: "/home/test/.t3/wsl-runtime/cache",
+                }),
                 invalidateRuntime: (_distro, runtimeId) =>
                   Effect.sync(() => {
                     invalidatedRuntimeIds.push(runtimeId);
@@ -1076,7 +993,6 @@ describe("DesktopBackendConfiguration", () => {
   it.effect("resolvePrimary captures backend output in dev so child logs can be persisted", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-desktop-backend-config-test-",
       });

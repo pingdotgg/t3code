@@ -297,6 +297,32 @@ describe("DesktopWslServerTree", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("removes the legacy Windows extraction tree without preparing a fallback", () =>
+    withTempDir((tempDir) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const resourcesPath = path.join(tempDir, "resources");
+        const treeRoot = path.join(tempDir, "userdata", "wsl-server-tree");
+        yield* fileSystem.makeDirectory(path.join(treeRoot, "1.2.3"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(treeRoot, "1.2.3", "legacy"), "old");
+
+        yield* Effect.gen(function* () {
+          const tree = yield* DesktopWslServerTree.DesktopWslServerTree;
+          yield* tree.cleanupLegacy;
+        }).pipe(
+          Effect.provide(
+            DesktopWslServerTree.layer.pipe(
+              Layer.provideMerge(environmentLayer({ baseDir: tempDir, resourcesPath })),
+            ),
+          ),
+        );
+
+        assert.isFalse(yield* fileSystem.exists(treeRoot));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reports a retryable failure when the archive cannot be read", () =>
     withTempDir((tempDir) =>
       Effect.gen(function* () {
