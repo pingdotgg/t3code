@@ -49,6 +49,7 @@ function row(provider: UsageProviderKind, overrides: Partial<UsageThreadRow> = {
       reasoningTokens: 5,
     },
     costUsd: 1,
+    cacheWriteUsd: 0.25,
     sessions: 1,
     agents: [],
     daily: [],
@@ -58,7 +59,7 @@ function row(provider: UsageProviderKind, overrides: Partial<UsageThreadRow> = {
 
 function breakdown(rows: readonly UsageThreadRow[]): UsageThreadBreakdown {
   return {
-    contractVersion: 7,
+    contractVersion: 8,
     readAt: "2026-08-28T01:15:00.000Z",
     sinceDay: "2026-08-01" as UsageDay,
     untilDay: "2026-08-28" as UsageDay,

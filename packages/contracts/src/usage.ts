@@ -21,22 +21,23 @@ import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./ba
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 9 as const;
+export const USAGE_CONTRACT_VERSION = 10 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
  * v5 only adds `grok` to {@link UsageProviderKind}; v6 adds the optional bucket
  * `project`; v7 adds its optional stable `projectId`; v8 distinguishes outside
- * projects from unknown attribution; v9 adds the separate thread-breakdown RPC.
- * v4 Claude/Codex buckets remain valid, so mixed-version environments keep
- * those totals instead of treating every older server as stale.
+ * projects from unknown attribution; v9 adds the separate thread-breakdown RPC;
+ * v10 adds optional cache-write costs. v4 Claude/Codex buckets remain valid, so
+ * mixed-version environments keep those totals instead of treating every older
+ * server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 /** First contract version that explicitly distinguishes outside from unknown attribution. */
 export const USAGE_PROJECT_ATTRIBUTION_SINCE = 8 as const;
 /** First contract version that exposes the current thread-breakdown RPC. */
-export const USAGE_THREAD_BREAKDOWN_SINCE = 9 as const;
+export const USAGE_THREAD_BREAKDOWN_SINCE = 10 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
@@ -123,6 +124,12 @@ export const UsageBucket = Schema.Struct({
    * rather than derived on the client.
    */
   cacheSavingsUsd: Schema.Number,
+  /**
+   * Estimated cost of the cache-creation tokens in this bucket at the model's
+   * cache-write rate. A subset of `costUsd` when the bucket is model-priced.
+   * Absent from summaries written before this field existed.
+   */
+  cacheWriteUsd: Schema.optional(Schema.Number),
   costSource: UsageCostSource,
   /** Distinct assistant responses, after de-duplication. */
   records: NonNegativeInt,
@@ -250,16 +257,21 @@ export const UsageAgentRow = Schema.Struct({
   agentId: TrimmedNonEmptyString,
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
+  cacheWriteUsd: Schema.Number,
 });
 export type UsageAgentRow = typeof UsageAgentRow.Type;
 
 /**
- * One day of a thread's estimated cost. Days the thread was idle are omitted.
- * Unpriced records contribute tokens to the row totals but nothing here.
+ * One day of a thread's model-priced cost split by component. Days the thread
+ * was idle are omitted. Unpriced records contribute tokens to the row totals
+ * but nothing here.
  */
 export const UsageThreadDayCost = Schema.Struct({
   day: UsageDay,
-  costUsd: Schema.Number,
+  cacheWriteUsd: Schema.Number,
+  cacheReadUsd: Schema.Number,
+  /** Fresh input plus output. */
+  freshUsd: Schema.Number,
 });
 export type UsageThreadDayCost = typeof UsageThreadDayCost.Type;
 
@@ -281,6 +293,7 @@ export const UsageThreadRow = Schema.Struct({
   project: Schema.optional(TrimmedNonEmptyString),
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
+  cacheWriteUsd: Schema.Number,
   /** Distinct transcript sessions folded into this row. */
   sessions: NonNegativeInt,
   /** Lower-cost thread rows represented by this grouped remainder row. */

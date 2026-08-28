@@ -88,6 +88,8 @@ const modelTotals = Object.freeze([
     provider: "claude" as const,
     costUsd: 10,
     totalTokens: 100,
+    cacheWriteTokens: 40,
+    cacheWriteUsd: 2.5,
     records: 1,
     costShare: 10 / 16,
   },
@@ -96,6 +98,8 @@ const modelTotals = Object.freeze([
     provider: "codex" as const,
     costUsd: 5,
     totalTokens: 1_000,
+    cacheWriteTokens: 0,
+    cacheWriteUsd: 0,
     records: 1,
     costShare: 5 / 16,
   },
@@ -104,6 +108,8 @@ const modelTotals = Object.freeze([
     provider: "codex" as const,
     costUsd: 1,
     totalTokens: 1_000,
+    cacheWriteTokens: 0,
+    cacheWriteUsd: 0,
     records: 1,
     costShare: 1 / 16,
   },
@@ -116,6 +122,8 @@ const projectTotals = Object.freeze([
     project: "Expensive Project",
     costUsd: 9,
     totalTokens: 200,
+    cacheWriteTokens: 60,
+    cacheWriteUsd: 1.75,
     records: 2,
     costShare: 9 / 20,
   },
@@ -125,6 +133,8 @@ const projectTotals = Object.freeze([
     project: null,
     costUsd: 7,
     totalTokens: 900,
+    cacheWriteTokens: 0,
+    cacheWriteUsd: 0,
     records: 1,
     costShare: 7 / 20,
   },
@@ -293,6 +303,17 @@ describe("UsagePage model breakdown", () => {
     const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
 
     expect(body).toMatch(/expensive-model.*token-heavy-model.*token-heavy-cheaper-model/);
+  });
+
+  it("shows cache-write cost per row, with a dash for write-free providers", () => {
+    testState.breakdown = "model";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+
+    // Claude row carries its cache-write dollars; codex rows never bill writes.
+    expect(body).toContain("$2.50");
+    expect(body).toMatch(/token-heavy-model.*>-</);
   });
 
   it("sorts models by token usage when the token metric is selected", () => {

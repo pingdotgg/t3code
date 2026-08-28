@@ -409,6 +409,81 @@ describe("mergeUsage", () => {
     expect(filtered.costUsd).toBe(2);
   });
 
+  it("reconciles aggregate, provider, project, and filtered project totals", () => {
+    const environments = [
+      environment(
+        "env-a",
+        summary(
+          [
+            bucket({ project: "App", costUsd: 6 }),
+            bucket({
+              project: "App",
+              provider: "codex",
+              model: "gpt-5.6-sol",
+              costUsd: 3,
+              totals: {
+                uncachedInputTokens: 20,
+                cachedInputTokens: 200,
+                cacheCreationTokens: 0,
+                outputTokens: 10,
+                reasoningTokens: 5,
+              },
+            }),
+            bucket({ costUsd: 2 }),
+          ],
+          [
+            { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+            { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+          ],
+        ),
+      ),
+    ];
+    const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+
+    expect(merged.providers.reduce((sum, provider) => sum + provider.costUsd, 0)).toBe(
+      merged.costUsd,
+    );
+    expect(merged.providers.reduce((sum, provider) => sum + provider.totalTokens, 0)).toBe(
+      merged.totalTokens,
+    );
+    expect(merged.projects.reduce((sum, project) => sum + project.costUsd, 0)).toBe(merged.costUsd);
+    expect(merged.projects.reduce((sum, project) => sum + project.totalTokens, 0)).toBe(
+      merged.totalTokens,
+    );
+
+    for (const project of merged.projects) {
+      const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, {
+        projectFilter: project.projectKey,
+      });
+      expect(filtered.costUsd).toBe(project.costUsd);
+      expect(filtered.totalTokens).toBe(project.totalTokens);
+    }
+  });
+
+  it("sums cache-write cost overall and per model, tolerating summaries without it", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ cacheWriteUsd: 3 }),
+              bucket({ cacheWriteUsd: 1, model: "claude-opus-5" }),
+              // A summary written before the field existed contributes nothing.
+              bucket({ model: "claude-opus-5" }),
+            ],
+            [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costQuality.cacheWriteUsd).toBe(4);
+    const opus = merged.models.find((model) => model.model === "claude-opus-5");
+    expect(opus?.cacheWriteUsd).toBe(1);
+  });
+
   it("filters every figure except the project list when a project is selected", () => {
     const environments = [
       environment(

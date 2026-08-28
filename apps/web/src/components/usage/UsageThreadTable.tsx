@@ -16,6 +16,7 @@ import {
 } from "@t3tools/shared/usageFormat";
 import type { EnvironmentProviderContribution } from "@t3tools/shared/usageMerge";
 
+import { cn } from "../../lib/utils";
 import { useUsageThreads, type UsageThreadRowWithEnvironment } from "../../state/usage";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -66,15 +67,17 @@ export function UsageThreadTable({
   return (
     <table className="w-full table-fixed text-sm">
       <colgroup>
-        <col className="w-[40%]" />
-        <col className="w-[20%]" />
-        <col className="w-[20%]" />
-        <col className="w-[20%]" />
+        <col className="w-[32%]" />
+        <col className="w-[17%]" />
+        <col className="w-[17%]" />
+        <col className="w-[17%]" />
+        <col className="w-[17%]" />
       </colgroup>
       <thead>
         <tr className="border-b border-border text-left text-xs text-muted-foreground">
           <th className="py-2 font-normal">Thread</th>
           <th className="py-2 text-right font-normal">Cost</th>
+          <th className="py-2 text-right font-normal">Cache writes</th>
           <th className="py-2 text-right font-normal">Share</th>
           <th className="py-2 text-right font-normal">Tokens</th>
         </tr>
@@ -82,7 +85,7 @@ export function UsageThreadTable({
       <tbody>
         {rows.length === 0 ? (
           <tr>
-            <td colSpan={4} className="py-6 text-center text-muted-foreground">
+            <td colSpan={5} className="py-6 text-center text-muted-foreground">
               {unavailableEnvironments > 0
                 ? "Thread activity could not be loaded for this window."
                 : "No activity in this window."}
@@ -113,7 +116,7 @@ export function UsageThreadTable({
         )}
         {truncatedRows > 0 ? (
           <tr>
-            <td colSpan={4} className="py-2 text-xs text-muted-foreground">
+            <td colSpan={5} className="py-2 text-xs text-muted-foreground">
               {truncatedRows === 1
                 ? "1 lower-cost thread row is grouped above."
                 : `${truncatedRows} lower-cost thread rows are grouped above.`}
@@ -122,7 +125,7 @@ export function UsageThreadTable({
         ) : null}
         {unavailableEnvironments > 0 && rows.length > 0 ? (
           <tr>
-            <td colSpan={4} className="py-2 text-xs text-muted-foreground">
+            <td colSpan={5} className="py-2 text-xs text-muted-foreground">
               {unavailableEnvironments === 1
                 ? "1 environment could not report threads."
                 : `${unavailableEnvironments} environments could not report threads.`}
@@ -212,6 +215,9 @@ function ThreadRowGroup({
         </td>
         <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
         <td className="py-2 text-right text-muted-foreground tabular-nums">
+          {row.totals.cacheCreationTokens === 0 ? "-" : formatUsd(row.cacheWriteUsd)}
+        </td>
+        <td className="py-2 text-right text-muted-foreground tabular-nums">
           {formatPercent(share)}
         </td>
         <td className="py-2 text-right text-muted-foreground tabular-nums">
@@ -220,7 +226,7 @@ function ThreadRowGroup({
       </tr>
       {open ? (
         <tr className="border-b border-border/50">
-          <td colSpan={4} className="py-3 ps-9">
+          <td colSpan={5} className="py-3 ps-9">
             <UsageThreadDailyChart daily={row.daily} sinceDay={sinceDay} untilDay={untilDay} />
             {row.agents.map((agent) => {
               const agentTokens =
@@ -256,7 +262,8 @@ const CHART_WIDTH = 760;
 const CHART_HEIGHT = 96;
 
 /**
- * One thread's daily estimated cost. Static SVG, no animation.
+ * One thread's daily model-priced cost split into cache writes, cache reads,
+ * and fresh input plus output. Static SVG, no animation.
  */
 export function UsageThreadDailyChart({
   daily,
@@ -272,7 +279,10 @@ export function UsageThreadDailyChart({
     () => new Map<string, UsageThreadDayCost>(daily.map((entry) => [entry.day, entry])),
     [daily],
   );
-  const peak = daily.reduce((max, entry) => Math.max(max, entry.costUsd), 0);
+  const peak = daily.reduce(
+    (max, entry) => Math.max(max, entry.cacheWriteUsd + entry.cacheReadUsd + entry.freshUsd),
+    0,
+  );
 
   if (peak === 0 || days.length === 0) {
     return <p className="pb-2 text-xs text-muted-foreground">No priced usage in this window.</p>;
@@ -283,40 +293,71 @@ export function UsageThreadDailyChart({
 
   return (
     <div className="flex max-w-3xl flex-col gap-1 pb-2">
-      <div className="text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
         <span>
           Daily cost, {formatDayShort(sinceDay)} to {formatDayShort(untilDay)}
         </span>
+        <LegendSwatch className="text-sky-500" label="cache writes" />
+        <LegendSwatch className="text-muted-foreground" label="cache reads" />
+        <LegendSwatch className="text-success" label="fresh input + output" />
       </div>
       <svg
         viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
         className="h-24 w-full"
         preserveAspectRatio="none"
         role="img"
-        aria-label="Daily estimated cost for this thread"
+        aria-label="Daily model-priced cost for this thread by component"
       >
         {days.map((day, index) => {
           const entry = byDay.get(day);
           if (entry === undefined) return null;
           const x = index * bandWidth + (bandWidth - barWidth) / 2;
-          const height = (entry.costUsd / peak) * (CHART_HEIGHT - 4);
-          const renderedHeight = height === 0 ? 0 : Math.max(height, 0.75);
+          const segments = [
+            { value: entry.freshUsd, className: "text-success" },
+            { value: entry.cacheReadUsd, className: "text-muted-foreground" },
+            { value: entry.cacheWriteUsd, className: "text-sky-500" },
+          ];
+          let y = CHART_HEIGHT;
+          const total = entry.cacheWriteUsd + entry.cacheReadUsd + entry.freshUsd;
           return (
             <g key={day}>
-              <title>{`${formatDayShort(day)}: ${formatUsd(entry.costUsd)}`}</title>
-              <rect
-                x={x}
-                y={CHART_HEIGHT - renderedHeight}
-                width={barWidth}
-                height={renderedHeight}
-                fill="currentColor"
-                className="text-success"
-              />
+              <title>{`${formatDayShort(day)}: ${formatUsd(total)}. Cache writes ${formatUsd(entry.cacheWriteUsd)}, cache reads ${formatUsd(entry.cacheReadUsd)}, fresh input and output ${formatUsd(entry.freshUsd)}`}</title>
+              {segments.map((segment) => {
+                if (segment.value <= 0) return null;
+                const height = (segment.value / peak) * (CHART_HEIGHT - 4);
+                y -= height;
+                return (
+                  <rect
+                    key={segment.className}
+                    x={x}
+                    y={y}
+                    width={barWidth}
+                    height={height}
+                    fill="currentColor"
+                    className={segment.className}
+                  />
+                );
+              })}
             </g>
           );
         })}
       </svg>
     </div>
+  );
+}
+
+function LegendSwatch({
+  className,
+  label,
+}: {
+  readonly className: string;
+  readonly label: string;
+}) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span aria-hidden className={cn("size-2 rounded-[2px] bg-current", className)} />
+      {label}
+    </span>
   );
 }
 

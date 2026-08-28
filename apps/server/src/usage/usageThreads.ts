@@ -21,7 +21,7 @@ import type {
 import { UsageDay } from "@t3tools/contracts";
 
 import { makeDayFormatter, type ProjectAttribution } from "./usageAggregation.ts";
-import { priceUsage, type RateTable } from "./usagePricing.ts";
+import { cacheWriteUsd, priceUsage, usageComponentCosts, type RateTable } from "./usagePricing.ts";
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 
 const MAX_DATE_TIMESTAMP_MS = 8_640_000_000_000_000;
@@ -34,9 +34,16 @@ export interface ThreadRecordContext {
   readonly agentId: string | null;
 }
 
+interface MutableComponentCosts {
+  cacheWriteUsd: number;
+  cacheReadUsd: number;
+  freshUsd: number;
+}
+
 interface MutableAgentSlice {
   totals: UsageTokenTotals;
   costUsd: number;
+  cacheWriteUsd: number;
 }
 
 export interface SessionUsageGroup {
@@ -49,7 +56,8 @@ export interface SessionUsageGroup {
   readonly project: string;
   readonly totals: UsageTokenTotals;
   readonly costUsd: number;
-  readonly daily: ReadonlyMap<string, number>;
+  readonly cacheWriteUsd: number;
+  readonly daily: ReadonlyMap<string, MutableComponentCosts>;
   readonly agents: ReadonlyMap<string, MutableAgentSlice>;
 }
 
@@ -63,7 +71,8 @@ interface MutableSessionGroup {
   project: string;
   totals: UsageTokenTotals;
   costUsd: number;
-  daily: Map<string, number>;
+  cacheWriteUsd: number;
+  daily: Map<string, MutableComponentCosts>;
   agents: Map<string, MutableAgentSlice>;
 }
 
@@ -79,7 +88,7 @@ export interface ThreadUsageOptions {
 }
 
 /**
- * Folds records into per-session groups with per-day estimated costs.
+ * Folds records into per-session groups with per-day component costs.
  *
  * De-duplication is global across the scan with the same semantics as the
  * summary aggregator, so a thread's number here always reconciles with its
@@ -139,6 +148,7 @@ export class ThreadUsageAccumulator {
         project: resolvedProject?.title ?? "",
         totals: EMPTY_TOTALS,
         costUsd: 0,
+        cacheWriteUsd: 0,
         daily: new Map(),
         agents: new Map(),
       };
@@ -151,18 +161,30 @@ export class ThreadUsageAccumulator {
       record.totals,
       record.reportedCostUsd,
     );
+    const writeUsd = cacheWriteUsd(this.#options.rates, record.model, record.totals);
     group.totals = addTotals(group.totals, record.totals);
     group.costUsd += priced.costUsd;
-    group.daily.set(day, (group.daily.get(day) ?? 0) + priced.costUsd);
+    group.cacheWriteUsd += writeUsd;
+
+    const components = usageComponentCosts(this.#options.rates, record.model, record.totals);
+    let dayEntry = group.daily.get(day);
+    if (dayEntry === undefined) {
+      dayEntry = { cacheWriteUsd: 0, cacheReadUsd: 0, freshUsd: 0 };
+      group.daily.set(day, dayEntry);
+    }
+    dayEntry.cacheWriteUsd += components.cacheWriteUsd;
+    dayEntry.cacheReadUsd += components.cacheReadUsd;
+    dayEntry.freshUsd += components.freshUsd;
 
     if (context.agentId !== null) {
       let agent = group.agents.get(context.agentId);
       if (agent === undefined) {
-        agent = { totals: EMPTY_TOTALS, costUsd: 0 };
+        agent = { totals: EMPTY_TOTALS, costUsd: 0, cacheWriteUsd: 0 };
         group.agents.set(context.agentId, agent);
       }
       agent.totals = addTotals(agent.totals, record.totals);
       agent.costUsd += priced.costUsd;
+      agent.cacheWriteUsd += writeUsd;
     }
     return true;
   }
@@ -178,6 +200,7 @@ export class ThreadUsageAccumulator {
       project: group.project,
       totals: group.totals,
       costUsd: group.costUsd,
+      cacheWriteUsd: group.cacheWriteUsd,
       daily: group.daily,
       agents: group.agents,
     }));
@@ -219,8 +242,9 @@ interface MutableThreadRow {
   totals: UsageTokenTotals;
   costUsd: number;
   sessionKeys: Set<string>;
+  cacheWriteUsd: number;
   groupedRows: number;
-  daily: Map<string, number>;
+  daily: Map<string, MutableComponentCosts>;
   agents: Map<string, MutableAgentSlice>;
   /** Session whose transcript can supply a title when no thread claims the row. */
   titleSessionKey: string;
@@ -234,9 +258,19 @@ export interface FoldedThreadRows {
   readonly truncatedRows: number;
 }
 
-function addDailyCosts(target: Map<string, number>, source: ReadonlyMap<string, number>): void {
-  for (const [day, costUsd] of source) {
-    target.set(day, (target.get(day) ?? 0) + costUsd);
+function addDailyCosts(
+  target: Map<string, MutableComponentCosts>,
+  source: ReadonlyMap<string, MutableComponentCosts>,
+): void {
+  for (const [day, components] of source) {
+    let dayEntry = target.get(day);
+    if (dayEntry === undefined) {
+      dayEntry = { cacheWriteUsd: 0, cacheReadUsd: 0, freshUsd: 0 };
+      target.set(day, dayEntry);
+    }
+    dayEntry.cacheWriteUsd += components.cacheWriteUsd;
+    dayEntry.cacheReadUsd += components.cacheReadUsd;
+    dayEntry.freshUsd += components.freshUsd;
   }
 }
 
@@ -279,6 +313,7 @@ function toAgentRow([agentId, slice]: readonly [string, MutableAgentSlice]): Usa
     agentId,
     totals: slice.totals,
     costUsd: slice.costUsd,
+    cacheWriteUsd: slice.cacheWriteUsd,
   };
 }
 
@@ -300,10 +335,12 @@ function boundedAgentRows(
     (combined, [, slice]) => ({
       totals: addTotals(combined.totals, slice.totals),
       costUsd: combined.costUsd + slice.costUsd,
+      cacheWriteUsd: combined.cacheWriteUsd + slice.cacheWriteUsd,
     }),
     {
       totals: EMPTY_TOTALS,
       costUsd: 0,
+      cacheWriteUsd: 0,
     },
   );
   return [...kept.map(toAgentRow), toAgentRow([`Other subagents (${omitted.length})`, overflow])];
@@ -349,6 +386,7 @@ export function foldThreadRows(
         totals: EMPTY_TOTALS,
         costUsd: 0,
         sessionKeys: new Set(),
+        cacheWriteUsd: 0,
         groupedRows: 0,
         daily: new Map(),
         agents: new Map(),
@@ -360,15 +398,17 @@ export function foldThreadRows(
     row.totals = addTotals(row.totals, group.totals);
     row.costUsd += group.costUsd;
     row.sessionKeys.add(group.sessionKey);
+    row.cacheWriteUsd += group.cacheWriteUsd;
     addDailyCosts(row.daily, group.daily);
     for (const [agentId, slice] of group.agents) {
       let agent = row.agents.get(agentId);
       if (agent === undefined) {
-        agent = { totals: EMPTY_TOTALS, costUsd: 0 };
+        agent = { totals: EMPTY_TOTALS, costUsd: 0, cacheWriteUsd: 0 };
         row.agents.set(agentId, agent);
       }
       agent.totals = addTotals(agent.totals, slice.totals);
       agent.costUsd += slice.costUsd;
+      agent.cacheWriteUsd += slice.cacheWriteUsd;
     }
   }
 
@@ -420,6 +460,7 @@ export function foldThreadRows(
         totals: EMPTY_TOTALS,
         costUsd: 0,
         sessionKeys: new Set(),
+        cacheWriteUsd: 0,
         groupedRows: 0,
         daily: new Map(),
         agents: new Map(),
@@ -431,15 +472,17 @@ export function foldThreadRows(
     remainder.totals = addTotals(remainder.totals, omittedRow.totals);
     remainder.costUsd += omittedRow.costUsd;
     for (const sessionKey of omittedRow.sessionKeys) remainder.sessionKeys.add(sessionKey);
+    remainder.cacheWriteUsd += omittedRow.cacheWriteUsd;
     addDailyCosts(remainder.daily, omittedRow.daily);
     for (const [agentId, slice] of omittedRow.agents) {
       let agent = remainder.agents.get(agentId);
       if (agent === undefined) {
-        agent = { totals: EMPTY_TOTALS, costUsd: 0 };
+        agent = { totals: EMPTY_TOTALS, costUsd: 0, cacheWriteUsd: 0 };
         remainder.agents.set(agentId, agent);
       }
       agent.totals = addTotals(agent.totals, slice.totals);
       agent.costUsd += slice.costUsd;
+      agent.cacheWriteUsd += slice.cacheWriteUsd;
     }
   }
 
@@ -467,13 +510,16 @@ export function foldThreadRows(
       ...(row.project === "" ? {} : { project: row.project }),
       totals: row.totals,
       costUsd: row.costUsd,
+      cacheWriteUsd: row.cacheWriteUsd,
       sessions: row.sessionKeys.size,
       ...(row.groupedRows === 0 ? {} : { groupedRows: row.groupedRows }),
       agents: boundedAgentRows(row.agents, options.cap),
       daily: [...row.daily.entries()]
-        .map(([day, costUsd]) => ({
+        .map(([day, components]) => ({
           day: day as UsageDay,
-          costUsd,
+          cacheWriteUsd: components.cacheWriteUsd,
+          cacheReadUsd: components.cacheReadUsd,
+          freshUsd: components.freshUsd,
         }))
         .sort((a, b) => a.day.localeCompare(b.day)) satisfies UsageThreadDayCost[],
     })),
