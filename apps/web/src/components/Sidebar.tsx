@@ -1804,6 +1804,31 @@ export default function Sidebar() {
     },
   });
   const [projectScopeMenuOpen, setProjectScopeMenuOpen] = useState(false);
+  const [projectScopeSearchQuery, setProjectScopeSearchQuery] = useState("");
+  // Reset on open (not close) so the full list doesn't flash back in while
+  // the popup is still fading out.
+  const handleProjectScopeMenuOpenChange = useCallback((open: boolean) => {
+    setProjectScopeMenuOpen(open);
+    if (open) setProjectScopeSearchQuery("");
+  }, []);
+  // The menu popup's typeahead swallows printable keys (preventDefault) and
+  // Home/End move the item highlight, so only navigation and dismissal keys
+  // may bubble past the search input.
+  const handleProjectScopeSearchKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      switch (event.key) {
+        case "ArrowDown":
+        case "ArrowUp":
+        case "Enter":
+        case "Escape":
+        case "Tab":
+          return;
+        default:
+          event.stopPropagation();
+      }
+    },
+    [],
+  );
   const newThreadContext = useHandleNewThread();
   const openAddProjectCommandPalette = useCallback(
     () => openCommandPalette({ open: "add-project" }),
@@ -1884,6 +1909,15 @@ export default function Sidebar() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
+  const normalizedProjectScopeQuery = projectScopeSearchQuery.trim().toLocaleLowerCase();
+  const filteredProjectScopeGroups = useMemo(() => {
+    if (!normalizedProjectScopeQuery) return projectGroups;
+    return projectGroups.filter(
+      (project) =>
+        project.displayName.toLocaleLowerCase().includes(normalizedProjectScopeQuery) ||
+        project.workspaceRoot.toLocaleLowerCase().includes(normalizedProjectScopeQuery),
+    );
+  }, [normalizedProjectScopeQuery, projectGroups]);
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
   // provider entry from their own environment's config: default instance ids
@@ -3490,7 +3524,7 @@ export default function Sidebar() {
             </div>
             {projectGroups.length > 0 ? (
               <div className="flex items-center gap-1">
-                <Menu open={projectScopeMenuOpen} onOpenChange={setProjectScopeMenuOpen}>
+                <Menu open={projectScopeMenuOpen} onOpenChange={handleProjectScopeMenuOpenChange}>
                   <MenuTrigger
                     render={
                       <SidebarMenuButton
@@ -3515,21 +3549,51 @@ export default function Sidebar() {
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </MenuTrigger>
                   <MenuPopup align="start" className="w-(--anchor-width)">
+                    {projectGroups.length >= 5 ? (
+                      <div className="sticky -top-1 z-10 -mx-1 -mt-1 mb-1 rounded-t-[calc(var(--radius-lg)-1px)] border-b border-border bg-popover">
+                        <div className="flex h-8 items-center gap-2 px-2">
+                          <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
+                          <Input
+                            nativeInput
+                            unstyled
+                            type="search"
+                            // Without this the menu keeps focus on the trigger or an item,
+                            // and typing runs the popup typeahead instead of searching.
+                            autoFocus
+                            value={projectScopeSearchQuery}
+                            onChange={(event) =>
+                              setProjectScopeSearchQuery(event.currentTarget.value)
+                            }
+                            onKeyDown={handleProjectScopeSearchKeyDown}
+                            placeholder="Search projects"
+                            aria-label="Search projects"
+                            className="min-w-0 flex-1 [&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:leading-normal"
+                          />
+                        </div>
+                      </div>
+                    ) : null}
                     <MenuRadioGroup
                       value={projectScopeKey ?? "all"}
                       onValueChange={(value) =>
                         setProjectScopeKey(value === "all" ? null : (value as string))
                       }
                     >
-                      <MenuRadioItem
-                        value="all"
-                        closeOnClick
-                        className="h-8 min-h-8 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
-                      >
-                        <FolderIcon className="size-4 shrink-0" />
-                        <span className="min-w-0 truncate text-sm">All projects</span>
-                      </MenuRadioItem>
-                      {projectGroups.map((project) => {
+                      {normalizedProjectScopeQuery ? null : (
+                        <MenuRadioItem
+                          value="all"
+                          closeOnClick
+                          className="h-8 min-h-8 py-0 text-sm font-medium [&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                        >
+                          <FolderIcon className="size-4 shrink-0" />
+                          <span className="min-w-0 truncate text-sm">All projects</span>
+                        </MenuRadioItem>
+                      )}
+                      {normalizedProjectScopeQuery && filteredProjectScopeGroups.length === 0 ? (
+                        <div className="px-2 py-3 text-center text-sm text-muted-foreground">
+                          No projects found
+                        </div>
+                      ) : null}
+                      {filteredProjectScopeGroups.map((project) => {
                         const scopeKey = project.projectKey;
                         return (
                           <MenuRadioItem
