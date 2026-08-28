@@ -21,11 +21,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { SearchBarCommands } from "react-native-screens";
 
 import { AppText as Text } from "../../components/AppText";
-import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
+import {
+  ANDROID_SIDEBAR_PAGE_TITLE_ROW_MIN_HEIGHT,
+  androidSidebarPageTitleProps,
+} from "../../lib/layoutMetrics";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -1295,18 +1298,25 @@ function ThreadNavigationSidebarPane(
           backgroundColor,
         }}
       >
-        <View className="h-[50px] flex-row items-end gap-0.5 pr-2 pl-5">
+        <View
+          className="flex-row items-end gap-0.5 pr-2 pl-5"
+          style={{ minHeight: ANDROID_SIDEBAR_PAGE_TITLE_ROW_MIN_HEIGHT }}
+        >
           {/* Title slot doubles as the connection status surface: while an
-              environment reconnects, the brand fades to a status label in
+              environment reconnects, "Threads" fades to a status label in
               place (no layout shift in the list below). */}
           <WorkspaceConnectionTitle
             grow
             onPress={props.onOpenEnvironmentSettings}
             size="pageTitle"
             brand={
-              <View className="h-11 flex-1 justify-center">
-                <CompactBrandTitle allowFontScaling={false} />
-              </View>
+              <Text
+                {...androidSidebarPageTitleProps()}
+                className="flex-1 font-t3-bold text-foreground"
+                numberOfLines={1}
+              >
+                Threads
+              </Text>
             }
           />
           <View className="flex-row items-center gap-2.5">
