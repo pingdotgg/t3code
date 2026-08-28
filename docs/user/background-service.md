@@ -62,7 +62,8 @@ A few more macOS notes:
   or disabled with `launchctl disable`, macOS will not start it at login until you switch it back
   on.
 
-**Windows** is not supported yet.
+**Windows** is not supported yet. On Windows, use the desktop app's **Settings** → **General** →
+**Open at login** option to launch T3 Code when you sign in.
 
 ## Using It with T3 Connect
 

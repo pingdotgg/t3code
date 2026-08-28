@@ -230,6 +230,7 @@ function makeTestLayer(input: {
         }
         return { settings: desktopSettings, changed };
       }),
+    setOpenAtLogin: () => Effect.die("unexpected open-at-login update"),
     setServerExposureMode: () => Effect.die("unexpected server exposure update"),
     setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
     setUpdateChannel: () => Effect.die("unexpected update channel change"),

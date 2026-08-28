@@ -28,6 +28,10 @@ export interface DesktopSettings {
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
+  // Registers the packaged desktop app as an OS login item so it launches
+  // when the user signs in. Unpackaged/dev builds persist the preference
+  // but skip the OS registration.
+  readonly openAtLogin: boolean;
   readonly serverExposureMode: DesktopServerExposureMode;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
@@ -76,6 +80,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
   mainWindowMaximized: false,
+  openAtLogin: false,
   serverExposureMode: "local-only",
   tailscaleServeEnabled: false,
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
@@ -97,6 +102,7 @@ const DesktopSettingsDocument = Schema.Struct({
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
+  openAtLogin: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -155,6 +161,9 @@ export class DesktopAppSettings extends Context.Service<
     readonly setMainWindowBounds: (
       bounds: DesktopWindowBounds,
       isMaximized: boolean,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setOpenAtLogin: (
+      enabled: boolean,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setServerExposureMode: (
       mode: DesktopServerExposureMode,
@@ -227,6 +236,7 @@ function normalizeDesktopSettingsDocument(
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
+    openAtLogin: parsed.openAtLogin === true,
     serverExposureMode:
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
@@ -256,6 +266,9 @@ function toDesktopSettingsDocument(
   if (settings.mainWindowMaximized) {
     document.mainWindowMaximized = true;
   }
+  if (settings.openAtLogin !== defaults.openAtLogin) {
+    document.openAtLogin = settings.openAtLogin;
+  }
   if (settings.serverExposureMode !== defaults.serverExposureMode) {
     document.serverExposureMode = settings.serverExposureMode;
   }
@@ -282,6 +295,15 @@ function toDesktopSettingsDocument(
   }
 
   return document;
+}
+
+function setOpenAtLogin(settings: DesktopSettings, enabled: boolean): DesktopSettings {
+  return settings.openAtLogin === enabled
+    ? settings
+    : {
+        ...settings,
+        openAtLogin: enabled,
+      };
 }
 
 function setServerExposureMode(
@@ -518,6 +540,10 @@ export const make = Effect.gen(function* () {
           },
         }),
       ),
+    setOpenAtLogin: (enabled) =>
+      persist((settings) => setOpenAtLogin(settings, enabled)).pipe(
+        Effect.withSpan("desktop.settings.setOpenAtLogin", { attributes: { enabled } }),
+      ),
     setServerExposureMode: (mode) =>
       persist((settings) => setServerExposureMode(settings, mode)).pipe(
         Effect.withSpan("desktop.settings.setServerExposureMode", { attributes: { mode } }),
@@ -577,6 +603,7 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         load: SynchronizedRef.get(settingsRef),
         setMainWindowBounds: (bounds, isMaximized) =>
           update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),
+        setOpenAtLogin: (enabled) => update((settings) => setOpenAtLogin(settings, enabled)),
         setServerExposureMode: (mode) =>
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),

@@ -38,6 +38,18 @@ export class ElectronAppWhenReadyError extends Schema.TaggedErrorClass<ElectronA
   }
 }
 
+export class ElectronLoginItemSettingsError extends Schema.TaggedErrorClass<ElectronLoginItemSettingsError>()(
+  "ElectronLoginItemSettingsError",
+  {
+    openAtLogin: Schema.Boolean,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to ${this.openAtLogin ? "enable" : "disable"} the desktop login item.`;
+  }
+}
+
 export class ElectronApp extends Context.Service<
   ElectronApp,
   {
@@ -73,6 +85,9 @@ export class ElectronApp extends Context.Service<
     readonly setDesktopName: (desktopName: string) => Effect.Effect<void>;
     readonly setDockIcon: (iconPath: string) => Effect.Effect<void>;
     readonly appendCommandLineSwitch: (switchName: string, value?: string) => Effect.Effect<void>;
+    readonly setLoginItemSettings: (settings: {
+      readonly openAtLogin: boolean;
+    }) => Effect.Effect<void, ElectronLoginItemSettingsError>;
     readonly onBeforeQuitForUpdate: (
       listener: () => void,
     ) => Effect.Effect<void, never, Scope.Scope>;
@@ -192,6 +207,17 @@ export const make = ElectronApp.of({
         return;
       }
       Electron.app.commandLine.appendSwitch(switchName, value);
+    }),
+  setLoginItemSettings: (settings) =>
+    Effect.try({
+      try: () => {
+        Electron.app.setLoginItemSettings({ openAtLogin: settings.openAtLogin });
+      },
+      catch: (cause) =>
+        new ElectronLoginItemSettingsError({
+          openAtLogin: settings.openAtLogin,
+          cause,
+        }),
     }),
   onBeforeQuitForUpdate: (listener) =>
     Effect.acquireRelease(

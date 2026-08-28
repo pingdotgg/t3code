@@ -25,6 +25,7 @@ const DesktopSettingsPatch = Schema.Struct({
     ),
   ),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
+  openAtLogin: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -108,6 +109,7 @@ describe("DesktopSettings", () => {
         linuxPasswordStore: "auto",
         mainWindowBounds: null,
         mainWindowMaximized: false,
+        openAtLogin: false,
         serverExposureMode: "local-only",
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
@@ -137,6 +139,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "gnome-libsecret",
           mainWindowBounds: null,
           mainWindowMaximized: false,
+          openAtLogin: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
@@ -162,6 +165,11 @@ describe("DesktopSettings", () => {
         assert.isTrue(updateChannel.changed);
         assert.equal(updateChannel.settings.updateChannel, "nightly");
         assert.equal(updateChannel.settings.updateChannelConfiguredByUser, true);
+
+        const openAtLogin = yield* settings.setOpenAtLogin(true);
+        assert.isTrue(openAtLogin.changed);
+        assert.equal(openAtLogin.settings.openAtLogin, true);
+        assert.isFalse((yield* settings.setOpenAtLogin(true)).changed);
       }),
     ),
   );
@@ -244,6 +252,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
+          openAtLogin: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
@@ -300,6 +309,7 @@ describe("DesktopSettings", () => {
             linuxPasswordStore: "auto",
             mainWindowBounds: null,
             mainWindowMaximized: false,
+            openAtLogin: false,
             serverExposureMode: "network-accessible",
             tailscaleServeEnabled: true,
             tailscaleServePort: 8443,
@@ -322,6 +332,7 @@ describe("DesktopSettings", () => {
 
         yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
         yield* settings.setServerExposureMode("network-accessible");
+        yield* settings.setOpenAtLogin(true);
 
         const persisted = yield* decodeDesktopSettingsPatch(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
@@ -329,6 +340,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(persisted, {
           mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
           mainWindowMaximized: true,
+          openAtLogin: true,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
       }),
@@ -348,6 +360,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,
+          openAtLogin: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -376,6 +389,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,
+          openAtLogin: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -403,6 +417,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,
+          openAtLogin: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: true,
           tailscaleServePort: 443,

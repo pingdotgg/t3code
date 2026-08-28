@@ -174,6 +174,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "open-at-login",
+    title: "Open at login",
+    to: "/settings/general",
+    desktopOnly: true,
+  },
+  {
     id: "text-generation-model",
     title: "Text generation model",
     to: "/settings/general",

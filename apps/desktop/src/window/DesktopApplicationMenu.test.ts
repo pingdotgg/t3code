@@ -46,6 +46,7 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
   setDesktopName: () => Effect.void,
   setDockIcon: () => Effect.void,
   appendCommandLineSwitch: () => Effect.void,
+  setLoginItemSettings: () => Effect.void,
   onBeforeQuitForUpdate: () => Effect.void,
   removeCommandLineSwitch: () => Effect.void,
   on: () => Effect.void,

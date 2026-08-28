@@ -24,6 +24,7 @@ import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopLoginItem from "../settings/DesktopLoginItem.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
@@ -63,8 +64,11 @@ export class DesktopDevelopmentBackendPortRequiredError extends Schema.TaggedErr
 const { logInfo: logBootstrapInfo, logWarning: logBootstrapWarning } =
   DesktopObservability.makeComponentLogger("desktop-bootstrap");
 
-const { logInfo: logStartupInfo, logError: logStartupError } =
-  DesktopObservability.makeComponentLogger("desktop-startup");
+const {
+  logInfo: logStartupInfo,
+  logWarning: logStartupWarning,
+  logError: logStartupError,
+} = DesktopObservability.makeComponentLogger("desktop-startup");
 
 const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(function* (
   configuredPort: Option.Option<number>,
@@ -257,6 +261,13 @@ const startup = Effect.gen(function* () {
   yield* electronApp.setPath("userData", userDataPath);
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
   yield* desktopSettings.load;
+  yield* DesktopLoginItem.applyOpenAtLogin((yield* desktopSettings.get).openAtLogin).pipe(
+    Effect.catchTag("ElectronLoginItemSettingsError", (error) =>
+      logStartupWarning("could not apply open-at-login preference", {
+        message: error.message,
+      }),
+    ),
+  );
 
   if (linuxElectronOptions !== null) {
     yield* logStartupInfo("linux password store configured", {

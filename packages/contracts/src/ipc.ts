@@ -504,6 +504,18 @@ export const DesktopWslStateSchema = Schema.Struct({
   preflightError: Schema.NullOr(Schema.String),
 });
 
+export interface DesktopOpenAtLoginState {
+  enabled: boolean;
+  // False in unpackaged/dev builds. The preference is still stored and is
+  // applied the next time a packaged desktop app starts.
+  available: boolean;
+}
+
+export const DesktopOpenAtLoginStateSchema = Schema.Struct({
+  enabled: Schema.Boolean,
+  available: Schema.Boolean,
+});
+
 /**
  * Renderer-facing snapshot of a desktop preview tab. Mirrors the main-process
  * PreviewTabState shape but uses serialisable primitives only.
@@ -1117,6 +1129,12 @@ export interface DesktopBridge {
   setWslBackendEnabled: (enabled: boolean) => Promise<DesktopWslState>;
   setWslDistro: (distro: string | null) => Promise<DesktopWslState>;
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
+  /**
+   * Desktop-only login-item preference. Optional while older desktop shells
+   * can host a newer web client.
+   */
+  getOpenAtLoginState?: () => Promise<DesktopOpenAtLoginState>;
+  setOpenAtLogin?: (enabled: boolean) => Promise<DesktopOpenAtLoginState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   /** Optional while older desktop shells can host a newer web client. */
   pickProjectFavicon?: (initialPath?: string) => Promise<string | null>;

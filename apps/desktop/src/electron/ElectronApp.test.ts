@@ -23,6 +23,7 @@ const {
   setDockIconMock,
   setNameMock,
   setPathMock,
+  setLoginItemSettingsMock,
   whenReadyMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
@@ -45,6 +46,7 @@ const {
   setDockIconMock: vi.fn(),
   setNameMock: vi.fn(),
   setPathMock: vi.fn(),
+  setLoginItemSettingsMock: vi.fn(),
   whenReadyMock: vi.fn(() => Promise.resolve()),
 }));
 
@@ -78,6 +80,7 @@ vi.mock("electron", () => ({
     setDesktopName: setDesktopNameMock,
     setName: setNameMock,
     setPath: setPathMock,
+    setLoginItemSettings: setLoginItemSettingsMock,
     whenReady: whenReadyMock,
     exit: exitMock,
   },
@@ -97,6 +100,7 @@ describe("ElectronApp", () => {
     removeListenerMock.mockClear();
     removeSwitchMock.mockClear();
     setPathMock.mockClear();
+    setLoginItemSettingsMock.mockClear();
   });
 
   it.effect("reads app metadata through the service", () =>
@@ -209,6 +213,34 @@ describe("ElectronApp", () => {
       yield* electronApp.removeCommandLineSwitch("password-store");
 
       assert.deepEqual(removeSwitchMock.mock.calls, [["password-store"]]);
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("sets login item settings through the service", () =>
+    Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      yield* electronApp.setLoginItemSettings({ openAtLogin: true });
+
+      assert.deepEqual(setLoginItemSettingsMock.mock.calls, [[{ openAtLogin: true }]]);
+    }).pipe(Effect.provide(ElectronApp.layer)),
+  );
+
+  it.effect("preserves login item registration failures", () =>
+    Effect.gen(function* () {
+      const cause = new Error("registry write failed");
+      setLoginItemSettingsMock.mockImplementationOnce(() => {
+        throw cause;
+      });
+
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const error = yield* electronApp
+        .setLoginItemSettings({ openAtLogin: true })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronApp.ElectronLoginItemSettingsError);
+      assert.strictEqual(error.openAtLogin, true);
+      assert.strictEqual(error.cause, cause);
+      assert.strictEqual(error.message, "Failed to enable the desktop login item.");
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 });

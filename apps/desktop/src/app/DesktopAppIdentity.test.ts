@@ -64,6 +64,7 @@ const makeElectronAppLayer = (calls: ElectronAppCalls) =>
         calls.setDockIcon.push(iconPath);
       }),
     appendCommandLineSwitch: () => Effect.void,
+    setLoginItemSettings: () => Effect.void,
     onBeforeQuitForUpdate: () => Effect.void,
     removeCommandLineSwitch: () => Effect.void,
     on: () => Effect.void,

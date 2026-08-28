@@ -62,7 +62,9 @@ describe("searchSettings", () => {
 
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
+    expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "open-at-login")).toBe(true);
     expect(searchSettings("quit confirmation")).toEqual([]);
+    expect(searchSettings("open at login")).toEqual([]);
   });
 
   it("keeps catalog result ids unique", () => {

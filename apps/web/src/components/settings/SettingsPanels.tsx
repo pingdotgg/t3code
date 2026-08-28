@@ -66,6 +66,7 @@ import {
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { useDesktopOpenAtLogin } from "../../state/desktopOpenAtLogin";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
@@ -1853,6 +1854,36 @@ function LegacyFeaturesSection() {
   );
 }
 
+function OpenAtLoginSettingsRow() {
+  const { supported, state, setEnabled } = useDesktopOpenAtLogin();
+  if (!supported) return null;
+
+  const enabled = state?.enabled === true;
+
+  return (
+    <SettingsRow
+      {...searchableSetting("open-at-login")}
+      description={
+        state?.available === false
+          ? "Launch T3 Code when you sign in. This takes effect in the installed desktop app."
+          : "Launch T3 Code when you sign in to this computer."
+      }
+      resetAction={
+        enabled ? (
+          <SettingResetButton label="open at login" onClick={() => void setEnabled(false)} />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={enabled}
+          onCheckedChange={(checked) => void setEnabled(Boolean(checked))}
+          aria-label="Open at login"
+        />
+      }
+    />
+  );
+}
+
 export function GeneralSettingsPanel() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -2395,6 +2426,8 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
+
+        <OpenAtLoginSettingsRow />
 
         <SettingsRow
           {...searchableSetting("text-generation-model")}

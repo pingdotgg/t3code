@@ -48,6 +48,7 @@ function makeElectronAppLayer(
     setDesktopName: () => Effect.void,
     setDockIcon: () => Effect.void,
     appendCommandLineSwitch: () => Effect.void,
+    setLoginItemSettings: () => Effect.void,
     removeCommandLineSwitch: () => Effect.void,
     onBeforeQuitForUpdate: (listener) => registerListener("before-quit-for-update", listener),
     on: (eventName, listener) =>

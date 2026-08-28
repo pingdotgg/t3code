@@ -44,6 +44,7 @@ import {
   setTheme,
   showContextMenu,
 } from "./methods/window.ts";
+import { getOpenAtLoginState, setOpenAtLogin } from "./methods/openAtLogin.ts";
 import * as PreviewIpc from "./methods/preview.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 
@@ -81,6 +82,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setWslBackendEnabled);
   yield* ipc.handle(setWslDistro);
   yield* ipc.handle(setWslOnly);
+
+  yield* ipc.handle(getOpenAtLoginState);
+  yield* ipc.handle(setOpenAtLogin);
 
   yield* ipc.handle(pickFolder);
   yield* ipc.handle(pickProjectFavicon);
