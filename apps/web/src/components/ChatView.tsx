@@ -6168,10 +6168,22 @@ function ChatViewContent(props: ChatViewProps) {
         },
       }));
       const snapshot = composerRef.current?.readSnapshot();
+      // Avoid ping-pong when skill picker inserts plain text while editor is still
+      // showing old value: the controlled effect (activePendingProgress.customAnswer
+      // -> composer) will rewrite editor to new value and place cursor. Calling
+      // focusAt now would move selection in old content (clamped) and fire
+      // handleEditorChange with old value, overwriting the just-inserted skill.
+      const isPlainInsert =
+        snapshot !== undefined &&
+        typeof snapshot.value === "string" &&
+        value.length > snapshot.value.length &&
+        value.startsWith(snapshot.value);
+
       if (
-        snapshot?.value !== value ||
-        snapshot.cursor !== nextCursor ||
-        snapshot.expandedCursor !== expandedCursor
+        !isPlainInsert &&
+        (snapshot?.value !== value ||
+          snapshot.cursor !== nextCursor ||
+          snapshot.expandedCursor !== expandedCursor)
       ) {
         composerRef.current?.focusAt(nextCursor);
       }
