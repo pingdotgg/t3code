@@ -88,19 +88,6 @@ export interface OrchestrationEventStoreShape {
    */
   readonly readAll: () => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
 
-  /**
-   * Check whether an aggregate has an event after a sequence, optionally
-   * restricted to one event type.
-   *
-   * Used during replay to tell whether a later event supersedes the one being
-   * applied, without streaming the rest of the log.
-   */
-  readonly hasEventAfter: (input: {
-    readonly aggregateKind: OrchestrationEvent["aggregateKind"];
-    readonly aggregateId: string;
-    readonly type?: OrchestrationEvent["type"];
-    readonly sequenceExclusive: number;
-  }) => Effect.Effect<boolean, OrchestrationEventStoreError>;
   /** Append V2 agent events to the same globally ordered application log. */
   readonly appendAgentEvents: (input: {
     readonly commandId?: CommandId;
@@ -135,6 +122,18 @@ export interface OrchestrationEventStoreShape {
   readonly streamApplicationEvents: (input?: {
     readonly afterSequence?: number;
   }) => Stream.Stream<ApplicationStoredEvent, OrchestrationEventStoreError>;
+  /**
+   * Check whether an aggregate has an event of the given type after a sequence.
+   *
+   * Used during replay to tell whether a later event supersedes the one being
+   * applied, without streaming the rest of the log.
+   */
+  readonly hasEventAfter: (input: {
+    readonly aggregateKind: OrchestrationEvent["aggregateKind"];
+    readonly aggregateId: string;
+    readonly type: OrchestrationEvent["type"];
+    readonly sequenceExclusive: number;
+  }) => Effect.Effect<boolean, OrchestrationEventStoreError>;
 }
 
 /**

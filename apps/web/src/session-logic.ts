@@ -114,6 +114,7 @@ export type TimelineEntry = (
       readonly kind: "message";
       readonly createdAt: string;
       readonly message: ChatMessage;
+      readonly projectedItem?: OrchestrationV2ProjectedTurnItem;
     }
   | {
       readonly id: string;
@@ -243,6 +244,13 @@ export function workEntryIndicatesToolFailure(entry: WorkLogEntry): boolean {
 /** True when the rendered result indicates failure. The command itself is user intent, not output. */
 export function workEntryDisplayIndicatesToolFailure(entry: WorkLogEntry): boolean {
   return workEntryIndicatesToolFailureFromOutput(entry, false);
+}
+
+/** Severe failures keep the red treatment ordinary tool failures lost: provider
+ *  runtime errors mean the turn or a core side effect broke, not that a
+ *  command exited nonzero. */
+export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
+  return entry.itemType === "error";
 }
 
 export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
@@ -669,6 +677,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(input: {
           : {}),
         createdAt,
         updatedAt: DateTime.formatIso(item.updatedAt),
+        ...(item.type === "user_message" ? { inputIntent: item.inputIntent } : {}),
       };
       committedMessageIds.add(message.id);
       entries.push({
@@ -776,6 +785,30 @@ export function inferCheckpointTurnCountByRunId(
       summary.runId === null ? [] : [[summary.runId, summary.checkpointTurnCount] as const],
     ),
   );
+}
+
+export function deriveRevertTurnCountByUserMessageId(input: {
+  readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+  readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+}): Map<ChatMessage["id"], number> {
+  const readyCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
+  for (const checkpoint of input.checkpoints) {
+    if (checkpoint.status === "ready") {
+      readyCheckpointByRunId.set(checkpoint.runId, checkpoint);
+    }
+  }
+  const byUserMessageId = new Map<ChatMessage["id"], number>();
+  for (const entry of input.timelineEntries) {
+    if (entry.kind !== "message" || entry.message.role !== "user") continue;
+    if (entry.message.inputIntent !== "turn_start" && entry.message.inputIntent !== "queued_turn") {
+      continue;
+    }
+    if (entry.message.runId === null) continue;
+    const checkpoint = readyCheckpointByRunId.get(entry.message.runId);
+    if (checkpoint === undefined) continue;
+    byUserMessageId.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
+  }
+  return byUserMessageId;
 }
 
 export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {

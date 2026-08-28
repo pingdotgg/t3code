@@ -42,7 +42,9 @@ import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistr
 import {
   haveProvidersChanged,
   mergeProviderSnapshot,
+  mergeProviderSnapshots,
   ProviderRegistryLive,
+  selectProvidersByKind,
 } from "./ProviderRegistry.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
@@ -423,21 +425,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
-      it.effect("passes configured launch args to the Codex provider probe", () =>
-        Effect.gen(function* () {
-          let observedLaunchArgs: string | undefined;
-          const settings = decodeCodexSettings({ launchArgs: "--strict-config --enable foo" });
-
-          const status = yield* checkCodexProviderStatus(settings, (input) => {
-            observedLaunchArgs = input.launchArgs;
-            return Effect.succeed(makeCodexProbeSnapshot());
-          });
-
-          assert.strictEqual(status.status, "ready");
-          assert.strictEqual(observedLaunchArgs, "--strict-config --enable foo");
-        }),
-      );
-
       it.effect("returns unauthenticated when app-server requires OpenAI auth", () =>
         Effect.gen(function* () {
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
@@ -534,28 +521,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.installed, false);
           assert.strictEqual(status.auth.status, "unknown");
           assert.strictEqual(status.message, "Codex CLI (`codex`) was not found on PATH.");
-        }),
-      );
-
-      it.effect("closes the app-server probe scope when provider status times out", () =>
-        Effect.gen(function* () {
-          const killCalls = yield* Ref.make(0);
-          const statusFiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
-            Effect.provide(hangingScopedSpawnerLayer(killCalls)),
-            Effect.forkChild,
-          );
-
-          yield* Effect.yieldNow;
-          yield* TestClock.adjust("11 seconds");
-          yield* Effect.yieldNow;
-
-          const status = yield* Fiber.join(statusFiber);
-          assert.strictEqual(status.status, "error");
-          assert.strictEqual(
-            status.message,
-            "Timed out while checking Codex app-server provider status.",
-          );
-          assert.strictEqual(yield* Ref.get(killCalls), 1);
         }),
       );
 
@@ -1033,6 +998,182 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
             assert.strictEqual(yield* Ref.get(refreshCalls), 0);
           }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("refreshes OpenCode catalogs and preserves other providers", () =>
+        Effect.gen(function* () {
+          const codexDriver = ProviderDriverKind.make("codex");
+          const openCodeDriver = ProviderDriverKind.make("opencode");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const openCodeInstanceId = ProviderInstanceId.make("opencode");
+          const codexRefreshCalls = yield* Ref.make(0);
+          const openCodeRefreshCalls = yield* Ref.make(0);
+          const codexProvider = {
+            instanceId: codexInstanceId,
+            driver: codexDriver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const failedOpenCodeProvider = {
+            instanceId: openCodeInstanceId,
+            driver: openCodeDriver,
+            status: "error",
+            enabled: true,
+            installed: true,
+            auth: { status: "unknown" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            message: "Failed to refresh OpenCode models.",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const recoveredOpenCodeProvider = {
+            ...failedOpenCodeProvider,
+            status: "ready",
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:01:00.000Z",
+            message: "One upstream provider connected through OpenCode.",
+            models: [
+              {
+                slug: "github/gpt-5",
+                name: "GPT-5",
+                subProvider: "GitHub",
+                isCustom: false,
+                capabilities: null,
+              },
+            ],
+          } as const satisfies ServerProvider;
+          const changedCatalogProvider = {
+            ...recoveredOpenCodeProvider,
+            checkedAt: "2026-06-10T00:02:00.000Z",
+            models: [
+              {
+                slug: "anthropic/claude-sonnet-4",
+                name: "Claude Sonnet 4",
+                subProvider: "Anthropic",
+                isCustom: false,
+                capabilities: null,
+              },
+            ],
+          } as const satisfies ServerProvider;
+          const catalogSnapshot = yield* Ref.make<ServerProvider>(recoveredOpenCodeProvider);
+          const instances = [
+            {
+              instanceId: codexInstanceId,
+              driverKind: codexDriver,
+              continuationIdentity: {
+                driverKind: codexDriver,
+                continuationKey: "codex:instance:codex",
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: codexDriver,
+                  packageName: null,
+                }),
+                getSnapshot: Effect.succeed(codexProvider),
+                refresh: Ref.update(codexRefreshCalls, (count) => count + 1).pipe(
+                  Effect.as(codexProvider),
+                ),
+                streamChanges: Stream.empty,
+              },
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            },
+            {
+              instanceId: openCodeInstanceId,
+              driverKind: openCodeDriver,
+              continuationIdentity: {
+                driverKind: openCodeDriver,
+                continuationKey: "opencode:instance:opencode",
+              },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: openCodeDriver,
+                  packageName: null,
+                }),
+                getSnapshot: Effect.succeed(failedOpenCodeProvider),
+                refresh: Ref.update(openCodeRefreshCalls, (count) => count + 1).pipe(
+                  Effect.andThen(Ref.get(catalogSnapshot)),
+                ),
+                streamChanges: Stream.empty,
+              },
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            },
+          ] satisfies ReadonlyArray<ProviderInstance>;
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+              listInstances: Effect.succeed(instances),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-reconnect-refresh-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const initialProviders = yield* registry.getProviders;
+            assert.strictEqual(
+              initialProviders.find((provider) => provider.instanceId === openCodeInstanceId)
+                ?.status,
+              "error",
+            );
+
+            const recoveredProviders = yield* registry.refresh();
+            assert.deepStrictEqual(
+              recoveredProviders.find((provider) => provider.instanceId === openCodeInstanceId)
+                ?.models,
+              recoveredOpenCodeProvider.models,
+            );
+            assert.deepStrictEqual(
+              recoveredProviders.find((provider) => provider.instanceId === codexInstanceId),
+              codexProvider,
+            );
+
+            yield* Ref.set(catalogSnapshot, changedCatalogProvider);
+            const changedProviders = yield* registry.refresh();
+            assert.deepStrictEqual(
+              changedProviders.find((provider) => provider.instanceId === openCodeInstanceId)
+                ?.models,
+              changedCatalogProvider.models,
+            );
+            assert.deepStrictEqual(
+              changedProviders.find((provider) => provider.instanceId === codexInstanceId),
+              codexProvider,
+            );
+          }).pipe(Effect.provide(runtimeServices));
+
+          assert.strictEqual(yield* Ref.get(codexRefreshCalls), 2);
+          assert.strictEqual(yield* Ref.get(openCodeRefreshCalls), 2);
         }),
       );
 

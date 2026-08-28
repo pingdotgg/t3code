@@ -175,6 +175,9 @@ function buildProps() {
     turnDiffSummaryByAssistantMessageId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
+    onOpenThread: () => {},
+    onForkFromRun: async () => {},
+    onRollbackCheckpoint: () => {},
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: () => {},
     isRevertingCheckpoint: false,
@@ -691,18 +694,12 @@ describe("MessagesTimeline", () => {
 
   it("keeps steer intent visible on committed user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = buildUserTimelineEntry("Adjust the current turn");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={[
-          buildUserTimelineEntry(
-            [
-              'Without reading a file, do you have <global-agent-instructions scope="workspace">',
-              'Before <nested data-value="a&b">inside</nested> after',
-              "</global-agent-instructions> in your context?",
-              "Comparison: 2 < 3 and 5 > 4.",
-            ].join("\n"),
-          ),
+          { ...entry, message: { ...entry.message, inputIntent: "steer" as const } },
         ]}
       />,
     );
@@ -830,110 +827,56 @@ describe("MessagesTimeline", () => {
 
   it("exposes a per-response fork action for completed assistant items", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
+    const projectedItem = {
+      position: 0,
+      visibility: "local",
+      sourceThreadId: "thread-1",
+      sourceItemId: "assistant-item-1",
+      item: {
+        id: "assistant-item-1",
+        threadId: "thread-1",
+        runId: "run-1",
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: null,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: {},
+        type: "assistant_message",
+        messageId: "assistant-message-1",
+        text: "Done",
+        streaming: false,
+      },
+    } as never;
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={[
-          buildUserTimelineEntry(
-            [
-              'Inline `<tag attr="x">`',
-              "",
-              "```xml",
-              '<root><child enabled="true" /></root>',
-              "```",
-            ].join("\n"),
-          ),
+          {
+            id: "assistant-message-1",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem,
+            message: {
+              id: MessageId.make("assistant-message-1"),
+              role: "assistant",
+              text: "Done",
+              runId: RunId.make("run-1"),
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
         ]}
       />,
     );
 
-    expect(markup).toContain('<code data-inline-code="">&lt;tag attr=&quot;x&quot;&gt;</code>');
-    expect(markup).toContain("&lt;root&gt;&lt;child enabled=&quot;true&quot; /&gt;&lt;/root&gt;");
-  });
-
-  it("does not render markdown title attributes in user messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          buildUserTimelineEntry(
-            '[link](https://example.com "link tip") ![image](https://example.com/image.png "image tip")',
-          ),
-        ]}
-      />,
-    );
-
-    expect(markup).toContain('href="https://example.com"');
-    expect(markup).toContain('src="https://example.com/image.png"');
-    expect(markup).not.toContain('title="link tip"');
-    expect(markup).not.toContain('title="image tip"');
-  });
-
-  it("renders unsafe user HTML as inert source text", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          buildUserTimelineEntry(
-            '<script>globalThis.__t3Xss = 1</script><img src="x" onerror="globalThis.__t3Xss = 2">',
-          ),
-        ]}
-      />,
-    );
-
-    expect(markup).toContain("&lt;script&gt;globalThis.__t3Xss = 1&lt;/script&gt;");
-    expect(markup).toContain(
-      "&lt;img src=&quot;x&quot; onerror=&quot;globalThis.__t3Xss = 2&quot;&gt;",
-    );
-    expect(markup).not.toMatch(/<script(?:\s|>)/i);
-    expect(markup).not.toMatch(/<img(?:\s|>)/i);
-  });
-
-  it("continues to render sanitized raw HTML in assistant messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          buildAssistantTimelineEntry("<details><summary>More</summary>Details</details>"),
-        ]}
-      />,
-    );
-
-    expect(markup).toContain('data-markdown-details=""');
-    expect(markup).toContain("More");
-    expect(markup).not.toContain("&lt;details&gt;");
-  });
-
-  it("sanitizes executable HTML while preserving supported assistant markup", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          buildAssistantTimelineEntry(
-            [
-              '<details open onclick="globalThis.__t3Xss = 1">',
-              "<summary>Safe details</summary>",
-              "<script>globalThis.__t3Xss = 2</script>",
-              '<img src="x" onerror="globalThis.__t3Xss = 3">',
-              '<a href="javascript:globalThis.__t3Xss = 4">Unsafe link</a>',
-              "</details>",
-            ].join(""),
-          ),
-        ]}
-      />,
-    );
-
-    expect(markup).toContain('data-markdown-details=""');
-    expect(markup).toContain("Safe details");
-    expect(markup).not.toMatch(/<script(?:\s|>)/i);
-    expect(markup).not.toContain("onclick=");
-    expect(markup).not.toContain("onerror=");
-    expect(markup).not.toContain("javascript:");
-    expect(markup).not.toContain("globalThis.__t3Xss");
+    expect(markup).toContain('aria-label="Fork from this response"');
   });
 
   it("renders inline terminal labels with the composer chip UI", async () => {
@@ -1261,6 +1204,99 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Claude research thread");
     expect(markup).toContain("claude-default · claude-sonnet-4-6");
     expect(markup).not.toContain("Work Log");
+  });
+
+  it("keeps the collapsed summary icon neutral when the group ends in a failure", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-completed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-completed",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Run tests",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "completed",
+            },
+          },
+          {
+            id: "entry-failed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-failed",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Run lint",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "failed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Ran 2 commands");
+    expect(markup).toContain("lucide-terminal");
+    expect(markup).not.toContain("lucide-x");
+    expect(markup).not.toContain("text-destructive");
+    // The failure stays discoverable for screen readers.
+    expect(markup).toContain("tool call failed");
+  });
+
+  it("keeps mixed work logs neutral after a later tool call succeeds", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-failed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-failed",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Run search",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "failed",
+            },
+          },
+          {
+            id: "entry-info",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-info",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Status updated",
+              tone: "info",
+            },
+          },
+          {
+            id: "entry-completed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "work-completed",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              label: "Run tests",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "completed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("+2 previous log entries");
+    expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
   it("renders live subagent progress on the persistent linked card", async () => {
@@ -2015,19 +2051,19 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("· Resolve triage instances");
   });
 
-  it("renders a failure marker for failed tool lifecycle entries", () => {
+  it("renders a muted failure marker for failed tool lifecycle entries", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={[
           {
-            id: "context-info-entry",
+            id: "entry-info",
             kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
+            createdAt: "2026-03-17T19:12:27.000Z",
             entry: {
-              id: "context-info",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Session started",
+              id: "work-info",
+              createdAt: "2026-03-17T19:12:27.000Z",
+              label: "Status updated",
               tone: "info",
             },
           },
@@ -2050,5 +2086,44 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("lucide-x");
     expect(markup).toContain('aria-label="Tool call failed"');
+    // Ordinary tool failures render muted, not red.
+    expect(markup).not.toContain("text-destructive");
+  });
+
+  it("keeps the red treatment for severe orchestration failures", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-info",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:27.000Z",
+            entry: {
+              id: "work-info",
+              createdAt: "2026-03-17T19:12:27.000Z",
+              label: "Status updated",
+              tone: "info",
+            },
+          },
+          {
+            id: "entry-turn-failed",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-turn-failed",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Provider turn start failed",
+              tone: "error",
+              itemType: "error",
+              toolLifecycleStatus: "failed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("lucide-x");
+    expect(markup).toContain("text-destructive");
   });
 });

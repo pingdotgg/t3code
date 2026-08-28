@@ -724,7 +724,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           sizeBytes: 4,
         });
         yield* fileSystem.writeFile(
-          path.join(attachmentsDir, attachmentRelativePath(attachment)),
+          path.join(attachmentsDir, attachmentRelativePath(attachment)!),
           Uint8Array.from([1, 2, 3, 4]),
         );
         const attemptId = RunAttemptId.make("attempt-claude-attachments");
@@ -751,7 +751,7 @@ describe("ClaudeAdapterV2 attachments", () => {
         } as const;
         const expectedAttachmentPath = path.join(
           attachmentsDir,
-          attachmentRelativePath(attachment),
+          attachmentRelativePath(attachment)!,
         );
         assert.deepEqual(offeredMessages[0]?.message.content, [
           {

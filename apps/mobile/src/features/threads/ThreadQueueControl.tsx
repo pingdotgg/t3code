@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadProjection } from "../../state/use-thread-detail";
@@ -28,7 +28,8 @@ export function ThreadQueueControl(props: {
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "cancel queued message");
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
-  const iconColor = useThemeColor("--color-icon-subtle");
+  const theme = useUniwindTheme();
+  const iconColor = theme["--color-icon-subtle"];
 
   if (!workflow || workflow.queuedRuns.length === 0) return null;
 

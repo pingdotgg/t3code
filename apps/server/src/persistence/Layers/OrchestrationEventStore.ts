@@ -22,8 +22,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -431,29 +431,6 @@ const makeEventStore = Effect.gen(function* () {
     return readPage(sequenceExclusive, normalizedLimit);
   };
 
-  const findEventAfter = SqlSchema.findOneOption({
-    Request: HasEventAfterRequestSchema,
-    Result: Schema.Struct({ sequence: Schema.Number }),
-    execute: (request) => sql`
-          SELECT sequence
-          FROM orchestration_events
-          WHERE aggregate_kind = ${request.aggregateKind}
-            AND stream_id = ${request.aggregateId}
-            AND ${sql.and([
-              sql`sequence > ${request.sequenceExclusive}`,
-              ...(request.type === undefined ? [] : [sql`event_type = ${request.type}`]),
-            ])}
-          LIMIT 1
-        `,
-  });
-
-  const hasEventAfter: OrchestrationEventStoreShape["hasEventAfter"] = (input) =>
-    findEventAfter(input).pipe(
-      Effect.map(Option.isSome),
-      Effect.mapError(
-        toPersistenceSqlOrDecodeError(
-          "OrchestrationEventStore.hasEventAfter:query",
-          "OrchestrationEventStore.hasEventAfter:decodeRow",
   const readApplicationRows = (input: {
     readonly afterSequence: number;
     readonly throughSequence?: number;
@@ -667,13 +644,38 @@ const makeEventStore = Effect.gen(function* () {
       }),
     );
 
+  const findEventAfter = SqlSchema.findOneOption({
+    Request: HasEventAfterRequestSchema,
+    Result: Schema.Struct({ sequence: Schema.Number }),
+    execute: (request) =>
+      sql`
+        SELECT sequence
+        FROM orchestration_events
+        WHERE aggregate_kind = ${request.aggregateKind}
+          AND stream_id = ${request.aggregateId}
+          AND event_type = ${request.type}
+          AND sequence > ${request.sequenceExclusive}
+        LIMIT 1
+      `,
+  });
+
+  const hasEventAfter: OrchestrationEventStoreShape["hasEventAfter"] = (input) =>
+    findEventAfter(input).pipe(
+      Effect.map(Option.isSome),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "OrchestrationEventStore.hasEventAfter:query",
+          "OrchestrationEventStore.hasEventAfter:decodeRow",
+        ),
+      ),
+    );
+
   return {
     append,
     readFromSequence,
     readAggregateRange,
     getAggregateReplayStats,
     readAll: () => readFromSequence(0, Number.MAX_SAFE_INTEGER),
-    hasEventAfter,
     appendAgentEvents,
     readAgentEvents,
     latestAgentSequence,
@@ -681,6 +683,7 @@ const makeEventStore = Effect.gen(function* () {
     readApplicationEvents: catchUpApplicationEvents,
     publishCommitted: (events) => PubSub.publishAll(committedEvents, events).pipe(Effect.asVoid),
     streamApplicationEvents,
+    hasEventAfter,
   } satisfies OrchestrationEventStoreShape;
 });
 

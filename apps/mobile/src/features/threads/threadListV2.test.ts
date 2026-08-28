@@ -327,16 +327,16 @@ describe("buildThreadListV2Items", () => {
     expect(layout.nextSnoozeWakeAt).toBeNull();
   });
 
-  it("keeps a merged thread active when auto-settle on merge is off", () => {
+  it("keeps a merged thread active when automatic settling is off", () => {
     const merged = makeThread({ id: ThreadId.make("merged"), title: "Merged" });
     const layout = buildThreadListV2Items({
       threads: [merged],
       environmentId: null,
       searchQuery: "",
       changeRequestByKey: new Map([
-        [`${environmentId}:${merged.id}`, { state: "merged" as const }],
+        [`${environmentId}:${merged.id}`, { state: "merged" as const, updatedAt: NOW }],
       ]),
-      autoSettleOnMerge: false,
+      autoSettleMode: "never",
       now: NOW,
     });
 

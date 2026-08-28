@@ -316,6 +316,7 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
         connectToOpenCodeServer: () =>
           Effect.succeed({
             url: "replay://opencode",
+            version: "0.0.0-replay",
             exitCode: null,
             external: true,
           }),
