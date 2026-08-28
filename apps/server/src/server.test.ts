@@ -798,7 +798,7 @@ const buildAppUnderTest = (options?: {
           }),
           Layer.mock(ThreadDeletionReactor)({
             start: () => Effect.void,
-            drain: Effect.void,
+            drainThrough: () => Effect.void,
             ...options?.layers?.threadDeletionReactor,
           }),
         ),
@@ -8449,22 +8449,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("waits for deletion cleanup before re-creating a thread id", () =>
+  it.effect("drains deletion cleanup through the re-created thread event", () =>
     Effect.gen(function* () {
       // A draft retry reuses the thread id its failed bootstrap deleted. The
       // deletion reactor stops sessions and closes terminals by that id, so
-      // both thread.create paths must let its queue drain first.
+      // both thread.create paths use the created event as a fence, then drain
+      // cleanup before handing the new incarnation to resource-owning work.
       const trace: Array<string> = [];
       const drainRequested = yield* Deferred.make<void>();
       const cleanupDone = yield* Deferred.make<void>();
       yield* buildAppUnderTest({
         layers: {
           threadDeletionReactor: {
-            drain: Effect.gen(function* () {
-              trace.push("drain");
-              yield* Deferred.succeed(drainRequested, undefined);
-              yield* Deferred.await(cleanupDone);
-            }),
+            drainThrough: (sequence) =>
+              Effect.gen(function* () {
+                trace.push(`drain:${sequence}`);
+                yield* Deferred.succeed(drainRequested, undefined);
+                yield* Deferred.await(cleanupDone);
+              }),
           },
           orchestrationEngine: {
             dispatch: (command) =>
@@ -8500,15 +8502,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
             );
             yield* Deferred.await(drainRequested);
-            assert.deepEqual(trace, ["drain"]);
+            assert.deepEqual(trace, ["thread.create", "drain:1"]);
             yield* Deferred.succeed(cleanupDone, undefined);
             yield* Fiber.join(directCreate);
           }),
         ),
       );
-      assert.deepEqual(trace, ["drain", "thread.create"]);
+      assert.deepEqual(trace, ["thread.create", "drain:1"]);
 
-      // Cleanup is already released; the bootstrap path must still drain first.
+      // Cleanup is already released; the bootstrap path must still drain
+      // between creating the thread and starting its turn.
       trace.length = 0;
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
@@ -8547,7 +8550,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }),
         ),
       );
-      assert.deepEqual(trace, ["drain", "thread.create", "thread.turn.start"]);
+      assert.deepEqual(trace, ["thread.create", "drain:1", "thread.turn.start"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

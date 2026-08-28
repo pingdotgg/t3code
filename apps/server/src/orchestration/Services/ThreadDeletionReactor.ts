@@ -23,12 +23,12 @@ export interface ThreadDeletionReactorShape {
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
 
   /**
-   * Resolves once every thread.deleted published up to now has been handed
-   * to the worker and the worker's queue is empty and idle. Callers that
-   * re-create a deleted thread id wait on this so the old incarnation's
-   * cleanup cannot run against the new one.
+   * Resolves once every thread.deleted at or before the supplied event
+   * sequence has been handed to the worker and the worker is empty and idle.
+   * A successful thread.create sequence is the fence callers use before the
+   * new incarnation can own runtime resources.
    */
-  readonly drain: Effect.Effect<void>;
+  readonly drainThrough: (sequence: number) => Effect.Effect<void>;
 }
 
 /**

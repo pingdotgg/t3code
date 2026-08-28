@@ -123,7 +123,7 @@ describe("ThreadDeletionReactor drain", () => {
           // Sequence 1 is fully cleaned and the worker queue is idle. Sequence
           // 2 is committed and published but still in flight to the subscriber.
           yield* Ref.set(latestSequence, 2);
-          const drained = yield* Effect.forkChild(reactor.drain);
+          const drained = yield* Effect.forkChild(reactor.drainThrough(2));
           yield* Effect.yieldNow;
           yield* Effect.yieldNow;
           expect(stops).toEqual([1]);

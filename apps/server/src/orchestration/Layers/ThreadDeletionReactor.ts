@@ -81,10 +81,10 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processThreadDeletedSafely);
 
-  // Highest event sequence the subscriber has handed to the worker. Events
-  // are published after they commit, so a caller that reads latestSequence
-  // and waits for this to catch up knows every deletion up to that point is
-  // at least enqueued; the worker drain then covers the in-flight ones.
+  // Highest event sequence the subscriber has handed to the worker. Waiting
+  // through a successful thread.created sequence covers every deletion that
+  // was ahead of that create in the engine queue; the worker drain then covers
+  // the in-flight cleanup.
   const seenSequence = yield* SubscriptionRef.make(0);
   const noteSeen = (sequence: number) =>
     SubscriptionRef.update(seenSequence, (seen) => Math.max(seen, sequence));
@@ -105,8 +105,9 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const drain: ThreadDeletionReactorShape["drain"] = Effect.gen(function* () {
-    const target = yield* orchestrationEngine.latestSequence;
+  const drainThrough: ThreadDeletionReactorShape["drainThrough"] = Effect.fn(
+    "ThreadDeletionReactor.drainThrough",
+  )(function* (target) {
     yield* SubscriptionRef.changes(seenSequence).pipe(
       Stream.filter((seen) => seen >= target),
       Stream.runHead,
@@ -116,7 +117,7 @@ const make = Effect.gen(function* () {
 
   return {
     start,
-    drain,
+    drainThrough,
   } satisfies ThreadDeletionReactorShape;
 });
 
