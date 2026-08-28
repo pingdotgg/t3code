@@ -1,11 +1,15 @@
 /**
  * GrokSkills — filesystem discovery of Grok Build skills for the `$` picker.
  *
- * Grok loads skills from `<grok home>/skills` (user), `<grok home>/bundled/skills`
- * (system), then workspace `.agents/skills`, `.claude/skills`, and `.grok/skills`
- * (project). Each skill is a directory with a `SKILL.md` carrying YAML
- * frontmatter. Later roots win on name collisions, so project skills beat
- * user skills and `.grok` beats `.agents` / `.claude`.
+ * Grok loads skills from `<grok home>/bundled/skills` (system), then user
+ * `~/.agents/skills` and `<grok home>/skills`, then workspace `.agents/skills`,
+ * `.claude/skills`, and `.grok/skills` (project). Each skill is a directory
+ * with a `SKILL.md` carrying YAML frontmatter.
+ *
+ * Skills are deduplicated by case-insensitive name. Later roots win, so
+ * project skills beat user skills and `.grok` beats `.agents` / `.claude`.
+ * That also collapses the common `~/.grok/skills/<name> -> ~/.agents/skills/<name>`
+ * symlink layout into a single picker row.
  *
  * ACP does not surface skill paths for the composer picker, so the provider
  * snapshot scans these locations directly (same approach as ClaudeSkills).
@@ -55,12 +59,34 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   };
 }
 
+function skillDedupKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/**
+ * Resolve the user home used for `~/.agents` (and default `~/.grok`). Prefer
+ * `HOME` / `USERPROFILE` from the provider environment so tests can isolate
+ * discovery without touching the real home directory.
+ */
+const resolveUserHomePath = Effect.fn("resolveUserHomePath")(function* (
+  environment: NodeJS.ProcessEnv,
+  cwd?: string,
+): Effect.fn.Return<string, never, Path.Path> {
+  const path = yield* Path.Path;
+  const home = environment.HOME?.trim() || environment.USERPROFILE?.trim() || "";
+  if (home.length > 0) {
+    return cwd ? path.resolve(cwd, home) : path.resolve(home);
+  }
+  return NodeOS.homedir();
+});
+
 /**
  * Resolve the Grok home directory the CLI would use: `GROK_HOME` when set
- * (resolved against the workspace cwd when relative), otherwise `~/.grok`.
+ * (resolved against the workspace cwd when relative), otherwise `<user home>/.grok`.
  */
 const resolveGrokHomePath = Effect.fn("resolveGrokHomePath")(function* (
   environment: NodeJS.ProcessEnv,
+  userHomePath: string,
   cwd?: string,
 ): Effect.fn.Return<string, never, Path.Path> {
   const path = yield* Path.Path;
@@ -70,7 +96,7 @@ const resolveGrokHomePath = Effect.fn("resolveGrokHomePath")(function* (
   if (grokHome.length > 0) {
     return cwd ? path.resolve(cwd, grokHome) : path.resolve(grokHome);
   }
-  return path.join(NodeOS.homedir(), ".grok");
+  return path.join(userHomePath, ".grok");
 });
 
 /**
@@ -85,10 +111,14 @@ export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const env = environment ?? process.env;
-  const homePath = yield* resolveGrokHomePath(env, cwd);
+  const userHomePath = yield* resolveUserHomePath(env, cwd);
+  const homePath = yield* resolveGrokHomePath(env, userHomePath, cwd);
 
+  // Lowest priority first. Later roots overwrite earlier ones with the same
+  // case-insensitive name.
   const roots: ReadonlyArray<{ directory: string; scope: GrokSkillScope }> = [
     { directory: path.join(homePath, "bundled", "skills"), scope: "system" },
+    { directory: path.join(userHomePath, ".agents", "skills"), scope: "user" },
     { directory: path.join(homePath, "skills"), scope: "user" },
     ...(cwd
       ? [
@@ -126,7 +156,7 @@ export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
         continue;
       }
 
-      skillsByName.set(name, {
+      skillsByName.set(skillDedupKey(name), {
         name,
         path: skillPath,
         enabled: true,

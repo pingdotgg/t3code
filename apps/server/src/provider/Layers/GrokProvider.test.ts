@@ -277,12 +277,19 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-skills-snap-" });
-          const grokHome = path.join(dir, "grok-home");
-          const skillDir = path.join(grokHome, "skills", "unslop");
+          const userHome = path.join(dir, "user-home");
+          const grokHome = path.join(userHome, ".grok");
+          const agentsSkillDir = path.join(userHome, ".agents", "skills", "review");
+          const grokSkillDir = path.join(grokHome, "skills", "unslop");
           const grokPath = path.join(dir, "grok");
-          yield* fs.makeDirectory(skillDir, { recursive: true });
+          yield* fs.makeDirectory(agentsSkillDir, { recursive: true });
+          yield* fs.makeDirectory(grokSkillDir, { recursive: true });
           yield* fs.writeFileString(
-            path.join(skillDir, "SKILL.md"),
+            path.join(agentsSkillDir, "SKILL.md"),
+            ["---", "name: review", "description: Review changes.", "---"].join("\n"),
+          );
+          yield* fs.writeFileString(
+            path.join(grokSkillDir, "SKILL.md"),
             ["---", "name: unslop", "description: Cut AI tells.", "---", "", "# Unslop"].join("\n"),
           );
           yield* fs.writeFileString(
@@ -293,7 +300,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
-            { ...process.env, GROK_HOME: grokHome },
+            { ...process.env, HOME: userHome, GROK_HOME: grokHome },
           );
         }),
       );
@@ -301,6 +308,12 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
       expect(snapshot.status).toBe("error");
       expect(snapshot.message).toContain("ACP startup failed");
       expect(snapshot.skills).toEqual([
+        expect.objectContaining({
+          name: "review",
+          enabled: true,
+          scope: "user",
+          description: "Review changes.",
+        }),
         expect.objectContaining({
           name: "unslop",
           enabled: true,

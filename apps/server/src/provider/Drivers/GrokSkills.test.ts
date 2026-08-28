@@ -18,17 +18,23 @@ const writeSkill = Effect.fn(function* (
   yield* fs.writeFileString(path.join(skillDir, "SKILL.md"), contents);
 });
 
+const isolatedEnv = (home: string, grokHome: string): NodeJS.ProcessEnv => ({
+  HOME: home,
+  GROK_HOME: grokHome,
+});
+
 it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
-  it.effect("discovers bundled, user, and project skills with frontmatter metadata", () =>
+  it.effect("discovers bundled, user agents, user grok, and project skills", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-skills-" });
-      const home = path.join(tempDir, "grok-home");
+      const userHome = path.join(tempDir, "user-home");
+      const grokHome = path.join(userHome, ".grok");
       const workspace = path.join(tempDir, "workspace");
 
       yield* writeSkill(
-        path.join(home, "bundled", "skills"),
+        path.join(grokHome, "bundled", "skills"),
         "create-skill",
         [
           "---",
@@ -40,9 +46,14 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
         ].join("\n"),
       );
       yield* writeSkill(
-        path.join(home, "skills"),
+        path.join(userHome, ".agents", "skills"),
         "unslop",
         ["---", "name: unslop", "description: Cut AI tells.", "---", "", "# Unslop"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(grokHome, "skills"),
+        "file-pr",
+        ["---", "name: file-pr", "description: Open a PR.", "---", "", "# PR"].join("\n"),
       );
       yield* writeSkill(
         path.join(workspace, ".grok", "skills"),
@@ -50,12 +61,12 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
         ["---", "name: deploy", "description: Deploy the app.", "---", "", "# Deploy"].join("\n"),
       );
 
-      const skills = yield* discoverGrokSkills(workspace, { GROK_HOME: home });
+      const skills = yield* discoverGrokSkills(workspace, isolatedEnv(userHome, grokHome));
 
       assert.deepEqual(skills, [
         {
           name: "create-skill",
-          path: path.join(home, "bundled", "skills", "create-skill", "SKILL.md"),
+          path: path.join(grokHome, "bundled", "skills", "create-skill", "SKILL.md"),
           enabled: true,
           scope: "system",
           description: "Scaffold a new skill.",
@@ -68,8 +79,15 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
           description: "Deploy the app.",
         },
         {
+          name: "file-pr",
+          path: path.join(grokHome, "skills", "file-pr", "SKILL.md"),
+          enabled: true,
+          scope: "user",
+          description: "Open a PR.",
+        },
+        {
           name: "unslop",
-          path: path.join(home, "skills", "unslop", "SKILL.md"),
+          path: path.join(userHome, ".agents", "skills", "unslop", "SKILL.md"),
           enabled: true,
           scope: "user",
           description: "Cut AI tells.",
@@ -83,7 +101,8 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-skills-" });
-      const home = path.join(tempDir, "grok-home");
+      const userHome = path.join(tempDir, "user-home");
+      const grokHome = path.join(userHome, ".grok");
       const workspace = path.join(tempDir, "workspace");
 
       yield* writeSkill(
@@ -97,7 +116,7 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
         ["---", "name: ship", "description: Ship the release.", "---"].join("\n"),
       );
 
-      const skills = yield* discoverGrokSkills(workspace, { GROK_HOME: home });
+      const skills = yield* discoverGrokSkills(workspace, isolatedEnv(userHome, grokHome));
 
       assert.deepEqual(skills, [
         {
@@ -118,28 +137,34 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
     }),
   );
 
-  it.effect("prefers workspace .grok skills on name collisions", () =>
+  it.effect("deduplicates matching skill names across roots, preferring later roots", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-skills-" });
-      const home = path.join(tempDir, "grok-home");
+      const userHome = path.join(tempDir, "user-home");
+      const grokHome = path.join(userHome, ".grok");
       const workspace = path.join(tempDir, "workspace");
 
       yield* writeSkill(
-        path.join(home, "bundled", "skills"),
+        path.join(grokHome, "bundled", "skills"),
         "deploy",
         ["---", "name: deploy", "description: Bundled deploy.", "---"].join("\n"),
       );
       yield* writeSkill(
-        path.join(home, "skills"),
+        path.join(userHome, ".agents", "skills"),
         "deploy",
-        ["---", "name: deploy", "description: User deploy.", "---"].join("\n"),
+        ["---", "name: deploy", "description: Agents user deploy.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(grokHome, "skills"),
+        "deploy",
+        ["---", "name: deploy", "description: User grok deploy.", "---"].join("\n"),
       );
       yield* writeSkill(
         path.join(workspace, ".agents", "skills"),
         "deploy",
-        ["---", "name: deploy", "description: Agents deploy.", "---"].join("\n"),
+        ["---", "name: deploy", "description: Agents project deploy.", "---"].join("\n"),
       );
       yield* writeSkill(
         path.join(workspace, ".claude", "skills"),
@@ -152,7 +177,7 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
         ["---", "name: deploy", "description: Grok deploy.", "---"].join("\n"),
       );
 
-      const skills = yield* discoverGrokSkills(workspace, { GROK_HOME: home });
+      const skills = yield* discoverGrokSkills(workspace, isolatedEnv(userHome, grokHome));
 
       assert.deepEqual(skills, [
         {
@@ -166,13 +191,47 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
     }),
   );
 
+  it.effect("deduplicates case-insensitively across .agents and .grok user skills", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-skills-" });
+      const userHome = path.join(tempDir, "user-home");
+      const grokHome = path.join(userHome, ".grok");
+
+      yield* writeSkill(
+        path.join(userHome, ".agents", "skills"),
+        "html-communication",
+        ["---", "name: Html-Communication", "description: Agents copy.", "---"].join("\n"),
+      );
+      yield* writeSkill(
+        path.join(grokHome, "skills"),
+        "html-communication",
+        ["---", "name: html-communication", "description: Grok copy.", "---"].join("\n"),
+      );
+
+      const skills = yield* discoverGrokSkills(undefined, isolatedEnv(userHome, grokHome));
+
+      assert.deepEqual(skills, [
+        {
+          name: "html-communication",
+          path: path.join(grokHome, "skills", "html-communication", "SKILL.md"),
+          enabled: true,
+          scope: "user",
+          description: "Grok copy.",
+        },
+      ]);
+    }),
+  );
+
   it.effect("skips malformed frontmatter and non-skill entries", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-skills-" });
-      const home = path.join(tempDir, "grok-home");
-      const skillsDir = path.join(home, "skills");
+      const userHome = path.join(tempDir, "user-home");
+      const grokHome = path.join(userHome, ".grok");
+      const skillsDir = path.join(grokHome, "skills");
 
       yield* writeSkill(skillsDir, "no-frontmatter", "# Just a heading\n");
       yield* writeSkill(skillsDir, "broken-yaml", "---\nname: [unclosed\n---\n");
@@ -184,7 +243,7 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
       yield* fs.makeDirectory(skillsDir, { recursive: true });
       yield* fs.writeFileString(path.join(skillsDir, "README.md"), "not a skill");
 
-      const skills = yield* discoverGrokSkills(undefined, { GROK_HOME: home });
+      const skills = yield* discoverGrokSkills(undefined, isolatedEnv(userHome, grokHome));
 
       assert.deepEqual(skills, [
         {
@@ -209,9 +268,10 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-skills-" });
-      const home = path.join(tempDir, "grok-home");
-      const agentsHome = path.join(tempDir, "agents-skills");
-      const skillsDir = path.join(home, "skills");
+      const userHome = path.join(tempDir, "user-home");
+      const grokHome = path.join(userHome, ".grok");
+      const agentsHome = path.join(userHome, ".agents", "skills");
+      const skillsDir = path.join(grokHome, "skills");
 
       yield* writeSkill(
         agentsHome,
@@ -226,8 +286,9 @@ it.layer(NodeServices.layer)("discoverGrokSkills", (it) => {
         path.join(skillsDir, "html-communication"),
       );
 
-      const skills = yield* discoverGrokSkills(undefined, { GROK_HOME: home });
+      const skills = yield* discoverGrokSkills(undefined, isolatedEnv(userHome, grokHome));
 
+      // Same name in ~/.agents and ~/.grok (symlink) collapses to one row.
       assert.deepEqual(skills, [
         {
           name: "html-communication",

@@ -22,11 +22,17 @@ after updating or signing in to Grok Build to load the current catalog and reaso
 
 ## Where Grok Skills Are Loaded
 
-T3 Code looks for Grok skills in the Grok home `bundled/skills` folder, then the Grok home
-`skills` folder (`~/.grok/skills` by default, or `$GROK_HOME/skills`), then
-`<workspace>/.agents/skills`, `<workspace>/.claude/skills`, and `<workspace>/.grok/skills`.
+T3 Code looks for Grok skills in this order:
 
-If the same skill name exists in more than one folder, the later folder wins.
+1. Grok home `bundled/skills`
+2. `~/.agents/skills`
+3. Grok home `skills` (`~/.grok/skills` by default, or `$GROK_HOME/skills`)
+4. `<workspace>/.agents/skills`
+5. `<workspace>/.claude/skills`
+6. `<workspace>/.grok/skills`
+
+If the same skill name exists in more than one folder, T3 Code keeps a single entry. Matching is
+case-insensitive, and the later folder wins.
 
 ## Permissions
 
