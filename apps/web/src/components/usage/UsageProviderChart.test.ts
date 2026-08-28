@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildDayColumns, niceScale } from "./UsageProviderChart";
+import { brushSelection, buildDayColumns, niceScale } from "./UsageProviderChart";
 import { providersWithUsage } from "./usageProviders";
 
 describe("niceScale", () => {
@@ -131,5 +131,31 @@ describe("hourly chart columns", () => {
         "cost",
       ).map((column) => column.total),
     ).toEqual([0, 4, 0]);
+  });
+});
+
+describe("brushSelection", () => {
+  const days = ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"];
+
+  it("returns inclusive bounds for a forward drag", () => {
+    expect(brushSelection(days, 1, 3)).toEqual({
+      sinceDay: "2026-08-02",
+      untilDay: "2026-08-04",
+    });
+  });
+
+  it("normalises a backward drag", () => {
+    expect(brushSelection(days, 3, 1)).toEqual({
+      sinceDay: "2026-08-02",
+      untilDay: "2026-08-04",
+    });
+  });
+
+  it("treats a plain click as no selection", () => {
+    expect(brushSelection(days, 2, 2)).toBeNull();
+  });
+
+  it("rejects endpoints outside the day list", () => {
+    expect(brushSelection(days, 0, 9)).toBeNull();
   });
 });

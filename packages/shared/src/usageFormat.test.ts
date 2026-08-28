@@ -6,6 +6,7 @@ import {
   formatDateTimeShort,
   formatHourShort,
   formatRelativeHourShort,
+  makeCustomWindow,
   makeWindow,
 } from "./usageFormat.ts";
 
@@ -69,5 +70,23 @@ describe("hourly usage formatting", () => {
     } finally {
       resolvedOptions.mockRestore();
     }
+  });
+});
+
+describe("makeCustomWindow", () => {
+  it("builds a daily window over the inclusive range", () => {
+    const window = makeCustomWindow("2026-08-03", "2026-08-11");
+
+    expect(window.sinceDay).toBe("2026-08-03");
+    expect(window.untilDay).toBe("2026-08-11");
+    expect(window.resolution).toBe("day");
+    expect(window.sinceTime).toBeUndefined();
+  });
+
+  it("swaps out-of-order bounds so a raw drag never produces an invalid window", () => {
+    const window = makeCustomWindow("2026-08-11", "2026-08-03");
+
+    expect(window.sinceDay).toBe("2026-08-03");
+    expect(window.untilDay).toBe("2026-08-11");
   });
 });

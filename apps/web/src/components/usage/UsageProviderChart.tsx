@@ -1,7 +1,9 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
+
+import { cn } from "../../lib/utils";
 import {
   formatDayShort,
   formatHourShort,
@@ -19,6 +21,13 @@ const PLOT_TOP = 8;
 export type UsageChartMetric = "tokens" | "cost";
 
 interface UsageProviderChartProps {
+  /**
+   * Present only when the window can zoom (daily resolution). Receives the
+   * inclusive day bounds of a completed drag selection.
+   */
+  readonly onZoomToDays?: (sinceDay: string, untilDay: string) => void;
+  /** Restores the preset window on double-click. */
+  readonly onResetZoom?: () => void;
   readonly providers: readonly UsageProviderKind[];
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
@@ -187,7 +196,26 @@ export function buildDayColumns(
   return buildPeriodColumns(days, byDay, metric);
 }
 
+/**
+ * Inclusive day bounds of a brush selection, or null for a plain click.
+ * Endpoints may arrive in either drag direction.
+ */
+export function brushSelection(
+  days: readonly string[],
+  startIndex: number,
+  endIndex: number,
+): { readonly sinceDay: string; readonly untilDay: string } | null {
+  if (startIndex === endIndex) return null;
+  const [first, last] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+  const sinceDay = days[first];
+  const untilDay = days[last];
+  if (sinceDay === undefined || untilDay === undefined) return null;
+  return { sinceDay, untilDay };
+}
+
 export function UsageProviderChart({
+  onZoomToDays,
+  onResetZoom,
   providers,
   days,
   daily,
@@ -207,6 +235,9 @@ export function UsageProviderChart({
     [daily, hourly, resolution],
   );
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  // Drag-selection endpoints, as period indices. Only daily windows zoom.
+  const [brush, setBrush] = useState<{ readonly start: number; readonly end: number } | null>(null);
+  const zoomable = resolution === "day" && onZoomToDays !== undefined;
   const plotRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
@@ -306,22 +337,66 @@ export function UsageProviderChart({
     return () => observer.disconnect();
   }, [hoverIndex, positionTooltip]);
 
+  const indexAt = useCallback(
+    (clientX: number): number | null => {
+      const plot = plotRef.current;
+      if (plot === null || periods.length === 0) return null;
+      const bounds = plot.getBoundingClientRect();
+      if (bounds.width === 0) return null;
+      const localX = Math.min(bounds.width, Math.max(0, clientX - bounds.left));
+      const fraction = localX / bounds.width;
+      const index = Math.round(fraction * (periods.length - 1));
+      return Math.min(periods.length - 1, Math.max(0, index));
+    },
+    [periods.length],
+  );
+
   const handleMove = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       const plot = plotRef.current;
       if (plot === null || periods.length === 0) return;
       const bounds = plot.getBoundingClientRect();
       if (bounds.width === 0) return;
+      const index = indexAt(event.clientX);
+      if (index === null) return;
+      if (brush !== null) {
+        // While selecting, the crosshair and tooltip give way to the band.
+        if (index !== brush.end) setBrush({ start: brush.start, end: index });
+        return;
+      }
       const localX = Math.min(bounds.width, Math.max(0, event.clientX - bounds.left));
       const localY = Math.min(bounds.height, Math.max(0, event.clientY - bounds.top));
-      const fraction = localX / bounds.width;
-      const index = Math.round(fraction * (periods.length - 1));
       hoverPositionRef.current = { x: localX, y: localY };
       positionTooltip();
-      setHoverIndex(Math.min(periods.length - 1, Math.max(0, index)));
+      setHoverIndex(index);
     },
-    [periods.length, positionTooltip],
+    [brush, indexAt, periods.length, positionTooltip],
   );
+
+  const beginBrush = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!zoomable || event.button !== 0) return;
+      const index = indexAt(event.clientX);
+      if (index === null) return;
+      event.preventDefault();
+      hoverPositionRef.current = null;
+      setHoverIndex(null);
+      setBrush({ start: index, end: index });
+    },
+    [indexAt, zoomable],
+  );
+
+  // A drag may end anywhere on the page, so the commit listens on the window.
+  useEffect(() => {
+    if (brush === null || onZoomToDays === undefined) return;
+    const commit = () => {
+      const selection = brushSelection(days, brush.start, brush.end);
+      setBrush(null);
+      if (selection !== null) onZoomToDays(selection.sinceDay, selection.untilDay);
+    };
+    window.addEventListener("mouseup", commit);
+    return () => window.removeEventListener("mouseup", commit);
+  }, [brush, days, onZoomToDays]);
 
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
   const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
@@ -350,8 +425,10 @@ export function UsageProviderChart({
 
         <div
           ref={plotRef}
-          className="relative h-56 flex-1"
+          className={cn("relative h-56 flex-1", zoomable && "cursor-crosshair")}
           onMouseMove={handleMove}
+          onMouseDown={beginBrush}
+          onDoubleClick={onResetZoom}
           onMouseLeave={() => {
             hoverPositionRef.current = null;
             setHoverIndex(null);
@@ -400,6 +477,21 @@ export function UsageProviderChart({
                 vectorEffect="non-scaling-stroke"
               />
             ))}
+
+            {brush === null || brush.start === brush.end ? null : (
+              <rect
+                x={Math.min(brush.start, brush.end) * stepX}
+                y={PLOT_TOP}
+                width={Math.abs(brush.end - brush.start) * stepX}
+                height={VIEW_HEIGHT - PLOT_TOP}
+                fill="currentColor"
+                fillOpacity={0.08}
+                stroke="currentColor"
+                strokeWidth={1}
+                className="text-muted-foreground"
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
 
             {hoverIndex === null ? null : (
               <line

@@ -171,6 +171,21 @@ export function formatRelativeHourShort(
 }
 
 /**
+ * A daily window over an explicit inclusive day range, in the viewer's zone.
+ * Bounds arrive from date inputs or a chart brush; out-of-order bounds are
+ * swapped rather than rejected so callers can pass a drag's raw endpoints.
+ */
+export function makeCustomWindow(sinceDay: string, untilDay: string): UsageSummaryInput {
+  const [first, last] = sinceDay <= untilDay ? [sinceDay, untilDay] : [untilDay, sinceDay];
+  return {
+    sinceDay: UsageDay.make(first),
+    untilDay: UsageDay.make(last),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    resolution: "day",
+  };
+}
+
+/**
  * The window the page requests, expressed in the viewer's own time zone so days
  * line up with what they actually experienced.
  */

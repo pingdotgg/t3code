@@ -17,6 +17,7 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
+  makeCustomWindow,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { Button } from "../ui/button";
@@ -42,14 +43,17 @@ const WINDOW_OPTIONS = [
 ] as const;
 
 export function UsagePage() {
+  // `days` remembers the last preset even while a custom (brushed or typed)
+  // range is active, so a reset lands back where the user started.
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
+    custom: false,
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
-  const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const { days: windowDays, custom: isCustomWindow, window } = windowSelection;
+  const isPast24Hours = !isCustomWindow && windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
 
   // Hold the content until every environment is terminal. Rendering merged
@@ -89,10 +93,24 @@ export function UsagePage() {
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
+      custom: false,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
     });
   };
+  const selectCustomWindow = (sinceDay: string, untilDay: string) => {
+    setWindowSelection({
+      days: windowDays,
+      custom: true,
+      window: makeCustomWindow(sinceDay, untilDay),
+    });
+  };
   const refreshWindow = () => {
+    // A custom range is a fixed span of past days; rescanning is all a
+    // refresh can mean for it.
+    if (isCustomWindow) {
+      refresh();
+      return;
+    }
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay === window.sinceDay &&
@@ -102,7 +120,7 @@ export function UsagePage() {
     ) {
       refresh();
     } else {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+      setWindowSelection({ days: windowDays, custom: false, window: nextWindow });
     }
   };
   const windowLabel =
@@ -136,10 +154,15 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
+        <UsageDateRangeInputs
+          sinceDay={window.sinceDay}
+          untilDay={window.untilDay}
+          onChange={selectCustomWindow}
+        />
         <ToggleGroup
           aria-label="Usage period"
           variant="segmented"
-          value={[String(windowDays)]}
+          value={isCustomWindow ? [] : [String(windowDays)]}
           onValueChange={(next) => {
             const value = next[0];
             if (value) selectWindow(Number(value));
@@ -175,7 +198,12 @@ export function UsagePage() {
             <SelectItem value="tokens">Tokens</SelectItem>
           </SelectPopup>
         </Select>
-        <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
+        <Select
+          value={isCustomWindow ? "custom" : String(windowDays)}
+          onValueChange={(value) => {
+            if (value !== "custom" && value !== null) selectWindow(Number(value));
+          }}
+        >
           <SelectTrigger
             aria-label="Usage period"
             size="compact"
@@ -183,7 +211,9 @@ export function UsagePage() {
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              {isCustomWindow
+                ? "Custom"
+                : WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -282,10 +312,17 @@ export function UsagePage() {
                   </div>
 
                   <div className="flex min-w-0 flex-col gap-3">
-                    <h2 className="text-sm font-medium text-foreground">
-                      {isPast24Hours ? "Hourly" : "Daily"}{" "}
-                      {metric === "tokens" ? "processed tokens" : "cost"}
-                    </h2>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <h2 className="text-sm font-medium text-foreground">
+                        {isPast24Hours ? "Hourly" : "Daily"}{" "}
+                        {metric === "tokens" ? "processed tokens" : "cost"}
+                      </h2>
+                      {isPast24Hours ? null : (
+                        <span className="text-[10px] tracking-wide text-muted-foreground uppercase">
+                          drag to zoom · double-click resets
+                        </span>
+                      )}
+                    </div>
                     <UsageProviderChart
                       providers={activeProviders}
                       days={days}
@@ -296,6 +333,12 @@ export function UsagePage() {
                       referenceTime={window.untilTime}
                       resolution={isPast24Hours ? "hour" : "day"}
                       timeZone={window.timeZone}
+                      {...(isPast24Hours
+                        ? {}
+                        : {
+                            onZoomToDays: selectCustomWindow,
+                            onResetZoom: () => selectWindow(windowDays),
+                          })}
                     />
                   </div>
                 </section>
@@ -461,6 +504,49 @@ export function UsagePage() {
         </ScrollArea>
       </div>
     </SidebarInset>
+  );
+}
+
+/**
+ * Free date-range bounds beside the presets. Native date inputs; committing
+ * either bound deselects every preset. Hidden below lg with the rest of the
+ * expanded toolbar.
+ */
+function UsageDateRangeInputs({
+  sinceDay,
+  untilDay,
+  onChange,
+}: {
+  readonly sinceDay: string;
+  readonly untilDay: string;
+  readonly onChange: (sinceDay: string, untilDay: string) => void;
+}) {
+  const inputClass =
+    "h-7 rounded-md border border-border bg-transparent px-2 text-xs text-foreground [color-scheme:inherit] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none";
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <input
+        type="date"
+        aria-label="From day"
+        className={inputClass}
+        value={sinceDay}
+        max={untilDay}
+        onChange={(event) => {
+          if (event.target.value) onChange(event.target.value, untilDay);
+        }}
+      />
+      <span>to</span>
+      <input
+        type="date"
+        aria-label="To day"
+        className={inputClass}
+        value={untilDay}
+        min={sinceDay}
+        onChange={(event) => {
+          if (event.target.value) onChange(sinceDay, event.target.value);
+        }}
+      />
+    </div>
   );
 }
 
