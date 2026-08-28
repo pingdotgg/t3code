@@ -1,11 +1,5 @@
 import * as Schema from "effect/Schema";
-import {
-  type PointerEvent as ReactPointerEvent,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type PointerEvent as ReactPointerEvent, useCallback, useRef, useState } from "react";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
 
@@ -26,6 +20,7 @@ export interface UseResizableWidthOptions {
 }
 
 export interface ResizableWidthHandlers {
+  readonly ref: (element: HTMLElement | null) => (() => void) | undefined;
   readonly onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -96,12 +91,16 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     dragStateRef.current = null;
   }, []);
 
-  useEffect(() => {
-    return () => {
-      const state = dragStateRef.current;
-      if (state) releasePointer(state.pointerId);
-    };
-  }, [releasePointer]);
+  const ref = useCallback(
+    (element: HTMLElement | null) => {
+      if (element === null) return undefined;
+      return () => {
+        const state = dragStateRef.current;
+        if (state) releasePointer(state.pointerId);
+      };
+    },
+    [releasePointer],
+  );
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -176,6 +175,6 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
 
   return {
     width: clampedWidth,
-    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+    handlers: { ref, onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
   };
 }

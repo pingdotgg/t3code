@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -17,9 +16,8 @@ const OPTIONS: UseResizableWidthOptions = {
 };
 
 /**
- * Minimal CSSOM stand-in for `document.body.style`. Mirrors the real mapping
- * between the camelCase property and the dashed name `removeProperty` takes,
- * so a cleanup that removes the wrong name shows up as a leak here too.
+ * Minimal CSSOM stand-in for `document.body.style`, mirroring the real mapping
+ * between the camelCase property and the dashed name `removeProperty` takes.
  */
 function createBodyStyle() {
   const declarations = new Map<string, string>();
@@ -36,9 +34,6 @@ function createBodyStyle() {
     set userSelect(value: string) {
       declarations.set("user-select", value);
     },
-    getPropertyValue(name: string) {
-      return declarations.get(name) ?? "";
-    },
     removeProperty(name: string) {
       const previous = declarations.get(name) ?? "";
       declarations.delete(name);
@@ -51,6 +46,7 @@ function createBodyStyle() {
 class TestNode {
   parentNode: TestNode | null = null;
   childNodes: TestNode[] = [];
+  capturedPointerId: number | null = null;
   readonly nodeName: string;
   readonly tagName: string;
   readonly namespaceURI = "http://www.w3.org/1999/xhtml";
@@ -85,12 +81,51 @@ class TestNode {
     return new TestNode(name, this);
   }
 
+  setPointerCapture(pointerId: number) {
+    this.capturedPointerId = pointerId;
+  }
+
+  hasPointerCapture(pointerId: number) {
+    return this.capturedPointerId === pointerId;
+  }
+
+  releasePointerCapture(pointerId: number) {
+    if (this.capturedPointerId === pointerId) this.capturedPointerId = null;
+  }
+
   addEventListener() {}
   removeEventListener() {}
   setAttribute() {}
 }
 
-function installTestDom() {
+function pointerEvent(handle: TestNode, clientX: number, pointerId = 1) {
+  return {
+    button: 0,
+    pointerId,
+    clientX,
+    currentTarget: handle,
+    preventDefault() {},
+    stopPropagation() {},
+  } as unknown as Parameters<ResizableWidthHandlers["onPointerDown"]>[0];
+}
+
+function Probe(props: {
+  handleMounted: boolean;
+  onHandlers: (handlers: ResizableWidthHandlers) => void;
+}) {
+  const { handlers } = useResizableWidth(OPTIONS);
+  useEffect(() => {
+    props.onHandlers(handlers);
+  }, [handlers, props]);
+  return props.handleMounted ? <div {...handlers} /> : null;
+}
+
+/**
+ * Mounts the hook behind a drag handle that can be removed independently of
+ * the hook, mirroring `PreviewPanelShell`: the shell owns the hook and renders
+ * the handle only while the panel is inline and not maximized.
+ */
+async function mountProbe() {
   const document = new TestNode("#document", null, 9) as TestNode & {
     body: { style: ReturnType<typeof createBodyStyle> };
   };
@@ -101,6 +136,7 @@ function installTestDom() {
     addEventListener() {},
     removeEventListener() {},
   };
+  Object.assign(document, { defaultView: window, activeElement: null });
   vi.stubGlobal("document", document);
   vi.stubGlobal("window", window);
   vi.stubGlobal("HTMLIFrameElement", TestNode);
@@ -110,65 +146,37 @@ function installTestDom() {
     return 1;
   });
   vi.stubGlobal("cancelAnimationFrame", () => {});
-  return document;
-}
 
-/** Stand-in for the resize handle element, tracking its pointer capture. */
-function createHandleElement() {
-  let capturedPointerId: number | null = null;
-  return {
-    setPointerCapture(pointerId: number) {
-      capturedPointerId = pointerId;
-    },
-    hasPointerCapture(pointerId: number) {
-      return capturedPointerId === pointerId;
-    },
-    releasePointerCapture(pointerId: number) {
-      if (capturedPointerId === pointerId) capturedPointerId = null;
-    },
-    get capturedPointerId() {
-      return capturedPointerId;
-    },
-  };
-}
-
-function pointerEvent(
-  handle: ReturnType<typeof createHandleElement>,
-  overrides: { pointerId?: number; clientX?: number; button?: number } = {},
-) {
-  return {
-    button: overrides.button ?? 0,
-    pointerId: overrides.pointerId ?? 1,
-    clientX: overrides.clientX ?? 0,
-    currentTarget: handle,
-    preventDefault() {},
-    stopPropagation() {},
-  } as unknown as Parameters<ResizableWidthHandlers["onPointerDown"]>[0];
-}
-
-function Probe(props: { onHandlers: (handlers: ResizableWidthHandlers) => void }) {
-  const { handlers } = useResizableWidth(OPTIONS);
-  useEffect(() => {
-    props.onHandlers(handlers);
-  }, [handlers, props]);
-  return null;
-}
-
-async function mountProbe(document: TestNode) {
+  const container = document.createElement("div");
   const { createRoot } = await import("react-dom/client");
-  const root = createRoot(document.createElement("div") as unknown as Element);
+  const root = createRoot(container as unknown as Element);
   let handlers: ResizableWidthHandlers | null = null;
-  await act(() => {
-    root.render(
-      <Probe
-        onHandlers={(next) => {
-          handlers = next;
-        }}
-      />,
-    );
-  });
+
+  const render = async (handleMounted: boolean) => {
+    await act(() => {
+      root.render(
+        <Probe
+          handleMounted={handleMounted}
+          onHandlers={(next) => {
+            handlers = next;
+          }}
+        />,
+      );
+    });
+  };
+
+  await render(true);
+  const handle = container.childNodes[0];
+  if (!handle) throw new Error("the drag handle was never rendered");
   if (handlers === null) throw new Error("handlers were never published");
-  return { root, handlers: handlers as ResizableWidthHandlers };
+
+  return {
+    body: document.body,
+    handle,
+    handlers: handlers as ResizableWidthHandlers,
+    unmountHandle: () => render(false),
+    unmountAll: () => act(() => root.unmount()),
+  };
 }
 
 afterEach(() => {
@@ -177,47 +185,54 @@ afterEach(() => {
 
 describe("useResizableWidth global cursor state", () => {
   it("clears the global cursor when the drag ends with a pointer up", async () => {
-    const document = installTestDom();
-    const handle = createHandleElement();
-    const { root, handlers } = await mountProbe(document);
-
-    try {
-      await act(() => {
-        handlers.onPointerDown(pointerEvent(handle, { clientX: 800 }));
-      });
-      expect(document.body.style.cursor).toBe("col-resize");
-      expect(document.body.style.userSelect).toBe("none");
-
-      await act(() => {
-        handlers.onPointerUp(pointerEvent(handle, { clientX: 760 }));
-      });
-
-      expect(document.body.style.cursor).toBe("");
-      expect(document.body.style.userSelect).toBe("");
-      expect(handle.capturedPointerId).toBeNull();
-    } finally {
-      await act(() => root.unmount());
-    }
-  });
-
-  it("clears the global cursor when the handle unmounts mid-drag", async () => {
-    const document = installTestDom();
-    const handle = createHandleElement();
-    const { root, handlers } = await mountProbe(document);
+    const probe = await mountProbe();
 
     await act(() => {
-      handlers.onPointerDown(pointerEvent(handle, { clientX: 800 }));
+      probe.handlers.onPointerDown(pointerEvent(probe.handle, 800));
     });
-    expect(document.body.style.cursor).toBe("col-resize");
+    expect(probe.body.style.cursor).toBe("col-resize");
+    expect(probe.body.style.userSelect).toBe("none");
 
-    // The panel can disappear under an in-flight drag: maximizing the right
-    // panel, switching it out of inline mode, or closing it all unmount the
-    // handle. No further pointer event can reach a handler after that, so the
-    // hook itself has to give the body its cursor back.
-    await act(() => root.unmount());
+    await act(() => {
+      probe.handlers.onPointerUp(pointerEvent(probe.handle, 760));
+    });
 
-    expect(document.body.style.cursor).toBe("");
-    expect(document.body.style.userSelect).toBe("");
-    expect(handle.capturedPointerId).toBeNull();
+    expect(probe.body.style.cursor).toBe("");
+    expect(probe.body.style.userSelect).toBe("");
+    expect(probe.handle.capturedPointerId).toBeNull();
+
+    await probe.unmountAll();
+  });
+
+  it("clears the global cursor when the handle is removed mid-drag", async () => {
+    const probe = await mountProbe();
+
+    await act(() => {
+      probe.handlers.onPointerDown(pointerEvent(probe.handle, 800));
+    });
+    expect(probe.body.style.cursor).toBe("col-resize");
+
+    await probe.unmountHandle();
+
+    expect(probe.body.style.cursor).toBe("");
+    expect(probe.body.style.userSelect).toBe("");
+    expect(probe.handle.capturedPointerId).toBeNull();
+
+    await probe.unmountAll();
+  });
+
+  it("clears the global cursor when the whole panel unmounts mid-drag", async () => {
+    const probe = await mountProbe();
+
+    await act(() => {
+      probe.handlers.onPointerDown(pointerEvent(probe.handle, 800));
+    });
+    expect(probe.body.style.cursor).toBe("col-resize");
+
+    await probe.unmountAll();
+
+    expect(probe.body.style.cursor).toBe("");
+    expect(probe.body.style.userSelect).toBe("");
+    expect(probe.handle.capturedPointerId).toBeNull();
   });
 });
