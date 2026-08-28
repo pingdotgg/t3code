@@ -335,8 +335,8 @@ describe("CloudManagedEndpointRuntime", () => {
 
       expect(spawned.map((command) => command.command)).toEqual(["cloudflared", "cloudflared"]);
       expect(spawned.map((command) => command.args)).toEqual([
-        ["tunnel", "run"],
-        ["tunnel", "run"],
+        ["tunnel", "--no-autoupdate", "--loglevel", "info", "--output", "default", "run"],
+        ["tunnel", "--no-autoupdate", "--loglevel", "info", "--output", "default", "run"],
       ]);
       expect(spawned.map((command) => command.options.env?.TUNNEL_TOKEN)).toEqual([
         "token-1",

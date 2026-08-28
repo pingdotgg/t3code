@@ -2,6 +2,7 @@ import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
   RelayAgentAwarenessPreferences,
+  RelayManagedEndpointOrigin,
 } from "@t3tools/contracts/relay";
 import {
   boolean,
@@ -96,6 +97,7 @@ export const relayManagedEndpointAllocations = pgTable(
     readyAt: varchar("ready_at", { length: 64 }),
     recoveryEnabledAt: varchar("recovery_enabled_at", { length: 64 }),
     recoveryEnvironmentPublicKey: text("recovery_environment_public_key"),
+    origin: jsonb("origin").$type<RelayManagedEndpointOrigin>(),
     generation: integer("generation").notNull().default(0),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
     updatedAt: varchar("updated_at", { length: 64 }).notNull(),

@@ -126,14 +126,19 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
   connectHttpApiLayer,
   pendingServiceUpdateExists,
-  reconcileDesiredCloudLink,
+  reconcileDesiredCloudLinkIfStillDesired,
   recoverManagedCloudTunnel,
   registerManagedCloudTunnelRecovery,
+  startManagedCloudTunnelIfOriginConfirmed,
   releaseManagedTunnelOnShutdown,
 } from "./cloud/http.ts";
 import { serverRelayBrokerTracingLayer } from "./cloud/relayTracing.ts";
 import { shouldRetryCloudLink } from "./cloud/relayResponse.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
+import {
+  managedTunnelStartupAction,
+  retryManagedTunnelRegistration,
+} from "./cloud/managedTunnelStartup.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
@@ -749,21 +754,20 @@ const makeServerLayer = Layer.unwrap(
             const recoveryLock = yield* Semaphore.make(1);
             const recoverManagedTunnel = (config: RelayManagedEndpointRuntimeConfig) =>
               recoveryLock.withPermits(1)(
-                recoverManagedCloudTunnel(localOrigin, config).pipe(
+                recoverManagedCloudTunnel(localOrigin, config, {
+                  retryRuntimeFailures: true,
+                }).pipe(
                   Effect.retry({
                     while: (error) =>
                       error._tag !== "EnvironmentHttpBadRequestError" &&
                       error._tag !== "EnvironmentHttpUnauthorizedError" &&
                       error._tag !== "EnvironmentHttpConflictError" &&
-                      (error._tag !== "EnvironmentCloudEndpointUnavailableError" ||
-                        CloudManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus(
-                          error.endpointRuntimeStatus,
-                        )),
+                      error._tag !== "EnvironmentCloudEndpointUnavailableError",
                     schedule: Schedule.exponential("1 second").pipe(
                       Schedule.modifyDelay(({ duration }) =>
                         Effect.succeed(Duration.min(duration, Duration.seconds(30))),
                       ),
-                      Schedule.upTo({ duration: "10 minutes" }),
+                      Schedule.jittered,
                     ),
                   }),
                   Effect.tap((recovered) =>
@@ -800,9 +804,18 @@ const makeServerLayer = Layer.unwrap(
             const desiredCliLinkMode = wantsCliLink
               ? yield* CloudCliState.readCliDesiredLinkMode
               : null;
-            const registerManagedTunnel = registerManagedCloudTunnelRecovery().pipe(
-              Effect.tap((registered) =>
-                registered
+            const registerManagedTunnel = retryManagedTunnelRegistration(
+              registerManagedCloudTunnelRecovery(localOrigin, {
+                retryRuntimeFailures: true,
+              }),
+              (error) =>
+                error._tag !== "EnvironmentCloudEndpointUnavailableError" &&
+                error._tag !== "EnvironmentHttpBadRequestError" &&
+                error._tag !== "EnvironmentHttpUnauthorizedError" &&
+                error._tag !== "EnvironmentHttpConflictError",
+            ).pipe(
+              Effect.tap((result) =>
+                result.status === "ready"
                   ? Effect.logInfo("T3 Connect managed tunnel recovery registered")
                   : Effect.void,
               ),
@@ -811,13 +824,26 @@ const makeServerLayer = Layer.unwrap(
                   ? Effect.interrupt
                   : Effect.logWarning("Failed to register T3 Connect managed tunnel recovery", {
                       cause,
-                    }).pipe(Effect.as(false)),
+                    }).pipe(Effect.as({ status: "unavailable" as const })),
               ),
             );
-            const registered =
-              desiredCliLinkMode === "publish_only" ? false : yield* registerManagedTunnel;
-            if (wantsCliLink && !registered) {
-              const reconciled = yield* reconcileDesiredCloudLink(localOrigin).pipe(
+            yield* startManagedCloudTunnelIfOriginConfirmed(localOrigin).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", { cause }),
+              ),
+            );
+            const registration =
+              desiredCliLinkMode === "publish_only"
+                ? { status: "not_linked" as const }
+                : yield* registerManagedTunnel;
+            const startupAction = managedTunnelStartupAction({ wantsCliLink, registration });
+            if (startupAction.action === "request_recovery") {
+              yield* endpointRuntime.requestRecovery(startupAction.config);
+            }
+            if (startupAction.action === "reconcile_link") {
+              const reconciledMode = yield* reconcileDesiredCloudLinkIfStillDesired(
+                localOrigin,
+              ).pipe(
                 Effect.retry({
                   while: (error) =>
                     error._tag !== "EnvironmentHttpBadRequestError" &&
@@ -830,16 +856,22 @@ const makeServerLayer = Layer.unwrap(
                     Schedule.upTo({ duration: "10 minutes" }),
                   ),
                 }),
-                Effect.tap(() => Effect.logInfo("T3 Connect desired link reconciled on startup")),
-                Effect.as(true),
+                Effect.tap((mode) =>
+                  mode === null
+                    ? Effect.void
+                    : Effect.logInfo("T3 Connect desired link reconciled on startup"),
+                ),
                 Effect.catch((cause) =>
                   Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
                     cause,
-                  }).pipe(Effect.as(false)),
+                  }).pipe(Effect.as(null)),
                 ),
               );
-              if (reconciled && desiredCliLinkMode === "managed") {
-                yield* registerManagedTunnel;
+              if (reconciledMode === "managed") {
+                const afterReconcile = yield* registerManagedTunnel;
+                if (afterReconcile.status === "recovery_required") {
+                  yield* endpointRuntime.requestRecovery(afterReconcile.config);
+                }
               }
             }
           }),

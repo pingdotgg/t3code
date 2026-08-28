@@ -38,6 +38,7 @@ import {
   type RelayLinkProofRequest,
 } from "@t3tools/contracts/relay";
 import {
+  CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
   decodeRuntimeConfig,
@@ -50,9 +51,11 @@ import {
   linkProofScopes,
   pendingServiceUpdateExists,
   reconcileDesiredCloudLink,
+  reconcileDesiredCloudLinkIfStillDesired,
   recoverManagedCloudTunnel,
   registerManagedCloudTunnelRecovery,
   releaseManagedTunnelOnShutdown,
+  startManagedCloudTunnelIfOriginConfirmed,
 } from "./http.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
@@ -395,9 +398,26 @@ describe("releaseManagedTunnelOnShutdown", () => {
   // The persisted state of a CLI-managed link whose tunnel is releasable.
   const managedLinkSecrets = [
     [CLOUD_ENDPOINT_RUNTIME_CONFIG, "runtime-config"],
+    [CLOUD_ENDPOINT_CONFIRMED_ORIGIN, "confirmed-origin"],
     [RELAY_URL_SECRET, "https://relay.example.test"],
     [CLOUD_CLI_DESIRED_LINK_SECRET, "managed"],
   ] as const;
+
+  it.effect("does not recreate a link that was unlinked while startup registration retried", () => {
+    const { store, values } = makeMemorySecretStore(managedLinkSecrets);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      // Registration started while this marker existed. Unlink removes it
+      // before startup receives the relay's final not_linked response.
+      values.delete(CLOUD_CLI_DESIRED_LINK_SECRET);
+
+      expect(yield* reconcileDesiredCloudLinkIfStillDesired("http://127.0.0.1:3773")).toBeNull();
+      expect(requests).toEqual([]);
+      expect(applyConfigCalls).toEqual([]);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
 
   it.effect("stops the connector, releases the relay tunnel, and drops the dead token", () => {
     const { store, values } = makeMemorySecretStore(managedLinkSecrets);
@@ -417,6 +437,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       );
       expect(request.headers.authorization).toBe("Bearer cli-access-token");
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
+      expect(values.has(CLOUD_ENDPOINT_CONFIRMED_ORIGIN)).toBe(false);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
@@ -659,7 +680,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
-  it.effect("registers an existing tunnel without provisioning or restarting it", () => {
+  it.effect("registers an existing tunnel and starts the confirmed connector", () => {
     const { store } = makeMemorySecretStore([
       [
         CLOUD_ENDPOINT_RUNTIME_CONFIG,
@@ -673,7 +694,9 @@ describe("releaseManagedTunnelOnShutdown", () => {
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
 
     return Effect.gen(function* () {
-      expect(yield* registerManagedCloudTunnelRecovery()).toBe(true);
+      expect(yield* registerManagedCloudTunnelRecovery("http://127.0.0.1:3773")).toMatchObject({
+        status: "ready",
+      });
       expect(requests).toHaveLength(1);
       expect(requests[0]?.method).toBe("POST");
       expect(requests[0]?.url).toBe(
@@ -688,11 +711,117 @@ describe("releaseManagedTunnelOnShutdown", () => {
         ).toMatchObject({
           cloudUserId: "user-123",
           tunnelId: "existing-tunnel",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
         });
       }
+      expect(applyConfigCalls).toHaveLength(1);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests,
+        respond: () => Response.json({ status: "ready" }),
+      }),
+    );
+  });
+
+  it.effect(
+    "starts a connector with a marker for the current origin without contacting relay",
+    () => {
+      const configJson =
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}';
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "existing-token",
+        tunnelId: "existing-tunnel",
+      };
+      const { store } = makeMemorySecretStore([
+        [CLOUD_ENDPOINT_RUNTIME_CONFIG, configJson],
+        [
+          CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
+          `{"config":${configJson},"origin":{"localHttpHost":"127.0.0.1","localHttpPort":3773}}`,
+        ],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+      return Effect.gen(function* () {
+        expect(yield* startManagedCloudTunnelIfOriginConfirmed("http://127.0.0.1:3773")).toBe(true);
+        expect(applyConfigCalls).toEqual([config]);
+        expect(requests).toEqual([]);
+      }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+    },
+  );
+
+  it.effect.each([
+    { name: "missing", marker: undefined, origin: "http://127.0.0.1:3773" },
+    {
+      name: "stale",
+      marker:
+        '{"config":{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"},"origin":{"localHttpHost":"127.0.0.1","localHttpPort":3773}}',
+      origin: "http://127.0.0.1:4884",
+    },
+  ])("does not start a connector with a $name origin marker", ({ marker, origin }) => {
+    const entries: Array<readonly [string, string]> = [
+      [
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}',
+      ],
+    ];
+    if (marker !== undefined) entries.push([CLOUD_ENDPOINT_CONFIRMED_ORIGIN, marker]);
+    const { store } = makeMemorySecretStore(entries);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      expect(yield* startManagedCloudTunnelIfOriginConfirmed(origin)).toBe(false);
       expect(applyConfigCalls).toEqual([]);
+      expect(requests).toEqual([]);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
+
+  it.effect.each(["replaced", "removed"] as const)(
+    "does not activate a tunnel when its runtime config is %s during registration",
+    (mutation) => {
+      const originalConfig =
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}';
+      const { store, values } = makeMemorySecretStore([
+        [CLOUD_ENDPOINT_RUNTIME_CONFIG, originalConfig],
+        [RELAY_URL_SECRET, "https://relay.example.test"],
+        [CLOUD_LINKED_USER_ID, "user-123"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+      return Effect.gen(function* () {
+        expect(yield* registerManagedCloudTunnelRecovery("http://127.0.0.1:3773")).toEqual({
+          status: "superseded",
+        });
+        expect(applyConfigCalls).toEqual([]);
+        expect(values.has(CLOUD_ENDPOINT_CONFIRMED_ORIGIN)).toBe(false);
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls,
+          requests,
+          respond: () => {
+            if (mutation === "replaced") {
+              values.set(
+                CLOUD_ENDPOINT_RUNTIME_CONFIG,
+                new TextEncoder().encode(
+                  '{"providerKind":"cloudflare_tunnel","connectorToken":"fresh-token","tunnelId":"fresh-tunnel"}',
+                ),
+              );
+            } else {
+              values.delete(CLOUD_ENDPOINT_RUNTIME_CONFIG);
+            }
+            return Response.json({ status: "ready" });
+          },
+        }),
+      );
+    },
+  );
 
   it.effect("does not register recovery without a recorded tunnel ID", () => {
     const { store } = makeMemorySecretStore([
@@ -708,7 +837,9 @@ describe("releaseManagedTunnelOnShutdown", () => {
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
 
     return Effect.gen(function* () {
-      expect(yield* registerManagedCloudTunnelRecovery()).toBe(false);
+      expect(yield* registerManagedCloudTunnelRecovery("http://127.0.0.1:3773")).toEqual({
+        status: "not_linked",
+      });
       expect(requests).toEqual([]);
       expect(applyConfigCalls).toEqual([]);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));

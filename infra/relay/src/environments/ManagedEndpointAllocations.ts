@@ -1,4 +1,4 @@
-import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
+import type { RelayManagedEndpoint, RelayManagedEndpointOrigin } from "@t3tools/contracts/relay";
 import { and, eq, exists, inArray, isNull, sql } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 import * as Context from "effect/Context";
@@ -21,6 +21,7 @@ export interface ManagedEndpointAllocation {
   readonly tunnelName: string;
   readonly dnsRecordId: string | null;
   readonly readyAt: string | null;
+  readonly origin: RelayManagedEndpointOrigin | null;
   readonly updatedAt: string;
   readonly generation: number;
 }
@@ -103,6 +104,7 @@ interface RecordManagedEndpointDnsInput extends ManagedEndpointAllocationKey {
 interface MarkManagedEndpointReadyInput extends ManagedEndpointAllocationKey {
   readonly tunnelId: string;
   readonly generation: number;
+  readonly origin: RelayManagedEndpointOrigin;
 }
 
 interface ClaimManagedEndpointReleaseInput extends ManagedEndpointAllocationKey {
@@ -113,6 +115,7 @@ interface ClaimManagedEndpointReleaseInput extends ManagedEndpointAllocationKey 
 interface EnableManagedEndpointRecoveryInput extends ManagedEndpointAllocationKey {
   readonly tunnelId: string;
   readonly environmentPublicKey: string;
+  readonly origin: RelayManagedEndpointOrigin;
 }
 
 interface ClaimManagedEndpointDeprovisionInput extends ManagedEndpointAllocationKey {
@@ -191,6 +194,7 @@ const allocationSelection = {
   tunnelName: relayManagedEndpointAllocations.tunnelName,
   dnsRecordId: relayManagedEndpointAllocations.dnsRecordId,
   readyAt: relayManagedEndpointAllocations.readyAt,
+  origin: relayManagedEndpointAllocations.origin,
   updatedAt: relayManagedEndpointAllocations.updatedAt,
   generation: relayManagedEndpointAllocations.generation,
 };
@@ -289,6 +293,7 @@ export const make = Effect.gen(function* () {
         .set({
           tunnelId: input.tunnelId,
           readyAt: sql`case when ${relayManagedEndpointAllocations.tunnelId} = ${input.tunnelId} then ${relayManagedEndpointAllocations.readyAt} else null end`,
+          origin: sql`case when ${relayManagedEndpointAllocations.tunnelId} = ${input.tunnelId} then ${relayManagedEndpointAllocations.origin} else null end`,
           updatedAt: DateTime.formatIso(yield* DateTime.now),
           generation: sql`${relayManagedEndpointAllocations.generation} + 1`,
         })
@@ -351,6 +356,7 @@ export const make = Effect.gen(function* () {
         .update(relayManagedEndpointAllocations)
         .set({
           readyAt: now,
+          origin: input.origin,
           updatedAt: now,
           generation: sql`${relayManagedEndpointAllocations.generation} + 1`,
         })
@@ -391,6 +397,7 @@ export const make = Effect.gen(function* () {
           and(
             whereAllocation(input),
             eq(relayManagedEndpointAllocations.tunnelId, input.tunnelId),
+            eq(relayManagedEndpointAllocations.origin, input.origin),
             exists(
               new QueryBuilder()
                 .select({ userId: relayEnvironmentLinks.userId })

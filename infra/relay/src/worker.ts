@@ -182,6 +182,7 @@ export const ApiLive = Api.make(
     yield* yield* relayApiZone.zoneId;
     const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
     const managedEndpointZoneName = yield* managedEndpointZone.name;
+    const managedEndpointCleanupMode = yield* RelayConfiguration.managedEndpointCleanupModeConfig;
 
     //
     // 3. Runtime layers and app construction
@@ -201,6 +202,7 @@ export const ApiLive = Api.make(
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
         managedEndpointNamespace: stage,
+        managedEndpointCleanupMode,
       });
     });
 
@@ -342,7 +344,7 @@ export const ApiLive = Api.make(
             ),
           ),
           ManagedEndpointReaper.ManagedEndpointReaper.pipe(
-            Effect.flatMap((reaper) => reaper.sweep),
+            Effect.flatMap((reaper) => reaper.sweep.pipe(Effect.timeout("2 minutes"))),
             Effect.tap((result) =>
               result.scanned > 0
                 ? Effect.logInfo("Finished managed tunnel cleanup", result)

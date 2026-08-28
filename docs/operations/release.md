@@ -132,6 +132,8 @@ Required `production` environment variables:
 Optional `production` environment variables:
 
 - `RELAY_DOMAIN` when overriding the derived `relay.<RELAY_API_ZONE_NAME>` domain
+- `RELAY_TUNNEL_CLEANUP_MODE` with `off`, `dry-run`, or `enabled`. Missing and blank values use
+  `off`.
 
 Required `production` environment secrets:
 

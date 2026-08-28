@@ -30,6 +30,7 @@ import {
   RelayLinkProofRequest,
   RelayManagedEndpointOrigin,
   RelayManagedEndpointRecoveryProofPayload,
+  RelayManagedEndpointRecoveryRegistrationResponse,
   RelayManagedEndpointRecoveryResponse,
   type RelayManagedEndpointRuntimeConfig,
   RelayOkResponse,
@@ -56,10 +57,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpServer from "effect/unstable/http/HttpServer";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -74,10 +77,13 @@ import {
 } from "./serviceProtocol.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
+  decodeConfirmedOrigin,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
   decodeRuntimeConfig,
   encodeEndpointRuntimeConfigJson,
+  encodeConfirmedOriginJson,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
@@ -460,10 +466,137 @@ const cloudLinkProofHandler = Effect.fn("environment.cloud.linkProof")(
   ),
 );
 
+function managedEndpointOriginFromLocalUrl(localOrigin: string): RelayManagedEndpointOrigin {
+  const localUrl = new URL(localOrigin);
+  if (localUrl.origin !== localOrigin) {
+    throw new Error("Invalid local origin");
+  }
+  return {
+    localHttpHost: localUrl.hostname,
+    localHttpPort: endpointRequestPort(localUrl),
+  };
+}
+
+function managedEndpointRuntimeConfigsMatch(
+  left: RelayManagedEndpointRuntimeConfig,
+  right: RelayManagedEndpointRuntimeConfig,
+): boolean {
+  return (
+    left.providerKind === right.providerKind &&
+    left.connectorToken === right.connectorToken &&
+    left.tunnelId === right.tunnelId &&
+    left.tunnelName === right.tunnelName
+  );
+}
+
+const activateManagedTunnel = Effect.fn("environment.cloud.activateManagedTunnel")(function* (
+  dependencies: CloudHttpDependencies,
+  input: {
+    readonly config: RelayManagedEndpointRuntimeConfig;
+    readonly configJson: string;
+    readonly origin: RelayManagedEndpointOrigin;
+  },
+) {
+  return yield* dependencies.endpointRuntime.withLinkStateLock(
+    Effect.gen(function* () {
+      const currentConfig = yield* dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
+      if (Option.isNone(currentConfig) || bytesToString(currentConfig.value) !== input.configJson) {
+        return null;
+      }
+      const status = yield* dependencies.endpointRuntime.applyConfig(input.config);
+      if (status.status !== "running") {
+        return yield* new EnvironmentCloudEndpointUnavailableError({
+          message: "Managed endpoint runtime could not be started.",
+          endpointRuntimeStatus: status,
+        });
+      }
+      const marker = yield* encodeConfirmedOriginJson({
+        config: input.config,
+        origin: input.origin,
+      });
+      yield* dependencies.secrets.set(CLOUD_ENDPOINT_CONFIRMED_ORIGIN, stringToBytes(marker));
+      return status;
+    }),
+  );
+});
+
+const activateManagedTunnelWithRetry = (
+  dependencies: CloudHttpDependencies,
+  input: {
+    readonly config: RelayManagedEndpointRuntimeConfig;
+    readonly configJson: string;
+    readonly origin: RelayManagedEndpointOrigin;
+  },
+  retryRuntimeFailures: boolean,
+) => {
+  const activate = activateManagedTunnel(dependencies, input);
+  return retryRuntimeFailures
+    ? activate.pipe(
+        Effect.retry({
+          while: (error) =>
+            error._tag === "EnvironmentCloudEndpointUnavailableError" &&
+            ManagedEndpointRuntime.isRetryableManagedEndpointRuntimeStatus(
+              error.endpointRuntimeStatus,
+            ),
+          schedule: Schedule.exponential("1 second").pipe(
+            Schedule.modifyDelay(({ duration }) =>
+              Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+            ),
+            Schedule.jittered,
+          ),
+        }),
+      )
+    : activate;
+};
+
+export const startManagedCloudTunnelIfOriginConfirmed = Effect.fn(
+  "environment.cloud.startManagedCloudTunnelIfOriginConfirmed",
+)(function* (localOrigin: string) {
+  const dependencies = yield* cloudHttpDependencies;
+  const origin = yield* Effect.try({
+    try: () => managedEndpointOriginFromLocalUrl(localOrigin),
+    catch: () =>
+      new EnvironmentHttpBadRequestError({
+        message: "Could not resolve local environment origin.",
+      }),
+  });
+  return yield* dependencies.endpointRuntime.withLinkStateLock(
+    Effect.gen(function* () {
+      const [runtimeBytes, markerBytes] = yield* Effect.all([
+        dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+        dependencies.secrets.get(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
+      ]);
+      if (Option.isNone(runtimeBytes) || Option.isNone(markerBytes)) return false;
+      const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeBytes.value)));
+      const marker = Option.getOrNull(decodeConfirmedOrigin(bytesToString(markerBytes.value)));
+      if (
+        config === null ||
+        marker === null ||
+        !managedEndpointRuntimeConfigsMatch(marker.config, config) ||
+        marker.origin.localHttpHost !== origin.localHttpHost ||
+        marker.origin.localHttpPort !== origin.localHttpPort
+      ) {
+        return false;
+      }
+      const status = yield* dependencies.endpointRuntime.applyConfig(config);
+      if (status.status !== "running") {
+        return yield* new EnvironmentCloudEndpointUnavailableError({
+          message: "Managed endpoint runtime could not be started.",
+          endpointRuntimeStatus: status,
+        });
+      }
+      return true;
+    }),
+  );
+});
+
 const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(function* (
   dependencies: CloudHttpDependencies,
   payload: RelayEnvironmentConfigRequest,
-  options?: { readonly lockHeld?: boolean },
+  options?: {
+    readonly lockHeld?: boolean;
+    readonly confirmedOrigin?: RelayManagedEndpointOrigin;
+  },
 ) {
   const apply = Effect.gen(function* () {
     yield* validateRelayConfigPayload(payload);
@@ -472,17 +605,20 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
       cloudUserId: payload.cloudUserId,
     });
     yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
-    const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
-      payload.endpointRuntime,
-    );
-    const ok =
-      endpointRuntimeStatus.status === "disabled" || endpointRuntimeStatus.status === "running";
-    if (!ok) {
+    if (
+      payload.endpointRuntime !== null &&
+      payload.endpointRuntime.providerKind !== "cloudflare_tunnel"
+    ) {
+      const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
+        payload.endpointRuntime,
+      );
       return yield* new EnvironmentCloudEndpointUnavailableError({
         message: "Managed endpoint runtime could not be started.",
         endpointRuntimeStatus,
       });
     }
+    yield* dependencies.endpointRuntime.applyConfig(null);
+    yield* dependencies.secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
 
     yield* dependencies.secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
     yield* dependencies.secrets.set(
@@ -504,23 +640,30 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
         CLOUD_ENDPOINT_RUNTIME_CONFIG,
         stringToBytes(endpointRuntimeJson),
       );
-      yield* registerManagedCloudTunnelRecovery().pipe(
-        Effect.retry({
-          times: 2,
-          while: (error) =>
-            error._tag !== "EnvironmentHttpUnauthorizedError" &&
-            error._tag !== "EnvironmentHttpConflictError",
-        }),
-        Effect.catch((cause) =>
-          Effect.logWarning("Failed to register T3 Connect managed tunnel recovery", {
-            cause,
-          }),
-        ),
-      );
     } else {
       yield* dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
     }
-    return { ok, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
+    if (payload.endpointRuntime === null || options?.confirmedOrigin === undefined) {
+      return {
+        ok: true,
+        endpointRuntimeStatus: { status: "disabled" },
+      } satisfies EnvironmentCloudRelayConfigResult;
+    }
+    const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
+      payload.endpointRuntime,
+    );
+    if (endpointRuntimeStatus.status !== "running") {
+      return yield* new EnvironmentCloudEndpointUnavailableError({
+        message: "Managed endpoint runtime could not be started.",
+        endpointRuntimeStatus,
+      });
+    }
+    const marker = yield* encodeConfirmedOriginJson({
+      config: payload.endpointRuntime,
+      origin: options.confirmedOrigin,
+    });
+    yield* dependencies.secrets.set(CLOUD_ENDPOINT_CONFIRMED_ORIGIN, stringToBytes(marker));
+    return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
   });
   return yield* options?.lockHeld ? apply : dependencies.endpointRuntime.withLinkStateLock(apply);
 });
@@ -528,7 +671,43 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
 const cloudRelayConfigHandler = Effect.fn("environment.cloud.relayConfig")(
   function* (dependencies: CloudHttpDependencies, payload: RelayEnvironmentConfigRequest) {
     yield* requireEnvironmentScope(AuthRelayWriteScope);
-    return yield* applyCloudRelayConfig(dependencies, payload);
+    const result = yield* applyCloudRelayConfig(dependencies, payload);
+    if (payload.endpointRuntime?.providerKind === "cloudflare_tunnel") {
+      const server = yield* HttpServer.HttpServer;
+      const address = server.address;
+      if (typeof address === "string" || !("port" in address)) {
+        return yield* new EnvironmentHttpInternalServerError({
+          message: "Could not resolve the local server origin.",
+        });
+      }
+      const registration = yield* registerManagedCloudTunnelRecovery(
+        `http://127.0.0.1:${address.port}`,
+      ).pipe(
+        Effect.retry({
+          times: 2,
+          while: (error) =>
+            error._tag !== "EnvironmentCloudEndpointUnavailableError" &&
+            error._tag !== "EnvironmentHttpUnauthorizedError" &&
+            error._tag !== "EnvironmentHttpConflictError",
+        }),
+      );
+      if (registration.status === "superseded") {
+        return yield* new EnvironmentHttpConflictError({
+          message: "The managed tunnel configuration changed during registration.",
+        });
+      }
+      if (registration.status !== "ready") {
+        return yield* new EnvironmentCloudEndpointUnavailableError({
+          message: "Managed endpoint origin could not be confirmed.",
+          endpointRuntimeStatus: { status: "disabled" },
+        });
+      }
+      return {
+        ok: true,
+        endpointRuntimeStatus: registration.endpointRuntimeStatus,
+      } satisfies EnvironmentCloudRelayConfigResult;
+    }
+    return result;
   },
   Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
     failEnvironmentCloudInternalError(error.message)(error),
@@ -540,6 +719,10 @@ const cloudRelayConfigHandler = Effect.fn("environment.cloud.relayConfig")(
   Effect.catchTag(
     "SchemaError",
     failEnvironmentCloudInternalError("Could not persist environment relay configuration."),
+  ),
+  Effect.catchTag(
+    "PlatformError",
+    failEnvironmentCloudInternalError("Could not register the managed endpoint origin."),
   ),
 );
 
@@ -558,6 +741,7 @@ const relayClientRequest = <A>(
     Effect.flatMap(dependencies.httpClient.execute),
     Effect.flatMap(filterRelayResponse),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(input.schema)),
+    Effect.timeout("10 seconds"),
     Effect.mapError(relayRequestError),
     withRelayClientTracing,
   );
@@ -642,7 +826,13 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
         cloudMintPublicKey: link.cloudMintPublicKey,
         endpointRuntime: link.endpointRuntime,
       },
-      { lockHeld: true },
+      {
+        lockHeld: true,
+        confirmedOrigin: {
+          localHttpHost: localUrl.hostname,
+          localHttpPort: endpointRequestPort(localUrl),
+        },
+      },
     );
   },
   Effect.catchIf(
@@ -667,12 +857,32 @@ export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileD
   },
 );
 
+export const reconcileDesiredCloudLinkIfStillDesired = Effect.fn(
+  "environment.cloud.reconcileDesiredLinkIfStillDesired",
+)(function* (localOrigin: string) {
+  const dependencies = yield* cloudHttpDependencies;
+  return yield* dependencies.endpointRuntime.withLinkStateLock(
+    Effect.gen(function* () {
+      if (!(yield* readCliDesiredCloudLink)) {
+        return null;
+      }
+      const mode = yield* readCliDesiredLinkMode;
+      yield* reconcileDesiredCloudLinkWith(dependencies, localOrigin);
+      return mode;
+    }),
+  );
+});
+
 type ManagedTunnelRecoveryProofInput = {
   readonly environmentId: RelayManagedEndpointRecoveryProofPayload["environmentId"];
   readonly cloudUserId: string;
   readonly relayUrl: string;
 } & (
-  | { readonly action: "register"; readonly tunnelId: string }
+  | {
+      readonly action: "register";
+      readonly tunnelId: string;
+      readonly origin: RelayManagedEndpointOrigin;
+    }
   | { readonly action: "recover"; readonly origin: RelayManagedEndpointOrigin }
 );
 
@@ -697,7 +907,12 @@ const makeManagedTunnelRecoveryProof = Effect.fn(
   };
   const payload =
     input.action === "register"
-      ? { ...claims, action: "register" as const, tunnelId: input.tunnelId }
+      ? {
+          ...claims,
+          action: "register" as const,
+          tunnelId: input.tunnelId,
+          origin: input.origin,
+        }
       : { ...claims, action: "recover" as const, origin: input.origin };
 
   return yield* signRelayJwt({
@@ -716,7 +931,7 @@ const makeManagedTunnelRecoveryProof = Effect.fn(
 
 export const registerManagedCloudTunnelRecovery = Effect.fn(
   "environment.cloud.registerManagedCloudTunnelRecovery",
-)(function* () {
+)(function* (localOrigin: string, options?: { readonly retryRuntimeFailures?: boolean }) {
   const dependencies = yield* cloudHttpDependencies;
   const [runtimeConfig, relayUrl, cloudUserId, environmentCredential] = yield* Effect.all([
     dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
@@ -730,14 +945,21 @@ export const registerManagedCloudTunnelRecovery = Effect.fn(
     Option.isNone(cloudUserId) ||
     Option.isNone(environmentCredential)
   ) {
-    return false;
+    return { status: "not_linked" as const };
   }
 
   const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeConfig.value)));
   if (config?.providerKind !== "cloudflare_tunnel" || config.tunnelId === undefined) {
-    return false;
+    return { status: "not_linked" as const };
   }
 
+  const origin = yield* Effect.try({
+    try: () => managedEndpointOriginFromLocalUrl(localOrigin),
+    catch: () =>
+      new EnvironmentHttpBadRequestError({
+        message: "Could not resolve local environment origin.",
+      }),
+  });
   const environmentId = yield* dependencies.environment.getEnvironmentId;
   const relayUrlValue = bytesToString(relayUrl.value);
   const cloudUserIdValue = bytesToString(cloudUserId.value);
@@ -747,6 +969,7 @@ export const registerManagedCloudTunnelRecovery = Effect.fn(
     cloudUserId: cloudUserIdValue,
     relayUrl: relayUrlValue,
     tunnelId: config.tunnelId,
+    origin,
   });
   const registered = yield* relayClientRequest(dependencies, {
     url: `${relayUrlValue}/v1/environments/${encodeURIComponent(environmentId)}/tunnel/recovery`,
@@ -754,15 +977,34 @@ export const registerManagedCloudTunnelRecovery = Effect.fn(
     payload: {
       cloudUserId: cloudUserIdValue,
       tunnelId: config.tunnelId,
+      origin,
       proof,
     },
-    schema: RelayOkResponse,
+    schema: RelayManagedEndpointRecoveryRegistrationResponse,
   });
-  return registered.ok;
+  if (registered.status === "recovery_required") {
+    return { status: registered.status, config };
+  }
+  const endpointRuntimeStatus = yield* activateManagedTunnelWithRetry(
+    dependencies,
+    {
+      config,
+      configJson: bytesToString(runtimeConfig.value),
+      origin,
+    },
+    options?.retryRuntimeFailures === true,
+  );
+  return endpointRuntimeStatus === null
+    ? { status: "superseded" as const }
+    : { status: "ready" as const, endpointRuntimeStatus };
 });
 
 export const recoverManagedCloudTunnel = Effect.fn("environment.cloud.recoverManagedCloudTunnel")(
-  function* (localOrigin: string, expectedConfig?: RelayManagedEndpointRuntimeConfig) {
+  function* (
+    localOrigin: string,
+    expectedConfig?: RelayManagedEndpointRuntimeConfig,
+    options?: { readonly retryRuntimeFailures?: boolean },
+  ) {
     const dependencies = yield* cloudHttpDependencies;
     const [runtimeConfig, relayUrl, cloudUserId, environmentCredential] = yield* Effect.all([
       dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
@@ -834,7 +1076,15 @@ export const recoverManagedCloudTunnel = Effect.fn("environment.cloud.recoverMan
       });
     }
 
-    return yield* dependencies.endpointRuntime.withLinkStateLock(
+    const encoded = yield* encodeEndpointRuntimeConfigJson(recovered.endpointRuntime).pipe(
+      Effect.mapError(
+        () =>
+          new EnvironmentHttpInternalServerError({
+            message: "Could not persist the recovered managed tunnel configuration.",
+          }),
+      ),
+    );
+    const stored = yield* dependencies.endpointRuntime.withLinkStateLock(
       Effect.gen(function* () {
         const currentConfig = yield* dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
         if (
@@ -843,26 +1093,22 @@ export const recoverManagedCloudTunnel = Effect.fn("environment.cloud.recoverMan
         ) {
           return false;
         }
-
-        const status = yield* dependencies.endpointRuntime.applyConfig(recovered.endpointRuntime);
-        if (status.status !== "running") {
-          return yield* new EnvironmentCloudEndpointUnavailableError({
-            message: "Managed endpoint runtime could not be started.",
-            endpointRuntimeStatus: status,
-          });
-        }
-        const encoded = yield* encodeEndpointRuntimeConfigJson(recovered.endpointRuntime).pipe(
-          Effect.mapError(
-            () =>
-              new EnvironmentHttpInternalServerError({
-                message: "Could not persist the recovered managed tunnel configuration.",
-              }),
-          ),
-        );
         yield* dependencies.secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, stringToBytes(encoded));
+        yield* dependencies.secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
         return true;
       }),
     );
+    if (!stored) return false;
+    const status = yield* activateManagedTunnelWithRetry(
+      dependencies,
+      {
+        config: recovered.endpointRuntime,
+        configJson: encoded,
+        origin,
+      },
+      options?.retryRuntimeFailures === true,
+    );
+    return status !== null;
   },
 );
 
@@ -935,11 +1181,10 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
   if (Option.isNone(runtimeConfig)) {
     return false;
   }
-  // Only CLI-desired managed links release on shutdown, because the startup
-  // reconcile that provisions the replacement tunnel only runs for them. A
-  // link installed by a web/mobile client comes back after a restart by
-  // reapplying the stored connector token — it has no boot-time re-provision
-  // path — so its tunnel must survive the restart. (Unlink still deletes it.)
+  // Only CLI-desired managed links release eagerly because this request uses
+  // CLI authorization. Web/mobile links register startup recovery with their
+  // environment credential, and the relay reaper removes them after they are
+  // down for the configured grace period. Unlink still deletes either kind.
   if (!(yield* readCliDesiredCloudLink) || (yield* readCliDesiredLinkMode) !== "managed") {
     return false;
   }
@@ -996,6 +1241,7 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
     bytesToString(storedConfig.value) === bytesToString(runtimeConfig.value)
   ) {
     yield* dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
+    yield* dependencies.secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
   }
   return true;
 });
@@ -1053,9 +1299,10 @@ const cloudUnlinkHandler = Effect.fn("environment.cloud.unlink")(
             dependencies.secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
             dependencies.secrets.remove(CLOUD_MINT_PUBLIC_KEY),
             dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+            dependencies.secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
             dependencies.secrets.remove(PUBLISH_AGENT_ACTIVITY_SECRET),
           ],
-          { concurrency: 7 },
+          { concurrency: 8 },
         );
         yield* setCliDesiredCloudLink(false);
         return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;

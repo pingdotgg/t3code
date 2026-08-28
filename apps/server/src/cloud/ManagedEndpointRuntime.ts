@@ -6,7 +6,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -15,22 +14,6 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { CLOUD_ENDPOINT_RUNTIME_CONFIG, decodeRuntimeConfig } from "./config.ts";
-
-function bytesToString(bytes: Uint8Array): string {
-  return new TextDecoder().decode(bytes);
-}
-
-const readRuntimeConfig = Effect.gen(function* () {
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const bytes = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
-  if (Option.isNone(bytes)) {
-    return null;
-  }
-  return Option.getOrNull(decodeRuntimeConfig(bytesToString(bytes.value)));
-});
 
 export type CloudManagedEndpointRuntimeStatus =
   | {
@@ -321,16 +304,20 @@ export const make = Effect.gen(function* () {
     const connectorScope = yield* Scope.make("sequential");
     const child = yield* spawner
       .spawn(
-        ChildProcess.make(executable.executablePath, ["tunnel", "run"], {
-          detached: false,
-          env: {
-            ...process.env,
-            TUNNEL_TOKEN: config.connectorToken,
+        ChildProcess.make(
+          executable.executablePath,
+          ["tunnel", "--no-autoupdate", "--loglevel", "info", "--output", "default", "run"],
+          {
+            detached: false,
+            env: {
+              ...process.env,
+              TUNNEL_TOKEN: config.connectorToken,
+            },
+            shell: false,
+            stderr: "pipe",
+            stdout: "pipe",
           },
-          shell: false,
-          stderr: "pipe",
-          stdout: "pipe",
-        }),
+        ),
       )
       .pipe(
         Effect.provideService(Scope.Scope, connectorScope),
@@ -412,14 +399,6 @@ export const make = Effect.gen(function* () {
     withLinkStateLock: linkStateSemaphore.withPermits(1),
   });
 
-  const initialConfig = yield* readRuntimeConfig.pipe(
-    Effect.catch((cause) =>
-      Effect.logWarning("Failed to read managed endpoint runtime config", { cause }).pipe(
-        Effect.as(null),
-      ),
-    ),
-  );
-  yield* runtime.applyConfig(initialConfig);
   yield* Effect.addFinalizer(() => runtime.applyConfig(null));
   return runtime;
 });

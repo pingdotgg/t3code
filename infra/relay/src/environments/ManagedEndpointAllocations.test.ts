@@ -94,6 +94,7 @@ describe("ManagedEndpointAllocations", () => {
           environmentId: "environment-1",
           tunnelId: "tunnel-1",
           environmentPublicKey: "public-key",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
         }),
       ).toBe(true);
 
@@ -131,6 +132,7 @@ describe("ManagedEndpointAllocations", () => {
           environmentId: "environment-1",
           tunnelId: "missing-tunnel",
           environmentPublicKey: "public-key",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
         }),
       ).toBe(false);
     }).pipe(Effect.provide(layerWithDb(fakeDb)));

@@ -196,10 +196,17 @@ export type RelayManagedEndpointRecoveryRequest = typeof RelayManagedEndpointRec
 export const RelayManagedEndpointRecoveryRegistrationRequest = Schema.Struct({
   cloudUserId: TrimmedNonEmptyString,
   tunnelId: TrimmedNonEmptyString,
+  origin: RelayManagedEndpointOrigin,
   proof: TrimmedNonEmptyString,
 });
 export type RelayManagedEndpointRecoveryRegistrationRequest =
   typeof RelayManagedEndpointRecoveryRegistrationRequest.Type;
+
+export const RelayManagedEndpointRecoveryRegistrationResponse = Schema.Struct({
+  status: Schema.Literals(["ready", "recovery_required"]),
+});
+export type RelayManagedEndpointRecoveryRegistrationResponse =
+  typeof RelayManagedEndpointRecoveryRegistrationResponse.Type;
 
 export const RelayManagedEndpointRecoveryResponse = Schema.Struct({
   endpoint: RelayManagedEndpoint,
@@ -241,6 +248,7 @@ export const RelayManagedEndpointRecoveryProofPayload = Schema.Union([
     environmentId: EnvironmentId,
     cloudUserId: TrimmedNonEmptyString,
     tunnelId: TrimmedNonEmptyString,
+    origin: RelayManagedEndpointOrigin,
   }),
   Schema.Struct({
     ...RelaySignedJwtRegisteredClaims,
@@ -1138,7 +1146,7 @@ const RelayServerGroup = HttpApiGroup.make("server")
           environmentId: EnvironmentId,
         }),
         payload: RelayManagedEndpointRecoveryRegistrationRequest,
-        success: RelayOkResponse,
+        success: RelayManagedEndpointRecoveryRegistrationResponse,
         error: RelayAuthAndInternalErrors,
       },
     ).annotate(OpenApi.Summary, "Register managed tunnel recovery without provisioning"),

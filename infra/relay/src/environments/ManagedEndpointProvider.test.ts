@@ -218,6 +218,7 @@ function makeAllocations(calls: AllocationCall[] = []) {
           tunnelId: null,
           dnsRecordId: null,
           readyAt: null,
+          origin: null,
           updatedAt: `generation-${++generation}`,
           generation: 0,
         };
@@ -261,6 +262,7 @@ function makeAllocations(calls: AllocationCall[] = []) {
         mutate(allocationKey(input), (allocation) => ({
           ...allocation,
           readyAt: "2026-06-02T00:00:00.000Z",
+          origin: input.origin,
         }));
         return true;
       }),
@@ -1038,6 +1040,209 @@ describe("ManagedEndpointProvider", () => {
 
       expect(yield* provider.release({ ...key, expectedTunnelId: "old-tunnel-id" })).toBe(false);
       expect(tunnelCalls.map((call) => call.operation)).not.toContain("delete");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps a tunnel when a provision replaces an ordinary release generation", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const allocations = makeAllocations();
+    let replaceAfterClaim = false;
+    const replaced = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
+      ...allocations,
+      claimRelease: (input) =>
+        allocations.claimRelease(input).pipe(
+          Effect.tap((claimedGeneration) => {
+            if (claimedGeneration === null || replaceAfterClaim) return Effect.void;
+            replaceAfterClaim = true;
+            return allocations
+              .recordTunnel({
+                userId: input.userId,
+                environmentId: input.environmentId,
+                tunnelId: "replacement-tunnel",
+                generation: claimedGeneration,
+              })
+              .pipe(Effect.asVoid);
+          }),
+        ),
+    });
+    const layer = providerLayer(makePersistentTunnelClient(tunnelCalls), makeDnsClient(), replaced);
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+
+      expect(yield* provider.release(key)).toBe(false);
+      expect(tunnelCalls.map((call) => call.operation)).not.toContain("delete");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("does no Cloudflare work when the registered origin is unchanged", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const layer = providerLayer(makePersistentTunnelClient(tunnelCalls));
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 } as const;
+      const provisioned = yield* provider.provision({ ...key, origin });
+      tunnelCalls.length = 0;
+
+      expect(
+        yield* provider.reconcileOrigin({
+          ...key,
+          tunnelId: provisioned.runtime.tunnelId!,
+          origin,
+          endpoint: provisioned.endpoint,
+        }),
+      ).toBe("ready");
+      expect(tunnelCalls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("updates Cloudflare ingress once when the registered port changes", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const layer = providerLayer(makePersistentTunnelClient(tunnelCalls));
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      const provisioned = yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+      tunnelCalls.length = 0;
+
+      expect(
+        yield* provider.reconcileOrigin({
+          ...key,
+          tunnelId: provisioned.runtime.tunnelId!,
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 4884 },
+          endpoint: provisioned.endpoint,
+        }),
+      ).toBe("ready");
+      expect(tunnelCalls).toEqual([
+        {
+          operation: "putConfiguration",
+          input: {
+            tunnelId: "tunnel-id",
+            tunnelConfig: {
+              ingress: [
+                {
+                  hostname: expectedManagedHostname("env_ABC"),
+                  service: "http://127.0.0.1:4884",
+                },
+                { service: "http_status:404" },
+              ],
+            },
+          },
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("requires recovery when Cloudflare reports the registered tunnel is missing", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const baseTunnelClient = makePersistentTunnelClient(tunnelCalls);
+    let tunnelMissing = false;
+    const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
+      ...baseTunnelClient,
+      putConfiguration: (tunnelId, tunnelConfig) =>
+        tunnelMissing
+          ? Effect.fail(
+              new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
+                operation: "put-configuration",
+                tunnelId,
+                cause: { _tag: "TunnelNotFound" },
+              }),
+            )
+          : baseTunnelClient.putConfiguration(tunnelId, tunnelConfig),
+    });
+    const layer = providerLayer(tunnelClient);
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      const provisioned = yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+      tunnelMissing = true;
+
+      expect(
+        yield* provider.reconcileOrigin({
+          ...key,
+          tunnelId: provisioned.runtime.tunnelId!,
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 4884 },
+          endpoint: provisioned.endpoint,
+        }),
+      ).toBe("recovery_required");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fails origin sync when the allocation generation changes", () => {
+    const allocations = makeAllocations();
+    let loseClaim = false;
+    const changed = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
+      ...allocations,
+      withClaimedTunnel: (input, effect) =>
+        loseClaim ? Effect.succeed(Option.none()) : allocations.withClaimedTunnel(input, effect),
+    });
+    const layer = providerLayer(makePersistentTunnelClient(), makeDnsClient(), changed);
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      const provisioned = yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+      loseClaim = true;
+
+      const error = yield* Effect.flip(
+        provider.reconcileOrigin({
+          ...key,
+          tunnelId: provisioned.runtime.tunnelId!,
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 4884 },
+          endpoint: provisioned.endpoint,
+        }),
+      );
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningFailed",
+        stage: "sync-origin",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects an active endpoint that does not match the allocation hostname", () => {
+    const layer = providerLayer(makePersistentTunnelClient());
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+      const provisioned = yield* provider.provision({
+        ...key,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      });
+
+      const error = yield* Effect.flip(
+        provider.reconcileOrigin({
+          ...key,
+          tunnelId: provisioned.runtime.tunnelId!,
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+          endpoint: {
+            ...provisioned.endpoint,
+            httpBaseUrl: "https://different-host.t3code.test/",
+          },
+        }),
+      );
+      expect(error).toMatchObject({
+        _tag: "ManagedEndpointProvisioningFailed",
+        stage: "sync-origin",
+      });
     }).pipe(Effect.provide(layer));
   });
 
