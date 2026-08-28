@@ -22,9 +22,11 @@ import { normalizeModelSlug } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -53,21 +55,14 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
-const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
-  "not found",
-  "missing thread",
-  "no such thread",
-  "unknown thread",
-  "does not exist",
-  "no rollout found",
-];
+const CODEX_APP_SERVER_EXIT_PROOF_TIMEOUT = "1 second" as const;
 
 export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
 }
 
 export const CodexResumeCursorSchema = Schema.Struct({
-  threadId: Schema.String,
+  threadId: Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty()),
 });
 const CodexUserInputAnswerObject = Schema.Struct({
   answers: Schema.Array(Schema.String),
@@ -213,7 +208,7 @@ export interface CodexSessionRuntimeShape {
     answers: ProviderUserInputAnswers,
   ) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly events: Stream.Stream<ProviderEvent, never>;
-  readonly close: Effect.Effect<void>;
+  readonly close: Effect.Effect<ProviderEvent, CodexSessionRuntimeError>;
 }
 
 export type CodexSessionRuntimeError =
@@ -221,7 +216,9 @@ export type CodexSessionRuntimeError =
   | CodexSessionRuntimePendingApprovalNotFoundError
   | CodexSessionRuntimePendingUserInputNotFoundError
   | CodexSessionRuntimeInvalidUserInputAnswersError
-  | CodexSessionRuntimeThreadIdMissingError;
+  | CodexSessionRuntimeThreadIdMissingError
+  | CodexSessionRuntimeThreadIdMismatchError
+  | CodexSessionRuntimeWriterReleaseUnprovenError;
 
 export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
   "CodexSessionRuntimePendingApprovalNotFoundError",
@@ -266,6 +263,64 @@ export class CodexSessionRuntimeThreadIdMissingError extends Schema.TaggedErrorC
     return `Codex session is missing a provider thread id for ${this.threadId}`;
   }
 }
+
+export class CodexSessionRuntimeThreadIdMismatchError extends Schema.TaggedErrorClass<CodexSessionRuntimeThreadIdMismatchError>()(
+  "CodexSessionRuntimeThreadIdMismatchError",
+  {
+    threadId: Schema.String,
+    requestedThreadId: Schema.String,
+    returnedThreadId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Codex resumed native thread '${this.returnedThreadId}' instead of requested thread '${this.requestedThreadId}' for ${this.threadId}`;
+  }
+}
+
+export class CodexSessionRuntimeWriterReleaseUnprovenError extends Schema.TaggedErrorClass<CodexSessionRuntimeWriterReleaseUnprovenError>()(
+  "CodexSessionRuntimeWriterReleaseUnprovenError",
+  {
+    threadId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Codex App Server exit was not observed for ${this.threadId}`;
+  }
+}
+
+export const proveCodexAppServerWriterReleased = <
+  ExitError,
+  ExitRequirements,
+  RunningError,
+  RunningRequirements,
+>(input: {
+  readonly threadId: ThreadId;
+  readonly exitCode: Effect.Effect<number, ExitError, ExitRequirements>;
+  readonly isRunning: Effect.Effect<boolean, RunningError, RunningRequirements>;
+  readonly exitProofTimeout?: Duration.Input;
+}) =>
+  Effect.gen(function* () {
+    const childExit = yield* input.exitCode.pipe(
+      Effect.exit,
+      Effect.timeoutOption(input.exitProofTimeout ?? CODEX_APP_SERVER_EXIT_PROOF_TIMEOUT),
+    );
+    if (Option.isNone(childExit)) {
+      return yield* new CodexSessionRuntimeWriterReleaseUnprovenError({
+        threadId: input.threadId,
+      });
+    }
+    const childRunning = yield* input.isRunning.pipe(Effect.exit);
+    if (Exit.isFailure(childRunning) || childRunning.value) {
+      return yield* new CodexSessionRuntimeWriterReleaseUnprovenError({
+        threadId: input.threadId,
+      });
+    }
+  });
+
+type CodexSessionRuntimeCloseResult = Deferred.Deferred<ProviderEvent, CodexSessionRuntimeError>;
+type CodexSessionRuntimeCloseSelection =
+  | { readonly owner: true; readonly result: CodexSessionRuntimeCloseResult }
+  | { readonly owner: false; readonly result: CodexSessionRuntimeCloseResult };
 
 interface PendingApproval {
   readonly requestId: ApprovalRequestId;
@@ -667,14 +722,6 @@ function classifyCodexStderrLine(rawLine: string): { readonly message: string } 
   return { message: line };
 }
 
-export function isRecoverableThreadResumeError(error: unknown): boolean {
-  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  if (!message.includes("thread")) {
-    return false;
-  }
-  return RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS.some((snippet) => message.includes(snippet));
-}
-
 type CodexThreadOpenResponse =
   | CodexRpc.ClientRequestResponsesByMethod["thread/start"]
   | CodexRpc.ClientRequestResponsesByMethod["thread/resume"];
@@ -696,7 +743,10 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
-}): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
+}): Effect.Effect<
+  CodexThreadOpenResponse,
+  CodexErrors.CodexAppServerError | CodexSessionRuntimeThreadIdMismatchError
+> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
     cwd: input.cwd,
@@ -715,15 +765,18 @@ export const openCodexThread = (input: {
       ...startParams,
     })
     .pipe(
-      Effect.catchIf(isRecoverableThreadResumeError, (error) =>
-        Effect.logWarning("codex app-server thread resume fell back to fresh start", {
-          threadId: input.threadId,
-          requestedRuntimeMode: input.runtimeMode,
-          resumeThreadId,
-          recoverable: true,
-          cause: error,
-        }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
-      ),
+      Effect.flatMap((opened) => {
+        if (opened.thread.id === resumeThreadId) {
+          return Effect.succeed(opened);
+        }
+        return Effect.fail(
+          new CodexSessionRuntimeThreadIdMismatchError({
+            threadId: input.threadId,
+            requestedThreadId: resumeThreadId,
+            returnedThreadId: opened.thread.id,
+          }),
+        );
+      }),
     );
 };
 
@@ -1170,7 +1223,7 @@ export const makeCodexSessionRuntime = (
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
     const suppressMemoryConsolidationNotification = makeMemoryConsolidationNotificationFilter();
-    const closedRef = yield* Ref.make(false);
+    const closeResultRef = yield* Ref.make<CodexSessionRuntimeCloseResult | undefined>(undefined);
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
@@ -1246,13 +1299,15 @@ export const makeCodexSessionRuntime = (
     const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
       Effect.gen(function* () {
         const id = yield* randomUUIDv4("provider-event");
-        return yield* offerEvent({
+        const providerEvent = {
           id: EventId.make(id),
           provider: PROVIDER,
           ...(options.providerInstanceId ? { providerInstanceId: options.providerInstanceId } : {}),
           createdAt: yield* nowIso,
           ...event,
-        });
+        } satisfies ProviderEvent;
+        yield* offerEvent(providerEvent);
+        return providerEvent;
       });
     const emitSessionEvent = (method: string, message: string) =>
       emitEvent({
@@ -2203,9 +2258,9 @@ export const makeCodexSessionRuntime = (
 
     yield* child.exitCode.pipe(
       Effect.flatMap((exitCode) =>
-        Ref.get(closedRef).pipe(
-          Effect.flatMap((closed) => {
-            if (closed) {
+        Ref.get(closeResultRef).pipe(
+          Effect.flatMap((closeResult) => {
+            if (closeResult !== undefined) {
               return Effect.void;
             }
             const nextStatus = exitCode === 0 ? "closed" : "error";
@@ -2269,26 +2324,57 @@ export const makeCodexSessionRuntime = (
       return providerThreadId;
     });
 
-    const close = Effect.gen(function* () {
-      const alreadyClosed = yield* Ref.getAndSet(closedRef, true);
-      if (alreadyClosed) {
-        return;
-      }
+    const performClose = Effect.gen(function* () {
       yield* settlePendingApprovals("cancel");
       yield* settlePendingUserInputs({});
+      yield* Scope.close(runtimeScope, Exit.void);
+      yield* proveCodexAppServerWriterReleased({
+        threadId: options.threadId,
+        exitCode: child.exitCode,
+        isRunning: child.isRunning,
+      });
       yield* updateSession(sessionRef, {
         status: "closed",
         activeTurnId: undefined,
       });
-      yield* emitSessionEvent("session/closed", "Session stopped").pipe(
-        Effect.catch((cause) =>
-          Effect.logError("Failed to emit Codex session closed event.", { cause }),
-        ),
-      );
-      yield* Scope.close(runtimeScope, Exit.void);
+      const closedEvent = yield* emitSessionEvent("session/closed", "Session stopped");
       yield* Queue.shutdown(serverNotifications);
       yield* Queue.shutdown(events);
+      return closedEvent;
     });
+
+    const close = Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const candidate = yield* Deferred.make<ProviderEvent, CodexSessionRuntimeError>();
+        const selection = yield* Ref.modify(
+          closeResultRef,
+          (
+            current,
+          ): readonly [
+            CodexSessionRuntimeCloseSelection,
+            CodexSessionRuntimeCloseResult | undefined,
+          ] => {
+            if (current !== undefined) {
+              return [{ owner: false, result: current }, current];
+            }
+            return [{ owner: true, result: candidate }, candidate];
+          },
+        );
+        if (!selection.owner) {
+          return yield* restore(Deferred.await(selection.result));
+        }
+
+        const closeExit = yield* Effect.exit(restore(performClose));
+        yield* Deferred.done(candidate, closeExit);
+        if (Exit.isFailure(closeExit)) {
+          yield* Ref.update(closeResultRef, (current) =>
+            current === candidate ? undefined : current,
+          );
+          return yield* Effect.failCause(closeExit.cause);
+        }
+        return closeExit.value;
+      }),
+    );
 
     return {
       start,

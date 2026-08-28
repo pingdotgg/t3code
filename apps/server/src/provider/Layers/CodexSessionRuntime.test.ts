@@ -17,14 +17,22 @@ import {
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
+  CodexSessionRuntimeWriterReleaseUnprovenError,
+  CodexSessionRuntimeThreadIdMismatchError,
   describeMcpElicitation,
   hasConfiguredMcpServer,
-  isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
+  proveCodexAppServerWriterReleased,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+const isCodexSessionRuntimeThreadIdMismatchError = Schema.is(
+  CodexSessionRuntimeThreadIdMismatchError,
+);
+const isCodexSessionRuntimeWriterReleaseUnprovenError = Schema.is(
+  CodexSessionRuntimeWriterReleaseUnprovenError,
+);
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {
@@ -41,6 +49,79 @@ describe("CodexSessionRuntimeIdentifierGenerationError", () => {
       "Failed to generate Codex App Server identifier for provider-event.",
     );
   });
+});
+
+describe("proveCodexAppServerWriterReleased", () => {
+  const threadId = ThreadId.make("thread-writer-release-proof");
+
+  it.effect("accepts an exited child that is no longer running", () =>
+    Effect.gen(function* () {
+      let checkedRunning = false;
+      yield* proveCodexAppServerWriterReleased({
+        threadId,
+        exitCode: Effect.succeed(0),
+        isRunning: Effect.sync(() => {
+          checkedRunning = true;
+          return false;
+        }),
+      });
+      NodeAssert.equal(checkedRunning, true);
+    }),
+  );
+
+  it.effect("accepts a signaled exit result when isRunning is false", () =>
+    Effect.gen(function* () {
+      let checkedRunning = false;
+      yield* proveCodexAppServerWriterReleased({
+        threadId,
+        exitCode: Effect.fail(new CodexSessionRuntimeWriterReleaseUnprovenError({ threadId })),
+        isRunning: Effect.sync(() => {
+          checkedRunning = true;
+          return false;
+        }),
+      });
+      NodeAssert.equal(checkedRunning, true);
+    }),
+  );
+
+  it.effect("rejects an exit-code timeout", () =>
+    Effect.gen(function* () {
+      let checkedRunning = false;
+      const error = yield* proveCodexAppServerWriterReleased({
+        threadId,
+        exitCode: Effect.never,
+        isRunning: Effect.sync(() => {
+          checkedRunning = true;
+          return false;
+        }),
+        exitProofTimeout: 0,
+      }).pipe(Effect.flip);
+      NodeAssert.equal(isCodexSessionRuntimeWriterReleaseUnprovenError(error), true);
+      NodeAssert.equal(checkedRunning, false);
+    }),
+  );
+
+  it.effect("rejects a child that still reports running", () =>
+    Effect.gen(function* () {
+      const error = yield* proveCodexAppServerWriterReleased({
+        threadId,
+        exitCode: Effect.succeed(0),
+        isRunning: Effect.succeed(true),
+      }).pipe(Effect.flip);
+      NodeAssert.equal(isCodexSessionRuntimeWriterReleaseUnprovenError(error), true);
+    }),
+  );
+
+  it.effect("rejects an isRunning probe failure", () =>
+    Effect.gen(function* () {
+      const error = yield* proveCodexAppServerWriterReleased({
+        threadId,
+        exitCode: Effect.succeed(0),
+        isRunning: Effect.fail(new CodexSessionRuntimeWriterReleaseUnprovenError({ threadId })),
+      }).pipe(Effect.flip);
+      NodeAssert.equal(isCodexSessionRuntimeWriterReleaseUnprovenError(error), true);
+    }),
+  );
 });
 
 function makeThreadOpenResponse(
@@ -715,67 +796,8 @@ describe("codexSessionAppServerArgs", () => {
   });
 });
 
-describe("isRecoverableThreadResumeError", () => {
-  it("matches missing thread errors", () => {
-    NodeAssert.equal(
-      isRecoverableThreadResumeError(
-        new CodexErrors.CodexAppServerRequestError({
-          code: -32603,
-          errorMessage: "Thread does not exist",
-        }),
-      ),
-      true,
-    );
-  });
-
-  it("matches a missing rollout for a known thread id", () => {
-    NodeAssert.equal(
-      isRecoverableThreadResumeError(
-        new CodexErrors.CodexAppServerRequestError({
-          code: -32603,
-          errorMessage: "no rollout found for thread id 019fdf74-aaa9-7950-b252-7cc7a8650470",
-        }),
-      ),
-      true,
-    );
-  });
-
-  it("ignores non-recoverable resume errors", () => {
-    NodeAssert.equal(
-      isRecoverableThreadResumeError(
-        new CodexErrors.CodexAppServerRequestError({
-          code: -32603,
-          errorMessage: "Permission denied",
-        }),
-      ),
-      false,
-    );
-  });
-
-  it("ignores unrelated missing-resource errors that do not mention threads", () => {
-    NodeAssert.equal(
-      isRecoverableThreadResumeError(
-        new CodexErrors.CodexAppServerRequestError({
-          code: -32603,
-          errorMessage: "Config file not found",
-        }),
-      ),
-      false,
-    );
-    NodeAssert.equal(
-      isRecoverableThreadResumeError(
-        new CodexErrors.CodexAppServerRequestError({
-          code: -32603,
-          errorMessage: "Model does not exist",
-        }),
-      ),
-      false,
-    );
-  });
-});
-
 describe("openCodexThread", () => {
-  it.effect("falls back to thread/start when resume fails recoverably", () =>
+  it.effect("uses thread/start only for a new thread without a resume id", () =>
     Effect.gen(function* () {
       const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
       const started = makeThreadOpenResponse("fresh-thread");
@@ -785,14 +807,6 @@ describe("openCodexThread", () => {
           payload: CodexRpc.ClientRequestParamsByMethod[M],
         ) => {
           calls.push({ method, payload });
-          if (method === "thread/resume") {
-            return Effect.fail(
-              new CodexErrors.CodexAppServerRequestError({
-                code: -32603,
-                errorMessage: "thread not found",
-              }),
-            );
-          }
           return Effect.succeed(started as CodexRpc.ClientRequestResponsesByMethod[M]);
         },
       };
@@ -804,14 +818,114 @@ describe("openCodexThread", () => {
         cwd: "/tmp/project",
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
-        resumeThreadId: "stale-thread",
+        resumeThreadId: undefined,
       });
 
       NodeAssert.equal(opened.thread.id, "fresh-thread");
       NodeAssert.deepStrictEqual(
         calls.map((call) => call.method),
-        ["thread/resume", "thread/start"],
+        ["thread/start"],
       );
+    }),
+  );
+
+  it.effect("never falls back to thread/start when strict resume fails", () =>
+    Effect.gen(function* () {
+      const calls: Array<"thread/start" | "thread/resume"> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push(method);
+          return Effect.fail(
+            new CodexErrors.CodexAppServerRequestError({
+              code: -32603,
+              errorMessage: "thread not found",
+            }),
+          );
+        },
+      };
+
+      const error = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "native-thread",
+      }).pipe(Effect.flip);
+
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.equal(error.errorMessage, "thread not found");
+      NodeAssert.deepStrictEqual(calls, ["thread/resume"]);
+    }),
+  );
+
+  it.effect("rejects a resumed native id that differs from the requested id", () =>
+    Effect.gen(function* () {
+      const calls: Array<"thread/start" | "thread/resume"> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push(method);
+          return Effect.succeed(
+            makeThreadOpenResponse(
+              "wrong-native-thread",
+            ) as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      const error = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "requested-native-thread",
+      }).pipe(Effect.flip);
+
+      NodeAssert.ok(isCodexSessionRuntimeThreadIdMismatchError(error));
+      NodeAssert.equal(error.requestedThreadId, "requested-native-thread");
+      NodeAssert.equal(error.returnedThreadId, "wrong-native-thread");
+      NodeAssert.deepStrictEqual(calls, ["thread/resume"]);
+    }),
+  );
+
+  it.effect("accepts strict resume only when the returned native id matches", () =>
+    Effect.gen(function* () {
+      const calls: Array<"thread/start" | "thread/resume"> = [];
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          _payload: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          calls.push(method);
+          return Effect.succeed(
+            makeThreadOpenResponse(
+              "requested-native-thread",
+            ) as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      const opened = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "requested-native-thread",
+      });
+
+      NodeAssert.equal(opened.thread.id, "requested-native-thread");
+      NodeAssert.deepStrictEqual(calls, ["thread/resume"]);
     }),
   );
 
