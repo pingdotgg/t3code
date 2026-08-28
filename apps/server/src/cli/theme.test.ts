@@ -131,6 +131,26 @@ describe("t3 theme", () => {
     }),
   );
 
+  // Publish and set are one command, so a settings file the set step cannot
+  // use must fail it before the themes directory is mutated -- not after,
+  // with a half-applied publish left behind.
+  it.effect("publishes nothing when the settings file cannot be used", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      NodeFS.mkdirSync(NodePath.dirname(settingsPathFor(baseDir)), { recursive: true });
+      NodeFS.writeFileSync(settingsPathFor(baseDir), "{ not json");
+      const themeFile = NodePath.join(baseDir, "nightfall.json");
+      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+
+      const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+
+      assert.include(String(failure), "not a JSON object");
+      assert.equal(NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes")), false);
+    }),
+  );
+
   // A typo'd id written as the theme would silently never resolve anywhere;
   // the id branch is as strict as the filename rule.
   it.effect("rejects an id no client could resolve", () =>

@@ -379,6 +379,10 @@ const themeSetCommand = Command.make("set", {
         looksLikePath && (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false)));
       let themeId: string;
       if (targetIsFile) {
+        // Settings are preflighted before publishing, so a settings file the
+        // set step cannot read or parse fails the command before it mutates
+        // the themes directory.
+        yield* readSettingsObject(paths.settingsPath);
         themeId = yield* publishThemeFile({
           themesDir: paths.themesDir,
           filePath: target,
