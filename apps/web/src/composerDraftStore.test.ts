@@ -1314,6 +1314,47 @@ describe("composerDraftStore modelSelection", () => {
     ).toEqual(modelSelection(CODEX_DRIVER, "gpt-5.4"));
   });
 
+  it("marks picker writes explicit and seeding writes non-explicit", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBeUndefined();
+
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
+      explicit: true,
+    });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBe(true);
+
+    // Last writer defines intent: a later seed clears the marker.
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
+      replaceOptions: true,
+    });
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBeUndefined();
+  });
+
+  it("persists the explicit marker through storage round-trips", async () => {
+    vi.useFakeTimers();
+    try {
+      useComposerDraftStore
+        .getState()
+        .setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
+          explicit: true,
+        });
+      // Land the debounced persist write.
+      await vi.advanceTimersByTimeAsync(300);
+
+      // Hydrate from the same storage the store persists into and verify the
+      // marker survives the partialize → decode → merge path.
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBe(true);
+      expect(
+        draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CODEX_INSTANCE],
+      ).toEqual(modelSelection(CODEX_DRIVER, "gpt-5.4"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("replaces only the targeted provider options on the current model selection", () => {
     const store = useComposerDraftStore.getState();
 
@@ -1354,6 +1395,23 @@ describe("composerDraftStore modelSelection", () => {
         thinking: false,
       }),
     );
+  });
+
+  it("marks trait edits as explicit model intent", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBeUndefined();
+
+    store.setProviderModelOptions(
+      threadRef,
+      CODEX_DRIVER,
+      toSelections({ reasoningEffort: "xhigh" }),
+    );
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBe(true);
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CODEX_INSTANCE],
+    ).toEqual(modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "xhigh" }));
   });
 
   it("keeps explicit default-state overrides on the selection", () => {
@@ -1705,6 +1763,201 @@ describe("composerDraftStore sticky composer settings", () => {
       },
       activeProvider: "claudeAgent",
     });
+  });
+
+  it("replaces a non-explicit stale model and its options with sticky state", () => {
+    const store = useComposerDraftStore.getState();
+    const draftId = DraftId.make("draft-stale-sticky-seed");
+
+    store.setModelSelection(
+      draftId,
+      modelSelection(CODEX_DRIVER, "stale-model", { reasoningEffort: "low" }),
+    );
+    store.setStickyModelSelection(
+      modelSelection(CODEX_DRIVER, "sticky-model", { reasoningEffort: "xhigh" }),
+    );
+    store.applyStickyState(draftId);
+
+    expect(draftByKey(draftId)).toMatchObject({
+      activeProvider: CODEX_INSTANCE,
+      modelSelectionByProvider: {
+        [CODEX_INSTANCE]: modelSelection(CODEX_DRIVER, "sticky-model", {
+          reasoningEffort: "xhigh",
+        }),
+      },
+    });
+  });
+
+  it("clears a non-explicit stale model when there is no sticky state", () => {
+    const store = useComposerDraftStore.getState();
+    const draftId = DraftId.make("draft-stale-without-sticky");
+
+    store.setModelSelection(draftId, modelSelection(CODEX_DRIVER, "stale-model"));
+    store.applyStickyState(draftId);
+
+    expect(draftByKey(draftId)).toBeUndefined();
+  });
+});
+
+describe("composerDraftStore model seed migration", () => {
+  const staleDraftId = DraftId.make("draft-legacy-stale-model");
+  const explicitDraftId = DraftId.make("draft-legacy-explicit-model");
+  const typedDraftId = DraftId.make("draft-legacy-typed-model");
+  const staleThreadId = ThreadId.make("thread-legacy-stale-model");
+  const explicitThreadId = ThreadId.make("thread-legacy-explicit-model");
+  const typedThreadId = ThreadId.make("thread-legacy-typed-model");
+  const serverThreadId = ThreadId.make("thread-server-model");
+  const serverThreadKey = scopedThreadKey(scopeThreadRef(TEST_ENVIRONMENT_ID, serverThreadId));
+  const projectId = ProjectId.make("project-model-migration");
+  const logicalProjectKey = `${TEST_ENVIRONMENT_ID}:/tmp/project-model-migration`;
+
+  const draftThread = (threadId: ThreadId) => ({
+    threadId,
+    environmentId: TEST_ENVIRONMENT_ID,
+    projectId,
+    logicalProjectKey,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    envMode: "local",
+    startFromOrigin: false,
+    promotedTo: null,
+  });
+
+  beforeEach(async () => {
+    resetComposerDraftStore();
+    await useComposerDraftStore.persist.clearStorage();
+  });
+
+  afterEach(async () => {
+    await useComposerDraftStore.persist.clearStorage();
+  });
+
+  it.each([1, 2])(
+    "keeps the legacy sticky Codex selection when v%s storage omitted the provider",
+    async (version) => {
+      vi.useFakeTimers();
+      try {
+        const stickySelection = modelSelection(CODEX_DRIVER, "gpt-5.6-terra", {
+          reasoningEffort: "xhigh",
+        });
+        const storage = useComposerDraftStore.persist.getOptions().storage;
+        expect(storage).toBeDefined();
+        storage?.setItem(COMPOSER_DRAFT_STORAGE_KEY, {
+          version,
+          state: {
+            draftsByThreadId: {},
+            draftThreadsByThreadId: {},
+            projectDraftThreadIdByProjectId: {},
+            stickyModel: stickySelection.model,
+            stickyModelOptions: providerModelOptions({
+              [CODEX_DRIVER]: { reasoningEffort: "xhigh" },
+            }),
+          },
+        } as never);
+        await vi.advanceTimersByTimeAsync(300);
+
+        await useComposerDraftStore.persist.rehydrate();
+
+        expect(useComposerDraftStore.getState()).toMatchObject({
+          stickyModelSelectionByProvider: { [CODEX_INSTANCE]: stickySelection },
+          stickyActiveProvider: null,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("strips seeded models only from empty draft sessions when upgrading storage", async () => {
+    vi.useFakeTimers();
+    try {
+      const staleSelection = modelSelection(CODEX_DRIVER, "gpt-5.4");
+      const stickySelection = modelSelection(CODEX_DRIVER, "gpt-5.6-terra", {
+        reasoningEffort: "xhigh",
+      });
+      const storage = useComposerDraftStore.persist.getOptions().storage;
+      expect(storage).toBeDefined();
+      storage?.setItem(COMPOSER_DRAFT_STORAGE_KEY, {
+        version: 8,
+        state: {
+          draftsByThreadKey: {
+            [staleDraftId]: {
+              prompt: "",
+              attachments: [],
+              modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+              activeProvider: CODEX_INSTANCE,
+              runtimeMode: "approval-required",
+            },
+            [typedDraftId]: {
+              prompt: "keep this prompt",
+              attachments: [],
+              modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+              activeProvider: CODEX_INSTANCE,
+            },
+            [explicitDraftId]: {
+              prompt: "",
+              attachments: [],
+              modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+              activeProvider: CODEX_INSTANCE,
+              modelSelectionExplicit: true,
+            },
+            [serverThreadKey]: {
+              prompt: "",
+              attachments: [],
+              modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+              activeProvider: CODEX_INSTANCE,
+            },
+          },
+          draftThreadsByThreadKey: {
+            [staleDraftId]: draftThread(staleThreadId),
+            [explicitDraftId]: draftThread(explicitThreadId),
+            [typedDraftId]: draftThread(typedThreadId),
+          },
+          logicalProjectDraftThreadKeyByLogicalProjectKey: {
+            [logicalProjectKey]: staleDraftId,
+          },
+          stickyModelSelectionByProvider: { [CODEX_INSTANCE]: stickySelection },
+          stickyActiveProvider: CODEX_INSTANCE,
+        },
+      } as never);
+      await vi.advanceTimersByTimeAsync(300);
+
+      await useComposerDraftStore.persist.rehydrate();
+
+      expect(draftByKey(staleDraftId)).toMatchObject({
+        modelSelectionByProvider: {},
+        activeProvider: null,
+        runtimeMode: "approval-required",
+      });
+      expect(draftByKey(typedDraftId)).toMatchObject({
+        prompt: "keep this prompt",
+        modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+        activeProvider: CODEX_INSTANCE,
+      });
+      expect(draftByKey(explicitDraftId)).toMatchObject({
+        modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+        activeProvider: CODEX_INSTANCE,
+        modelSelectionExplicit: true,
+      });
+      expect(draftByKey(serverThreadKey)).toMatchObject({
+        modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+        activeProvider: CODEX_INSTANCE,
+      });
+      expect(useComposerDraftStore.getState().draftThreadsByThreadKey[staleDraftId]).toMatchObject({
+        environmentId: TEST_ENVIRONMENT_ID,
+        projectId,
+        logicalProjectKey,
+      });
+      expect(useComposerDraftStore.getState()).toMatchObject({
+        stickyModelSelectionByProvider: { [CODEX_INSTANCE]: stickySelection },
+        stickyActiveProvider: CODEX_INSTANCE,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
