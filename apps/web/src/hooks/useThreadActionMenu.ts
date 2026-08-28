@@ -73,7 +73,7 @@ export function useThreadActionMenu(input: {
     pinThread,
     unpinThread,
     archiveThread,
-    deleteThread,
+    confirmAndDeleteThread,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -82,7 +82,6 @@ export function useThreadActionMenu(input: {
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
   const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
-  const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
@@ -278,24 +277,12 @@ export function useThreadActionMenu(input: {
             return;
           }
           case "delete": {
-            if (confirmThreadDelete) {
-              const confirmed = await settlePromise(() =>
-                api.dialogs.confirm(
-                  [
-                    `Delete thread "${thread.title}"?`,
-                    "This permanently clears conversation history for this thread.",
-                  ].join("\n"),
-                  { variant: "destructive" },
-                ),
-              );
-              if (confirmed._tag === "Failure" || !confirmed.value) return;
-            }
-            const deleted = await deleteThread(threadRef);
+            const deleted = await confirmAndDeleteThread(threadRef);
             if (
               deleted._tag === "Failure" &&
               !isAtomCommandInterrupted(deleted) &&
               // A failure with the thread already gone is worktree cleanup
-              // failing after a successful delete — deleteThread has toasted
+              // failing after a successful delete — the delete flow has toasted
               // that itself, and "Failed to delete thread" would be a lie.
               readThreadShell(threadRef) !== null
             ) {
@@ -313,12 +300,11 @@ export function useThreadActionMenu(input: {
       autoSettleAfterDays,
       autoSettleOnMerge,
       changeRequest,
+      confirmAndDeleteThread,
       confirmThreadArchive,
-      confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
       copyThreadIdToClipboard,
-      deleteThread,
       handleNewThread,
       markThreadUnread,
       onStartRename,
