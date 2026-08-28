@@ -2817,8 +2817,16 @@ function workEntryPreview(
   workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
   workspaceRoot: string | undefined,
 ) {
-  // Prefer stdout/detail so completed shell/monitor results are visible collapsed
-  // (command alone hid ls listings behind expand-only inspector JSON).
+  // Collapsed rows show the tool's INPUT (command, touched files, search
+  // pattern); outputs like stdout and diffs stay behind the expander.
+  if (workEntry.command) return workEntry.command;
+  const [firstPath] = workEntry.changedFiles ?? [];
+  if (firstPath) {
+    const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
+    return workEntry.changedFiles!.length === 1
+      ? displayPath
+      : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
+  }
   if (workEntry.detail?.trim()) {
     const lines = workEntry.detail
       .trim()
@@ -2829,14 +2837,7 @@ function workEntryPreview(
       return lines.slice(0, 3).join(" · ");
     }
   }
-  if (workEntry.command) return workEntry.command;
-  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
-  const [firstPath] = workEntry.changedFiles ?? [];
-  if (!firstPath) return null;
-  const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
-  return workEntry.changedFiles!.length === 1
-    ? displayPath
-    : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
+  return null;
 }
 
 function workEntryRawCommand(
