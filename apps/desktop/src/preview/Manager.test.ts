@@ -58,6 +58,50 @@ describe("isPreviewRefreshShortcut", () => {
   });
 });
 
+describe("previewWindowOpenAction", () => {
+  const details = (overrides: {
+    readonly url?: string;
+    readonly disposition?: Electron.HandlerDetails["disposition"];
+  }) => ({
+    url: "https://accounts.google.com/o/oauth2/auth",
+    disposition: "new-window" as Electron.HandlerDetails["disposition"],
+    ...overrides,
+  });
+
+  it("opens a real window for scripted popups so the opener survives", () => {
+    // OAuth SDKs read a null `window.open()` as a blocked popup, and they need
+    // the opener alive to receive the credential back.
+    expect(PreviewManager.previewWindowOpenAction(details({}))).toBe("popup");
+    expect(
+      PreviewManager.previewWindowOpenAction(details({ url: "http://localhost:5173/auth" })),
+    ).toBe("popup");
+  });
+
+  it("keeps target=_blank links in the preview tab", () => {
+    expect(PreviewManager.previewWindowOpenAction(details({ disposition: "foreground-tab" }))).toBe(
+      "navigate",
+    );
+    expect(PreviewManager.previewWindowOpenAction(details({ disposition: "background-tab" }))).toBe(
+      "navigate",
+    );
+  });
+
+  it("does not hand a window to schemes that cannot be hardened", () => {
+    // A popup skips the `will-attach-webview` hardening, so it only gets a window
+    // when its preferences can be overridden. Chromium copies the guest's
+    // preferences for `about:blank` and forbids overriding them.
+    for (const url of [
+      "about:blank",
+      "javascript:alert(1)",
+      "file:///etc/passwd",
+      "vscode://vscode-remote/ssh-remote+box/tmp",
+      "not a url",
+    ]) {
+      expect(PreviewManager.previewWindowOpenAction(details({ url }))).toBe("navigate");
+    }
+  });
+});
+
 const {
   browserWindowConstructor,
   createFromPath,
