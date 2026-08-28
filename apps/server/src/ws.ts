@@ -25,6 +25,7 @@ import {
   type EditorId,
   type FileManagerRevealKind,
   type OrchestrationClientOrigin,
+  type OrchestrationV2Command,
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
@@ -475,6 +476,19 @@ const makeWsRpcLayer = (
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const providerSessionsV2 = yield* ProviderSessionManagerV2;
+      const analytics = yield* AnalyticsService.AnalyticsService;
+      // Client-origin attribution (#7774): every thread/turn the connecting
+      // client starts is credited to its surface + app version. Best-effort:
+      // attribution must never fail the user's command.
+      const originProps = clientOriginAnalyticsProps(clientOrigin);
+      const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
+        switch (command.type) {
+          case "message.dispatch":
+            return analytics.record("client.turn.requested", originProps).pipe(Effect.ignore);
+          default:
+            return Effect.void;
+        }
+      };
       const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
       const enrichProjectShells = Effect.fn("ws.orchestrationV2.enrichProjectShells")(
         (projects: ReadonlyArray<OrchestrationProjectShell>) =>
@@ -1181,6 +1195,7 @@ const makeWsRpcLayer = (
                 ),
               )
               .pipe(
+                Effect.tap(() => recordClientCommandAnalytics(command)),
                 Effect.map((result) => ({ sequence: result.sequence })),
                 Effect.mapError((cause) => {
                   const detail = userFacingDispatchErrorMessage(cause);
@@ -1321,6 +1336,18 @@ const makeWsRpcLayer = (
                 }),
               )
               .pipe(
+                Effect.tap(() =>
+                  analytics
+                    .record("client.thread.started", originProps)
+                    .pipe(
+                      Effect.andThen(
+                        input.initialMessage === undefined
+                          ? Effect.void
+                          : analytics.record("client.turn.requested", originProps),
+                      ),
+                      Effect.ignore,
+                    ),
+                ),
                 Effect.map((result) => ({
                   ...result,
                   projection: projectThreadProjectionForWire(result.projection),
