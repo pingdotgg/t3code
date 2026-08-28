@@ -728,6 +728,13 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
     }),
+    // Limit figures move slowly and the provider endpoint is rate limited
+    // itself; a minute of staleness is invisible next to a 5-hour window.
+    usageLimits: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:usage-limits",
+      tag: WS_METHODS.serverGetUsageLimits,
+      staleTimeMs: 60_000,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",

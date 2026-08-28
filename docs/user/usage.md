@@ -11,3 +11,8 @@ completed-turn record will not appear.
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
 headline and chart, and refreshing rescans every connected environment.
+
+The **Limits** view shows how much of each subscription plan's rate windows is currently used,
+with reset countdowns per window. Limit info is only available for subscription sign-ins: API-key
+authentication is billed per token and has no rate windows, so those providers show a notice
+instead. Claude Code reports limits today; other providers will follow.
