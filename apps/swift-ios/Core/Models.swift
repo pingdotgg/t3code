@@ -429,6 +429,7 @@ public struct OrchestrationThreadShell: Codable, Identifiable, Equatable, Sendab
     public let archivedAt: String?
     public let settledOverride: String?
     public let settledAt: String?
+    public var unsettledAt: String? = nil
     public let snoozedUntil: String?
     public let snoozedAt: String?
     public let pinnedAt: String?
@@ -503,6 +504,7 @@ public struct OrchestrationThread: Codable, Identifiable, Equatable, Sendable {
     public let archivedAt: String?
     public let settledOverride: String?
     public let settledAt: String?
+    public var unsettledAt: String? = nil
     public let snoozedUntil: String?
     public let snoozedAt: String?
     public let pinnedAt: String?

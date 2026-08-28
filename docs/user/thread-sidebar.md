@@ -7,6 +7,14 @@ one environment.
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.
 
+The **Settle** and **Reopen** actions sync through the T3 Code server. Automatic settlement uses
+the inactivity and pull request settings saved on each device. Active work stays active. A closed
+pull request, or an enabled merged pull request, can settle a thread if no newer user activity
+exists. An open pull request blocks inactivity settlement, but you can still settle it manually.
+
+When you un-settle a thread, it returns to the top of the active list so you can find it right
+away. Its timestamps do not change. Other threads keep their positions.
+
 Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
 in the sidebar. The thread settles when the linked pull request merges if **Auto-settle merged
 threads** is enabled. Right-click the same link and choose **Unlink from thread** to remove it.
@@ -18,6 +26,15 @@ other connected devices.
 If reordering is unavailable for one environment, update the T3 Code server running in that
 environment. Older servers can still pin and unpin threads, but do not understand synced ordering;
 their pinned threads keep the default newest-first order below the ones you have arranged.
+
+## Refreshing saved threads
+
+On SwiftUI mobile, returning to the inbox keeps the last opened thread highlighted. The highlight
+moves when you open another thread.
+
+SwiftUI mobile keeps saved messages visible while a thread refreshes. A status above the composer
+shows when the thread is updating or its computer is offline. If the refresh fails, choose **Retry**.
+The app also retries when that computer reconnects.
 
 ## Environment artwork
 
