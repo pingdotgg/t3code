@@ -67,6 +67,10 @@ export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+export function isProviderNamespacedModelSlug(slug: string): boolean {
+  return slug.includes("/");
+}
+
 export function isCommandMissingCause(error: unknown): boolean {
   if (isProviderCommandNotFoundError(error)) return true;
   return error instanceof PlatformError.PlatformError && error.reason._tag === "NotFound";

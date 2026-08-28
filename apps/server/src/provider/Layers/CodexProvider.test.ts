@@ -1,6 +1,11 @@
 import { assert, it } from "@effect/vitest";
+import type { ServerProviderModel } from "@t3tools/contracts";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  mapCodexModelCapabilities,
+  scopeCodexModelsToInstance,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -143,4 +148,46 @@ it("ignores custom models that shadow a preferred slug", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
+});
+
+it("requires provider-namespaced catalog models to be declared on the instance", () => {
+  const openAiModel: ServerProviderModel = {
+    slug: "gpt-5.6-sol",
+    name: "GPT-5.6-Sol",
+    isCustom: false,
+    capabilities: null,
+  };
+  const openRouterModel: ServerProviderModel = {
+    slug: "z-ai/glm-5.3-flash",
+    name: "GLM-5.3-Flash",
+    isCustom: false,
+    capabilities: { optionDescriptors: [] },
+  };
+  const catalog = [openAiModel, openRouterModel];
+
+  assert.deepStrictEqual(
+    scopeCodexModelsToInstance(catalog, []).map((model) => model.slug),
+    ["gpt-5.6-sol"],
+  );
+  assert.deepStrictEqual(scopeCodexModelsToInstance(catalog, ["z-ai/glm-5.3-flash"]), [
+    openAiModel,
+    {
+      ...openRouterModel,
+      isCustom: true,
+    },
+  ]);
+});
+
+it("preserves first-party catalog metadata when a custom slug shadows it", () => {
+  const firstPartyModel: ServerProviderModel = {
+    slug: "gpt-5.6-sol",
+    name: "GPT-5.6-Sol",
+    isCustom: false,
+    isLegacy: true,
+    capabilities: null,
+  };
+
+  assert.deepStrictEqual(scopeCodexModelsToInstance([firstPartyModel], [firstPartyModel.slug]), [
+    firstPartyModel,
+  ]);
 });
