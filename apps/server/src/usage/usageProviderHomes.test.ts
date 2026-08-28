@@ -21,9 +21,17 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
             claude_max: { driver: "claudeAgent", config: { homePath: "~/.claude-max" } },
             claude_pro: {
               driver: "claudeAgent",
-              environment: [{ name: "CLAUDE_CONFIG_DIR", value: "~/.claude-pro" }],
+              environment: [
+                { name: "CLAUDE_CONFIG_DIR", value: path.join(NodeOS.homedir(), ".claude-pro") },
+              ],
             },
             codex_work: { driver: "codex", config: { homePath: "~/.codex-work" } },
+            codex_env: {
+              driver: "codex",
+              environment: [
+                { name: "CODEX_HOME", value: path.join(NodeOS.homedir(), ".codex-env") },
+              ],
+            },
           },
         });
 
@@ -37,6 +45,7 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
         ]);
         expect(homes.codexSessionDirs).toEqual([
           path.join(path.resolve(NodeOS.homedir(), ".codex-work"), "sessions"),
+          path.join(NodeOS.homedir(), ".codex-env", "sessions"),
           path.join(NodeOS.homedir(), ".codex", "sessions"),
         ]);
         expect(homes.grokSessionsDir).toBe(path.join(NodeOS.homedir(), ".grok", "sessions"));
@@ -72,6 +81,31 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
         const homes = yield* resolveUsageProviderHomes(settings, {});
 
         expect(homes.claudeHomePaths).toEqual([path.resolve(NodeOS.homedir())]);
+      }),
+    );
+
+    it.effect("ignores non-absolute environment homes, which the CLI gets verbatim", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const settings = decodeSettings({
+          providerInstances: {
+            // Env vars are never shell-expanded, so a tilde or relative value
+            // depends on each workspace's cwd and has no single scan dir.
+            claude_tilde: {
+              driver: "claudeAgent",
+              environment: [{ name: "CLAUDE_CONFIG_DIR", value: "~/.claude-tilde" }],
+            },
+            codex_relative: {
+              driver: "codex",
+              environment: [{ name: "CODEX_HOME", value: "codex-home" }],
+            },
+          },
+        });
+
+        const homes = yield* resolveUsageProviderHomes(settings, {});
+
+        expect(homes.claudeHomePaths).toEqual([path.resolve(NodeOS.homedir())]);
+        expect(homes.codexSessionDirs).toEqual([path.join(NodeOS.homedir(), ".codex", "sessions")]);
       }),
     );
 
