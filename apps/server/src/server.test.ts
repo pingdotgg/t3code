@@ -57,6 +57,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -4915,6 +4916,51 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         type: "keybindingsUpdated",
         payload: { keybindings: [], issues: [] },
       });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("refreshes providers for each subscribeServerConfig connection", () =>
+    Effect.gen(function* () {
+      const refreshCalls = yield* Ref.make(0);
+      const firstRefreshDone = yield* Deferred.make<void>();
+      const secondRefreshDone = yield* Deferred.make<void>();
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerRegistry: {
+            refresh: () =>
+              Ref.updateAndGet(refreshCalls, (count) => count + 1).pipe(
+                Effect.tap((count) =>
+                  Deferred.succeed(
+                    count === 1 ? firstRefreshDone : secondRefreshDone,
+                    undefined,
+                  ).pipe(Effect.ignore),
+                ),
+                Effect.as([]),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.subscribeServerConfig]({}).pipe(Stream.runHead);
+            yield* Deferred.await(firstRefreshDone);
+          }),
+        ),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.subscribeServerConfig]({}).pipe(Stream.runHead);
+            yield* Deferred.await(secondRefreshDone);
+          }),
+        ),
+      );
+
+      assert.equal(yield* Ref.get(refreshCalls), 2);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -34,6 +34,7 @@ import {
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { OpenCodeRuntime } from "../opencodeRuntime.ts";
+import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -141,13 +142,27 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
-      const textGeneration = yield* makeOpenCodeTextGeneration(effectiveConfig, processEnv);
+      const serverOwner = yield* OpenCodeServerOwner.make({
+        binaryPath: effectiveConfig.binaryPath,
+        directory: serverConfig.cwd,
+        ...(effectiveConfig.serverPassword
+          ? { serverPassword: effectiveConfig.serverPassword }
+          : {}),
+        environment: processEnv,
+      });
+      const textGeneration = yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
+        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
+      );
 
       const checkProvider = checkOpenCodeProviderStatus(
         effectiveConfig,
         serverConfig.cwd,
         processEnv,
-      ).pipe(Effect.map(stampIdentity), Effect.provideService(OpenCodeRuntime, openCodeRuntime));
+      ).pipe(
+        Effect.map(stampIdentity),
+        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
+        Effect.provideService(OpenCodeRuntime, openCodeRuntime),
+      );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<OpenCodeSettings>>(
@@ -156,6 +171,8 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           getSettings: snapshotSettings.getSettings,
           streamSettings: snapshotSettings.streamSettings,
           haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+          checkProviderOnSettingsChange: () => false,
+          refreshOnInterval: false,
           initialSnapshot: (settings) =>
             makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
           checkProvider,

@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
+import { Badge } from "../ui/badge";
 import { buttonVariants } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -58,15 +59,15 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   const activeInstanceId = props.activeInstanceId;
   const selectedInstanceOptions = props.modelOptionsByInstance.get(activeInstanceId) ?? [];
-  // If the current slug belongs to a different instance (for example after
-  // a provider switch or disable), prefer the active instance's first
-  // option so the trigger icon and label stay in sync instead of showing
-  // a stale foreign slug.
+  // OpenCode can keep a model through a transient catalog refresh. Other
+  // providers keep the active instance's first option as their normal fallback.
   const selectedModel =
     selectedInstanceOptions.find((option) => option.slug === props.model) ??
-    selectedInstanceOptions[0];
+    (activeEntry?.driverKind === "opencode" ? undefined : selectedInstanceOptions[0]);
   const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
-  const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
+  const triggerLabel = selectedModel
+    ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+    : props.model;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
@@ -179,6 +180,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>
+          {selectedModel?.isUnavailable ? (
+            <Badge variant="outline" size="sm">
+              Unavailable
+            </Badge>
+          ) : null}
         </span>
         <span aria-hidden="true" className="flex items-center">
           <ComposerControlChevron />

@@ -95,6 +95,10 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   return isPendingInitialProbe || didInstalledProviderProbeFail;
 };
 
+const shouldRetainMissingOpenCodeMetadata = (provider: ServerProvider): boolean =>
+  provider.driver === ProviderDriverKind.make("opencode") &&
+  shouldRetainMissingProviderModels(provider);
+
 const mergeProviderModels = (
   provider: ServerProvider,
   previousModels: ReadonlyArray<ServerProvider["models"][number]>,
@@ -132,6 +136,16 @@ export const mergeProviderSnapshot = (
     : {
         ...nextProvider,
         models: mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
+        ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
+          ? {
+              slashCommands:
+                nextProvider.slashCommands.length === 0
+                  ? previousProvider.slashCommands
+                  : nextProvider.slashCommands,
+              skills:
+                nextProvider.skills.length === 0 ? previousProvider.skills : nextProvider.skills,
+            }
+          : {}),
       };
 
 export const mergeProviderSnapshots = (

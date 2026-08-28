@@ -417,6 +417,8 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   // ----- default model -----
   const storedSelection = representative.defaultModelSelection;
   const resolvedSelection = resolveDefaultProviderModelSelection(serverProviders, storedSelection);
+  const resolvedInstanceId = resolvedSelection?.instanceId ?? null;
+  const resolvedModel = resolvedSelection?.model ?? null;
   const instanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
@@ -425,12 +427,11 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     [serverProviders, settings],
   );
   const modelOptionsByInstance = useMemo(
-    () => getCustomModelOptionsByInstance(settings, serverProviders),
-    [serverProviders, settings],
+    () =>
+      getCustomModelOptionsByInstance(settings, serverProviders, resolvedInstanceId, resolvedModel),
+    [resolvedInstanceId, resolvedModel, serverProviders, settings],
   );
-  const activeEntry = instanceEntries.find(
-    (entry) => entry.instanceId === resolvedSelection?.instanceId,
-  );
+  const activeEntry = instanceEntries.find((entry) => entry.instanceId === resolvedInstanceId);
   const setDefaultModel = useCallback(
     (selection: ModelSelection | null) =>
       void updateAllMembers({ defaultModelSelection: selection }, "Failed to update default model"),
