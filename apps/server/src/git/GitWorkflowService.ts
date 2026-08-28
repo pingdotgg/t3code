@@ -342,6 +342,7 @@ export const make = Effect.gen(function* () {
     pruneWorktrees: (input) =>
       ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(
         Effect.andThen(git.pruneWorktrees(input)),
+      ),
     deleteLocalBranch: (input) =>
       ensureGitCommand("GitWorkflowService.deleteLocalBranch", input.cwd).pipe(
         Effect.andThen(git.deleteLocalBranch(input)),

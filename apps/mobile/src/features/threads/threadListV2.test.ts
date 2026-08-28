@@ -333,7 +333,9 @@ describe("buildThreadListV2Items", () => {
       threads: [merged],
       environmentId: null,
       searchQuery: "",
-      changeRequestStateByKey: new Map([[`${environmentId}:${merged.id}`, "merged"]]),
+      changeRequestByKey: new Map([
+        [`${environmentId}:${merged.id}`, { state: "merged" as const }],
+      ]),
       autoSettleOnMerge: false,
       now: NOW,
     });
@@ -371,7 +373,7 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(1);
   });
 
-  it("renders pinned threads first and exempts them from auto-settle — parity with web", () => {
+  it("moves a settled pinned thread into the settled shelf — parity with web (#7969)", () => {
     const layout = buildThreadListV2Items({
       threads: [
         makeThread({ id: ThreadId.make("active"), title: "Active" }),
@@ -389,9 +391,11 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["pinned-settled", "active"]);
-    expect(layout.items.map((item) => item.pinned)).toEqual([true, false]);
-    expect(layout.settledCount).toBe(0);
+    // Since #7969 a settled thread leaves the active block even while pinned;
+    // the pin re-applies when the thread is un-settled.
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "pinned-settled"]);
+    expect(layout.items.map((item) => item.pinned)).toEqual([false, false]);
+    expect(layout.settledCount).toBe(1);
   });
 
   it("snooze hides a pinned thread and wake restores it to the pinned block", () => {

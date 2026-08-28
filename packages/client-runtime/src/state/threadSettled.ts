@@ -29,6 +29,7 @@ interface QueuedThreadShell {
 }
 
 interface SettlementThreadShell extends QueuedThreadShell {
+  readonly createdAt: string;
   readonly settledOverride: "settled" | "active" | null;
   readonly settledAt: string | null;
   readonly hasPendingApprovals: boolean;

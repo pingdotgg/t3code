@@ -121,6 +121,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       threadSettlement: clients keep their local visited state against
       servers that lack this. */
   threadVisitedTracking: Schema.optionalKey(Schema.Boolean),
+  /** Server persists a pull request reference on thread.meta.update. */
+  threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */

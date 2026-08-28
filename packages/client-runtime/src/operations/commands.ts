@@ -1,4 +1,5 @@
 import {
+  type ThreadLinkedPullRequest,
   CommandId,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2CheckpointUnavailableError,
@@ -110,6 +111,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly worktreePath?: string | null;
   /** Kick off an async title regeneration for the thread. */
   readonly regenerateTitle?: boolean;
+  /** Link or unlink (#8160) a pull request; v2 servers ignore it for now. */
+  readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
 }
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {

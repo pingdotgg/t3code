@@ -18,6 +18,7 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
 import { ServerConfig } from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as ModelManifest from "../provider/ModelManifest.ts";
 import { ProviderInstanceRegistryHydrationLive } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
 import {
   NoOpProviderEventLoggers,
@@ -62,6 +63,7 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
       FetchHttpClient.layer,
       OpenCodeRuntimeLive.pipe(Layer.provide(NodeServices.layer)),
       Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
+      ModelManifest.layerTest,
     ),
   ),
 );

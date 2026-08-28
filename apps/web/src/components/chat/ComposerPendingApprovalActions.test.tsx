@@ -1,4 +1,4 @@
-import { ApprovalRequestId } from "@t3tools/contracts";
+import { RuntimeRequestId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -8,8 +8,9 @@ describe("ComposerPendingApprovalActions", () => {
   it("states that the persistent approval lasts for this session", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalActions
-        requestId={ApprovalRequestId.make("approval-1")}
+        requestId={RuntimeRequestId.make("approval-1")}
         isResponding={false}
+        canRespond
         onRespondToApproval={async () => undefined}
       />,
     );
@@ -25,8 +26,9 @@ describe("ComposerPendingApprovalActions", () => {
   it("shows only the approval choices advertised by an MCP server", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalActions
-        requestId={ApprovalRequestId.make("approval-safari")}
+        requestId={RuntimeRequestId.make("approval-safari")}
         isResponding={false}
+        canRespond
         options={[
           { decision: "decline", label: "Decline" },
           { decision: "acceptAlways", label: "Always allow Safari" },
@@ -70,8 +72,9 @@ describe("ComposerPendingApprovalActions", () => {
     const label = "Allow ".repeat(40).trim();
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalActions
-        requestId={ApprovalRequestId.make("approval-long-label")}
+        requestId={RuntimeRequestId.make("approval-long-label")}
         isResponding={false}
+        canRespond
         options={[{ decision: "acceptAlways", label }]}
         onRespondToApproval={async () => undefined}
       />,

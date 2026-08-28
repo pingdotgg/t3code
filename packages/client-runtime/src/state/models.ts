@@ -1,4 +1,5 @@
 import type {
+  ThreadLinkedPullRequest,
   EnvironmentId,
   MessageId,
   OrchestrationProjectShell,
@@ -101,6 +102,12 @@ export interface EnvironmentThreadShell {
   readonly pinnedAt: string | null;
   /** Slot in the user-arranged pinned order; null for keyless (legacy) pins. */
   readonly pinOrderKey: string | null;
+  /**
+   * Pull request the user linked to the thread (#8160). The v2 server does not
+   * project this yet, so it stays undefined on v2 environments; UI treats
+   * undefined and null alike.
+   */
+  readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   /**
    * Server-tracked visited watermark. `undefined` means the environment's
    * server predates visited tracking and clients should fall back to any
