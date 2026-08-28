@@ -1346,6 +1346,52 @@ describe("XAiAcpExtension", () => {
     }),
   );
 
+  it.effect("fails a hung prompt from an xAI rate-limit completion (#8358)", () =>
+    Effect.gen(function* () {
+      const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
+      const hungPrompt = yield* Deferred.make<never>();
+      const baseRuntime = {
+        start: () =>
+          Effect.succeed({
+            sessionId: "root-session",
+            initializeResult: {},
+            sessionSetupResult: {},
+            modelConfigId: undefined,
+          }),
+        prompt: () => Deferred.await(hungPrompt),
+        cancel: Effect.void,
+        handleExtNotification: (
+          method: string,
+          _schema: unknown,
+          handler: (notification: unknown) => Effect.Effect<void>,
+        ) => {
+          handlers.set(method, handler);
+          return Effect.void;
+        },
+        handleExtRequest: () => Effect.void,
+      } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+
+      const runtime = yield* makeXAiPromptCompletionRuntime(baseRuntime);
+      const promptFiber = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      const promptCompleteHandler = handlers.get("x.ai/session/prompt_complete");
+      expect(promptCompleteHandler).toBeDefined();
+      yield* promptCompleteHandler!({
+        sessionId: "root-session",
+        stopReason: "rate_limit",
+      });
+      const error = yield* Fiber.join(promptFiber).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "AcpRequestError",
+        code: -32003,
+        errorMessage: "Grok usage limit reached. Try again later.",
+      });
+    }),
+  );
+
   it.effect("settles a hung prompt from _x.ai/session/update turn_completed", () =>
     Effect.gen(function* () {
       const handlers = new Map<string, (notification: unknown) => Effect.Effect<void>>();
