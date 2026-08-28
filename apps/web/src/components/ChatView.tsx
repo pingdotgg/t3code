@@ -203,6 +203,7 @@ import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings"
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
+import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -2459,6 +2460,15 @@ function ChatViewContent(props: ChatViewProps) {
     threadError,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const activeContextWindow = useMemo(
+    () =>
+      deriveLatestContextWindowSnapshot(serverVisibleTurnItems ?? [], activeThreadLiveTokenUsage),
+    [activeThreadLiveTokenUsage, serverVisibleTurnItems],
+  );
+  // Conservative compact gate until the branch grows main's full compaction
+  // preconditions: Claude server threads only, and never mid-turn.
+  const composerCompactDisabled =
+    !isServerThread || selectedProvider !== "claudeAgent" || isWorking;
   const pendingBackgroundTasks = useMemo(() => {
     if (serverProjection === null || serverProjection === undefined) {
       return [];
@@ -6801,14 +6811,20 @@ function ChatViewContent(props: ChatViewProps) {
                             runtimeMode={runtimeMode}
                             interactionMode={interactionMode}
                             lockedProvider={modelPickerLockedProvider}
-                            providerCatalogLoaded={serverConfig !== null}
                             providerStatuses={providerStatuses as ServerProvider[]}
                             activeProjectDefaultModelSelection={
                               activeProject?.defaultModelSelection
                             }
                             activeThreadModelSelection={activeThread?.modelSelection}
-                            activeThreadVisibleTurnItems={serverVisibleTurnItems}
-                            activeThreadLiveTokenUsage={activeThreadLiveTokenUsage}
+                            activeContextWindow={activeContextWindow}
+                            activeTasksProgress={null}
+                            activeTaskSteps={null}
+                            compactDisabled={composerCompactDisabled}
+                            compactDisabledReason={null}
+                            sendDisabledReason={null}
+                            attachmentUploadsCapabilityKnown
+                            supportsAttachmentUploads={false}
+                            externalDrawerAttached={composerBannerItems.length > 0}
                             resolvedTheme={resolvedTheme}
                             settings={settings}
                             keybindings={keybindings}
