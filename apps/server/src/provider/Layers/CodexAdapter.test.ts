@@ -23,6 +23,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -42,12 +43,17 @@ import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import {
   type CodexSessionRuntimeOptions,
+  type CodexSessionRuntimeError,
   type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
+  CodexSessionRuntimeThreadIdMismatchError,
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
 import { makeCodexAdapter } from "./CodexAdapter.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+const isCodexSessionRuntimeThreadIdMismatchError = Schema.is(
+  CodexSessionRuntimeThreadIdMismatchError,
+);
 
 // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
 class CodexAdapter extends Context.Service<CodexAdapter, CodexAdapterShape>()(
@@ -71,6 +77,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       threadId: this.options.threadId,
       cwd: this.options.cwd,
       ...(this.options.model ? { model: this.options.model } : {}),
+      ...(this.options.resumeCursor ? { resumeCursor: this.options.resumeCursor } : {}),
       createdAt: this.now,
       updatedAt: this.now,
     } satisfies ProviderSession),
@@ -120,6 +127,9 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
 
   public readonly closeImpl = vi.fn(() => Promise.resolve(undefined));
 
+  public startEffect?: Effect.Effect<ProviderSession, CodexSessionRuntimeError>;
+  public closeEffect?: Effect.Effect<ProviderEvent>;
+
   readonly options: CodexSessionRuntimeOptions;
 
   constructor(options: CodexSessionRuntimeOptions) {
@@ -127,7 +137,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   start() {
-    return Effect.promise(() => this.startImpl());
+    return this.startEffect ?? Effect.promise(() => this.startImpl());
   }
 
   getSession = Effect.promise(() => this.startImpl());
@@ -162,7 +172,33 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
     return Stream.fromQueue(this.eventQueue);
   }
 
-  close = Effect.promise(() => this.closeImpl());
+  makeClosedEvent(): ProviderEvent {
+    return {
+      id: asEventId(`evt-close-${this.options.threadId}`),
+      kind: "session",
+      provider: ProviderDriverKind.make("codex"),
+      ...(this.options.providerInstanceId
+        ? { providerInstanceId: this.options.providerInstanceId }
+        : {}),
+      threadId: this.options.threadId,
+      createdAt: this.now,
+      method: "session/closed",
+      message: "Session stopped",
+    };
+  }
+
+  makeIgnoredCloseEvent(): ProviderEvent {
+    return {
+      ...this.makeClosedEvent(),
+      method: "test/session-closed",
+    };
+  }
+
+  close = Effect.suspend(
+    () =>
+      this.closeEffect ??
+      Effect.promise(() => this.closeImpl()).pipe(Effect.as(this.makeIgnoredCloseEvent())),
+  );
 
   emit(event: ProviderEvent) {
     return Queue.offer(this.eventQueue, event).pipe(Effect.asVoid);
@@ -185,7 +221,10 @@ function makeRuntimeFactory() {
   };
 }
 
-function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolean }) {
+function makeScopedRuntimeFactory(options?: {
+  readonly failConstruction?: boolean;
+  readonly configureRuntime?: (runtime: FakeCodexRuntime) => void;
+}) {
   const runtimes: Array<FakeCodexRuntime> = [];
   const releasedThreadIds: Array<ThreadId> = [];
 
@@ -206,6 +245,7 @@ function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolea
       }
 
       const runtime = new FakeCodexRuntime(runtimeOptions);
+      options?.configureRuntime?.(runtime);
       runtimes.push(runtime);
       return runtime;
     }),
@@ -295,6 +335,60 @@ validationLayer("CodexAdapterLive validation", (it) => {
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
+    }),
+  );
+
+  it.effect("rejects an invalid Codex resume cursor instead of starting a new thread", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      const result = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-invalid-cursor"),
+          runtimeMode: "full-access",
+          resumeCursor: { sessionId: "not-a-codex-thread-id" },
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.deepStrictEqual(
+        result.failure,
+        new ProviderAdapterValidationError({
+          provider: ProviderDriverKind.make("codex"),
+          operation: "startSession",
+          issue: "Invalid Codex resume cursor.",
+        }),
+      );
+      NodeAssert.equal(validationRuntimeFactory.factory.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("rejects an empty Codex resume cursor", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      const result = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-empty-cursor"),
+          runtimeMode: "full-access",
+          resumeCursor: { threadId: "" },
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.deepStrictEqual(
+        result.failure,
+        new ProviderAdapterValidationError({
+          provider: ProviderDriverKind.make("codex"),
+          operation: "startSession",
+          issue: "Invalid Codex resume cursor.",
+        }),
+      );
+      NodeAssert.equal(validationRuntimeFactory.factory.mock.calls.length, 0);
     }),
   );
 });
@@ -1573,6 +1667,43 @@ scopedLifecycleLayer("CodexAdapterLive scoped lifecycle", (it) => {
       NodeAssert.equal(yield* adapter.hasSession(asThreadId("thread-stop")), false);
     }),
   );
+
+  it.effect("coalesces concurrent stop calls into one release and one close event", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-concurrent-stop");
+      const closeStarted = yield* Deferred.make<void>();
+      const allowClose = yield* Deferred.make<void>();
+      let closeAttempts = 0;
+      yield* Effect.addFinalizer(() => Deferred.succeed(allowClose, undefined).pipe(Effect.asVoid));
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = scopedLifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.closeEffect = Effect.sync(() => {
+        closeAttempts += 1;
+      }).pipe(
+        Effect.andThen(Deferred.succeed(closeStarted, undefined)),
+        Effect.andThen(Deferred.await(allowClose)),
+        Effect.as(runtime.makeClosedEvent()),
+      );
+
+      const firstStop = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
+      const secondStop = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
+      yield* Deferred.await(closeStarted);
+      NodeAssert.equal(closeAttempts, 1);
+
+      yield* Deferred.succeed(allowClose, undefined);
+      yield* Fiber.join(firstStop);
+      yield* Fiber.join(secondStop);
+      NodeAssert.equal(closeAttempts, 1);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+    }),
+  );
 });
 
 const scopedFailureRuntimeFactory = makeScopedRuntimeFactory({ failConstruction: true });
@@ -1616,6 +1747,272 @@ scopedFailureLayer("CodexAdapterLive scoped startup failure", (it) => {
     }),
   );
 });
+
+const identityMismatchRuntimeFactory = makeScopedRuntimeFactory({
+  configureRuntime: (runtime) => {
+    runtime.startEffect = Effect.fail(
+      new CodexSessionRuntimeThreadIdMismatchError({
+        threadId: runtime.options.threadId,
+        requestedThreadId: "requested-native-thread",
+        returnedThreadId: "wrong-native-thread",
+      }),
+    );
+  },
+});
+const identityMismatchLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: identityMismatchRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+identityMismatchLayer("CodexAdapterLive strict resume identity", (it) => {
+  it.effect("closes the target when native resume returns a different id", () =>
+    Effect.gen(function* () {
+      identityMismatchRuntimeFactory.releasedThreadIds.length = 0;
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-id-mismatch");
+
+      const result = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+          resumeCursor: { threadId: "requested-native-thread" },
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(result.failure._tag, "ProviderAdapterProcessError");
+      NodeAssert.ok(isCodexSessionRuntimeThreadIdMismatchError(result.failure.cause));
+      const runtime = identityMismatchRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.deepStrictEqual(runtime.options.resumeCursor, {
+        threadId: "requested-native-thread",
+      });
+      NodeAssert.equal(runtime.closeImpl.mock.calls.length, 1);
+      NodeAssert.deepStrictEqual(identityMismatchRuntimeFactory.releasedThreadIds, [threadId]);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+    }),
+  );
+});
+
+const startupReleaseFailure = new Error("target release remained unproven");
+const startupReleaseFailureRuntimeFactory = makeScopedRuntimeFactory({
+  configureRuntime: (runtime) => {
+    runtime.startEffect = Effect.fail(
+      new CodexSessionRuntimeThreadIdMismatchError({
+        threadId: runtime.options.threadId,
+        requestedThreadId: "requested-native-thread",
+        returnedThreadId: "wrong-native-thread",
+      }),
+    );
+    runtime.closeEffect = Effect.die(startupReleaseFailure);
+  },
+});
+const startupReleaseFailureLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: startupReleaseFailureRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+startupReleaseFailureLayer("CodexAdapterLive failed startup release", (it) => {
+  it.effect("retains ownership when a failed target cannot prove writer release", () =>
+    Effect.gen(function* () {
+      startupReleaseFailureRuntimeFactory.releasedThreadIds.length = 0;
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-startup-release-failure");
+
+      const result = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+          resumeCursor: { threadId: "requested-native-thread" },
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(result.failure._tag, "ProviderAdapterProcessError");
+      NodeAssert.strictEqual(result.failure.cause, startupReleaseFailure);
+      NodeAssert.deepStrictEqual(startupReleaseFailureRuntimeFactory.releasedThreadIds, [threadId]);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), true);
+      const sessions = yield* adapter.listSessions();
+      NodeAssert.equal(sessions.length, 1);
+      NodeAssert.deepStrictEqual(sessions[0]?.resumeCursor, {
+        threadId: "requested-native-thread",
+      });
+
+      const runtime = startupReleaseFailureRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      const turnResult = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "must not route",
+          attachments: [],
+        })
+        .pipe(Effect.result);
+      NodeAssert.equal(turnResult._tag, "Failure");
+      NodeAssert.equal(turnResult.failure._tag, "ProviderAdapterSessionNotFoundError");
+      NodeAssert.equal(runtime.sendTurnImpl.mock.calls.length, 0);
+    }),
+  );
+});
+
+it.effect("retains the session until runtime close and scope release both complete", () =>
+  Effect.gen(function* () {
+    const closeStarted = yield* Deferred.make<void>();
+    const allowClose = yield* Deferred.make<void>();
+    const releaseStarted = yield* Deferred.make<void>();
+    const allowRelease = yield* Deferred.make<void>();
+    let runtime: FakeCodexRuntime | undefined;
+    yield* Effect.addFinalizer(() =>
+      Deferred.succeed(allowClose, undefined).pipe(
+        Effect.andThen(Deferred.succeed(allowRelease, undefined)),
+        Effect.asVoid,
+      ),
+    );
+
+    const runtimeFactory = (runtimeOptions: CodexSessionRuntimeOptions) =>
+      Effect.gen(function* () {
+        yield* Scope.Scope;
+        yield* Effect.addFinalizer(() =>
+          Deferred.succeed(releaseStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(allowRelease)),
+          ),
+        );
+        const nextRuntime = new FakeCodexRuntime(runtimeOptions);
+        nextRuntime.closeEffect = Deferred.succeed(closeStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowClose)),
+          Effect.as(nextRuntime.makeClosedEvent()),
+        );
+        runtime = nextRuntime;
+        return nextRuntime;
+      });
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, { makeRuntime: runtimeFactory });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-deferred-release");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      NodeAssert.ok(runtime);
+
+      const exitEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      const stopFiber = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
+      yield* Deferred.await(closeStarted);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), true);
+      NodeAssert.equal(yield* Deferred.isDone(releaseStarted), false);
+
+      yield* Deferred.succeed(allowClose, undefined);
+      yield* Deferred.await(releaseStarted);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), true);
+      NodeAssert.equal(exitEventFiber.pollUnsafe(), undefined);
+
+      yield* Deferred.succeed(allowRelease, undefined);
+      yield* Fiber.join(stopFiber);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+      const exitEvent = yield* Fiber.join(exitEventFiber);
+      NodeAssert.equal(exitEvent._tag, "Some");
+      if (exitEvent._tag === "Some") {
+        NodeAssert.equal(exitEvent.value.type, "session.exited");
+      }
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("propagates close failure and retains authoritative session ownership", () =>
+  Effect.gen(function* () {
+    const closeFailure = new Error("close failed before writer release");
+    const releasedThreadIds: Array<ThreadId> = [];
+    let runtime: FakeCodexRuntime | undefined;
+
+    const runtimeFactory = (runtimeOptions: CodexSessionRuntimeOptions) =>
+      Effect.gen(function* () {
+        yield* Scope.Scope;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            releasedThreadIds.push(runtimeOptions.threadId);
+          }),
+        );
+        const nextRuntime = new FakeCodexRuntime(runtimeOptions);
+        nextRuntime.closeEffect = Effect.die(closeFailure);
+        runtime = nextRuntime;
+        return nextRuntime;
+      });
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, { makeRuntime: runtimeFactory });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-close-failure");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      NodeAssert.ok(runtime);
+
+      const result = yield* adapter.stopSession(threadId).pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(result.failure._tag, "ProviderAdapterProcessError");
+      NodeAssert.strictEqual(result.failure.cause, closeFailure);
+      NodeAssert.match(result.failure.detail, /close failed before writer release/);
+      NodeAssert.deepStrictEqual(releasedThreadIds, [threadId]);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), true);
+
+      runtime.closeEffect = Effect.succeed(runtime.makeClosedEvent());
+      yield* adapter.stopSession(threadId);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+    }).pipe(Effect.provide(layer));
+  }),
+);
 
 it.effect("flushes managed native logs when the adapter layer shuts down", () =>
   Effect.gen(function* () {
