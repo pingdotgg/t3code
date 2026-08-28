@@ -21,6 +21,7 @@ import type {
   OrchestrationV2TurnItem,
   ProviderUserInputAnswers,
   ProviderApprovalDecision,
+  ProviderApprovalOption,
   ProviderRequestKind,
   ProviderTurnId,
   ProviderInstanceId,
@@ -49,6 +50,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
+import {
+  describeMcpElicitation,
+  toMcpElicitationResponse,
+} from "../../provider/Layers/CodexSessionRuntime.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   codexDefaultModeDeveloperInstructions,
@@ -2943,6 +2948,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           readonly nativeRequestId: string;
           readonly requestKind: ProviderRequestKind;
           readonly prompt?: string | null;
+          readonly appName?: string;
+          readonly options?: ReadonlyArray<ProviderApprovalOption>;
         }) =>
           Effect.gen(function* () {
             const createdAt = yield* DateTime.now;
@@ -3022,6 +3029,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               ...(input.prompt === null || input.prompt === undefined
                 ? {}
                 : { prompt: input.prompt }),
+              ...(input.appName === undefined ? {} : { appName: input.appName }),
+              ...(input.options === undefined ? {} : { options: input.options }),
             };
             return { node, request, turnItem };
           });
@@ -3827,6 +3836,88 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               decision: resolved,
               permissions: payload.permissions,
             });
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
+          Effect.gen(function* () {
+            // Unsupported elicitation shapes cannot express an approval, so
+            // decline instead of presenting a request the user cannot answer.
+            if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
+              yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
+                serverName: payload.serverName,
+                mode: payload.mode,
+              });
+              return {
+                action: "decline",
+              } satisfies CodexSchema.McpServerElicitationRequestResponse;
+            }
+            const context =
+              payload.turnId === undefined || payload.turnId === null
+                ? undefined
+                : yield* awaitActiveTurn(payload.turnId);
+            if (context === undefined) {
+              yield* Effect.logWarning(
+                "Declined an MCP elicitation without an active Codex turn context.",
+                { serverName: payload.serverName },
+              );
+              return {
+                action: "decline",
+              } satisfies CodexSchema.McpServerElicitationRequestResponse;
+            }
+
+            const nativeRequestId =
+              payload.mode === "url"
+                ? payload.elicitationId
+                : `mcp-elicitation:${payload.serverName}`;
+            const described = describeMcpElicitation(payload);
+            const artifacts = yield* buildApprovalRequestArtifacts({
+              context,
+              nativeItemId: nativeRequestId,
+              nativeRequestId,
+              requestKind: "mcp-elicitation",
+              prompt: payload.message,
+              appName: described.appName,
+              options: described.options,
+            });
+            const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
+            yield* Ref.update(pendingRuntimeRequests, (current) => {
+              const updated = new Map(current);
+              updated.set(String(artifacts.request.id), {
+                type: "approval",
+                requestId: artifacts.request.id,
+                requestKind: "mcp-elicitation",
+                decision,
+              });
+              return updated;
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "runtime_request.updated",
+              driver: CODEX_PROVIDER,
+              threadId: artifacts.node.threadId,
+              runtimeRequest: artifacts.request,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+
+            const resolved = yield* Deferred.await(decision).pipe(
+              Effect.ensuring(
+                Ref.update(pendingRuntimeRequests, (current) => {
+                  const updated = new Map(current);
+                  updated.delete(String(artifacts.request.id));
+                  return updated;
+                }),
+              ),
+            );
+            return toMcpElicitationResponse(payload, resolved);
           }).pipe(Effect.orDie),
         );
 

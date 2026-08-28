@@ -75,6 +75,10 @@ export function derivePendingThreadRequests(
       requestKind: request.kind,
       createdAt: DateTime.formatIso(request.createdAt),
       ...(item?.type === "approval_request" && item.prompt ? { detail: item.prompt } : {}),
+      ...(item?.type === "approval_request" && item.appName ? { appName: item.appName } : {}),
+      ...(item?.type === "approval_request" && item.options !== undefined
+        ? { options: item.options }
+        : {}),
       responseCapability,
     });
   }
