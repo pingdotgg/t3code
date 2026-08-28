@@ -1694,6 +1694,17 @@ describe("MessagesTimeline", () => {
         timelineEntries={
           [
             {
+              id: "context-info-entry",
+              kind: "work",
+              createdAt: MESSAGE_CREATED_AT,
+              entry: {
+                id: "context-info",
+                createdAt: MESSAGE_CREATED_AT,
+                label: "Session started",
+                tone: "info",
+              },
+            },
+            {
               id: item.id,
               kind: "work",
               createdAt: MESSAGE_CREATED_AT,
@@ -1718,6 +1729,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-v2-item-type="command_execution"');
     expect(markup).toContain('data-v2-item-visibility="inherited"');
     expect(markup).toContain("Inherited");
+    expect(markup).toContain("+1 previous log entry");
   });
 
   it("renders T3 MCP dynamic tools with the product logo and pretty name", async () => {
@@ -1755,6 +1767,17 @@ describe("MessagesTimeline", () => {
         timelineEntries={
           [
             {
+              id: "context-info-entry",
+              kind: "work",
+              createdAt: MESSAGE_CREATED_AT,
+              entry: {
+                id: "context-info",
+                createdAt: MESSAGE_CREATED_AT,
+                label: "Session started",
+                tone: "info",
+              },
+            },
+            {
               id: item.id,
               kind: "work",
               createdAt: MESSAGE_CREATED_AT,
@@ -1789,6 +1812,17 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={[
+          {
+            id: "context-info-entry",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "context-info",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Session started",
+              tone: "info",
+            },
+          },
           {
             id: "entry-1",
             kind: "work",
@@ -1889,11 +1923,65 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-testid="file-diff"');
   });
 
+  it("collapses settled tool runs behind a generated summary toggle", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Ran command",
+              command: "vp lint",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "completed",
+            },
+          },
+          {
+            id: "entry-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Ran command",
+              command: "vp test run",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "completed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Ran 2 commands");
+    expect(markup).toContain('aria-expanded="false"');
+    // Entries stay hidden until the toggle expands the group.
+    expect(markup).not.toContain("vp lint");
+  });
+
   it("renders a failure marker for failed tool lifecycle entries", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={[
+          {
+            id: "context-info-entry",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "context-info",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Session started",
+              tone: "info",
+            },
+          },
           {
             id: "entry-1",
             kind: "work",
