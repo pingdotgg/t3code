@@ -194,6 +194,80 @@ You can also check the OpenRouter activity dashboard for requests from your API 
 OpenRouter's setup can change over time. Use its upstream Claude Code guide for the current details:
 <https://openrouter.ai/docs/guides/guides/claude-code-integration>.
 
+## I Want To Use Z.AI (GLM Coding Plan)
+
+Use this when you want Claude Code to run on Z.AI's GLM Coding Plan instead of an Anthropic
+login. Z.AI exposes a Claude-compatible endpoint, so this is a plain Claude provider with
+environment variables — no router needed.
+
+### Configure A Claude Z.AI Provider
+
+Add or edit a Claude provider in T3 Code Settings:
+
+```text
+Display name: Claude Z.AI
+Binary path: claude
+CLAUDE_CONFIG_DIR path: ~/.claude_zai_home
+```
+
+In that provider's Environment variables section, add:
+
+```text
+ANTHROPIC_BASE_URL   https://api.z.ai/api/anthropic
+ANTHROPIC_AUTH_TOKEN <your Z.AI API key>       Sensitive
+API_TIMEOUT_MS       3000000
+```
+
+Mark `ANTHROPIC_AUTH_TOKEN` as sensitive. T3 Code stores the value as a server secret and does not
+send it back to the app after saving.
+
+If you want this setup isolated from your normal Claude account, create that home first:
+
+```bash
+mkdir -p ~/.claude_zai_home
+```
+
+If you previously used the same Claude home with a normal Anthropic login, run `/logout` in a
+Claude Code session for that home before using Z.AI. Otherwise Claude Code may keep using cached
+Anthropic credentials instead of the Z.AI token.
+
+### Pick GLM Models
+
+Claude Code's default model roles can be mapped to GLM model IDs:
+
+```text
+ANTHROPIC_DEFAULT_OPUS_MODEL    glm-4.7
+ANTHROPIC_DEFAULT_SONNET_MODEL  glm-4.7
+ANTHROPIC_DEFAULT_HAIKU_MODEL   glm-4.5-air
+```
+
+Add those to the same provider's Environment variables section if you want stable model choices.
+Use lowercase model IDs.
+
+### Verify Z.AI Is Being Used
+
+Open a Claude session and run:
+
+```text
+/status
+```
+
+You should see the Anthropic base URL set to:
+
+```text
+https://api.z.ai/api/anthropic
+```
+
+### Common Z.AI Mistakes
+
+- Use `https://api.z.ai/api/anthropic`, not the OpenAI-compatible coding endpoint, for Claude Code.
+- Set `ANTHROPIC_AUTH_TOKEN` to your Z.AI API key, not `ANTHROPIC_API_KEY`.
+- Set `ANTHROPIC_API_KEY` to an empty string if Claude Code still tries an Anthropic login.
+- Put these variables on the Claude provider instance, not in global shell startup files.
+
+Z.AI's setup can change over time. Use its upstream Claude Code guide for the current details:
+<https://docs.z.ai/devpack/tool/claude>.
+
 ## I Want To Use Claude Code Router
 
 Claude Code Router is useful when you want a local routing layer with more control than a direct
