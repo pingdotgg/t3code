@@ -2,7 +2,9 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
   ChevronRightIcon,
+  Code2Icon,
   CopyIcon,
+  EyeIcon,
   GlobeIcon,
   InfoIcon,
   LightbulbIcon,
@@ -50,6 +52,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
+import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { CHAT_FILE_TAG_CHIP_CLASS_NAME, FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
@@ -78,6 +81,7 @@ import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
+import { isMermaidFenceLanguage } from "../lib/mermaidLanguage";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
@@ -717,19 +721,35 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
+  renderDiagram = false,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
+  renderDiagram?: boolean;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
+  const [showSource, setShowSource] = useState(false);
+  const [diagramError, setDiagramError] = useState<string | null>(null);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
+  const showDiagram = renderDiagram && !showSource && diagramError === null;
+  const sourceToggleLabel = showSource ? "Show diagram" : "Show source";
+
+  useEffect(() => {
+    setShowSource(false);
+    setDiagramError(null);
+  }, [code]);
+
+  const handleDiagramError = useCallback((message: string) => {
+    setDiagramError(message);
+    setShowSource(true);
+  }, []);
 
   const handleCopy = useCallback(() => {
     if (typeof navigator === "undefined" || navigator.clipboard == null) {
@@ -773,6 +793,7 @@ function MarkdownCodeBlock({
     <div
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
+      data-mermaid={renderDiagram ? (showDiagram ? "diagram" : "source") : undefined}
       data-wrap={wrapped ? "true" : "false"}
     >
       <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
@@ -784,24 +805,53 @@ function MarkdownCodeBlock({
           />
         </span>
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="chat-markdown-chrome-action"
-                  aria-pressed={wrapped}
-                  onClick={() => setWrapped((value) => !value)}
-                  aria-label={wrapLabel}
-                />
-              }
-            >
-              <WrapTextIcon className="size-3" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-          </Tooltip>
+          {renderDiagram ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    aria-pressed={showSource}
+                    onClick={() => {
+                      if (showSource) {
+                        setDiagramError(null);
+                        setShowSource(false);
+                      } else {
+                        setShowSource(true);
+                      }
+                    }}
+                    aria-label={sourceToggleLabel}
+                  />
+                }
+              >
+                {showSource ? <EyeIcon className="size-3" /> : <Code2Icon className="size-3" />}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{sourceToggleLabel}</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {showDiagram ? null : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    aria-pressed={wrapped}
+                    onClick={() => setWrapped((value) => !value)}
+                    aria-label={wrapLabel}
+                  />
+                }
+              >
+                <WrapTextIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -821,7 +871,21 @@ function MarkdownCodeBlock({
           </Tooltip>
         </span>
       </div>
-      {children}
+      {diagramError !== null ? (
+        <p className="px-3 pb-1 text-xs text-destructive" role="alert">
+          {diagramError}
+        </p>
+      ) : null}
+      {showDiagram ? (
+        <MermaidDiagram
+          code={code}
+          language={language}
+          theme={theme}
+          onError={handleDiagramError}
+        />
+      ) : (
+        children
+      )}
     </div>
   );
 }
@@ -2192,6 +2256,7 @@ function ChatMarkdown({
             language={language}
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
+            renderDiagram={isMermaidFenceLanguage(language) && !isStreaming}
           >
             <RenderErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               <Suspense fallback={<pre {...props}>{children}</pre>}>

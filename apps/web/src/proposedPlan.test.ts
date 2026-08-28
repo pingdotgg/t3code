@@ -47,6 +47,92 @@ describe("buildCollapsedProposedPlanPreviewMarkdown", () => {
       }),
     ).toBe("- step 1\n- step 2\n\n...");
   });
+
+  it("finishes a mermaid fence instead of truncating it mid-block", () => {
+    expect(
+      buildCollapsedProposedPlanPreviewMarkdown(
+        [
+          "# Kataar",
+          "",
+          "Two audiences, two surfaces, one queue:",
+          "",
+          "```mermaid",
+          "flowchart LR",
+          "  Guest[Guest] --> Form[Join form]",
+          "  Form --> Queue[Host queue]",
+          "  Queue --> Host[Host app]",
+          "```",
+          "",
+          "- more work",
+        ].join("\n"),
+        { maxLines: 4 },
+      ),
+    ).toBe(
+      [
+        "Two audiences, two surfaces, one queue:",
+        "",
+        "```mermaid",
+        "flowchart LR",
+        "  Guest[Guest] --> Form[Join form]",
+        "  Form --> Queue[Host queue]",
+        "  Queue --> Host[Host app]",
+        "```",
+        "",
+        "...",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps a leading mermaid flowchart in the collapsed preview", () => {
+    expect(
+      buildCollapsedProposedPlanPreviewMarkdown(
+        [
+          "# Kataar",
+          "",
+          "```mermaid",
+          "flowchart LR",
+          "  Guest[Guest] --> Form[Join form]",
+          "  Form --> Queue[Host queue]",
+          "  Queue --> Host[Host app]",
+          "```",
+          "",
+          "Then we build the host console.",
+        ].join("\n"),
+        { maxLines: 2 },
+      ),
+    ).toBe(
+      [
+        "```mermaid",
+        "flowchart LR",
+        "  Guest[Guest] --> Form[Join form]",
+        "  Form --> Queue[Host queue]",
+        "  Queue --> Host[Host app]",
+        "```",
+        "",
+        "...",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps a mermaid fence that fits entirely in the preview", () => {
+    expect(
+      buildCollapsedProposedPlanPreviewMarkdown(
+        [
+          "# Kataar",
+          "",
+          "```mermaid",
+          "flowchart LR",
+          "  A --> B",
+          "```",
+          "",
+          "- more work",
+          "- even more",
+          "- still more",
+        ].join("\n"),
+        { maxLines: 5 },
+      ),
+    ).toBe("```mermaid\nflowchart LR\n  A --> B\n```\n\n- more work\n\n...");
+  });
 });
 
 describe("stripDisplayedPlanMarkdown", () => {

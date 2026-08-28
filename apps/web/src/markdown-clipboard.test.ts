@@ -22,6 +22,7 @@ class FakeElement {
   constructor(
     readonly tagName: string,
     private readonly classNames: ReadonlyArray<string> = [],
+    private readonly attributes: Record<string, string> = {},
   ) {}
 
   get localName(): string {
@@ -37,12 +38,13 @@ class FakeElement {
     return this;
   }
 
-  getAttribute(): string | null {
-    return null;
+  getAttribute(name?: string): string | null {
+    if (name === undefined) return null;
+    return this.attributes[name] ?? null;
   }
 
-  hasAttribute(): boolean {
-    return false;
+  hasAttribute(name: string): boolean {
+    return Object.hasOwn(this.attributes, name);
   }
 }
 
@@ -91,5 +93,16 @@ describe("serializeRenderedMarkdownFragment", () => {
     const container = new FakeElement("DIV").append(code);
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("first line\nsecond line");
+  });
+
+  it("restores mermaid source from a rendered diagram wrapper", () => {
+    const diagram = new FakeElement("DIV", ["chat-markdown-mermaid"], {
+      "data-markdown-copy": "```mermaid\nflowchart TD\n  A --> B\n```\n\n",
+    }).append(new FakeElement("svg").append(new FakeText("ignored svg text")));
+    const container = new FakeElement("DIV").append(diagram);
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "```mermaid\nflowchart TD\n  A --> B\n```",
+    );
   });
 });

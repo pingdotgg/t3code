@@ -19,6 +19,26 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
   return sourceLines.join("\n");
 }
 
+const MARKDOWN_FENCE_LINE_REGEX = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
+
+function nextOpenMarkdownFence(
+  open: { char: string; length: number } | null,
+  line: string,
+): { char: string; length: number } | null {
+  const match = MARKDOWN_FENCE_LINE_REGEX.exec(line);
+  if (!match) return open;
+  const marker = match[1] ?? "";
+  const info = (match[2] ?? "").trim();
+  const char = marker[0] ?? "`";
+  if (open === null) {
+    return { char, length: marker.length };
+  }
+  if (marker[0] === open.char && marker.length >= open.length && info.length === 0) {
+    return null;
+  }
+  return open;
+}
+
 export function buildCollapsedProposedPlanPreviewMarkdown(
   planMarkdown: string,
   options?: {
@@ -33,14 +53,18 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   const previewLines: string[] = [];
   let visibleLineCount = 0;
   let hasMoreContent = false;
+  let openFence: { char: string; length: number } | null = null;
 
   for (const line of lines) {
     const isVisibleLine = line.trim().length > 0;
-    if (isVisibleLine && visibleLineCount >= maxLines) {
+    // Keep consuming until a started fence closes so mermaid/code is never
+    // parsed as a truncated fragment. The card still CSS-clips the preview.
+    if (isVisibleLine && visibleLineCount >= maxLines && openFence === null) {
       hasMoreContent = true;
       break;
     }
     previewLines.push(line);
+    openFence = nextOpenMarkdownFence(openFence, line);
     if (isVisibleLine) {
       visibleLineCount += 1;
     }

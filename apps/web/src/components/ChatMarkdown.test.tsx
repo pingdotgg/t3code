@@ -289,3 +289,31 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("chat-markdown-file-link");
   });
 });
+
+describe("ChatMarkdown mermaid fences", () => {
+  it("renders mermaid fences as diagrams with a source toggle", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text={"```mermaid\nflowchart TD\n  A --> B\n```"} />,
+    );
+
+    expect(html).toContain('data-language="mermaid"');
+    expect(html).toContain('data-mermaid="diagram"');
+    expect(html).toContain("Show source");
+    expect(html).toContain("Rendering diagram");
+  });
+
+  it("keeps mermaid source while the message is streaming", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        isStreaming
+        text={"```mermaid\nflowchart TD\n  A --> B\n```"}
+      />,
+    );
+
+    expect(html).toContain('data-language="mermaid"');
+    expect(html).not.toContain("data-mermaid");
+    expect(html).not.toContain("Show source");
+    expect(html).not.toContain("Rendering diagram");
+  });
+});
