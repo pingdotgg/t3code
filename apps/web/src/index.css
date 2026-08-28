@@ -808,617 +808,376 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
     backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-    .chat-composer-shoulder-tab {
-      border-color: var(
-        --chat-composer-outline,
-        color-mix(in srgb, var(--contrast-foreground) 8%, transparent)
-      );
-      background: color-mix(
-        in srgb,
-        var(--chat-composer-glass-surface, var(--card)) var(--glass-opacity),
-        transparent
-      );
-      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      box-shadow: 0 -8px 24px -18px rgb(0 0 0 / 45%);
+  }
 
-      @variant dark {
-        box-shadow: 0 -10px 28px -18px rgb(0 0 0 / 80%);
-      }
+  .chat-composer-shoulder-tab {
+    border-color: var(
+      --chat-composer-outline,
+      color-mix(in srgb, var(--contrast-foreground) 8%, transparent)
+    );
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-glass-surface, var(--card)) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    box-shadow: 0 -8px 24px -18px rgb(0 0 0 / 45%);
 
-      @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-        background: var(--chat-composer-glass-surface, var(--card));
-      }
+    @variant dark {
+      box-shadow: 0 -10px 28px -18px rgb(0 0 0 / 80%);
     }
 
-    .chat-composer-banner-stack-cap {
-      --chat-composer-attached-surface: var(--chat-composer-glass-surface, var(--card));
+    @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+      background: var(--chat-composer-glass-surface, var(--card));
+    }
+  }
+
+  .chat-composer-banner-stack-cap {
+    --chat-composer-attached-surface: var(--chat-composer-glass-surface, var(--card));
+    --chat-composer-attached-outline: var(
+      --chat-composer-outline,
+      color-mix(in srgb, var(--contrast-foreground) 8%, transparent)
+    );
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-attached-surface) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+
+    @variant dark {
+      --chat-composer-attached-surface: var(
+        --chat-composer-glass-surface,
+        color-mix(in srgb, var(--background) 96%, var(--color-white))
+      );
       --chat-composer-attached-outline: var(
         --chat-composer-outline,
-        color-mix(in srgb, var(--contrast-foreground) 8%, transparent)
+        color-mix(in srgb, var(--color-white) 5%, transparent)
       );
-      background: color-mix(
-        in srgb,
-        var(--chat-composer-attached-surface) var(--glass-opacity),
-        transparent
-      );
-      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-
-      @variant dark {
-        --chat-composer-attached-surface: var(
-          --chat-composer-glass-surface,
-          color-mix(in srgb, var(--background) 96%, var(--color-white))
-        );
-        --chat-composer-attached-outline: var(
-          --chat-composer-outline,
-          color-mix(in srgb, var(--color-white) 5%, transparent)
-        );
-      }
-
-      @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-        background: var(--chat-composer-attached-surface);
-      }
     }
 
-    /* Mirror the run-context strip above the composer. These surfaces deliberately
+    @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+      background: var(--chat-composer-attached-surface);
+    }
+  }
+
+  /* Mirror the run-context strip above the composer. These surfaces deliberately
      own no card fill or border themselves: a masked pseudo-element draws the
      same inset glass, 16px outer corners, quiet outline, and open attachment
      seam as the strip below. */
-    .chat-composer-drawer-surface,
-    .chat-composer-top-drawer {
-      --chat-composer-attachment-overlap: calc(1rem + 1px);
-      --chat-composer-attached-surface: var(--chat-composer-glass-surface, var(--card));
+  .chat-composer-drawer-surface,
+  .chat-composer-top-drawer {
+    --chat-composer-attachment-overlap: calc(1rem + 1px);
+    --chat-composer-attached-surface: var(--chat-composer-glass-surface, var(--card));
+    --chat-composer-attached-outline: var(
+      --chat-composer-outline,
+      color-mix(in srgb, var(--contrast-foreground) 8%, transparent)
+    );
+    --chat-composer-attached-tint: transparent;
+    position: relative;
+    isolation: isolate;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none;
+
+    @variant dark {
+      --chat-composer-attached-surface: var(
+        --chat-composer-glass-surface,
+        color-mix(in srgb, var(--background) 96%, var(--color-white))
+      );
       --chat-composer-attached-outline: var(
         --chat-composer-outline,
-        color-mix(in srgb, var(--contrast-foreground) 8%, transparent)
+        color-mix(in srgb, var(--color-white) 5%, transparent)
       );
-      --chat-composer-attached-tint: transparent;
-      position: relative;
-      isolation: isolate;
-      border: 0 !important;
-      background: transparent !important;
-      box-shadow: none;
 
-      @variant dark {
-        --chat-composer-attached-surface: var(
-          --chat-composer-glass-surface,
-          color-mix(in srgb, var(--background) 96%, var(--color-white))
-        );
-        --chat-composer-attached-outline: var(
-          --chat-composer-outline,
-          color-mix(in srgb, var(--color-white) 5%, transparent)
-        );
-
-        &::before {
-          background:
-            linear-gradient(var(--chat-composer-attached-tint), var(--chat-composer-attached-tint)),
-            linear-gradient(
-              to top,
-              transparent 0 var(--chat-composer-attachment-overlap),
-              rgb(0 0 0 / 18%) var(--chat-composer-attachment-overlap),
-              transparent calc(var(--chat-composer-attachment-overlap) + 10px)
-            ),
-            color-mix(
-              in srgb,
-              var(--chat-composer-attached-surface) var(--glass-opacity),
-              transparent
-            );
-          box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
-        }
-      }
-    }
-
-    .chat-composer-drawer-attached,
-    .chat-composer-top-drawer {
-      padding-bottom: var(--chat-composer-attachment-overlap);
-    }
-
-    [data-chat-composer-form="true"],
-    .chat-composer-drawer-slot,
-    .chat-composer-top-drawer {
-      --chat-composer-drawer-inset: 1.375rem;
-    }
-
-    .chat-composer-drawer-slot,
-    .chat-composer-top-drawer {
-      --chat-composer-attachment-overlap: calc(1rem + 1px);
-      width: calc(100% - var(--chat-composer-drawer-inset) - var(--chat-composer-drawer-inset));
-      max-width: calc(
-        48rem - var(--chat-composer-drawer-inset) - var(--chat-composer-drawer-inset)
-      );
-      margin-inline: auto;
-      margin-bottom: calc(-1 * var(--chat-composer-attachment-overlap));
-    }
-
-    :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)::before {
-      pointer-events: none;
-      position: absolute;
-      z-index: -1;
-      inset: 0;
-      border: 1px solid var(--chat-composer-attached-outline);
-      border-radius: 16px 16px 0 0;
-      background:
-        linear-gradient(var(--chat-composer-attached-tint), var(--chat-composer-attached-tint)),
-        color-mix(in srgb, var(--chat-composer-attached-surface) var(--glass-opacity), transparent);
-      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      -webkit-mask-image: linear-gradient(
-        to top,
-        transparent 0 var(--chat-composer-attachment-overlap),
-        black var(--chat-composer-attachment-overlap)
-      );
-      mask-image: linear-gradient(
-        to top,
-        transparent 0 var(--chat-composer-attachment-overlap),
-        black var(--chat-composer-attachment-overlap)
-      );
-      box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
-      content: "";
-
-      @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+      &::before {
         background:
           linear-gradient(var(--chat-composer-attached-tint), var(--chat-composer-attached-tint)),
-          var(--chat-composer-attached-surface) !important;
+          linear-gradient(
+            to top,
+            transparent 0 var(--chat-composer-attachment-overlap),
+            rgb(0 0 0 / 18%) var(--chat-composer-attachment-overlap),
+            transparent calc(var(--chat-composer-attachment-overlap) + 10px)
+          ),
+          color-mix(
+            in srgb,
+            var(--chat-composer-attached-surface) var(--glass-opacity),
+            transparent
+          );
+        box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
       }
     }
+  }
 
-    .chat-composer-drawer-slot + .chat-composer-drawer-slot::before,
-    .chat-composer-drawer-slot + :has(.chat-composer-top-drawer) .chat-composer-top-drawer::before {
-      border-top: 0;
-      border-radius: 0;
+  .chat-composer-drawer-attached,
+  .chat-composer-top-drawer {
+    padding-bottom: var(--chat-composer-attachment-overlap);
+  }
+
+  [data-chat-composer-form="true"],
+  .chat-composer-drawer-slot,
+  .chat-composer-top-drawer {
+    --chat-composer-drawer-inset: 1.375rem;
+  }
+
+  .chat-composer-drawer-slot,
+  .chat-composer-top-drawer {
+    --chat-composer-attachment-overlap: calc(1rem + 1px);
+    width: calc(100% - var(--chat-composer-drawer-inset) - var(--chat-composer-drawer-inset));
+    max-width: calc(48rem - var(--chat-composer-drawer-inset) - var(--chat-composer-drawer-inset));
+    margin-inline: auto;
+    margin-bottom: calc(-1 * var(--chat-composer-attachment-overlap));
+  }
+
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)::before {
+    pointer-events: none;
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-attached-outline);
+    border-radius: 16px 16px 0 0;
+    background:
+      linear-gradient(var(--chat-composer-attached-tint), var(--chat-composer-attached-tint)),
+      color-mix(in srgb, var(--chat-composer-attached-surface) var(--glass-opacity), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    -webkit-mask-image: linear-gradient(
+      to top,
+      transparent 0 var(--chat-composer-attachment-overlap),
+      black var(--chat-composer-attachment-overlap)
+    );
+    mask-image: linear-gradient(
+      to top,
+      transparent 0 var(--chat-composer-attachment-overlap),
+      black var(--chat-composer-attachment-overlap)
+    );
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+    content: "";
+
+    @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+      background:
+        linear-gradient(var(--chat-composer-attached-tint), var(--chat-composer-attached-tint)),
+        var(--chat-composer-attached-surface) !important;
     }
+  }
 
-    .chat-composer-top-drawer {
-      z-index: 0;
+  .chat-composer-drawer-slot + .chat-composer-drawer-slot::before,
+  .chat-composer-drawer-slot + :has(.chat-composer-top-drawer) .chat-composer-top-drawer::before {
+    border-top: 0;
+    border-radius: 0;
+  }
+
+  .chat-composer-top-drawer {
+    z-index: 0;
+  }
+
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="error"] {
+    --chat-composer-attached-outline: color-mix(in srgb, var(--error) 32%, transparent);
+    --chat-composer-attached-tint: color-mix(in srgb, var(--error) 8%, transparent);
+  }
+
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="info"] {
+    --chat-composer-attached-outline: color-mix(in srgb, var(--info) 32%, transparent);
+    --chat-composer-attached-tint: color-mix(in srgb, var(--info) 4%, transparent);
+  }
+
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="success"] {
+    --chat-composer-attached-outline: color-mix(in srgb, var(--success) 32%, transparent);
+    --chat-composer-attached-tint: color-mix(in srgb, var(--success) 4%, transparent);
+  }
+
+  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="warning"] {
+    --chat-composer-attached-outline: color-mix(in srgb, var(--warning) 28%, transparent);
+    --chat-composer-attached-tint: color-mix(in srgb, var(--warning) 8%, transparent);
+  }
+
+  .chat-composer-glass-shell {
+    --chat-composer-attachment-overlap: calc(1rem + 1px);
+    --chat-composer-glass-surface: var(--card);
+    --chat-composer-outline: rgb(0 0 0 / 8%);
+
+    isolation: isolate;
+
+    @variant dark {
+      --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
+      --chat-composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);
+      --chat-composer-highlight: rgb(255 255 255 / 3%);
     }
+  }
 
-    :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="error"] {
-      --chat-composer-attached-outline: color-mix(in srgb, var(--error) 32%, transparent);
-      --chat-composer-attached-tint: color-mix(in srgb, var(--error) 8%, transparent);
-    }
+  .chat-composer-glass-shell::before {
+    pointer-events: none;
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    border-radius: 22px;
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-glass-surface) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    content: "";
+  }
 
-    :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="info"] {
-      --chat-composer-attached-outline: color-mix(in srgb, var(--info) 32%, transparent);
-      --chat-composer-attached-tint: color-mix(in srgb, var(--info) 4%, transparent);
-    }
+  .chat-composer-glass-shell-with-context {
+    --chat-composer-context-extension: 2.25rem;
+  }
 
-    :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="success"] {
-      --chat-composer-attached-outline: color-mix(in srgb, var(--success) 32%, transparent);
-      --chat-composer-attached-tint: color-mix(in srgb, var(--success) 4%, transparent);
-    }
-
-    :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="warning"] {
-      --chat-composer-attached-outline: color-mix(in srgb, var(--warning) 28%, transparent);
-      --chat-composer-attached-tint: color-mix(in srgb, var(--warning) 8%, transparent);
-    }
-
-    .chat-composer-glass-shell {
-      --chat-composer-attachment-overlap: calc(1rem + 1px);
-      --chat-composer-glass-surface: var(--card);
-      --chat-composer-outline: rgb(0 0 0 / 8%);
-
-      isolation: isolate;
-
-      @variant dark {
-        --chat-composer-glass-surface: color-mix(
-          in srgb,
-          var(--background) 96%,
-          var(--color-white)
-        );
-        --chat-composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);
-        --chat-composer-highlight: rgb(255 255 255 / 3%);
-      }
-    }
-
-    .chat-composer-glass-shell::before {
-      pointer-events: none;
-      position: absolute;
-      z-index: 0;
-      inset: 0;
-      border-radius: 22px;
-      background: color-mix(
-        in srgb,
-        var(--chat-composer-glass-surface) var(--glass-opacity),
-        transparent
-      );
-      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      content: "";
-    }
-
-    .chat-composer-glass-shell-with-context {
-      --chat-composer-context-extension: 2.25rem;
-    }
-
-    .chat-composer-glass-shell-with-context::before {
-      border-radius: 0;
-      /*
+  .chat-composer-glass-shell-with-context::before {
+    border-radius: 0;
+    /*
      * One continuous glass layer: a 22px composer joined to a 16px strip. The
      * strip is inset 1.375rem per side, so the step-in positions and their
      * curve controls stay in rem to keep tracking it at non-default interface
      * font sizes; the composer's 22px top radius and the strip's 16px bottom
      * radius are px by design.
      */
-      clip-path: shape(
-        from 0 22px,
-        curve to 22px 0 with 0 9.85px / 9.85px 0,
-        line to calc(100% - 22px) 0,
-        curve to 100% 22px with calc(100% - 9.85px) 0 / 100% 9.85px,
-        line to 100% calc(100% - var(--chat-composer-context-extension) - 1.375rem),
-        curve to calc(100% - 1.375rem) calc(100% - var(--chat-composer-context-extension)) with 100%
-          calc(100% - var(--chat-composer-context-extension) - 0.6156rem) / calc(100% - 0.6156rem)
-          calc(100% - var(--chat-composer-context-extension)),
-        line to calc(100% - 1.375rem) calc(100% - 16px),
-        curve to calc(100% - 1.375rem - 16px) 100% with calc(100% - 1.375rem) calc(100% - 7.16px) /
-          calc(100% - 1.375rem - 7.16px) 100%,
-        line to calc(1.375rem + 16px) 100%,
-        curve to 1.375rem calc(100% - 16px) with calc(1.375rem + 7.16px) 100% / 1.375rem
-          calc(100% - 7.16px),
-        line to 1.375rem calc(100% - var(--chat-composer-context-extension)),
-        curve to 0 calc(100% - var(--chat-composer-context-extension) - 1.375rem) with 0.6156rem
-          calc(100% - var(--chat-composer-context-extension)) / 0
-          calc(100% - var(--chat-composer-context-extension) - 0.6156rem),
-        line to 0 22px,
-        close
-      );
-    }
+    clip-path: shape(
+      from 0 22px,
+      curve to 22px 0 with 0 9.85px / 9.85px 0,
+      line to calc(100% - 22px) 0,
+      curve to 100% 22px with calc(100% - 9.85px) 0 / 100% 9.85px,
+      line to 100% calc(100% - var(--chat-composer-context-extension) - 1.375rem),
+      curve to calc(100% - 1.375rem) calc(100% - var(--chat-composer-context-extension)) with 100%
+        calc(100% - var(--chat-composer-context-extension) - 0.6156rem) / calc(100% - 0.6156rem)
+        calc(100% - var(--chat-composer-context-extension)),
+      line to calc(100% - 1.375rem) calc(100% - 16px),
+      curve to calc(100% - 1.375rem - 16px) 100% with calc(100% - 1.375rem) calc(100% - 7.16px) /
+        calc(100% - 1.375rem - 7.16px) 100%,
+      line to calc(1.375rem + 16px) 100%,
+      curve to 1.375rem calc(100% - 16px) with calc(1.375rem + 7.16px) 100% / 1.375rem
+        calc(100% - 7.16px),
+      line to 1.375rem calc(100% - var(--chat-composer-context-extension)),
+      curve to 0 calc(100% - var(--chat-composer-context-extension) - 1.375rem) with 0.6156rem
+        calc(100% - var(--chat-composer-context-extension)) / 0
+        calc(100% - var(--chat-composer-context-extension) - 0.6156rem),
+      line to 0 22px,
+      close
+    );
+  }
 
-    @media (min-width: 40rem) {
-      .chat-composer-glass-shell-with-context {
-        --chat-composer-context-extension: 2rem;
+  @media (min-width: 40rem) {
+    .chat-composer-glass-shell-with-context {
+      --chat-composer-context-extension: 2rem;
+    }
+  }
+
+  .chat-composer-glass-host {
+    position: relative;
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+
+    @variant dark {
+      box-shadow: none;
+
+      &::after {
+        box-shadow: inset 0 1px var(--chat-composer-highlight);
       }
     }
+  }
 
-    .chat-composer-glass-host {
-      position: relative;
-      box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+  .chat-composer-glass-host::after {
+    pointer-events: none;
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-outline);
+    border-radius: inherit;
+    content: "";
+  }
 
-      @variant dark {
-        box-shadow: none;
+  .chat-composer-glass-shell-with-context .chat-composer-glass-host::after {
+    clip-path: polygon(
+      0 0,
+      100% 0,
+      100% 100%,
+      calc(100% - 22px) 100%,
+      calc(100% - 22px) calc(100% - 2px),
+      22px calc(100% - 2px),
+      22px 100%,
+      0 100%
+    );
+  }
 
-        &::after {
-          box-shadow: inset 0 1px var(--chat-composer-highlight);
-        }
+  .chat-composer-context-strip {
+    position: relative;
+    isolation: isolate;
+
+    @variant dark {
+      &::before {
+        border-color: rgb(255 255 255 / 7%);
+        background:
+          linear-gradient(
+            to bottom,
+            transparent 0 1rem,
+            rgb(0 0 0 / 18%) 1rem,
+            transparent calc(1rem + 10px)
+          ),
+          rgb(255 255 255 / 2%);
+        box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
       }
     }
+  }
 
-    .chat-composer-glass-host::after {
-      pointer-events: none;
-      position: absolute;
-      z-index: 1;
-      inset: 0;
-      border: 1px solid var(--chat-composer-outline);
-      border-radius: inherit;
-      content: "";
-    }
+  .chat-composer-queue-strip {
+    --chat-composer-queue-outline: rgb(0 0 0 / 8%);
+    --chat-composer-queue-surface: var(--card);
 
-    .chat-composer-glass-shell-with-context .chat-composer-glass-host::after {
-      clip-path: polygon(
-        0 0,
-        100% 0,
-        100% 100%,
-        calc(100% - 22px) 100%,
-        calc(100% - 22px) calc(100% - 2px),
-        22px calc(100% - 2px),
-        22px 100%,
-        0 100%
-      );
-    }
+    isolation: isolate;
 
-    .chat-composer-context-strip {
-      position: relative;
-      isolation: isolate;
+    @variant dark {
+      --chat-composer-queue-outline: rgb(255 255 255 / 7%);
+      --chat-composer-queue-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
 
-      @variant dark {
-        &::before {
-          border-color: rgb(255 255 255 / 7%);
-          background:
-            linear-gradient(
-              to bottom,
-              transparent 0 1rem,
-              rgb(0 0 0 / 18%) 1rem,
-              transparent calc(1rem + 10px)
-            ),
-            rgb(255 255 255 / 2%);
-          box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
-        }
+      &::before {
+        box-shadow:
+          inset 0 1px rgb(255 255 255 / 3%),
+          0 -12px 28px -24px rgb(0 0 0 / 80%);
       }
     }
+  }
 
-    .chat-composer-queue-strip {
-      --chat-composer-queue-outline: rgb(0 0 0 / 8%);
-      --chat-composer-queue-surface: var(--card);
+  .chat-composer-queue-strip::before {
+    pointer-events: none;
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-queue-outline);
+    border-radius: 16px 16px 0 0;
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-queue-surface) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    box-shadow: 0 -10px 28px -24px rgb(0 0 0 / 45%);
+    content: "";
+  }
 
-      isolation: isolate;
+  .chat-composer-context-strip::before {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-outline);
+    border-radius: 0 0 16px 16px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
+    mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+    content: "";
+  }
 
-      @variant dark {
-        --chat-composer-queue-outline: rgb(255 255 255 / 7%);
-        --chat-composer-queue-surface: color-mix(
-          in srgb,
-          var(--background) 96%,
-          var(--color-white)
-        );
-
-        &::before {
-          box-shadow:
-            inset 0 1px rgb(255 255 255 / 3%),
-            0 -12px 28px -24px rgb(0 0 0 / 80%);
-        }
-      }
-    }
-
-    .chat-composer-queue-strip::before {
-      pointer-events: none;
-      position: absolute;
-      z-index: -1;
-      inset: 0;
-      border: 1px solid var(--chat-composer-queue-outline);
-      border-radius: 16px 16px 0 0;
-      background: color-mix(
-        in srgb,
-        var(--chat-composer-queue-surface) var(--glass-opacity),
-        transparent
-      );
-      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      box-shadow: 0 -10px 28px -24px rgb(0 0 0 / 45%);
-      content: "";
+  @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
+    .chat-composer-glass-shell-with-context::before {
+      inset-block-end: var(--chat-composer-context-extension);
+      border-radius: 22px;
+      clip-path: none;
     }
 
     .chat-composer-context-strip::before {
-      position: absolute;
-      z-index: -1;
-      inset: 0;
-      border: 1px solid var(--chat-composer-outline);
-      border-radius: 0 0 16px 16px;
-      -webkit-mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
-      mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
-      box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
-      content: "";
-    }
-
-    @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
-      .chat-composer-glass-shell-with-context::before {
-        inset-block-end: var(--chat-composer-context-extension);
-        border-radius: 22px;
-        clip-path: none;
-      }
-
-      .chat-composer-context-strip::before {
-        background: color-mix(
-          in srgb,
-          var(--chat-composer-glass-surface) var(--glass-opacity),
-          transparent
-        );
-        -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-        backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      }
-
-      .chat-composer-context-strip {
-        @variant dark {
-          &::before {
-            background:
-              linear-gradient(
-                to bottom,
-                transparent 0 1rem,
-                rgb(0 0 0 / 18%) 1rem,
-                transparent calc(1rem + 10px)
-              ),
-              linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
-              color-mix(
-                in srgb,
-                var(--chat-composer-glass-surface) var(--glass-opacity),
-                transparent
-              );
-          }
-        }
-      }
-    }
-
-    .alert-glass {
-      --alert-glass-tint: transparent;
-
-      background:
-        linear-gradient(
-          color-mix(in srgb, var(--alert-glass-tint) 4%, transparent),
-          color-mix(in srgb, var(--alert-glass-tint) 4%, transparent)
-        ),
-        color-mix(in srgb, var(--background) var(--glass-opacity), transparent) !important;
-      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-    }
-
-    .alert-glass[data-variant="error"] {
-      --alert-glass-tint: var(--destructive);
-    }
-
-    .alert-glass[data-variant="info"] {
-      --alert-glass-tint: var(--info);
-    }
-
-    .alert-glass[data-variant="success"] {
-      --alert-glass-tint: var(--success);
-    }
-
-    .alert-glass[data-variant="warning"] {
-      --alert-glass-tint: var(--warning);
-    }
-
-    .glass-opacity-slider {
-      --glass-slider-progress: 0%;
-      --glass-slider-fill-offset: 0.5rem;
-      --glass-slider-fill-position: calc(
-        var(--glass-slider-progress) + var(--glass-slider-fill-offset)
-      );
-      appearance: none;
-      height: 1.5rem;
-      background: transparent;
-      cursor: pointer;
-    }
-
-    .glass-opacity-slider::-webkit-slider-runnable-track {
-      height: 0.375rem;
-      border-radius: 9999px;
-      background: linear-gradient(
-        to right,
-        var(--primary) 0 var(--glass-slider-fill-position),
-        color-mix(in srgb, var(--muted-foreground) 22%, transparent)
-          var(--glass-slider-fill-position) 100%
-      );
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
-    }
-
-    .glass-opacity-slider::-moz-range-track {
-      height: 0.375rem;
-      border-radius: 9999px;
-      background: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
-    }
-
-    .glass-opacity-slider::-moz-range-progress {
-      height: 0.375rem;
-      border-radius: 9999px;
-      background: var(--primary);
-    }
-
-    .glass-opacity-slider::-webkit-slider-thumb {
-      appearance: none;
-      width: 1rem;
-      height: 1rem;
-      margin-top: -0.3125rem;
-      border: 2px solid var(--primary);
-      border-radius: 9999px;
-      background: var(--background);
-      box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
-      transition:
-        transform 120ms ease,
-        box-shadow 120ms ease;
-    }
-
-    .glass-opacity-slider::-moz-range-thumb {
-      width: 1rem;
-      height: 1rem;
-      border: 2px solid var(--primary);
-      border-radius: 9999px;
-      background: var(--background);
-      box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
-      transition:
-        transform 120ms ease,
-        box-shadow 120ms ease;
-    }
-
-    .glass-opacity-slider:hover::-webkit-slider-thumb {
-      transform: scale(1.08);
-      box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
-    }
-
-    .glass-opacity-slider:hover::-moz-range-thumb {
-      transform: scale(1.08);
-      box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
-    }
-
-    .glass-opacity-slider:active::-webkit-slider-thumb {
-      transform: scale(0.94);
-    }
-
-    .glass-opacity-slider:active::-moz-range-thumb {
-      transform: scale(0.94);
-    }
-
-    .glass-opacity-slider:focus-visible {
-      outline: none;
-    }
-
-    .glass-opacity-slider:focus-visible::-webkit-slider-thumb {
-      box-shadow:
-        0 0 0 3px var(--background),
-        0 0 0 5px var(--ring);
-    }
-
-    .glass-opacity-slider:focus-visible::-moz-range-thumb {
-      box-shadow:
-        0 0 0 3px var(--background),
-        0 0 0 5px var(--ring);
-    }
-
-    @media (forced-colors: active) {
-      .glass-opacity-slider {
-        appearance: auto;
-        accent-color: Highlight;
-      }
-
-      .glass-opacity-slider::-webkit-slider-runnable-track,
-      .glass-opacity-slider::-webkit-slider-thumb {
-        all: revert;
-      }
-
-      .glass-opacity-slider::-moz-range-track,
-      .glass-opacity-slider::-moz-range-progress,
-      .glass-opacity-slider::-moz-range-thumb {
-        all: revert;
-      }
-    }
-
-    @media (min-width: 40rem) {
-      .chat-composer-glass-shell-with-context {
-        /* The xs toolbar controls shrink by 4px at Tailwind's sm breakpoint. */
-        --chat-composer-context-extension: 2rem;
-      }
-    }
-
-    .chat-composer-glass-host {
-      box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
-
-      @variant dark {
-        box-shadow: none;
-
-        &::after {
-          box-shadow: inset 0 1px var(--chat-composer-highlight);
-        }
-      }
-    }
-
-    .chat-composer-glass-host::after {
-      pointer-events: none;
-      position: absolute;
-      z-index: 1;
-      inset: 0;
-      border: 1px solid var(--chat-composer-outline);
-      border-radius: inherit;
-      content: "";
-    }
-
-    /* A top attachment cannot share the shell's single clipped backdrop: it
-     needs the composer surface and outline to paint in front of its overlap.
-     Split the glass into exact surfaces while a drawer or tab is present; the
-     default composer keeps the cheaper continuous layer. */
-    .chat-composer-glass-shell:is(
-      .chat-composer-glass-shell-attached,
-      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
-    )::before,
-    .chat-composer-glass-shell:is(
-        .chat-composer-glass-shell-attached,
-        :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
-      )
-      .chat-composer-glass-host::after {
-      display: none;
-    }
-
-    .chat-composer-glass-shell:is(
-        .chat-composer-glass-shell-attached,
-        :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
-      )
-      .chat-composer-glass-host {
-      box-shadow: none;
-    }
-
-    .chat-composer-glass-shell:is(
-        .chat-composer-glass-shell-attached,
-        :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
-      )
-      .chat-composer-glass-host
-      [data-chat-composer-main-surface="true"] {
       background: color-mix(
         in srgb,
         var(--chat-composer-glass-surface) var(--glass-opacity),
@@ -1426,107 +1185,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       );
       -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
       backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
-
-      &::after {
-        pointer-events: none;
-        position: absolute;
-        z-index: 20;
-        inset: 0;
-        border: 1px solid var(--chat-composer-outline);
-        border-radius: inherit;
-        content: "";
-      }
-
-      @variant dark {
-        box-shadow: none;
-
-        &::after {
-          box-shadow: inset 0 1px var(--chat-composer-highlight);
-        }
-      }
-
-      @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-        background: var(--chat-composer-glass-surface);
-      }
-    }
-
-    .chat-composer-glass-shell:is(
-        .chat-composer-glass-shell-attached,
-        :has(.chat-composer-top-drawer)
-      )
-      .chat-composer-glass-host
-      [data-chat-composer-mobile-collapsed="true"] {
-      min-height: var(--chat-composer-attachment-overlap);
-    }
-
-    .chat-composer-glass-shell-with-context .chat-composer-glass-host::after,
-    .chat-composer-glass-shell-with-context:is(
-        .chat-composer-glass-shell-attached,
-        :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
-      )
-      [data-chat-composer-main-surface="true"]::after {
-      /* Keep the attachment seam open; the strip continues the outer outline below. */
-      clip-path: polygon(
-        0 0,
-        100% 0,
-        100% 100%,
-        calc(100% - 22px) 100%,
-        calc(100% - 22px) calc(100% - 2px),
-        22px calc(100% - 2px),
-        22px 100%,
-        0 100%
-      );
     }
 
     .chat-composer-context-strip {
-      position: relative;
-      isolation: isolate;
-
-      @variant dark {
-        &::before {
-          border-color: rgb(255 255 255 / 7%);
-          background:
-            linear-gradient(
-              to bottom,
-              transparent 0 1rem,
-              rgb(0 0 0 / 18%) 1rem,
-              transparent calc(1rem + 10px)
-            ),
-            rgb(255 255 255 / 2%);
-          box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
-        }
-      }
-    }
-
-    .chat-composer-context-strip::before {
-      position: absolute;
-      z-index: -1;
-      inset: 0;
-      border: 1px solid var(--chat-composer-outline);
-      border-radius: 0 0 16px 16px;
-      /* Start the strip outline exactly where the composer's 22px curve reaches its tangent. */
-      -webkit-mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
-      mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
-      box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
-      content: "";
-    }
-
-    .chat-composer-glass-shell:is(
-        .chat-composer-glass-shell-attached,
-        :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
-      )
-      .chat-composer-context-strip {
-      &::before {
-        background: color-mix(
-          in srgb,
-          var(--chat-composer-glass-surface) var(--glass-opacity),
-          transparent
-        );
-        -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-        backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      }
-
       @variant dark {
         &::before {
           background:
@@ -1541,178 +1202,500 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
         }
       }
     }
+  }
 
-    @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
-      .chat-composer-glass-shell-with-context::before {
-        inset-block-end: var(--chat-composer-context-extension);
-        border-radius: 22px;
-        clip-path: none;
+  .alert-glass {
+    --alert-glass-tint: transparent;
+
+    background:
+      linear-gradient(
+        color-mix(in srgb, var(--alert-glass-tint) 4%, transparent),
+        color-mix(in srgb, var(--alert-glass-tint) 4%, transparent)
+      ),
+      color-mix(in srgb, var(--background) var(--glass-opacity), transparent) !important;
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  }
+
+  .alert-glass[data-variant="error"] {
+    --alert-glass-tint: var(--destructive);
+  }
+
+  .alert-glass[data-variant="info"] {
+    --alert-glass-tint: var(--info);
+  }
+
+  .alert-glass[data-variant="success"] {
+    --alert-glass-tint: var(--success);
+  }
+
+  .alert-glass[data-variant="warning"] {
+    --alert-glass-tint: var(--warning);
+  }
+
+  .glass-opacity-slider {
+    --glass-slider-progress: 0%;
+    --glass-slider-fill-offset: 0.5rem;
+    --glass-slider-fill-position: calc(
+      var(--glass-slider-progress) + var(--glass-slider-fill-offset)
+    );
+    appearance: none;
+    height: 1.5rem;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .glass-opacity-slider::-webkit-slider-runnable-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: linear-gradient(
+      to right,
+      var(--primary) 0 var(--glass-slider-fill-position),
+      color-mix(in srgb, var(--muted-foreground) 22%, transparent) var(--glass-slider-fill-position)
+        100%
+    );
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  }
+
+  .glass-opacity-slider::-moz-range-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+  }
+
+  .glass-opacity-slider::-moz-range-progress {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: var(--primary);
+  }
+
+  .glass-opacity-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    margin-top: -0.3125rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .glass-opacity-slider::-moz-range-thumb {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .glass-opacity-slider:hover::-webkit-slider-thumb {
+    transform: scale(1.08);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
+  }
+
+  .glass-opacity-slider:hover::-moz-range-thumb {
+    transform: scale(1.08);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent);
+  }
+
+  .glass-opacity-slider:active::-webkit-slider-thumb {
+    transform: scale(0.94);
+  }
+
+  .glass-opacity-slider:active::-moz-range-thumb {
+    transform: scale(0.94);
+  }
+
+  .glass-opacity-slider:focus-visible {
+    outline: none;
+  }
+
+  .glass-opacity-slider:focus-visible::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 3px var(--background),
+      0 0 0 5px var(--ring);
+  }
+
+  .glass-opacity-slider:focus-visible::-moz-range-thumb {
+    box-shadow:
+      0 0 0 3px var(--background),
+      0 0 0 5px var(--ring);
+  }
+
+  @media (forced-colors: active) {
+    .glass-opacity-slider {
+      appearance: auto;
+      accent-color: Highlight;
+    }
+
+    .glass-opacity-slider::-webkit-slider-runnable-track,
+    .glass-opacity-slider::-webkit-slider-thumb {
+      all: revert;
+    }
+
+    .glass-opacity-slider::-moz-range-track,
+    .glass-opacity-slider::-moz-range-progress,
+    .glass-opacity-slider::-moz-range-thumb {
+      all: revert;
+    }
+  }
+
+  @media (min-width: 40rem) {
+    .chat-composer-glass-shell-with-context {
+      /* The xs toolbar controls shrink by 4px at Tailwind's sm breakpoint. */
+      --chat-composer-context-extension: 2rem;
+    }
+  }
+
+  .chat-composer-glass-host {
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+
+    @variant dark {
+      box-shadow: none;
+
+      &::after {
+        box-shadow: inset 0 1px var(--chat-composer-highlight);
       }
+    }
+  }
 
-      .chat-composer-context-strip::before {
-        background: color-mix(
-          in srgb,
-          var(--chat-composer-glass-surface) var(--glass-opacity),
-          transparent
-        );
-        -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-        backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-      }
+  .chat-composer-glass-host::after {
+    pointer-events: none;
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-outline);
+    border-radius: inherit;
+    content: "";
+  }
 
-      .chat-composer-context-strip {
-        @variant dark {
-          &::before {
-            background:
-              linear-gradient(
-                to bottom,
-                transparent 0 1rem,
-                rgb(0 0 0 / 18%) 1rem,
-                transparent calc(1rem + 10px)
-              ),
-              linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
-              color-mix(
-                in srgb,
-                var(--chat-composer-glass-surface) var(--glass-opacity),
-                transparent
-              );
-          }
-        }
-      }
+  /* A top attachment cannot share the shell's single clipped backdrop: it
+     needs the composer surface and outline to paint in front of its overlap.
+     Split the glass into exact surfaces while a drawer or tab is present; the
+     default composer keeps the cheaper continuous layer. */
+  .chat-composer-glass-shell:is(
+    .chat-composer-glass-shell-attached,
+    :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+  )::before,
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    )
+    .chat-composer-glass-host::after {
+    display: none;
+  }
+
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    )
+    .chat-composer-glass-host {
+    box-shadow: none;
+  }
+
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    )
+    .chat-composer-glass-host
+    [data-chat-composer-main-surface="true"] {
+    background: color-mix(
+      in srgb,
+      var(--chat-composer-glass-surface) var(--glass-opacity),
+      transparent
+    );
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+
+    &::after {
+      pointer-events: none;
+      position: absolute;
+      z-index: 20;
+      inset: 0;
+      border: 1px solid var(--chat-composer-outline);
+      border-radius: inherit;
+      content: "";
     }
 
-    .settings-slider {
-      --settings-slider-progress: 0%;
-      --settings-slider-fill-offset: 0.5rem;
-      --settings-slider-fill-position: calc(
-        var(--settings-slider-progress) + var(--settings-slider-fill-offset)
-      );
-      appearance: none;
-      height: 1.5rem;
-      background: transparent;
-      cursor: pointer;
-    }
+    @variant dark {
+      box-shadow: none;
 
-    .settings-slider::-webkit-slider-runnable-track {
-      height: 0.375rem;
-      border-radius: 9999px;
-      background: linear-gradient(
-        to right,
-        var(--primary) 0 var(--settings-slider-fill-position),
-        color-mix(in srgb, var(--contrast-muted-foreground) 22%, transparent)
-          var(--settings-slider-fill-position) 100%
-      );
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--contrast-border) 55%, transparent);
-    }
-
-    .settings-slider::-moz-range-track {
-      height: 0.375rem;
-      border-radius: 9999px;
-      background: color-mix(in srgb, var(--contrast-muted-foreground) 22%, transparent);
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--contrast-border) 55%, transparent);
-    }
-
-    .settings-slider::-moz-range-progress {
-      height: 0.375rem;
-      border-radius: 9999px;
-      background: var(--primary);
-    }
-
-    .settings-slider::-webkit-slider-thumb {
-      appearance: none;
-      width: 1rem;
-      height: 1rem;
-      margin-top: -0.3125rem;
-      border: 2px solid var(--primary);
-      border-radius: 9999px;
-      background: var(--background);
-      box-shadow: 0 1px 2px color-mix(in srgb, var(--contrast-foreground) 12%, transparent);
-      transition:
-        transform 120ms ease,
-        box-shadow 120ms ease;
-    }
-
-    .settings-slider::-moz-range-thumb {
-      width: 1rem;
-      height: 1rem;
-      border: 2px solid var(--primary);
-      border-radius: 9999px;
-      background: var(--background);
-      box-shadow: 0 1px 2px color-mix(in srgb, var(--contrast-foreground) 12%, transparent);
-      transition:
-        transform 120ms ease,
-        box-shadow 120ms ease;
-    }
-
-    .settings-slider:hover::-webkit-slider-thumb {
-      transform: scale(1.08);
-      box-shadow: 0 1px 3px color-mix(in srgb, var(--contrast-foreground) 20%, transparent);
-    }
-
-    .settings-slider:hover::-moz-range-thumb {
-      transform: scale(1.08);
-      box-shadow: 0 1px 3px color-mix(in srgb, var(--contrast-foreground) 20%, transparent);
-    }
-
-    .settings-slider:active::-webkit-slider-thumb {
-      transform: scale(0.94);
-    }
-
-    .settings-slider:active::-moz-range-thumb {
-      transform: scale(0.94);
-    }
-
-    .settings-slider:focus-visible {
-      outline: none;
-    }
-
-    .settings-slider:focus-visible::-webkit-slider-thumb {
-      box-shadow:
-        0 0 0 3px var(--background),
-        0 0 0 5px var(--ring);
-    }
-
-    .settings-slider:focus-visible::-moz-range-thumb {
-      box-shadow:
-        0 0 0 3px var(--background),
-        0 0 0 5px var(--ring);
-    }
-
-    @media (forced-colors: active) {
-      .settings-slider {
-        appearance: auto;
-        accent-color: Highlight;
-      }
-
-      .settings-slider::-webkit-slider-runnable-track,
-      .settings-slider::-webkit-slider-thumb {
-        all: revert;
-      }
-
-      .settings-slider::-moz-range-track,
-      .settings-slider::-moz-range-progress,
-      .settings-slider::-moz-range-thumb {
-        all: revert;
-      }
-    }
-
-    @media (min-width: 40rem) {
-      .messages-timeline-row-frame {
-        padding-inline-start: 1.25rem;
-        padding-inline-end: calc(1.25rem + var(--thread-details-panel-inset));
-      }
-
-      .chat-composer-horizontal-inset {
-        padding-inline-start: calc(env(safe-area-inset-left) + 1.25rem);
-        padding-inline-end: calc(
-          env(safe-area-inset-right) + 1.25rem + var(--thread-details-panel-inset)
-        );
+      &::after {
+        box-shadow: inset 0 1px var(--chat-composer-highlight);
       }
     }
 
     @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-      .chat-composer-glass-shell::before {
-        background: var(--chat-composer-glass-surface);
+      background: var(--chat-composer-glass-surface);
+    }
+  }
+
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(.chat-composer-top-drawer)
+    )
+    .chat-composer-glass-host
+    [data-chat-composer-mobile-collapsed="true"] {
+    min-height: var(--chat-composer-attachment-overlap);
+  }
+
+  .chat-composer-glass-shell-with-context .chat-composer-glass-host::after,
+  .chat-composer-glass-shell-with-context:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    )
+    [data-chat-composer-main-surface="true"]::after {
+    /* Keep the attachment seam open; the strip continues the outer outline below. */
+    clip-path: polygon(
+      0 0,
+      100% 0,
+      100% 100%,
+      calc(100% - 22px) 100%,
+      calc(100% - 22px) calc(100% - 2px),
+      22px calc(100% - 2px),
+      22px 100%,
+      0 100%
+    );
+  }
+
+  .chat-composer-context-strip {
+    position: relative;
+    isolation: isolate;
+
+    @variant dark {
+      &::before {
+        border-color: rgb(255 255 255 / 7%);
+        background:
+          linear-gradient(
+            to bottom,
+            transparent 0 1rem,
+            rgb(0 0 0 / 18%) 1rem,
+            transparent calc(1rem + 10px)
+          ),
+          rgb(255 255 255 / 2%);
+        box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
       }
+    }
+  }
+
+  .chat-composer-context-strip::before {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    border: 1px solid var(--chat-composer-outline);
+    border-radius: 0 0 16px 16px;
+    /* Start the strip outline exactly where the composer's 22px curve reaches its tangent. */
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
+    mask-image: linear-gradient(to bottom, transparent 0 1rem, black 1rem);
+    box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+    content: "";
+  }
+
+  .chat-composer-glass-shell:is(
+      .chat-composer-glass-shell-attached,
+      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    )
+    .chat-composer-context-strip {
+    &::before {
+      background: color-mix(
+        in srgb,
+        var(--chat-composer-glass-surface) var(--glass-opacity),
+        transparent
+      );
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    }
+
+    @variant dark {
+      &::before {
+        background:
+          linear-gradient(
+            to bottom,
+            transparent 0 1rem,
+            rgb(0 0 0 / 18%) 1rem,
+            transparent calc(1rem + 10px)
+          ),
+          linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
+          color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent);
+      }
+    }
+  }
+
+  @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
+    .chat-composer-glass-shell-with-context::before {
+      inset-block-end: var(--chat-composer-context-extension);
+      border-radius: 22px;
+      clip-path: none;
+    }
+
+    .chat-composer-context-strip::before {
+      background: color-mix(
+        in srgb,
+        var(--chat-composer-glass-surface) var(--glass-opacity),
+        transparent
+      );
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+      backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    }
+
+    .chat-composer-context-strip {
+      @variant dark {
+        &::before {
+          background:
+            linear-gradient(
+              to bottom,
+              transparent 0 1rem,
+              rgb(0 0 0 / 18%) 1rem,
+              transparent calc(1rem + 10px)
+            ),
+            linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
+            color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent);
+        }
+      }
+    }
+  }
+
+  .settings-slider {
+    --settings-slider-progress: 0%;
+    --settings-slider-fill-offset: 0.5rem;
+    --settings-slider-fill-position: calc(
+      var(--settings-slider-progress) + var(--settings-slider-fill-offset)
+    );
+    appearance: none;
+    height: 1.5rem;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .settings-slider::-webkit-slider-runnable-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: linear-gradient(
+      to right,
+      var(--primary) 0 var(--settings-slider-fill-position),
+      color-mix(in srgb, var(--contrast-muted-foreground) 22%, transparent)
+        var(--settings-slider-fill-position) 100%
+    );
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--contrast-border) 55%, transparent);
+  }
+
+  .settings-slider::-moz-range-track {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--contrast-muted-foreground) 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--contrast-border) 55%, transparent);
+  }
+
+  .settings-slider::-moz-range-progress {
+    height: 0.375rem;
+    border-radius: 9999px;
+    background: var(--primary);
+  }
+
+  .settings-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    margin-top: -0.3125rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--contrast-foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .settings-slider::-moz-range-thumb {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--primary);
+    border-radius: 9999px;
+    background: var(--background);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--contrast-foreground) 12%, transparent);
+    transition:
+      transform 120ms ease,
+      box-shadow 120ms ease;
+  }
+
+  .settings-slider:hover::-webkit-slider-thumb {
+    transform: scale(1.08);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--contrast-foreground) 20%, transparent);
+  }
+
+  .settings-slider:hover::-moz-range-thumb {
+    transform: scale(1.08);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--contrast-foreground) 20%, transparent);
+  }
+
+  .settings-slider:active::-webkit-slider-thumb {
+    transform: scale(0.94);
+  }
+
+  .settings-slider:active::-moz-range-thumb {
+    transform: scale(0.94);
+  }
+
+  .settings-slider:focus-visible {
+    outline: none;
+  }
+
+  .settings-slider:focus-visible::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 3px var(--background),
+      0 0 0 5px var(--ring);
+  }
+
+  .settings-slider:focus-visible::-moz-range-thumb {
+    box-shadow:
+      0 0 0 3px var(--background),
+      0 0 0 5px var(--ring);
+  }
+
+  @media (forced-colors: active) {
+    .settings-slider {
+      appearance: auto;
+      accent-color: Highlight;
+    }
+
+    .settings-slider::-webkit-slider-runnable-track,
+    .settings-slider::-webkit-slider-thumb {
+      all: revert;
+    }
+
+    .settings-slider::-moz-range-track,
+    .settings-slider::-moz-range-progress,
+    .settings-slider::-moz-range-thumb {
+      all: revert;
+    }
+  }
+
+  @media (min-width: 40rem) {
+    .messages-timeline-row-frame {
+      padding-inline-start: 1.25rem;
+      padding-inline-end: calc(1.25rem + var(--thread-details-panel-inset));
+    }
+
+    .chat-composer-horizontal-inset {
+      padding-inline-start: calc(env(safe-area-inset-left) + 1.25rem);
+      padding-inline-end: calc(
+        env(safe-area-inset-right) + 1.25rem + var(--thread-details-panel-inset)
+      );
+    }
+  }
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    .chat-composer-glass-shell::before {
+      background: var(--chat-composer-glass-surface);
     }
   }
 }
