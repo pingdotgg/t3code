@@ -146,6 +146,55 @@ describe("mergeUsage", () => {
     ).toEqual({ claude: 1, codex: 1 });
   });
 
+  it("does not double count when environments overlap on some homes but not all", () => {
+    // env-b scans two instance homes; env-a scans only one of them. env-a's
+    // buckets aggregate H1 while env-b's aggregate H1+H2, so letting both
+    // contribute would count H1 twice. The larger set wins regardless of id
+    // order and the smaller environment's provider is dropped entirely.
+    const h1 = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const h2 = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude-max" };
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([bucket({ costUsd: 10, records: 5 })], [h1])),
+        environment("env-b", summary([bucket({ costUsd: 16, records: 8 })], [h1, h2])),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(16);
+    expect(merged.records).toBe(8);
+    expect(merged.sessions).toBe(2);
+    expect(merged.contributingEnvironments).toEqual(["env-b"]);
+    expect(merged.duplicateSources).toEqual(["env-a: /home/theo/.claude"]);
+  });
+
+  it("reports every dropped home when overlapping sets tie on size", () => {
+    // Neither set covers the other, so whichever loses the deterministic
+    // tie-break loses its unique home too; both of its paths are surfaced so
+    // the UI can say coverage is partial.
+    const shared = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary([bucket()], [shared, { ...shared, homePath: "/home/theo/.claude-a" }]),
+        ),
+        environment(
+          "env-b",
+          summary([bucket()], [shared, { ...shared, homePath: "/home/theo/.claude-b" }]),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.contributingEnvironments).toEqual(["env-a"]);
+    expect(merged.duplicateSources).toEqual([
+      "env-b: /home/theo/.claude",
+      "env-b: /home/theo/.claude-b",
+    ]);
+  });
+
   it("excludes an environment reporting an older contract version", () => {
     const merged = mergeUsage(
       [

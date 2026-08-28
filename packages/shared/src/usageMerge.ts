@@ -90,7 +90,7 @@ export interface MergedUsage {
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
   readonly costQuality: CostQuality;
-  /** Environments whose data was dropped as a duplicate of another's. */
+  /** Sources dropped because another environment claimed their directories. */
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
   readonly staleEnvironments: readonly EnvironmentId[];
@@ -114,61 +114,91 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
 }
 
 /**
- * Decides which environment owns each physical transcript directory.
+ * Decides which environment owns each provider's transcript directories.
  *
  * Several environments on one machine (worktree servers, for instance) resolve
- * the same provider home and would otherwise double count every token. The
- * first environment in a stable order claims a fingerprint; the rest have that
- * provider's buckets dropped. Environments are sorted by id so the winner does
- * not change between renders.
+ * the same provider home and would otherwise double count every token. Buckets
+ * are per-provider aggregates over every directory an environment scans, so
+ * the claim unit is an environment's whole set of fingerprints for a provider:
+ * owning only part of the set would still contribute the full aggregate and
+ * double count the shared directories. A group that overlaps an already
+ * claimed fingerprint is dropped entirely and every one of its paths is
+ * reported, so the UI can say coverage is partial. Groups with more
+ * directories claim first — an environment configured with a superset of
+ * another's homes must win or its unique homes' data would be lost — with
+ * environment id breaking ties so the winner does not change between renders.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
-  readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
+  readonly ownedProvidersByEnvironment: ReadonlyMap<EnvironmentId, ReadonlySet<UsageProviderKind>>;
   readonly duplicates: readonly string[];
 } {
-  const ownerByFingerprint = new Map<string, EnvironmentId>();
-  const duplicates: string[] = [];
-
-  const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
-
-  for (const environment of ordered) {
+  const groups: Array<{
+    environmentId: EnvironmentId;
+    label: string;
+    provider: UsageProviderKind;
+    keys: string[];
+    paths: string[];
+  }> = [];
+  for (const environment of environments) {
+    const byProvider = new Map<UsageProviderKind, { keys: string[]; paths: string[] }>();
     for (const source of environment.summary.sources) {
       if (source.status === "missing") continue;
-      const key = fingerprintKey(source.fingerprint);
-      if (ownerByFingerprint.has(key)) {
-        duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
-        continue;
-      }
-      ownerByFingerprint.set(key, environment.environmentId);
+      const provider = source.fingerprint.provider;
+      const group = byProvider.get(provider) ?? { keys: [], paths: [] };
+      group.keys.push(fingerprintKey(source.fingerprint));
+      group.paths.push(source.fingerprint.resolvedHomePath);
+      byProvider.set(provider, group);
+    }
+    for (const [provider, group] of byProvider) {
+      groups.push({
+        environmentId: environment.environmentId,
+        label: environment.label,
+        provider,
+        ...group,
+      });
     }
   }
+  groups.sort(
+    (a, b) => b.keys.length - a.keys.length || a.environmentId.localeCompare(b.environmentId),
+  );
 
-  return { ownerByFingerprint, duplicates };
+  const claimed = new Set<string>();
+  const ownedProvidersByEnvironment = new Map<EnvironmentId, Set<UsageProviderKind>>();
+  const duplicates: string[] = [];
+
+  for (const group of groups) {
+    if (group.keys.some((key) => claimed.has(key))) {
+      for (const path of group.paths) duplicates.push(`${group.label}: ${path}`);
+      continue;
+    }
+    for (const key of group.keys) claimed.add(key);
+    const owned = ownedProvidersByEnvironment.get(group.environmentId) ?? new Set();
+    owned.add(group.provider);
+    ownedProvidersByEnvironment.set(group.environmentId, owned);
+  }
+
+  return { ownedProvidersByEnvironment, duplicates };
 }
 
-/** Sources this environment owns after fingerprint claims, plus their buckets. */
+/** Providers this environment owns after group claims, plus their buckets. */
 function ownedContribution(
   environment: EnvironmentUsage,
-  ownerByFingerprint: ReadonlyMap<string, EnvironmentId>,
+  ownedProviders: ReadonlySet<UsageProviderKind>,
 ): {
   readonly buckets: readonly UsageBucket[];
   readonly sessionsByProvider: ReadonlyMap<UsageProviderKind, number>;
 } {
-  const ownedProviders = new Set<UsageProviderKind>();
   const sessionsByProvider = new Map<UsageProviderKind, number>();
   for (const source of environment.summary.sources) {
     if (source.status === "missing") continue;
-    const key = fingerprintKey(source.fingerprint);
-    if (ownerByFingerprint.get(key) === environment.environmentId) {
-      const provider = source.fingerprint.provider;
-      ownedProviders.add(provider);
-      // Distinct within a directory. Summing per-bucket session counts instead
-      // would count a session once per day and model it spans.
-      sessionsByProvider.set(
-        provider,
-        (sessionsByProvider.get(provider) ?? 0) + source.distinctSessions,
-      );
-    }
+    const provider = source.fingerprint.provider;
+    if (!ownedProviders.has(provider)) continue;
+    // Distinct within a directory. Summing per-bucket session counts instead
+    // would count a session once per day and model it spans.
+    sessionsByProvider.set(
+      provider,
+      (sessionsByProvider.get(provider) ?? 0) + source.distinctSessions,
+    );
   }
   return {
     buckets: environment.summary.buckets.filter((bucket) => ownedProviders.has(bucket.provider)),
@@ -242,7 +272,7 @@ export function mergeUsage(
     }
   }
 
-  const { ownerByFingerprint, duplicates } = claimSources(current);
+  const { ownedProvidersByEnvironment, duplicates } = claimSources(current);
 
   let costUsd = 0;
   let uncachedInputTokens = 0;
@@ -291,7 +321,10 @@ export function mergeUsage(
   const contributingEnvironments: EnvironmentId[] = [];
 
   for (const environment of current) {
-    const { buckets, sessionsByProvider } = ownedContribution(environment, ownerByFingerprint);
+    const { buckets, sessionsByProvider } = ownedContribution(
+      environment,
+      ownedProvidersByEnvironment.get(environment.environmentId) ?? new Set(),
+    );
     if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
 
     for (const [providerKind, providerSessions] of sessionsByProvider) {
