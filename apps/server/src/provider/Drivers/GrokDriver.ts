@@ -28,6 +28,7 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
+  makeProviderMaintenanceCapabilitySources,
   makeProviderMaintenanceResolver,
   normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -128,7 +129,12 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, pathService),
       );
-      const maintenanceCapabilities = yield* resolveMaintenance;
+      const maintenanceSources = yield* makeProviderMaintenanceCapabilitySources(
+        resolveMaintenance,
+        GrokMaintenanceResolver.resolve(),
+        { enabled },
+      );
+      const maintenanceCapabilities = yield* maintenanceSources.advisory;
 
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
@@ -146,7 +152,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<GrokSettings>>({
         maintenanceCapabilities,
-        resolveMaintenance,
+        resolveMaintenance: maintenanceSources.fresh,
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
@@ -154,7 +160,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
           buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
-          resolveMaintenance.pipe(
+          maintenanceSources.advisory.pipe(
             Effect.flatMap((maintenanceCapabilities) =>
               enrichGrokSnapshot({
                 snapshot: currentSnapshot,

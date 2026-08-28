@@ -291,6 +291,79 @@ it.effect("pins npm updates to the verified package prefix", () => {
   );
 });
 
+it.effect("rejects an npm package nested under another global package", () => {
+  const prefix = "/opt/node";
+  const packageRoot = `${prefix}/lib/node_modules/host/node_modules/@openai/codex`;
+  const npm = `${prefix}/bin/npm`;
+  return resolveInstallation(
+    context({
+      binaryPath: "codex",
+      resolvedCommandPath: `${prefix}/bin/codex`,
+      realCommandPath: `${packageRoot}/bin/codex.js`,
+      commands: { npm },
+      files: {
+        [`${packageRoot}/package.json`]: JSON.stringify({
+          name: "@openai/codex",
+          version: "1.0.0",
+        }),
+      },
+      probes: {
+        [`${npm} root -g`]: {
+          stdout: `${prefix}/lib/node_modules`,
+          stderr: "",
+          exitCode: 0,
+        },
+      },
+    }),
+    catalog,
+  ).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Unknown installation — verification failed",
+        ownershipVerified: false,
+        update: null,
+      });
+    }),
+  );
+});
+
+it.effect("rejects a nested npm package in a Windows global prefix", () => {
+  const prefix = "C:/Users/test/AppData/Roaming/npm";
+  const packageRoot = `${prefix}/node_modules/host/node_modules/@openai/codex`;
+  const npm = `${prefix}/npm.cmd`;
+  return resolveInstallation(
+    context({
+      binaryPath: "codex",
+      resolvedCommandPath: `${prefix}/codex.cmd`,
+      realCommandPath: `${packageRoot}/bin/codex.js`,
+      platform: "win32",
+      commands: { npm },
+      files: {
+        [`${packageRoot}/package.json`]: JSON.stringify({
+          name: "@openai/codex",
+          version: "1.0.0",
+        }),
+      },
+      probes: {
+        [`${npm} root -g`]: {
+          stdout: `${prefix}/node_modules`,
+          stderr: "",
+          exitCode: 0,
+        },
+      },
+    }),
+    catalog,
+  ).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Unknown installation — verification failed",
+        ownershipVerified: false,
+        update: null,
+      });
+    }),
+  );
+});
+
 it.effect("does not fall back to npm when a managed package path has no available owner", () =>
   resolveInstallation(
     context({

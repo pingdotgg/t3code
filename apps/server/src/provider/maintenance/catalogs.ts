@@ -149,17 +149,16 @@ const npmGlobalUpdateArgs = (packageName: string) => [
   `${packageName}@latest`,
 ];
 
-function npmGlobalPrefix(context: InstallationContext, packageRoot: string) {
+function npmGlobalPrefix(context: InstallationContext, packageRoot: string, packageName: string) {
   const slashRoot = packageRoot.replaceAll("\\", "/");
   const comparableRoot = context.platform === "win32" ? slashRoot.toLowerCase() : slashRoot;
-  if (context.platform === "win32") {
-    const marker = "/node_modules/";
-    const markerIndex = comparableRoot.lastIndexOf(marker);
-    return markerIndex > 0 ? slashRoot.slice(0, markerIndex) : null;
-  }
-  const marker = "/lib/node_modules/";
-  const markerIndex = comparableRoot.lastIndexOf(marker);
-  return markerIndex > 0 ? slashRoot.slice(0, markerIndex) : null;
+  const marker = context.platform === "win32" ? "/node_modules/" : "/lib/node_modules/";
+  const markerIndex = comparableRoot.indexOf(marker);
+  if (markerIndex <= 0) return null;
+  const packagePath = comparableRoot.slice(markerIndex + marker.length).replace(/\/+$/, "");
+  const comparablePackageName =
+    context.platform === "win32" ? packageName.toLowerCase() : packageName;
+  return packagePath === comparablePackageName ? slashRoot.slice(0, markerIndex) : null;
 }
 
 const nodeManagers = [
@@ -247,7 +246,7 @@ function detectNodePackage(input: ProviderMaintenanceDefinitionInput, manager: N
     if (text(manifest?.name) !== input.packageName) return notMatched;
     let updateRoot = resolvedManagerRoot;
     if (manager.id === "npm") {
-      const prefix = npmGlobalPrefix(context, root);
+      const prefix = npmGlobalPrefix(context, root, input.packageName);
       if (!prefix) {
         return undetermined("The npm global prefix owning this package could not be verified.");
       }
