@@ -1,5 +1,6 @@
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -116,6 +117,7 @@ const PR_LOOKUP_CACHE_TTL = Duration.minutes(2);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
+const STATUS_PR_LOOKUP_TIMEOUT = Duration.seconds(5);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
@@ -974,7 +976,9 @@ export const make = Effect.gen(function* () {
         if (details.upstreamRef === null && (yield* isUnpublishedBranch(cwd, headContext))) {
           return { latest: null, headContext };
         }
-        const latest = yield* findLatestPrForHeadContext(cwd, headContext);
+        const latest = yield* findLatestPrForHeadContext(cwd, headContext).pipe(
+          Effect.timeout(STATUS_PR_LOOKUP_TIMEOUT),
+        );
         return { latest, headContext };
       });
     },
@@ -1090,6 +1094,9 @@ export const make = Effect.gen(function* () {
               typeof error === "object" && error !== null && "_tag" in error
                 ? String(error._tag)
                 : typeof error,
+            ...(Cause.isTimeoutError(error)
+              ? { timeoutMs: Duration.toMillis(STATUS_PR_LOOKUP_TIMEOUT) }
+              : {}),
             ...(isSourceControlProviderError(error)
               ? {
                   provider: error.provider,

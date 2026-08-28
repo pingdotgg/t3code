@@ -5,8 +5,10 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -14,6 +16,7 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as References from "effect/References";
 import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 import type {
@@ -62,6 +65,9 @@ interface FakeGhScenario {
   failWith?: GitHubCli.GitHubCliError;
   /** Let this many gh calls succeed before failWith kicks in (default 0 = fail immediately). */
   failAfterCalls?: number;
+  hangPrList?: boolean;
+  prListStarted?: Deferred.Deferred<void>;
+  onPrListInterrupt?: () => void;
 }
 
 function fakeGhOutput(stdout: string): VcsProcess.VcsProcessOutput {
@@ -368,6 +374,15 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     }
 
     if (args[0] === "pr" && args[1] === "list") {
+      if (scenario.hangPrList) {
+        const started = scenario.prListStarted
+          ? Deferred.succeed(scenario.prListStarted, undefined)
+          : Effect.void;
+        return started.pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Effect.sync(() => scenario.onPrListInterrupt?.())),
+        );
+      }
       const headSelectorIndex = args.findIndex((value) => value === "--head");
       const headSelector =
         headSelectorIndex >= 0 && headSelectorIndex < args.length - 1
@@ -1566,6 +1581,62 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(status.refName).toBe("feature/status-no-gh");
       expect(status.pr).toBeNull();
     }),
+  );
+
+  it.effect("status interrupts a hanging gh PR lookup at the enrichment deadline", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-hanging-gh"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-hanging-gh"]);
+
+      let prListInterrupted = false;
+      const prListStarted = yield* Deferred.make<void>();
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          hangPrList: true,
+          prListStarted,
+          onPrListInterrupt: () => {
+            prListInterrupted = true;
+          },
+        },
+      });
+      const logs: Array<{ message: string; annotations: Record<string, unknown> }> = [];
+      const logger = Logger.make<unknown, void>(({ fiber, message }) => {
+        logs.push({
+          message: String(message),
+          annotations: { ...fiber.getRef(References.CurrentLogAnnotations) },
+        });
+      });
+
+      const statusFiber = yield* manager
+        .status({ cwd: repoDir })
+        .pipe(
+          Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+          Effect.forkChild,
+        );
+      yield* Deferred.await(prListStarted);
+      yield* TestClock.adjust(Duration.millis(4_999));
+      expect(statusFiber.pollUnsafe()).toBeUndefined();
+
+      yield* TestClock.adjust(Duration.millis(1));
+      const status = yield* Fiber.join(statusFiber);
+
+      expect(status.refName).toBe("feature/status-hanging-gh");
+      expect(status.hasUpstream).toBe(true);
+      expect(status.pr).toBeNull();
+      expect(prListInterrupted).toBe(true);
+      expect(
+        logs.find((entry) => entry.message.includes("PR lookup failed"))?.annotations,
+      ).toMatchObject({
+        operation: "lookupStatusPr",
+        branch: "feature/status-hanging-gh",
+        errorTag: "TimeoutError",
+        timeoutMs: 5_000,
+      });
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("status logs actionable provider detail without exposing the upstream cause", () =>
