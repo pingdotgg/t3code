@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import {
@@ -8,9 +9,83 @@ import {
   enumerateCommandPaletteItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
+  prioritizeProjectItems,
   reduceCommandPaletteUiState,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+
+describe("prioritizeProjectItems", () => {
+  const ENVIRONMENT = EnvironmentId.make("environment-1");
+  const REMOTE_ENVIRONMENT = EnvironmentId.make("environment-2");
+  const item = (value: string) =>
+    ({
+      kind: "action",
+      value,
+      searchTerms: [],
+      title: value,
+      icon: null,
+      run: async () => {},
+    }) as const;
+  const items = [
+    item("new-thread-in:environment-1:alpha"),
+    item("new-thread-in:environment-1:beta"),
+  ];
+  const groupMemberRefs = new Map([
+    ["new-thread-in:environment-1:alpha", [scopeProjectRef(ENVIRONMENT, ProjectId.make("alpha"))]],
+    ["new-thread-in:environment-1:beta", [scopeProjectRef(ENVIRONMENT, ProjectId.make("beta"))]],
+  ]);
+
+  it("lists the preferred project first so the picker opens on it", () => {
+    const prioritized = prioritizeProjectItems(
+      items,
+      scopeProjectRef(ENVIRONMENT, ProjectId.make("beta")),
+      groupMemberRefs,
+    );
+
+    expect(prioritized.map((entry) => entry.value)).toEqual([
+      "new-thread-in:environment-1:beta",
+      "new-thread-in:environment-1:alpha",
+    ]);
+  });
+
+  it("matches a preferred ref against every member of the item's logical group", () => {
+    // The item targets the remote member while the sidebar filter scopes the
+    // group by its local representative: comparing refs directly would miss.
+    const grouped = new Map([
+      [
+        "new-thread-in:environment-2:beta",
+        [
+          scopeProjectRef(ENVIRONMENT, ProjectId.make("beta")),
+          scopeProjectRef(REMOTE_ENVIRONMENT, ProjectId.make("beta")),
+        ],
+      ],
+    ]);
+
+    const prioritized = prioritizeProjectItems(
+      [item("new-thread-in:environment-1:alpha"), item("new-thread-in:environment-2:beta")],
+      scopeProjectRef(ENVIRONMENT, ProjectId.make("beta")),
+      grouped,
+    );
+
+    expect(prioritized[0]?.value).toBe("new-thread-in:environment-2:beta");
+  });
+
+  it("leaves the order alone without a preferred project", () => {
+    expect(prioritizeProjectItems(items, null, groupMemberRefs).map((e) => e.value)).toEqual(
+      items.map((e) => e.value),
+    );
+  });
+
+  it("leaves the order alone when the preferred project is already first", () => {
+    const prioritized = prioritizeProjectItems(
+      items,
+      scopeProjectRef(ENVIRONMENT, ProjectId.make("alpha")),
+      groupMemberRefs,
+    );
+
+    expect(prioritized.map((entry) => entry.value)).toEqual(items.map((entry) => entry.value));
+  });
+});
 
 describe("browseInputEndPaddingClass", () => {
   it("reserves the widest space for the create action", () => {
@@ -86,10 +161,30 @@ describe("reduceCommandPaletteUiState", () => {
       mode: "command",
       openIntent: { kind: "add-project" },
     });
-    expect(reduceCommandPaletteUiState(filesOpen, { _tag: "OpenNewThreadIn" })).toEqual({
+    expect(
+      reduceCommandPaletteUiState(filesOpen, {
+        _tag: "OpenNewThreadIn",
+        preferredProjectRef: null,
+      }),
+    ).toEqual({
       open: true,
       mode: "command",
-      openIntent: { kind: "new-thread-in" },
+      openIntent: { kind: "new-thread-in", preferredProjectRef: null },
+    });
+  });
+
+  it("carries the opener's preferred project into the new-thread intent", () => {
+    const preferredProjectRef = scopeProjectRef(
+      EnvironmentId.make("environment-1"),
+      ProjectId.make("project-1"),
+    );
+
+    expect(
+      reduceCommandPaletteUiState(closedState, { _tag: "OpenNewThreadIn", preferredProjectRef }),
+    ).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "new-thread-in", preferredProjectRef },
     });
   });
 

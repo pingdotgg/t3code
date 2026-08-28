@@ -11,6 +11,7 @@ import {
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const PROJECT_ID = ProjectId.make("project-1");
 const FALLBACK_PROJECT_ID = ProjectId.make("project-2");
+const SCOPED_PROJECT_ID = ProjectId.make("project-3");
 
 function createContext(overrides: Partial<ChatThreadActionContext> = {}): ChatThreadActionContext {
   return {
@@ -36,6 +37,20 @@ describe("chatThreadActions", () => {
         newWorktreesStartFromOrigin: true,
       }),
     ).toBe(false);
+  });
+
+  it("prefers the sidebar project scope over the active thread", () => {
+    const projectRef = resolveThreadActionProjectRef(
+      createContext({
+        scopedProjectRef: scopeProjectRef(ENVIRONMENT_ID, SCOPED_PROJECT_ID),
+        activeThread: {
+          environmentId: ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+        },
+      }),
+    );
+
+    expect(projectRef).toEqual(scopeProjectRef(ENVIRONMENT_ID, SCOPED_PROJECT_ID));
   });
 
   it("prefers the active thread project when resolving thread actions", () => {

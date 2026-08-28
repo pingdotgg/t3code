@@ -1,9 +1,17 @@
+import type { ScopedProjectRef } from "@t3tools/contracts";
+
 // Tiny event bus allowing components to programmatically open the command palette
 // without owning its React state.
 const COMMAND_PALETTE_OPEN_EVENT = "t3code:open-command-palette";
 
 export interface CommandPaletteOpenDetail {
   readonly open?: "add-project" | "new-thread-in";
+  /**
+   * For "new-thread-in": the project the picker should open on, so Enter
+   * creates there. The sidebar's new-thread button passes its project filter;
+   * other callers leave it unset and get the viewed thread's project.
+   */
+  readonly preferredProjectRef?: ScopedProjectRef | null;
 }
 
 export function openCommandPalette(detail?: CommandPaletteOpenDetail): void {
