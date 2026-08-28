@@ -12,6 +12,7 @@ import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import type { AcpToolCallState } from "./AcpRuntimeModel.ts";
 
 const xAiStopReasonMissingMetaKey = "xAiStopReasonMissing";
+const xAiRateLimitedErrorCode = -32003;
 const completedXAiPromptIdLimit = 128;
 
 const XAiPromptCompleteNotification = Schema.Struct({
@@ -78,7 +79,10 @@ export function xAiPromptCompleteFromSessionUpdate(
 interface PendingXAiPromptCompletion {
   readonly sessionId: string;
   readonly promptId: string;
-  readonly deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse>;
+  readonly deferred: Deferred.Deferred<
+    EffectAcpSchema.PromptResponse,
+    EffectAcpErrors.AcpRequestError
+  >;
 }
 
 export interface XAiAcpSubagentUpdate {
@@ -1031,7 +1035,7 @@ const registerXAiPromptCompletionFallback = (
   sessionId: string,
   promptId: string,
 ) =>
-  Deferred.make<EffectAcpSchema.PromptResponse>().pipe(
+  Deferred.make<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpRequestError>().pipe(
     Effect.tap((deferred) =>
       Ref.update(pendingRef, (pending) => [...pending, { sessionId, promptId, deferred }]),
     ),
@@ -1040,7 +1044,7 @@ const registerXAiPromptCompletionFallback = (
 
 const unregisterXAiPromptCompletionFallback = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,
-  deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse>,
+  deferred: Deferred.Deferred<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpRequestError>,
 ) => Ref.update(pendingRef, (pending) => pending.filter((entry) => entry.deferred !== deferred));
 
 const abortPendingPromptCompletions = (
@@ -1120,10 +1124,19 @@ const resolveXAiPromptCompletionFallback = ({
         if (!entry) {
           return [Effect.void, pending] as const;
         }
-        return [
-          Deferred.succeed(entry.deferred, promptResponseFromXAi(notification)).pipe(Effect.asVoid),
-          [...pending.slice(0, index), ...pending.slice(index + 1)],
-        ] as const;
+        const settle =
+          notification.stopReason === "rate_limit"
+            ? Deferred.fail(
+                entry.deferred,
+                new EffectAcpErrors.AcpRequestError({
+                  code: xAiRateLimitedErrorCode,
+                  errorMessage: "Grok usage limit reached. Try again later.",
+                }),
+              ).pipe(Effect.asVoid)
+            : Deferred.succeed(entry.deferred, promptResponseFromXAi(notification)).pipe(
+                Effect.asVoid,
+              );
+        return [settle, [...pending.slice(0, index), ...pending.slice(index + 1)]] as const;
       }).pipe(Effect.flatten);
     }),
   );
