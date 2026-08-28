@@ -21,6 +21,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { resolveSendableThreadEnvMode } from "@t3tools/shared/threadEnvMode";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
@@ -651,10 +652,16 @@ export function NewTaskDraftScreen(props: {
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
       ) ?? flow.selectedModel;
-    const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
-    const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
-    const selectedWorktreePath =
-      draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath;
+    const workspaceMode = resolveSendableThreadEnvMode({
+      requestedMode: draft.workspaceSelection?.mode ?? flow.workspaceMode,
+      isGitRepo: flow.isGitRepo,
+    });
+    const selectedBranchName = flow.isGitRepo
+      ? (draft.workspaceSelection?.branch ?? flow.selectedBranchName)
+      : null;
+    const selectedWorktreePath = flow.isGitRepo
+      ? (draft.workspaceSelection?.worktreePath ?? flow.selectedWorktreePath)
+      : null;
     const startFromOrigin = draft.workspaceSelection?.startFromOrigin ?? flow.startFromOrigin;
     const runtimeMode = draft.runtimeMode ?? flow.runtimeMode;
     const interactionMode = flow.planModeEnabled
@@ -666,7 +673,10 @@ export function NewTaskDraftScreen(props: {
       !modelSelection ||
       initialMessageText.length === 0 ||
       flow.submitting ||
-      (workspaceMode === "worktree" && !selectedBranchName)
+      (workspaceMode === "worktree" && !selectedBranchName) ||
+      // A connected send must not trust the provisional repo status; a queued
+      // task is re-checked when the outbox drains it.
+      (workspaceMode === "worktree" && environmentConnected && !flow.gitStatusSettled)
     ) {
       return;
     }
@@ -805,7 +815,8 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
-    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName) &&
+    !(flow.workspaceMode === "worktree" && environmentConnected && !flow.gitStatusSettled);
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
@@ -927,9 +938,13 @@ export function NewTaskDraftScreen(props: {
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
-        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
+        accessibilityHint={
+          flow.isGitRepo
+            ? `Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`
+            : "Worktrees need a git repository"
+        }
         accessibilityLabel={workspaceLabel}
-        disabled={isIncomingShareTransferPending}
+        disabled={isIncomingShareTransferPending || !flow.isGitRepo}
         iconNode={
           <NewTaskWorkspaceIcon
             workspaceMode={flow.workspaceMode}
@@ -942,15 +957,17 @@ export function NewTaskDraftScreen(props: {
         showChevron={false}
       />
 
-      <ComposerInlineControl
-        accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
-        chevronDirection="right"
-        disabled={isIncomingShareTransferPending}
-        icon="arrow.triangle.branch"
-        label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
-        maxWidth={190}
-        onPress={() => openContextPicker("NewTaskBranch")}
-      />
+      {flow.isGitRepo ? (
+        <ComposerInlineControl
+          accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
+          chevronDirection="right"
+          disabled={isIncomingShareTransferPending}
+          icon="arrow.triangle.branch"
+          label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
+          maxWidth={190}
+          onPress={() => openContextPicker("NewTaskBranch")}
+        />
+      ) : null}
     </View>
   );
 

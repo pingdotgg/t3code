@@ -29,16 +29,20 @@ import {
 import {
   isQueuedThreadCreationSendable,
   modelSelectionsEqual,
+  resolveQueuedThreadCreationWorkspace,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
   threadOutboxRetryDelayMs,
   type QueuedThreadCreation,
+  type QueuedThreadCreationWorkspace,
   type QueuedThreadMessage,
   type ThreadOutboxCommandStage,
 } from "./thread-outbox-model";
 import { threadEnvironment } from "./threads";
+import { vcsEnvironment } from "./vcs";
 import { useAtomCommand } from "./use-atom-command";
+import { useAtomQueryRunner } from "./use-atom-query-runner";
 import {
   editingQueuedMessageIdsAtom,
   useThreadOutboxMessages,
@@ -87,6 +91,10 @@ function settingsCommandId(message: QueuedThreadMessage, setting: string): Comma
 
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const readVcsStatus = useAtomQueryRunner(vcsEnvironment.status, {
+    reportFailure: false,
+    timeoutMs: 10_000,
+  });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -256,6 +264,30 @@ export function useThreadOutboxDrain(): void {
         return false;
       }
       const { completeDelivery } = makeDeliveryHelpers(queuedMessage);
+      // A task queued before its project's git status was known may still
+      // carry worktree mode. A non-repository cannot host a worktree, so
+      // re-check here and drain it as local, the same fallback the composer
+      // applies online. An unreadable status keeps the queued mode and lets
+      // the server decide.
+      let workspace: QueuedThreadCreationWorkspace = creation;
+      if (workspace.workspaceMode === "worktree") {
+        const status = await readVcsStatus({
+          environmentId: queuedMessage.environmentId,
+          input: { cwd: projectCwd },
+        });
+        // The edit-lock and queued-payload guards ran before this await. Defer
+        // if editing started or a saved edit replaced the captured payload.
+        const messageStillCurrent = await confirmThreadOutboxMessageQueued(queuedMessage);
+        if (
+          !messageStillCurrent ||
+          appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]
+        ) {
+          return true;
+        }
+        const isGitRepo =
+          AsyncResult.isSuccess(status) && status.value !== null ? status.value.isRepo : null;
+        workspace = resolveQueuedThreadCreationWorkspace(creation, isGitRepo);
+      }
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
         input: buildProjectThreadStartTurnInput({
@@ -270,16 +302,16 @@ export function useThreadOutboxDrain(): void {
           modelSelection,
           runtimeMode: queuedMessage.runtimeMode ?? DEFAULT_RUNTIME_MODE,
           interactionMode: queuedMessage.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
-          workspaceMode: creation.workspaceMode,
-          branch: creation.branch,
-          worktreePath: creation.worktreePath,
+          workspaceMode: workspace.workspaceMode,
+          branch: workspace.branch,
+          worktreePath: workspace.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
         }),
       });
       return completeDelivery(deliveryResult);
     },
-    [makeDeliveryHelpers, startTurn],
+    [makeDeliveryHelpers, readVcsStatus, startTurn],
   );
 
   useEffect(() => {

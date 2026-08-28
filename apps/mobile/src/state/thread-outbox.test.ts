@@ -15,6 +15,7 @@ import {
   groupQueuedThreadMessages,
   isQueuedThreadCreationSendable,
   modelSelectionsEqual,
+  resolveQueuedThreadCreationWorkspace,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
@@ -445,6 +446,8 @@ describe("thread outbox", () => {
     await manager.enqueue(message);
     const edited = { ...message, text: "edited" };
     await expect(manager.update(edited)).resolves.toBe(true);
+    await expect(manager.confirmQueued(message)).resolves.toBe(false);
+    await expect(manager.confirmQueued(edited)).resolves.toBe(true);
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
       "environment-1:thread-1": [edited],
     });
@@ -454,6 +457,43 @@ describe("thread outbox", () => {
     await expect(manager.update({ ...message, text: "stale flush" })).resolves.toBe(false);
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({});
     expect(stored.size).toBe(0);
+    registry.dispose();
+  });
+
+  it("waits for a saved edit before confirming a captured payload", async () => {
+    const registry = AtomRegistry.make();
+    let writeCount = 0;
+    let releaseEditWrite!: () => void;
+    const editWrite = new Promise<void>((resolve) => {
+      releaseEditWrite = resolve;
+    });
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => [],
+        write: async () => {
+          writeCount += 1;
+          if (writeCount === 2) {
+            await editWrite;
+          }
+        },
+        remove: async () => undefined,
+      },
+    });
+    const message = queuedMessage({
+      messageId: "message-1",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    const edited = { ...message, text: "edited" };
+
+    await manager.enqueue(message);
+    const update = manager.update(edited);
+    const staleConfirmation = manager.confirmQueued(message);
+    releaseEditWrite();
+
+    await expect(update).resolves.toBe(true);
+    await expect(staleConfirmation).resolves.toBe(false);
+    await expect(manager.confirmQueued(edited)).resolves.toBe(true);
     registry.dispose();
   });
 
@@ -589,6 +629,22 @@ describe("thread outbox", () => {
       false,
     );
     expect(isQueuedThreadCreationSendable(base)).toBe(false);
+  });
+
+  it("falls back queued worktree creation only for a known non-repository", () => {
+    const workspace = {
+      workspaceMode: "worktree",
+      branch: "main",
+      worktreePath: "/tmp/worktree",
+    } as const;
+
+    expect(resolveQueuedThreadCreationWorkspace(workspace, false)).toEqual({
+      workspaceMode: "local",
+      branch: null,
+      worktreePath: null,
+    });
+    expect(resolveQueuedThreadCreationWorkspace(workspace, true)).toBe(workspace);
+    expect(resolveQueuedThreadCreationWorkspace(workspace, null)).toBe(workspace);
   });
 
   it("retries transport failures but drops deterministic command failures", () => {

@@ -32,6 +32,14 @@ export const ProjectThreadCreationValidationError = Schema.Union([
 ]);
 export type ProjectThreadCreationValidationError = typeof ProjectThreadCreationValidationError.Type;
 
+export function isProjectThreadGitStatusSettled(input: {
+  readonly hasWorkspaceRoot: boolean;
+  readonly hasData: boolean;
+  readonly hasError: boolean;
+}): boolean {
+  return !input.hasWorkspaceRoot || input.hasData || input.hasError;
+}
+
 /**
  * Branch recorded on a thread created from the new-task composer. An explicit
  * picker choice always wins. An untouched current-checkout draft records the
