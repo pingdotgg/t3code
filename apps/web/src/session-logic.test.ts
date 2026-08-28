@@ -23,6 +23,9 @@ import {
   isLatestRunSettled,
   providerErrorPresentation,
   type TimelineEntry,
+  workEntryIndicatesToolFailure,
+  workEntryDisplayIndicatesToolFailure,
+  workEntryIndicatesToolSuccess,
 } from "./session-logic";
 import { makeThreadProjectionFixture } from "./test-fixtures";
 import type { ChatMessage } from "./types";
@@ -633,5 +636,49 @@ describe("V2 session presentation", () => {
       [supersededAttemptId, "superseded"],
       [activeAttemptId, "running"],
     ]);
+  });
+});
+
+describe("work-log failure policy (#7999/#7893)", () => {
+  const toolEntry = (overrides: Record<string, unknown>) =>
+    ({
+      id: "entry-1",
+      createdAt: "2026-08-27T00:00:00.000Z",
+      label: "Ran command",
+      tone: "tool",
+      ...overrides,
+    }) as never;
+
+  it("flags success-status rows whose output text reports a failure", () => {
+    expect(
+      workEntryIndicatesToolFailure(
+        toolEntry({ toolLifecycleStatus: "completed", detail: "bash: foo: command not found" }),
+      ),
+    ).toBe(true);
+    expect(
+      workEntryIndicatesToolFailure(
+        toolEntry({ toolLifecycleStatus: "completed", detail: "<exited with exit code 2>" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps the rendered row calm when only the command mentions failure text", () => {
+    const entry = toolEntry({
+      toolLifecycleStatus: "completed",
+      command: "rg 'command not found' src/",
+    });
+    expect(workEntryIndicatesToolFailure(entry)).toBe(true);
+    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
+  });
+
+  it("does not call a clean completed row failed", () => {
+    const entry = toolEntry({ toolLifecycleStatus: "completed", detail: "3 files changed" });
+    expect(workEntryIndicatesToolFailure(entry)).toBe(false);
+    expect(workEntryIndicatesToolSuccess(entry)).toBe(true);
+  });
+
+  it("recovered failure text no longer counts as success", () => {
+    const entry = toolEntry({ toolLifecycleStatus: "completed", detail: "ENOENT: no such file" });
+    expect(workEntryIndicatesToolSuccess(entry)).toBe(false);
   });
 });
