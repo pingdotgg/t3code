@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodePerfHooks from "node:perf_hooks";
 import * as NodeSqlite from "node:sqlite";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import { describe, expect, it } from "@effect/vitest";
 
@@ -128,13 +129,20 @@ describe("readOpenCodeRecords", () => {
     }
   });
 
-  it("waits briefly for a writer before reporting a locked database", async () => {
+  it("waits for a writer off the event loop before reporting a locked database", async () => {
     const dbPath = createDatabase();
     const writer = new NodeSqlite.DatabaseSync(dbPath);
     writer.exec("BEGIN EXCLUSIVE");
     const startedAt = NodePerfHooks.performance.now();
     try {
-      expect(await readOpenCodeRecords(dbPath, 2_000)).toBeNull();
+      const read = readOpenCodeRecords(dbPath, 2_000);
+      const first = await Promise.race([
+        read.then(() => "read" as const),
+        NodeTimersPromises.setTimeout(50, "timer" as const),
+      ]);
+
+      expect(first).toBe("timer");
+      expect(await read).toBeNull();
       expect(NodePerfHooks.performance.now() - startedAt).toBeGreaterThanOrEqual(500);
     } finally {
       writer.exec("ROLLBACK");

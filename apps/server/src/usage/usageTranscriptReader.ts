@@ -17,7 +17,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
-import * as NodeSqlite from "node:sqlite";
+import * as NodeWorkerThreads from "node:worker_threads";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
 
@@ -237,6 +237,99 @@ const OPEN_CODE_TABLE_QUERIES = {
 
 type OpenCodeMessageTable = keyof typeof OPEN_CODE_TABLE_QUERIES;
 
+interface OpenCodeWorkerRows {
+  readonly table: OpenCodeMessageTable;
+  readonly rows: readonly OpenCodeUsageRow[];
+}
+
+type OpenCodeWorkerResult =
+  | { readonly status: "ok"; readonly groups: readonly OpenCodeWorkerRows[] }
+  | { readonly status: "failed" };
+
+/**
+ * Kept inline so server bundles do not need a second worker entrypoint. Only
+ * usage scalars cross back to the main thread; message content stays in SQLite.
+ */
+const OPEN_CODE_WORKER_SOURCE = String.raw`
+  const { parentPort, workerData } = require("node:worker_threads");
+  const { DatabaseSync } = require("node:sqlite");
+
+  let database;
+  let result = { status: "failed" };
+  try {
+    database = new DatabaseSync(workerData.dbPath, {
+      readOnly: true,
+      timeout: workerData.busyTimeoutMs,
+    });
+
+    const tables = new Set();
+    for (const row of database.prepare(workerData.tablesQuery).all()) {
+      if (row.name === "session_message" || row.name === "message") tables.add(row.name);
+    }
+    if (tables.size > 0) {
+      const groups = [];
+      for (const table of ["session_message", "message"]) {
+        if (!tables.has(table)) continue;
+        const rows = database
+          .prepare(workerData.tableQueries[table])
+          .all(workerData.sinceMs)
+          .map((row) => ({ ...row }));
+        groups.push({ table, rows });
+      }
+      result = { status: "ok", groups };
+    }
+  } catch {
+    result = { status: "failed" };
+  } finally {
+    try {
+      database?.close();
+    } catch {}
+  }
+
+  parentPort.postMessage(result);
+`;
+
+function readOpenCodeRows(
+  dbPath: string,
+  sinceMs: number,
+): Promise<readonly OpenCodeWorkerRows[] | null> {
+  return new Promise((resolve) => {
+    const worker = (() => {
+      try {
+        return new NodeWorkerThreads.Worker(OPEN_CODE_WORKER_SOURCE, {
+          eval: true,
+          workerData: {
+            dbPath,
+            sinceMs,
+            busyTimeoutMs: OPEN_CODE_SQLITE_BUSY_TIMEOUT_MS,
+            tablesQuery: OPEN_CODE_MESSAGE_TABLES_QUERY,
+            tableQueries: OPEN_CODE_TABLE_QUERIES,
+          },
+        });
+      } catch {
+        return null;
+      }
+    })();
+    if (worker === null) {
+      resolve(null);
+      return;
+    }
+
+    let settled = false;
+    const finish = (value: readonly OpenCodeWorkerRows[] | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    worker.once("message", (message: OpenCodeWorkerResult) => {
+      finish(message.status === "ok" ? message.groups : null);
+    });
+    worker.once("error", () => finish(null));
+    worker.once("exit", () => finish(null));
+  });
+}
+
 /**
  * Reads usage records from OpenCode's SQLite transcript store.
  *
@@ -254,47 +347,25 @@ export async function readOpenCodeRecords(
   dbPath: string,
   sinceMs: number,
 ): Promise<readonly UsageRecord[] | null> {
-  let database: NodeSqlite.DatabaseSync;
-  try {
-    database = new NodeSqlite.DatabaseSync(dbPath, {
-      readOnly: true,
-      timeout: OPEN_CODE_SQLITE_BUSY_TIMEOUT_MS,
-    });
-  } catch {
-    return null;
-  }
+  const groups = await readOpenCodeRows(dbPath, sinceMs);
+  if (groups === null) return null;
 
-  try {
-    const tables = new Set<OpenCodeMessageTable>();
-    for (const row of database.prepare(OPEN_CODE_MESSAGE_TABLES_QUERY).all()) {
-      const name = (row as Record<string, unknown>)["name"];
-      if (name === "session_message" || name === "message") tables.add(name);
-    }
-    if (tables.size === 0) return null;
-
-    const recordsByKey = new Map<string, UsageRecord>();
-    let anonymous = 0;
-    for (const table of ["session_message", "message"] as const) {
-      if (!tables.has(table)) continue;
-      const rows = database.prepare(OPEN_CODE_TABLE_QUERIES[table]).all(sinceMs);
-      for (const row of rows) {
-        const record = parseOpenCodeUsageRow(row as OpenCodeUsageRow);
-        if (record === null) continue;
-        if (record.dedupeKey === null) {
-          // An anonymous record can still be unique; it just cannot dedupe
-          // across the two projections.
-          recordsByKey.set(`${table}#${anonymous++}`, record);
-          continue;
-        }
-        if (!recordsByKey.has(record.dedupeKey)) {
-          recordsByKey.set(record.dedupeKey, record);
-        }
+  const recordsByKey = new Map<string, UsageRecord>();
+  let anonymous = 0;
+  for (const { table, rows } of groups) {
+    for (const row of rows) {
+      const record = parseOpenCodeUsageRow(row);
+      if (record === null) continue;
+      if (record.dedupeKey === null) {
+        // An anonymous record can still be unique; it just cannot dedupe
+        // across the two projections.
+        recordsByKey.set(`${table}#${anonymous++}`, record);
+        continue;
+      }
+      if (!recordsByKey.has(record.dedupeKey)) {
+        recordsByKey.set(record.dedupeKey, record);
       }
     }
-    return [...recordsByKey.values()];
-  } catch {
-    return null;
-  } finally {
-    database.close();
   }
+  return [...recordsByKey.values()];
 }
