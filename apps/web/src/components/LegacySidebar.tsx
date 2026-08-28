@@ -2331,11 +2331,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 />
               }
             >
-              {project.allRemoteMembersAreDesktopLocal ? (
-                <EnvironmentIcon className="size-3" />
-              ) : (
-                <CloudIcon className="size-3" />
-              )}
+              <EnvironmentIcon className="size-3" />
             </TooltipTrigger>
             <TooltipPopup side="top">
               {project.allRemoteMembersAreDesktopLocal

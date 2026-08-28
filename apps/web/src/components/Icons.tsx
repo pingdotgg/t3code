@@ -9,10 +9,14 @@ export const LinuxIcon: Icon = (props) => (
   </svg>
 );
 
-export function getEnvironmentIcon(input: { isPrimary: boolean; isDesktopLocal: boolean }): Icon {
+export function getEnvironmentIcon(input: {
+  isPrimary: boolean;
+  isDesktopLocal: boolean;
+  remoteIcon?: Icon;
+}): Icon {
   if (input.isPrimary) return MonitorIcon;
   if (input.isDesktopLocal) return LinuxIcon;
-  return CloudIcon;
+  return input.remoteIcon ?? CloudIcon;
 }
 
 export const GitHubIcon: Icon = (props) => (

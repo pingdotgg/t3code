@@ -783,6 +783,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const EnvironmentIcon = getEnvironmentIcon({
     isPrimary: false,
     isDesktopLocal: props.isDesktopLocalEnvironment,
+    remoteIcon: ServerIcon,
   });
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
