@@ -6598,6 +6598,7 @@ function ChatViewContent(props: ChatViewProps) {
       setComposerDraftModelSelection(
         scopeThreadRef(activeThread.environmentId, activeThread.id),
         nextModelSelection,
+        { explicit: true },
       );
       setStickyComposerModelSelection(nextModelSelection);
       scheduleComposerFocus();

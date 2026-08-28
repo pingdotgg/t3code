@@ -712,10 +712,12 @@ export function NewTaskDraftScreen(props: {
       if (editingPendingTask) {
         flow.finishEditingPendingTask();
       } else {
-        // Drop the workspace selection with the content: the next task should
-        // re-resolve mode/branch/origin from the server's configured defaults
-        // instead of resurrecting this task's picks.
-        clearComposerDraftContent(draftKey, { clearWorkspaceSelection: true });
+        // Drop draft-local model/workspace selections with the content. The
+        // next task re-resolves project defaults before sticky app defaults.
+        clearComposerDraftContent(draftKey, {
+          clearModelSelection: true,
+          clearWorkspaceSelection: true,
+        });
       }
       navigation.getParent()?.goBack();
       return;
@@ -779,7 +781,10 @@ export function NewTaskDraftScreen(props: {
       }
       flow.finishEditingPendingTask();
     } else {
-      clearComposerDraftContent(draftKey, { clearWorkspaceSelection: true });
+      clearComposerDraftContent(draftKey, {
+        clearModelSelection: true,
+        clearWorkspaceSelection: true,
+      });
     }
     navigation.dispatch(
       StackActions.replace("Thread", {

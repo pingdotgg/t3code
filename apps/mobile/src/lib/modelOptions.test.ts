@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProviderInstanceId, type ServerConfig } from "@t3tools/contracts";
+import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3tools/contracts";
 
 import {
   buildModelOptions,
   groupByProvider,
   resolveDefaultableModelSelection,
+  resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
+  type ModelOption,
 } from "./modelOptions";
 
 describe("mobile model options", () => {
@@ -219,5 +221,31 @@ describe("mobile model options", () => {
     expect(resolveDefaultableModelSelection(config, legacy)).toBeNull();
     // Offline: nothing to validate against, selection passes through.
     expect(resolveDefaultableModelSelection(null, legacy)).toBe(legacy);
+  });
+
+  it("resolves new tasks from draft, project, sticky, then provider defaults", () => {
+    const draft = { instanceId: ProviderInstanceId.make("codex"), model: "draft" };
+    const project = { instanceId: ProviderInstanceId.make("codex"), model: "project" };
+    const sticky = { instanceId: ProviderInstanceId.make("codex"), model: "sticky" };
+    const providerDefault = {
+      selection: { instanceId: ProviderInstanceId.make("codex"), model: "default" },
+      isDefault: true,
+    } as ModelOption;
+    const resolve = (
+      draftSelection: ModelSelection | null,
+      projectDefaultSelection: ModelSelection | null,
+      stickySelection: ModelSelection | null,
+    ) =>
+      resolveNewTaskModelSelection({
+        draftSelection,
+        projectDefaultSelection,
+        stickySelection,
+        modelOptions: [providerDefault],
+      });
+
+    expect(resolve(draft, project, sticky)).toBe(draft);
+    expect(resolve(null, project, sticky)).toBe(project);
+    expect(resolve(null, null, sticky)).toBe(sticky);
+    expect(resolve(null, null, null)).toBe(providerDefault.selection);
   });
 });
