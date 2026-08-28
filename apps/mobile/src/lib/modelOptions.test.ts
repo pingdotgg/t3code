@@ -44,10 +44,59 @@ describe("mobile model options", () => {
         providerKey: "codex",
         providerLabel: "Codex",
         models: [
-          { key: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol", isLegacy: false },
+          { key: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol", subtitle: "", isLegacy: false },
           { key: "codex:gpt-5.4", label: "GPT-5.4", isLegacy: true },
         ],
       },
+    ]);
+  });
+
+  it("distinguishes same-name OpenCode models without changing their routing", () => {
+    const sources = [
+      { id: "anthropic", label: "Anthropic" },
+      { id: "github-copilot", label: "GitHub Copilot" },
+      { id: "opencode", label: "OpenCode Zen" },
+    ];
+    const config = {
+      providers: [
+        {
+          instanceId: "opencode_work",
+          driver: "opencode",
+          displayName: "OpenCode Work",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: sources.map((source) => ({
+            slug: `${source.id}/claude-fable-5`,
+            name: "Claude Fable 5",
+            subProvider: source.label,
+            isCustom: false,
+            capabilities: null,
+          })),
+        },
+      ],
+    } as unknown as ServerConfig;
+    const selection = {
+      instanceId: ProviderInstanceId.make("opencode_work"),
+      model: "github-copilot/claude-fable-5",
+    };
+
+    const options = buildModelOptions(config, selection);
+
+    expect(options).toMatchObject(
+      sources.map((source) => ({
+        key: `opencode_work:${source.id}/claude-fable-5`,
+        label: "Claude Fable 5",
+        subtitle: source.label,
+        providerLabel: "OpenCode Work",
+        selection: {
+          instanceId: "opencode_work",
+          model: `${source.id}/claude-fable-5`,
+        },
+      })),
+    );
+    expect(groupByProvider(options)).toEqual([
+      { providerKey: "opencode_work", providerLabel: "OpenCode Work", models: options },
     ]);
   });
 

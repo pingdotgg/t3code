@@ -10,6 +10,10 @@ becomes available after every upload finishes. Failed uploads can be retried or 
 On web and desktop, HEIC and HEIF photos are automatically converted to JPEG when you drag them into
 the composer or paste them into a message.
 
+On mobile, the model picker shows each OpenCode model's upstream provider, such as Anthropic,
+GitHub Copilot, or OpenCode Zen, beneath its name. Search by that provider name to narrow the list
+when starting a thread or changing an existing thread's model.
+
 ## Commands and skills
 
 Type `/` to open the command menu. Type `$` to find and add a skill. Skill rows show their source,
