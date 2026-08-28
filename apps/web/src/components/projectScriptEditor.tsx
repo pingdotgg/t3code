@@ -121,7 +121,9 @@ export function editorRequestForScript(
       keybinding: keybindingValueForCommand(keybindings, commandForProjectScript(script.id)),
       previewUrl: script.previewUrl ?? null,
       autoOpenPreview: script.autoOpenPreview ?? false,
-      ...(script.awaitSetupScript === undefined ? {} : { awaitSetupScript: script.awaitSetupScript }),
+      ...(script.awaitSetupScript === undefined
+        ? {}
+        : { awaitSetupScript: script.awaitSetupScript }),
       ...(script.setupScriptTimeoutMs === undefined
         ? {}
         : { setupScriptTimeoutMs: script.setupScriptTimeoutMs }),

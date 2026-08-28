@@ -54,6 +54,7 @@ import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
+  setupProjectScript,
   setupScriptStateFromActivities,
 } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
@@ -4820,7 +4821,8 @@ function ChatViewContent(props: ChatViewProps) {
     isUnsettling,
   ]);
   const [rerunningSetupThreadId, setRerunningSetupThreadId] = useState<string | null>(null);
-  const isRerunningSetup = rerunningSetupThreadId !== null && rerunningSetupThreadId === activeThreadId;
+  const isRerunningSetup =
+    rerunningSetupThreadId !== null && rerunningSetupThreadId === activeThreadId;
   const handleRerunSetupScript = useCallback(async () => {
     if (!activeThreadId) {
       return;
@@ -4954,12 +4956,16 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const scriptLabel = setupScript.scriptName?.trim() || "Setup script";
     if (setupScript.status === "running") {
+      const awaitsSetup =
+        setupProjectScript(activeProject?.scripts ?? [])?.awaitSetupScript !== false;
       return {
         id: `setup-script-running:${activeThreadId}`,
         variant: "info",
         icon: <WrenchIcon />,
         title: `${scriptLabel} is running`,
-        description: "The first agent turn waits until this finishes.",
+        description: awaitsSetup
+          ? "The first agent turn waits until this finishes."
+          : "Setup is still running in the background.",
       };
     }
     return {
@@ -4982,7 +4988,13 @@ function ChatViewContent(props: ChatViewProps) {
         </Button>
       ),
     };
-  }, [activeThreadId, handleRerunSetupScript, isRerunningSetup, threadActivities]);
+  }, [
+    activeProject?.scripts,
+    activeThreadId,
+    handleRerunSetupScript,
+    isRerunningSetup,
+    threadActivities,
+  ]);
   const handleRestoreThreadBranch = useCallback(() => {
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
       setBranchRestoreConfirmOpen(true);
@@ -5001,12 +5013,18 @@ function ChatViewContent(props: ChatViewProps) {
       resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
-    const setupScriptItems = setupScriptBannerItem === null ? [] : [setupScriptBannerItem];
+    const setupScriptFailedItems =
+      setupScriptBannerItem?.variant === "error" ? [setupScriptBannerItem] : [];
+    const setupScriptRunningItems =
+      setupScriptBannerItem !== null && setupScriptBannerItem.variant !== "error"
+        ? [setupScriptBannerItem]
+        : [];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...urgentSystemItems,
-        ...setupScriptItems,
+        ...setupScriptFailedItems,
         ...backgroundLivenessItems,
+        ...setupScriptRunningItems,
         ...calmSystemItems,
         ...resumeCompactionItems,
         ...wokeThreadItems,
@@ -5015,8 +5033,9 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return [
       ...urgentSystemItems,
-      ...setupScriptItems,
+      ...setupScriptFailedItems,
       ...backgroundLivenessItems,
+      ...setupScriptRunningItems,
       ...calmSystemItems,
       ...resumeCompactionItems,
       ...wokeThreadItems,

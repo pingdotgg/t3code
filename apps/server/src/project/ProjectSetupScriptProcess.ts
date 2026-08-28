@@ -57,6 +57,7 @@ export const make = Effect.gen(function* () {
           env: input.env,
           extendEnv: true,
           shell: true,
+          stdin: "ignore",
           detached: hostPlatform !== "win32",
         }),
       )
