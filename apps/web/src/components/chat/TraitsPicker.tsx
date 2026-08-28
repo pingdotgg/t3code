@@ -367,11 +367,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
                   {descriptor.label}
                 </div>
-                <MenuRadioGroup value={value}>
-                  <MenuRadioItem value={value} hideIndicator disabled>
-                    {value}
-                  </MenuRadioItem>
-                </MenuRadioGroup>
+                <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">{value}</div>
               </MenuGroup>
             </div>
           );
