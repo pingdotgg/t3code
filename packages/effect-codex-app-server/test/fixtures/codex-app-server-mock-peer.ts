@@ -4,6 +4,10 @@ let nextServerRequestId = 10_000;
 let pendingSkillsListRequestId: number | string | null = null;
 let pendingUserInputRequestId: number | null = null;
 
+if (process.env.CODEX_APP_SERVER_TEST_STDOUT_PREAMBLE === "1") {
+  process.stdout.write("mise ~/.config/mise/config.toml tools: codex@0.149.0\n");
+}
+
 const writeMessage = (message: unknown) => {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 };

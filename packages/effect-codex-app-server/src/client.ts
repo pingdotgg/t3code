@@ -19,6 +19,7 @@ import {
 import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
 
 export interface CodexAppServerClientOptions {
+  readonly ignoreNonJsonPreamble?: boolean;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (
@@ -186,6 +187,9 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
 
   const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
     stdio,
+    ...(options.ignoreNonJsonPreamble !== undefined
+      ? { ignoreNonJsonPreamble: options.ignoreNonJsonPreamble }
+      : {}),
     ...(terminationError ? { terminationError } : {}),
     ...(options.logIncoming !== undefined ? { logIncoming: options.logIncoming } : {}),
     ...(options.logOutgoing !== undefined ? { logOutgoing: options.logOutgoing } : {}),
@@ -265,5 +269,9 @@ const makeChildProcessClient = Effect.fn(
   "effect-codex-app-server/CodexAppServerClient.makeChildProcessClient",
 )(function* (handle: ChildProcessSpawner.ChildProcessHandle, options: CodexAppServerClientOptions) {
   yield* Stream.runDrain(handle.stderr).pipe(Effect.ignore, Effect.forkScoped);
-  return yield* make(makeChildStdio(handle), options, makeTerminationError(handle));
+  return yield* make(
+    makeChildStdio(handle),
+    { ignoreNonJsonPreamble: true, ...options },
+    makeTerminationError(handle),
+  );
 });

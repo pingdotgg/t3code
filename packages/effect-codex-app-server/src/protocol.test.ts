@@ -328,6 +328,62 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
+  it.effect("ignores non-JSON launcher output before the first protocol message", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const events: Array<CodexProtocol.CodexAppServerProtocolLogEvent> = [];
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        ignoreNonJsonPreamble: true,
+        logIncoming: true,
+        logger: (event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+      });
+
+      const response = yield* transport.request("initialize", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.offer(
+        input,
+        encoder.encode("mise ~/.config/mise/config.toml tools: codex@0.149.0\n"),
+      );
+      yield* Queue.offer(input, encodeJsonl({ id: 1, result: { userAgent: "codex/0.149.0" } }));
+
+      assert.deepEqual(yield* Fiber.join(response), { userAgent: "codex/0.149.0" });
+      assert.deepInclude(
+        events.find(({ stage }) => stage === "ignored_preamble"),
+        {
+          direction: "incoming",
+          stage: "ignored_preamble",
+          payload: { byteLength: 52 },
+        },
+      );
+    }),
+  );
+
+  it.effect("rejects non-JSON output after protocol messages begin", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        ignoreNonJsonPreamble: true,
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      const response = yield* transport.request("initialize", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.offer(input, encodeJsonl({ id: 1, result: {} }));
+      yield* Fiber.join(response);
+      yield* Queue.offer(input, encoder.encode("unexpected output\n"));
+
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, CodexError.CodexAppServerProtocolParseError);
+      assert.equal(error.operation, "decode-wire-message");
+    }),
+  );
+
   it.effect("correlates response errors with the originating request", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
