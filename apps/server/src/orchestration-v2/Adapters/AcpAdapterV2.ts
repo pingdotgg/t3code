@@ -141,6 +141,10 @@ export interface AcpAdapterV2ExtensionContext {
     },
     EffectAcpErrors.AcpError
   >;
+  /** Surfaces plan markdown as this turn's proposed-plan card (#8358). */
+  readonly captureProposedPlan: (input: { readonly planMarkdown: string }) => Effect.Effect<void>;
+  /** Last markdown captured for the active turn, as the exit-gate fallback. */
+  readonly lastProposedPlanMarkdown: Effect.Effect<string | undefined>;
 }
 
 export interface AcpRootTurnIdleSnapshot {
@@ -213,6 +217,12 @@ export interface AcpAdapterV2Flavor {
    * ACKs in the running state until stream end).
    */
   readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
+  /**
+   * Optional plan-file sniffing (#8358): providers that write their proposed
+   * plan to a file mid-turn (Grok plan.md) return its markdown from a tool
+   * call so T3 can show the proposed-plan card while plan mode is active.
+   */
+  readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
   /**
    * Optional mapping from a long-lived background tool start ACK to a task id
    * (e.g. monitor task uuid) so later synthetic text events can update it.
@@ -1855,6 +1865,119 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           return ordinal;
         });
 
+        const lastCapturedProposedPlan = yield* Ref.make<{
+          readonly nativeTurnId: string;
+          readonly markdown: string;
+          readonly planId: OrchestrationV2PlanArtifact["id"];
+        } | null>(null);
+        /**
+         * Emits a completed proposed-plan artifact for the active turn. Same
+         * plan id per turn so repeated captures (plan.md rewrites, the exit
+         * gate) update one card; identical markdown within a turn is a no-op.
+         */
+        const captureProposedPlan = Effect.fnUntraced(function* (input: {
+          readonly planMarkdown: string;
+        }) {
+          const context = yield* Ref.get(activeTurn);
+          if (context === null) return;
+          const markdown = input.planMarkdown.trim();
+          if (markdown.length === 0) return;
+          const previous = yield* Ref.get(lastCapturedProposedPlan);
+          if (
+            previous !== null &&
+            previous.nativeTurnId === context.nativeTurnId &&
+            previous.markdown === markdown
+          ) {
+            return;
+          }
+          const nativeItemId = `${context.nativeTurnId}:proposed-plan`;
+          const planId =
+            previous !== null && previous.nativeTurnId === context.nativeTurnId
+              ? previous.planId
+              : yield* idAllocator.allocate
+                  .plan({
+                    threadId: context.input.threadId,
+                    runId: context.input.runId,
+                    driver,
+                  })
+                  .pipe(Effect.orDie);
+          yield* Ref.set(lastCapturedProposedPlan, {
+            nativeTurnId: context.nativeTurnId,
+            markdown,
+            planId,
+          });
+          const now = yield* DateTime.now;
+          const nodeId = idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId });
+          const turnItemId = idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId });
+          const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
+          const nativeItemRef = { driver, nativeId: nativeItemId, strength: "weak" as const };
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: nodeId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              parentNodeId: context.input.rootNodeId,
+              rootNodeId: context.input.rootNodeId,
+              kind: "plan",
+              status: "completed",
+              countsForRun: false,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: context.startedAt,
+              completedAt: now,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "plan.updated",
+            driver,
+            plan: {
+              id: planId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId,
+              kind: "proposed_plan",
+              status: "completed",
+              markdown,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: turnItemId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: null,
+              startedAt: context.startedAt,
+              completedAt: now,
+              updatedAt: now,
+              type: "proposed_plan",
+              planId,
+              markdown,
+              streaming: false,
+            },
+          });
+        });
+        const lastProposedPlanMarkdown = Effect.gen(function* () {
+          const context = yield* Ref.get(activeTurn);
+          const previous = yield* Ref.get(lastCapturedProposedPlan);
+          return context !== null && previous?.nativeTurnId === context.nativeTurnId
+            ? previous.markdown
+            : undefined;
+        });
+
         const rememberSnapshotMessage = (message: OrchestrationV2ConversationMessage) =>
           Ref.update(snapshot, (current) => {
             const key = String(message.id);
@@ -3113,6 +3236,10 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             for (const event of parseSessionUpdateEvent(notification).events) {
               if (event._tag !== "ToolCallUpdated") continue;
               const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+              const proposedPlanMarkdown = flavor.extractProposedPlanMarkdown?.(toolCall);
+              if (proposedPlanMarkdown !== undefined && proposedPlanMarkdown.length > 0) {
+                yield* captureProposedPlan({ planMarkdown: proposedPlanMarkdown });
+              }
               const toolTaskId = flavor.extractBackgroundTaskId?.(toolCall);
               if (
                 toolTaskId !== undefined &&
@@ -4526,6 +4653,8 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             yield* flavor.registerExtensions({
               runtime,
               requestUserInput,
+              captureProposedPlan,
+              lastProposedPlanMarkdown,
               applyBackgroundTaskMutation: (mutation) =>
                 Effect.gen(function* () {
                   // Direct Stop quarantine: drop residual task lifecycle from
