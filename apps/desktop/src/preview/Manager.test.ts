@@ -78,12 +78,12 @@ describe("previewWindowOpenAction", () => {
   });
 
   it("keeps target=_blank links in the preview tab", () => {
-    expect(
-      PreviewManager.previewWindowOpenAction(details({ disposition: "foreground-tab" })),
-    ).toBe("navigate");
-    expect(
-      PreviewManager.previewWindowOpenAction(details({ disposition: "background-tab" })),
-    ).toBe("navigate");
+    expect(PreviewManager.previewWindowOpenAction(details({ disposition: "foreground-tab" }))).toBe(
+      "navigate",
+    );
+    expect(PreviewManager.previewWindowOpenAction(details({ disposition: "background-tab" }))).toBe(
+      "navigate",
+    );
   });
 
   it("does not hand a window to schemes that cannot be hardened", () => {
