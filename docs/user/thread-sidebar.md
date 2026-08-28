@@ -4,6 +4,9 @@ Pin a thread from its context menu to keep it in the pinned section above your a
 `mod+shift+p` pins or unpins the thread you have open. Pinned threads are shown independently of
 their project, including when you connect to more than one environment.
 
+To require confirmation before unpinning, enable **Settings → General → Unpin confirmation**. The
+confirmation applies to the sidebar controls, thread menus, and the `mod+shift+p` shortcut.
+
 Pinned threads follow the auto-settle policy in **Settings → General**. Choose exactly one policy:
 settle when a pull request merges or closes, settle after a configurable period of inactivity, or
 never auto-settle. **Never** leaves every automatic path off, so threads settle only when you choose
