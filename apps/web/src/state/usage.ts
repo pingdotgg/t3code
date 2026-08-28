@@ -13,6 +13,7 @@ import {
   type EnvironmentId,
   type ProviderUsageLimits,
   type UsageLimitsSummary,
+  type UsageLimitsProviderKind,
   type UsageProviderKind,
   type UsageSummary,
   type UsageSummaryInput,
@@ -176,7 +177,7 @@ const usageLimitsAtom = Atom.make((get): readonly EnvironmentUsageLimitsStatus[]
 }).pipe(Atom.withLabel("web-usage:limits"));
 
 export interface ProviderLimitsStatus {
-  readonly provider: UsageProviderKind;
+  readonly provider: UsageLimitsProviderKind;
   /** The figures this card renders. */
   readonly limits: ProviderUsageLimits;
   /** Environments whose answers this card covers. */
@@ -229,7 +230,7 @@ export function useUsageLimits(): UsageLimitsView {
       readonly accounts: Map<string, { limits: ProviderUsageLimits; labels: string[] }>;
       fallback: { limits: ProviderUsageLimits; labels: string[] } | null;
     }
-    const byProvider = new Map<UsageProviderKind, ProviderMerge>();
+    const byProvider = new Map<UsageLimitsProviderKind, ProviderMerge>();
     for (const environment of environments) {
       if (environment.summary === null) continue;
       for (const limits of environment.summary.providers) {

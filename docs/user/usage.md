@@ -15,4 +15,4 @@ headline and chart, and refreshing rescans every connected environment.
 The **Limits** view shows how much of each subscription plan's rate windows is currently used,
 with reset countdowns per window. Limit info is only available for subscription sign-ins: API-key
 authentication is billed per token and has no rate windows, so those providers show a notice
-instead. Claude Code and Codex report limits today; other providers will follow.
+instead. Claude Code, Codex and Grok report limits today; other providers will follow.

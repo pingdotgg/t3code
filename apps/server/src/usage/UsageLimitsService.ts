@@ -7,16 +7,20 @@
  * credentials: Claude's OAuth grant (credential file under the Claude home,
  * or the macOS login keychain) against Anthropic's OAuth usage endpoint, and
  * Codex's ChatGPT sign-in via a short-lived `codex app-server` asked for
- * `account/rateLimits/read`. API-key auth has no rate windows; those
- * providers answer `unsupported` in-band instead of failing the RPC.
+ * `account/rateLimits/read`, and Grok's OIDC sign-in (from `auth.json` under
+ * the Grok home) against the Grok CLI backend's billing endpoint. API-key
+ * auth has no rate windows; those providers answer `unsupported` in-band
+ * instead of failing the RPC.
  *
  * @module UsageLimitsService
  */
+import * as NodeOS from "node:os";
+
 import {
   USAGE_LIMITS_CONTRACT_VERSION,
   type ProviderUsageLimits,
+  type UsageLimitsProviderKind,
   type UsageLimitsSummary,
-  type UsageProviderKind,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -44,9 +48,20 @@ import {
   parseClaudeUsageWindows,
 } from "./usageLimitsClaude.ts";
 import { codexPlanLabel, mapCodexRateLimits, parseCodexAuthKind } from "./usageLimitsCodex.ts";
+import {
+  grokPlanLabel,
+  parseGrokAuthCredentials,
+  parseGrokBillingWindows,
+  parseGrokUserProfile,
+  resolveGrokProxyBaseUrl,
+} from "./usageLimitsGrok.ts";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
+
+/** Paths on the Grok CLI's chat proxy; the base URL is resolved per read. */
+const GROK_BILLING_PATH = "/billing?format=credits";
+const GROK_USER_PATH = "/user?include=subscription";
 
 /** The OAuth endpoints require the same beta marker the Claude CLI sends. */
 const CLAUDE_OAUTH_BETA_HEADER = "oauth-2025-04-20";
@@ -86,7 +101,7 @@ export const layerTest = Layer.succeed(
   }),
 );
 
-function makeProviderLimits(provider: UsageProviderKind) {
+function makeProviderLimits(provider: UsageLimitsProviderKind) {
   return (
     availability: ProviderUsageLimits["availability"],
     fields: {
@@ -106,6 +121,7 @@ function makeProviderLimits(provider: UsageProviderKind) {
 }
 const claudeLimits = makeProviderLimits("claude");
 const codexLimits = makeProviderLimits("codex");
+const grokLimits = makeProviderLimits("grok");
 
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -390,15 +406,140 @@ export const make = Effect.gen(function* () {
     return codexLimits("available", { plan, email, windows });
   });
 
-  const readLimits = Effect.fn("UsageLimitsService.readLimits")(function* () {
-    const [claude, codex] = yield* Effect.all([readClaudeLimits(), readCodexLimits()], {
-      concurrency: "unbounded",
+  const grokRequest = (url: string, key: string) =>
+    HttpClientRequest.get(url).pipe(
+      HttpClientRequest.setHeaders({
+        authorization: `Bearer ${key}`,
+        accept: "application/json",
+      }),
+    );
+
+  /**
+   * Best-effort plan tier and email from the Grok user endpoint. Identity
+   * only; a failure here must never degrade the limit figures.
+   */
+  const readGrokProfile = Effect.fn("UsageLimitsService.readGrokProfile")(
+    function* (input: { readonly baseUrl: string; readonly key: string }) {
+      const response = yield* httpClient.execute(
+        grokRequest(`${input.baseUrl}${GROK_USER_PATH}`, input.key),
+      );
+      if (response.status < 200 || response.status >= 300) return parseGrokUserProfile(null);
+      const payload = yield* response.json;
+      return parseGrokUserProfile(payload);
+    },
+    Effect.timeoutOption(REQUEST_TIMEOUT_MS),
+    (effect) =>
+      effect.pipe(
+        Effect.map((profile) => Option.getOrNull(profile) ?? parseGrokUserProfile(null)),
+        Effect.orElseSucceed(() => parseGrokUserProfile(null)),
+      ),
+  );
+
+  const readGrokLimits = Effect.fn("UsageLimitsService.readGrokLimits")(function* () {
+    // Mirrors the CLI's own auth precedence: an ambient xAI API key wins
+    // over the stored sign-in, and API keys have no subscription windows.
+    const environment = process.env;
+    const apiKey = environment.XAI_API_KEY ?? environment.GROK_CODE_XAI_API_KEY;
+    if (apiKey !== undefined && apiKey.trim().length > 0) {
+      return grokLimits("unsupported", { message: SUBSCRIPTION_ONLY_MESSAGE });
+    }
+
+    // Grok settings do not model a home dir; the CLI's own env overrides are
+    // the only relocation mechanism, so honor them the way the CLI would.
+    const homeOverride = environment.GROK_HOME?.trim();
+    const grokHome =
+      homeOverride !== undefined && homeOverride.length > 0
+        ? homeOverride
+        : path.join(NodeOS.homedir(), ".grok");
+    const authPath = environment.GROK_AUTH_PATH?.trim() || path.join(grokHome, "auth.json");
+    const raw = yield* fileSystem
+      .readFileString(authPath)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    const credentials = raw === null ? null : parseGrokAuthCredentials(raw);
+    if (credentials === null) {
+      return grokLimits("unauthenticated", {
+        message: "Grok is not signed in on this environment.",
+      });
+    }
+    if (credentials.authMode !== "oidc") {
+      return grokLimits("unsupported", { message: SUBSCRIPTION_ONLY_MESSAGE });
+    }
+
+    // The bearer is scoped to the CLI's configured chat proxy, which team
+    // setups override; it must go where the CLI would send it, never to the
+    // public default by accident.
+    const modelsCacheRaw = yield* fileSystem
+      .readFileString(path.join(grokHome, "models_cache.json"))
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    const baseUrl = resolveGrokProxyBaseUrl({
+      envBaseUrl: environment.GROK_CLI_CHAT_PROXY_BASE_URL,
+      modelsCacheRaw,
     });
+    if (baseUrl === null) {
+      return grokLimits("unavailable", {
+        message: "Grok's configured proxy endpoint could not be understood.",
+      });
+    }
+
+    const [response, profile] = yield* Effect.all(
+      [
+        httpClient.execute(grokRequest(`${baseUrl}${GROK_BILLING_PATH}`, credentials.key)).pipe(
+          Effect.timeoutOption(REQUEST_TIMEOUT_MS),
+          Effect.orElseSucceed(() => Option.none()),
+        ),
+        readGrokProfile({ baseUrl, key: credentials.key }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const email = profile.email ?? credentials.email;
+    const plan = grokPlanLabel(profile.subscriptionTier);
+    if (Option.isNone(response)) {
+      return grokLimits("unavailable", {
+        plan,
+        email,
+        message: "Grok's billing service could not be reached.",
+      });
+    }
+    const status = response.value.status;
+    if (status === 401 || status === 403) {
+      // The CLI's bearer is short-lived (minutes, not days); an expired one
+      // is routine rather than a broken login.
+      return grokLimits("unauthenticated", {
+        plan,
+        email,
+        message: "The stored Grok sign-in has expired. Use Grok once to refresh it, then retry.",
+      });
+    }
+    if (status < 200 || status >= 300) {
+      return grokLimits("unavailable", {
+        plan,
+        email,
+        message: `Grok's billing service answered with status ${status}.`,
+      });
+    }
+
+    const payload = yield* response.value.json.pipe(Effect.orElseSucceed(() => null));
+    const windows = parseGrokBillingWindows(payload);
+    if (windows.length === 0) {
+      return grokLimits("unavailable", {
+        plan,
+        email,
+        message: "Grok's billing service answered in a shape this version does not understand.",
+      });
+    }
+    return grokLimits("available", { plan, email, windows });
+  });
+
+  const readLimits = Effect.fn("UsageLimitsService.readLimits")(function* () {
+    const [claude, codex, grok] = yield* Effect.all(
+      [readClaudeLimits(), readCodexLimits(), readGrokLimits()],
+      { concurrency: "unbounded" },
+    );
     const readAt = yield* DateTime.now;
     return {
       contractVersion: USAGE_LIMITS_CONTRACT_VERSION,
       readAt: DateTime.formatIso(readAt),
-      providers: [claude, codex],
+      providers: [claude, codex, grok],
     } satisfies UsageLimitsSummary;
   });
 
