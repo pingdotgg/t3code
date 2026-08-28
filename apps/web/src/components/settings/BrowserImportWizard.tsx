@@ -249,8 +249,9 @@ function FullDiskAccessStep({
       <DialogHeader>
         <DialogTitle>Let T3 Code read {source.name}&rsquo;s cookies</DialogTitle>
         <DialogDescription>
-          {source.name} keeps its cookies somewhere only apps with Full Disk Access can reach. Turn
-          that on for T3 Code in System Settings, then come back and finish the import.
+          To import cookies from {source.name}, T3 Code needs Full Disk Access. Turn it on in System
+          Settings, then come back to finish the import — you can revoke it again once the import is
+          done.
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>
