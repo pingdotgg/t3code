@@ -11,6 +11,7 @@ export interface EnvironmentOption {
   projectId: ProjectId;
   label: string;
   isPrimary: boolean;
+  isDesktopLocal: boolean;
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);

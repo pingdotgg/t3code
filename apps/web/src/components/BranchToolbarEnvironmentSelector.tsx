@@ -3,6 +3,7 @@ import { CloudIcon, MonitorIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
+import { LinuxIcon } from "./LinuxIcon";
 import {
   Select,
   SelectGroup,
@@ -31,6 +32,11 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   const activeEnvironment = useMemo(() => {
     return availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
   }, [availableEnvironments, environmentId]);
+  const EnvironmentIcon = activeEnvironment?.isPrimary
+    ? MonitorIcon
+    : activeEnvironment?.isDesktopLocal
+      ? LinuxIcon
+      : CloudIcon;
 
   const environmentItems = useMemo(
     () =>
@@ -52,11 +58,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:h-6 sm:text-xs"
         data-composer-context-control
       >
-        {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3 shrink-0" />
-        ) : (
-          <CloudIcon className="size-3 shrink-0" />
-        )}
+        <EnvironmentIcon className="size-3 shrink-0" />
         <span
           data-composer-label
           className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
@@ -86,11 +88,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         aria-label="Run on"
         data-composer-context-control
       >
-        {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3 shrink-0" />
-        ) : (
-          <CloudIcon className="size-3 shrink-0" />
-        )}
+        <EnvironmentIcon className="size-3 shrink-0" />
         <span
           data-composer-label
           className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
@@ -111,6 +109,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
               <span className="inline-flex items-center gap-1.5">
                 {env.isPrimary ? (
                   <MonitorIcon className="size-3" />
+                ) : env.isDesktopLocal ? (
+                  <LinuxIcon className="size-3" />
                 ) : (
                   <CloudIcon className="size-3" />
                 )}
