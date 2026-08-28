@@ -135,6 +135,21 @@ describe("GitWorkflowService", () => {
     ),
   );
 
+  it.effect("returns an empty worktree list when no VCS repository is detected", () =>
+    Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService.GitWorkflowService;
+      const result = yield* workflow.listWorktrees({ cwd: "/not-a-repo" });
+
+      assert.deepStrictEqual(result, { worktrees: [], isRepo: false });
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          detect: () => Effect.succeed(null),
+        }),
+      ),
+    ),
+  );
+
   it.effect("structures workflow detection failures without exposing upstream details", () => {
     const cause = new VcsRepositoryDetectionError({
       operation: "VcsDriverRegistry.detect",

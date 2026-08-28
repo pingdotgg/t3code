@@ -32,6 +32,7 @@ import {
   commitVcsRefsRefresh,
   createVcsEnvironmentAtoms,
   makeCachedVcsRefsChanges,
+  vcsWorktreeLabel,
 } from "./vcs.ts";
 import {
   invalidateCachedVcsRefs,
@@ -54,6 +55,13 @@ const CONNECTED_CONNECTION_STATE: SupervisorConnectionState = {
   attempt: 1,
   generation: 1,
 };
+
+describe("vcsWorktreeLabel", () => {
+  it("uses the branch name or detached commit", () => {
+    expect(vcsWorktreeLabel({ branch: "feature", head: "1234567890" })).toBe("feature");
+    expect(vcsWorktreeLabel({ branch: null, head: "1234567890" })).toBe("Detached at 1234567");
+  });
+});
 
 const CACHED_REFS: VcsListRefsResult = {
   refs: [
