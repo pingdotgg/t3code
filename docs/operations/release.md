@@ -222,10 +222,12 @@ Windows packages the bundled server and only its runtime-external/native
 dependency closure in `resources/server.asar`. Native modules and helper
 executables declared as unpacked by that archive must be present at the matching
 paths below `resources/server.asar.unpacked`. The Windows-native backend reads
-the archive in place through Electron. WSL cannot read ASAR files, so enabling
-the WSL backend extracts the server tree once into the desktop state directory
-under `wsl-server-tree/<version>` and reuses the completed version until the app
-is updated.
+the archive in place through Electron. Packaged Windows builds also ship a
+Linux-only `resources/wsl-runtime.tar.gz` plus its SHA-256 sidecar. WSL verifies
+and extracts that archive into `~/.t3/wsl-runtime/sha256-<archive-digest>` inside
+the selected distro, then reuses it for later launches of the same update. The
+Windows-side `wsl-server-tree/<version>` extraction remains a fallback and is
+removed after the distro-local runtime passes preflight.
 
 The artifact builder rejects a Windows package when any of these invariants
 break:
@@ -236,6 +238,11 @@ break:
 - On same-architecture Windows builds, the packaged primary cannot load the fff
   native library from inside `server.asar` through its `.unpacked` sibling.
 - The isolated, extracted sidecar cannot load the server entry with plain Node.
+- A Windows build with a WSL node-pty prebuild omits the WSL archive or SHA-256
+  sidecar, the sidecar digest does not match the emitted archive, or required
+  Linux runtime members are absent.
+- The emitted WSL archive contains Windows/Darwin node-pty payloads, ConPTY,
+  pnpm install metadata, or Windows-only FFF, ffi-rs, or msgpackr bindings.
 - The external Windows resource monitor is absent.
 - The unpacked Windows application contains more than 80 files.
 

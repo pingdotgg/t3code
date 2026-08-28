@@ -52,6 +52,7 @@ import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/http
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
@@ -99,6 +100,10 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   // Present for a WSL run after the configured/default distro has been
   // resolved to the concrete distro passed to wsl.exe.
   readonly runningDistro?: string;
+  // Present only when this run launched from a staged WSL-local runtime.
+  // Once HTTP readiness succeeds, the manager uses it to retain this cache
+  // plus the newest previous cache and prune older versions.
+  readonly wslRuntimeId?: string;
 }
 
 // A preflight failure records whether it is fatal. Transient failures (WSL
@@ -637,6 +642,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   | HttpClient.HttpClient
   | DesktopObservability.DesktopBackendOutputLogFactory
   | DesktopTelemetryPublisher.DesktopTelemetryPublisher
+  | DesktopWslEnvironment.DesktopWslEnvironment
   | Scope.Scope
 > {
   const parentScope = yield* Scope.Scope;
@@ -644,6 +650,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const backendOutputLogFactory = yield* DesktopObservability.DesktopBackendOutputLogFactory;
   const backendOutputLog = yield* backendOutputLogFactory.forInstance(spec.id);
   const desktopTelemetryPublisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+  const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const state = yield* Ref.make(initialState);
@@ -939,6 +946,15 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             }
 
             yield* spec.onReady?.(config.value.httpBaseUrl) ?? Effect.void;
+            if (
+              config.value.runningDistro !== undefined &&
+              config.value.wslRuntimeId !== undefined
+            ) {
+              yield* wslEnvironment.pruneRuntimes(
+                config.value.runningDistro,
+                config.value.wslRuntimeId,
+              );
+            }
           }),
           onReadinessFailure: Effect.fn("desktop.backendInstance.onReadinessFailure")(
             function* (error) {
