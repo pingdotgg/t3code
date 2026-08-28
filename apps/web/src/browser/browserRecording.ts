@@ -122,6 +122,12 @@ export function useActiveBrowserRecordingTabIds(): ReadonlySet<string> {
 const activeRecordings = new Map<string, ActiveRecording>();
 let unsubscribeFrames: (() => void) | null = null;
 
+const publishActiveRecordingTabIds = (): void => {
+  appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
+    tabIds: new Set(activeRecordings.keys()),
+  });
+};
+
 export const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
 export const BROWSER_RECORDING_FIRST_FRAME_SIZE_TIMEOUT_MS = 5_000;
 
@@ -228,9 +234,7 @@ const clearActiveRecording = (recording: ActiveRecording): void => {
     unsubscribeFrames?.();
     unsubscribeFrames = null;
   }
-  appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
-    tabIds: new Set(activeRecordings.keys()),
-  });
+  publishActiveRecordingTabIds();
 };
 
 const cleanupFailedRecordingStart = async (
@@ -377,6 +381,7 @@ export async function startBrowserRecording(
     lifecycle: { phase: "starting" },
   };
   activeRecordings.set(tabId, recording);
+  publishActiveRecordingTabIds();
   try {
     try {
       unsubscribeFrames ??= bridge.recording.onFrame(drawFrame);
@@ -487,9 +492,6 @@ export async function startBrowserRecording(
     if (recording.lifecycle.phase === "starting") {
       recording.lifecycle = { phase: "recording" };
     }
-    appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
-      tabIds: new Set(activeRecordings.keys()),
-    });
     return startedAt;
   } finally {
     settleStartup?.();

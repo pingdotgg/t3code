@@ -9,6 +9,7 @@ import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { cn } from "~/lib/utils";
 
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
+import { useActiveBrowserRecordingTabIds } from "./browserRecording";
 import {
   browserViewportSettingKey,
   resolveBrowserViewportLayout,
@@ -47,9 +48,11 @@ export function HostedBrowserWebview(props: {
   readonly runtimeTabId: string;
   readonly initialUrl: string | null;
   readonly viewport: PreviewViewportSetting;
+  readonly pictureInPicture: boolean;
   readonly zoomFactor: number;
 }) {
-  const { threadRef, tabId, runtimeTabId, initialUrl, viewport, zoomFactor } = props;
+  const { threadRef, tabId, runtimeTabId, initialUrl, viewport, pictureInPicture, zoomFactor } =
+    props;
   const config = usePreviewWebviewConfig(threadRef.environmentId);
   const [initialSrc] = useState(() => initialUrl ?? "about:blank");
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
@@ -70,6 +73,10 @@ export function HostedBrowserWebview(props: {
       };
     }),
   );
+  const backgroundActivity = useBrowserSurfaceStore(
+    (state) => (state.activityByTabId[runtimeTabId] ?? 0) > 0,
+  );
+  const recordingActive = useActiveBrowserRecordingTabIds().has(runtimeTabId);
   usePreviewBridge({ threadRef, tabId, runtimeTabId });
 
   useEffect(() => {
@@ -231,8 +238,10 @@ export function HostedBrowserWebview(props: {
 
   if (!config) return null;
 
+  const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
+    renderingActive,
     cornerRadius: presentation.cornerRadius,
     rect: lastRect,
     hiddenSize,
@@ -244,6 +253,7 @@ export function HostedBrowserWebview(props: {
       className="fixed overflow-hidden bg-muted/35"
       style={{ ...wrapperStyle, overscrollBehavior: "contain" }}
       onScroll={syncContentPresentation}
+      data-preview-rendering={renderingActive ? "active" : "suspended"}
       data-preview-viewport={runtimeTabId}
     >
       <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>
