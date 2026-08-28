@@ -39,6 +39,11 @@ directory to route session and turn operations for a thread, so callers name a t
 Adding a driver means writing the driver plus adapter and adding it to `BUILT_IN_DRIVERS`. No
 orchestration, contract, or client change is required for the common case.
 
+Grok Build streams `agent()` children and workflow runs over private ACP methods
+(`x.ai/session_notification` / `_x.ai/session/update`). [`GrokAdapter.ts`][grok-adapter] maps those
+onto the same `task.started` / `task.progress` / `task.completed` events Claude Task and Codex
+collab children already emit, so the Agents panel lists Grok subagents without a third UI.
+
 ## Model manifest
 
 The model picker's legacy section is driven by `apps/server/src/provider/model-manifest.json`, which
@@ -120,6 +125,7 @@ when a request opens (approval) or user input is requested, via
 [claude]: ../../apps/server/src/provider/Drivers/ClaudeDriver.ts
 [cursor]: ../../apps/server/src/provider/Drivers/CursorDriver.ts
 [grok]: ../../apps/server/src/provider/Drivers/GrokDriver.ts
+[grok-adapter]: ../../apps/server/src/provider/Layers/GrokAdapter.ts
 [opencode]: ../../apps/server/src/provider/Drivers/OpenCodeDriver.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts
 [instances]: ../../apps/server/src/provider/Services/ProviderInstanceRegistry.ts

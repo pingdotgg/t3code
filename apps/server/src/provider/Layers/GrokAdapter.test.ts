@@ -2085,4 +2085,57 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       // hang until the suite timeout instead of failing here.
     }).pipe(TestClock.withLive),
   );
+
+  it.effect("maps Grok ACP subagent notifications onto the Agents panel task stream", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-subagent-panel");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_XAI_SUBAGENT: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const started =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "task.started" }>>();
+      const completed =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "task.completed" }>>();
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+        if (String(event.threadId) !== String(threadId)) {
+          return Effect.void;
+        }
+        if (event.type === "task.started") {
+          return Deferred.succeed(started, event).pipe(Effect.ignore);
+        }
+        if (event.type === "task.completed") {
+          return Deferred.succeed(completed, event).pipe(Effect.ignore);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "delegate the search",
+        attachments: [],
+      });
+
+      const startedEvent = yield* Deferred.await(started);
+      const completedEvent = yield* Deferred.await(completed);
+      assert.equal(startedEvent.payload.taskId, "grok-subagent-1");
+      assert.equal(startedEvent.payload.taskType, "subagent");
+      assert.equal(startedEvent.payload.role, "explore");
+      assert.equal(startedEvent.payload.title, "Search the codebase");
+      assert.equal(startedEvent.payload.timelineBypass, true);
+      assert.equal(startedEvent.raw?.method, "_x.ai/session/update");
+      assert.equal(completedEvent.payload.taskId, "grok-subagent-1");
+      assert.equal(completedEvent.payload.status, "completed");
+      assert.equal(completedEvent.payload.summary, "Found 3 call sites.");
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
 });

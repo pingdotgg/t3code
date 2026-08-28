@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
+  RuntimeTaskId,
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -67,6 +68,18 @@ import {
   normalizeGrokReasoningEffort,
   resolveGrokAcpBaseModelId,
 } from "../acp/GrokAcpSupport.ts";
+import {
+  applyGrokSubagentUpdate,
+  applyGrokWorkflowUpdate,
+  emptyGrokSubagentTrackState,
+  GROK_SESSION_NOTIFICATION_METHODS,
+  parseXAiSubagentUpdate,
+  parseXAiWorkflowUpdated,
+  XAiSessionNotification,
+  type GrokSessionNotificationMethod,
+  type GrokSubagentTrackState,
+  type GrokTaskEventSpec,
+} from "../acp/GrokAcpSubagents.ts";
 import {
   extractGrokPlanMarkdownFromToolCallData,
   extractXAiAskUserQuestions,
@@ -162,6 +175,14 @@ interface GrokSessionContext {
   promptResponsesReady: number;
   currentModelId: string | undefined;
   currentReasoningEffort: string | undefined;
+  /**
+   * Grok `agent()` / workflow ACP extras mapped onto task.* so the Agents
+   * panel can list them the same way Claude Task and Codex collab children
+   * already do.
+   */
+  workflowTrack: GrokSubagentTrackState;
+  /** First-seen spawn turn per task, reused after the parent turn settles. */
+  readonly taskSpawnTurnIds: Map<string, TurnId>;
   stopped: boolean;
 }
 
@@ -399,6 +420,45 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
 
+    const emitGrokTaskSpecs = (input: {
+      readonly ctx: GrokSessionContext;
+      readonly method: string;
+      readonly payload: unknown;
+      readonly specs: ReadonlyArray<GrokTaskEventSpec>;
+    }) =>
+      Effect.forEach(
+        input.specs,
+        (spec) =>
+          Effect.gen(function* () {
+            const taskIdValue = spec.payload.taskId;
+            if (typeof taskIdValue !== "string" || taskIdValue.length === 0) {
+              return;
+            }
+            const taskId = RuntimeTaskId.make(taskIdValue);
+            let turnId = input.ctx.taskSpawnTurnIds.get(taskIdValue);
+            if (turnId === undefined) {
+              turnId = resolveNotificationTurnId(input.ctx);
+              if (turnId !== undefined) {
+                input.ctx.taskSpawnTurnIds.set(taskIdValue, turnId);
+              }
+            }
+            yield* offerRuntimeEvent({
+              type: spec.type,
+              ...(yield* makeEventStamp()),
+              provider: PROVIDER,
+              threadId: input.ctx.threadId,
+              ...(turnId !== undefined ? { turnId } : {}),
+              payload: { ...spec.payload, taskId },
+              raw: {
+                source: "acp.grok.extension",
+                method: input.method,
+                payload: input.payload,
+              },
+            } as ProviderRuntimeEvent);
+          }),
+        { discard: true },
+      );
+
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
         const existing: Option.Option<Semaphore.Semaphore> = Option.fromNullishOr(
@@ -505,6 +565,54 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       const ctx = sessions.get(threadId);
       return ctx && turnId !== undefined ? signalTurnLiveness(ctx, turnId) : Effect.void;
     };
+
+    const refreshGrokSessionTurnLiveness = (ctx: GrokSessionContext) =>
+      Effect.gen(function* () {
+        const turnId = resolveNotificationTurnId(ctx);
+        if (turnId === undefined || ctx.livenessTurnId !== turnId) {
+          return;
+        }
+        // Subagent/workflow ticks prove the provider is still working even
+        // when the parent ACP stream is quiet. Stamp the watchdog clock
+        // before signalling; a wake without a fresh timestamp cancels a
+        // turn that has already sat near turnInactivityTimeoutMs.
+        ctx.lastTurnActivityAtNanos = yield* Clock.monotonicTimeNanos;
+        yield* signalTurnLiveness(ctx, turnId);
+      });
+
+    const applyGrokSessionNotification = (
+      ctx: GrokSessionContext,
+      method: GrokSessionNotificationMethod,
+      params: unknown,
+    ) =>
+      Effect.gen(function* () {
+        const workflow = parseXAiWorkflowUpdated(params);
+        if (workflow) {
+          const applied = applyGrokWorkflowUpdate(ctx.workflowTrack, workflow);
+          ctx.workflowTrack = applied.state;
+          yield* emitGrokTaskSpecs({
+            ctx,
+            method,
+            payload: params,
+            specs: applied.events,
+          });
+          yield* refreshGrokSessionTurnLiveness(ctx);
+          return;
+        }
+        const subagent = parseXAiSubagentUpdate(params);
+        if (!subagent) {
+          return;
+        }
+        const applied = applyGrokSubagentUpdate(ctx.workflowTrack, subagent);
+        ctx.workflowTrack = applied.state;
+        yield* emitGrokTaskSpecs({
+          ctx,
+          method,
+          payload: params,
+          specs: applied.events,
+        });
+        yield* refreshGrokSessionTurnLiveness(ctx);
+      });
 
     const resumeSessionTurnLiveness = Effect.fn("GrokAdapter.resumeSessionTurnLiveness")(function* (
       threadId: ThreadId,
@@ -1018,6 +1126,12 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 }),
             ),
           );
+          const pendingSessionNotifications: Array<{
+            readonly method: GrokSessionNotificationMethod;
+            readonly params: unknown;
+          }> = [];
+          let sessionNotificationsReady = false;
+          const sessionNotificationLock = yield* Semaphore.make(1);
           const started = yield* Effect.gen(function* () {
             yield* Effect.forEach(
               ["x.ai/ask_user_question", "_x.ai/ask_user_question"] as const,
@@ -1116,6 +1230,34 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         });
                       }
                       return makeXAiExitPlanModeCapturedResponse();
+                    }),
+                  ),
+                ),
+              { discard: true },
+            );
+            // Grok Build streams agent() / workflow runs over a private ACP
+            // channel. Claude maps Task/workflow_progress onto task.*; Codex
+            // maps collabAgent/* the same way. Keep that seam: parse here,
+            // emit canonical events, never a third Agents UI.
+            yield* Effect.forEach(
+              GROK_SESSION_NOTIFICATION_METHODS,
+              (method) =>
+                acp.handleExtNotification(method, XAiSessionNotification, (params) =>
+                  mapAcpCallbackFailure(
+                    Effect.gen(function* () {
+                      yield* logNative(input.threadId, method, params);
+                      if (!sessionNotificationsReady) {
+                        pendingSessionNotifications.push({ method, params });
+                        return;
+                      }
+                      const liveCtx = sessions.get(input.threadId);
+                      if (!liveCtx) {
+                        pendingSessionNotifications.push({ method, params });
+                        return;
+                      }
+                      yield* sessionNotificationLock.withPermit(
+                        applyGrokSessionNotification(liveCtx, method, params),
+                      );
                     }),
                   ),
                 ),
@@ -1290,6 +1432,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
               requestedStartReasoningEffort !== undefined
                 ? normalizeGrokReasoningEffort(requestedStartReasoningEffort)
                 : currentStartReasoningEffort,
+            workflowTrack: emptyGrokSubagentTrackState(),
+            taskSpawnTurnIds: new Map(),
             stopped: false,
           };
 
@@ -1433,6 +1577,15 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
           sessions.set(input.threadId, ctx);
           yield* runTurnLivenessWatchdog(ctx).pipe(Effect.forkIn(ctx.scope), Effect.asVoid);
           sessionScopeTransferred = true;
+          yield* sessionNotificationLock.withPermit(
+            Effect.gen(function* () {
+              const batch = pendingSessionNotifications.splice(0);
+              sessionNotificationsReady = true;
+              yield* Effect.forEach(batch, (pending) =>
+                applyGrokSessionNotification(ctx, pending.method, pending.params),
+              );
+            }),
+          );
 
           yield* offerRuntimeEvent({
             type: "session.started",
