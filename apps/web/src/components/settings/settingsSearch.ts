@@ -177,6 +177,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "open-at-login",
     title: "Open at login",
     to: "/settings/general",
+    // The row mounts for every Electron host (disabled on older shells that
+    // lack the login-item bridge methods), matching this desktopOnly gate.
     desktopOnly: true,
   },
   {

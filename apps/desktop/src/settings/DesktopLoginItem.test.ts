@@ -7,11 +7,12 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopAppSettings from "./DesktopAppSettings.ts";
 import * as DesktopLoginItem from "./DesktopLoginItem.ts";
 
-function environmentLayer(isPackaged: boolean) {
+function environmentLayer(isPackaged: boolean, platform: NodeJS.Platform = "darwin") {
   return Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
     DesktopEnvironment.DesktopEnvironment.of({
       isPackaged,
+      platform,
     } as DesktopEnvironment.DesktopEnvironment["Service"]),
   );
 }
@@ -49,6 +50,7 @@ const withLoginItem = <A, E, R>(
   >,
   input: {
     readonly isPackaged: boolean;
+    readonly platform?: NodeJS.Platform;
     readonly setLoginItemSettings?: ElectronApp.ElectronApp["Service"]["setLoginItemSettings"];
     readonly initialOpenAtLogin?: boolean;
   },
@@ -60,7 +62,7 @@ const withLoginItem = <A, E, R>(
           ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
           openAtLogin: input.initialOpenAtLogin ?? false,
         }),
-        environmentLayer(input.isPackaged),
+        environmentLayer(input.isPackaged, input.platform),
         electronAppLayer(input.setLoginItemSettings ?? (() => Effect.void)),
       ),
     ),
@@ -82,6 +84,21 @@ describe("DesktopLoginItem", () => {
     );
   });
 
+  it.effect("skips OS registration on packaged Linux and still persists", () => {
+    const { calls, setLoginItemSettings } = recordingSetLoginItemSettings();
+    return withLoginItem(
+      Effect.gen(function* () {
+        const state = yield* DesktopLoginItem.setOpenAtLogin(true);
+        assert.deepEqual(state, { enabled: true, available: false });
+        assert.equal(calls.length, 0);
+
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        assert.equal((yield* settings.get).openAtLogin, true);
+      }),
+      { isPackaged: true, platform: "linux", setLoginItemSettings },
+    );
+  });
+
   it.effect("skips OS registration for unpackaged builds and still persists", () => {
     const { calls, setLoginItemSettings } = recordingSetLoginItemSettings();
     return withLoginItem(
@@ -97,7 +114,7 @@ describe("DesktopLoginItem", () => {
     );
   });
 
-  it.effect("does not persist when OS registration fails", () => {
+  it.effect("persists the preference before applying the OS login item", () => {
     const cause = new Error("registry write failed");
     return withLoginItem(
       Effect.gen(function* () {
@@ -107,7 +124,7 @@ describe("DesktopLoginItem", () => {
         assert.strictEqual(error.cause, cause);
 
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        assert.equal((yield* settings.get).openAtLogin, false);
+        assert.equal((yield* settings.get).openAtLogin, true);
       }),
       {
         isPackaged: true,
@@ -130,6 +147,17 @@ describe("DesktopLoginItem", () => {
         assert.deepEqual(calls, [{ openAtLogin: true }]);
       }),
       { isPackaged: true, setLoginItemSettings, initialOpenAtLogin: true },
+    );
+  });
+
+  it.effect("does not apply a login item on packaged Linux", () => {
+    const { calls, setLoginItemSettings } = recordingSetLoginItemSettings();
+    return withLoginItem(
+      Effect.gen(function* () {
+        yield* DesktopLoginItem.applyOpenAtLogin(true);
+        assert.equal(calls.length, 0);
+      }),
+      { isPackaged: true, platform: "linux", setLoginItemSettings, initialOpenAtLogin: true },
     );
   });
 });

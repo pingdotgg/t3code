@@ -1856,26 +1856,30 @@ function LegacyFeaturesSection() {
 
 function OpenAtLoginSettingsRow() {
   const { supported, state, setEnabled } = useDesktopOpenAtLogin();
-  if (!supported) return null;
+  if (!isElectron) return null;
 
   const enabled = state?.enabled === true;
+  const pending = supported && state === null;
 
   return (
     <SettingsRow
       {...searchableSetting("open-at-login")}
       description={
-        state?.available === false
-          ? "Launch T3 Code when you sign in. This takes effect in the installed desktop app."
-          : "Launch T3 Code when you sign in to this computer."
+        !supported
+          ? "Update the desktop app to launch T3 Code when you sign in."
+          : state?.available === false
+            ? "Launch T3 Code when you sign in. This works in the installed Windows and macOS apps."
+            : "Launch T3 Code when you sign in to this computer."
       }
       resetAction={
-        enabled ? (
+        enabled && supported && !pending ? (
           <SettingResetButton label="open at login" onClick={() => void setEnabled(false)} />
         ) : null
       }
       control={
         <Switch
           checked={enabled}
+          disabled={!supported || pending}
           onCheckedChange={(checked) => void setEnabled(Boolean(checked))}
           aria-label="Open at login"
         />

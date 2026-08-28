@@ -17,11 +17,12 @@ const invokeGetOpenAtLoginState = getOpenAtLoginState
 const invokeSetOpenAtLogin = (enabled: boolean) =>
   setOpenAtLogin.handler(enabled).pipe(Effect.flatMap(decodeOpenAtLoginState));
 
-function environmentLayer(isPackaged: boolean) {
+function environmentLayer(isPackaged: boolean, platform: NodeJS.Platform = "darwin") {
   return Layer.succeed(
     DesktopEnvironment.DesktopEnvironment,
     DesktopEnvironment.DesktopEnvironment.of({
       isPackaged,
+      platform,
     } as DesktopEnvironment.DesktopEnvironment["Service"]),
   );
 }

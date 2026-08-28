@@ -51,15 +51,16 @@ yay -S t3code-nightly-bin
 
 ## Open at Login
 
-The desktop app can start when you sign in to your computer.
+On Windows and macOS, the desktop app can start when you sign in to your computer.
 
 Turn it on in **Settings** → **General** → **Open at login**. It is off by default.
 
 Windows lists T3 Code under Settings → Apps → Startup. macOS lists it under System Settings →
 General → Login Items. Turning the setting off in T3 Code removes it from those lists.
 
-This is separate from running T3 Code as a [background service](background-service.md), which keeps
-a headless server running on Linux and macOS.
+Linux does not support this option. This is also separate from running T3 Code as a
+[background service](background-service.md), which keeps a headless server running on Linux and
+macOS.
 
 ## Providers
 

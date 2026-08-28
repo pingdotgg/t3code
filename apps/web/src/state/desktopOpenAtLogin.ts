@@ -1,5 +1,5 @@
 import type { DesktopBridge, DesktopOpenAtLoginState } from "@t3tools/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 
@@ -26,6 +26,7 @@ export function useDesktopOpenAtLogin(): {
 } {
   const [state, setState] = useState<DesktopOpenAtLoginState | null>(null);
   const supported = getDesktopOpenAtLoginBridge() !== undefined;
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     const bridge = getDesktopOpenAtLoginBridge();
@@ -35,7 +36,8 @@ export function useDesktopOpenAtLogin(): {
     void bridge
       .getOpenAtLoginState()
       .then((next) => {
-        if (!cancelled) setState(next);
+        // Don't clobber a toggle that resolved while this initial read was in flight.
+        if (!cancelled) setState((current) => current ?? next);
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -53,30 +55,33 @@ export function useDesktopOpenAtLogin(): {
     };
   }, []);
 
-  const setEnabled = useCallback(
-    async (enabled: boolean) => {
-      const bridge = getDesktopOpenAtLoginBridge();
-      if (!bridge) return;
+  const setEnabled = useCallback(async (enabled: boolean) => {
+    const bridge = getDesktopOpenAtLoginBridge();
+    if (!bridge) return;
 
-      const previous = state;
-      setState((current) =>
-        current === null ? { enabled, available: true } : { ...current, enabled },
-      );
+    const requestId = ++requestIdRef.current;
+    setState((current) =>
+      current === null ? { enabled, available: true } : { ...current, enabled },
+    );
+    try {
+      const next = await bridge.setOpenAtLogin(enabled);
+      if (requestId === requestIdRef.current) setState(next);
+    } catch (error: unknown) {
       try {
-        setState(await bridge.setOpenAtLogin(enabled));
-      } catch (error: unknown) {
-        setState(previous);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not update open at login",
-            description: error instanceof Error ? error.message : "Failed to update the setting.",
-          }),
-        );
+        const next = await bridge.getOpenAtLoginState();
+        if (requestId === requestIdRef.current) setState(next);
+      } catch {
+        if (requestId === requestIdRef.current) setState(null);
       }
-    },
-    [state],
-  );
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not update open at login",
+          description: error instanceof Error ? error.message : "Failed to update the setting.",
+        }),
+      );
+    }
+  }, []);
 
   return { supported, state, setEnabled };
 }

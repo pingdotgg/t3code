@@ -506,8 +506,8 @@ export const DesktopWslStateSchema = Schema.Struct({
 
 export interface DesktopOpenAtLoginState {
   enabled: boolean;
-  // False in unpackaged/dev builds. The preference is still stored and is
-  // applied the next time a packaged desktop app starts.
+  // True only for packaged Windows and macOS. Unpackaged builds and Linux keep
+  // the preference, but Electron's login-item APIs do not register there.
   available: boolean;
 }
 
