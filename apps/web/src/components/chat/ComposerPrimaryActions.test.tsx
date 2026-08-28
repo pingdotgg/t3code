@@ -32,6 +32,7 @@ function renderPendingActions(isRunning: boolean) {
       showPlanFollowUpPrompt: false,
       promptHasText: false,
       isSendBusy: false,
+      sendDisabledReason: null,
       isConnecting: false,
       isEnvironmentUnavailable: false,
       isPreparingWorktree: false,
@@ -52,6 +53,7 @@ function renderStandaloneStop() {
       showPlanFollowUpPrompt: false,
       promptHasText: false,
       isSendBusy: false,
+      sendDisabledReason: null,
       isConnecting: false,
       isEnvironmentUnavailable: false,
       isPreparingWorktree: false,
@@ -72,6 +74,7 @@ function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent:
       showPlanFollowUpPrompt: false,
       promptHasText: hasSendableContent,
       isSendBusy: false,
+      sendDisabledReason: null,
       isConnecting: false,
       isEnvironmentUnavailable: false,
       isPreparingWorktree: false,
@@ -93,6 +96,7 @@ function renderSendButton(sendDisabledReason: string | null = null) {
       showPlanFollowUpPrompt: false,
       promptHasText: true,
       isSendBusy: false,
+      sendDisabledReason,
       isConnecting: false,
       isEnvironmentUnavailable: false,
       isPreparingWorktree: false,
@@ -200,6 +204,13 @@ describe("formatPendingPrimaryActionLabel", () => {
 });
 
 describe("ComposerPrimaryActions", () => {
+  it("disables and labels the send button while feedback is uploading", () => {
+    const markup = renderSendButton("Sending feedback");
+
+    expect(markup).toContain("disabled");
+    expect(markup).toContain('aria-label="Sending feedback"');
+  });
+
   it("offers Stop generation while a running turn is waiting for user input", () => {
     expect(renderPendingActions(true)).toContain('aria-label="Stop generation"');
   });
@@ -236,7 +247,7 @@ describe("ComposerPrimaryActions", () => {
     const markup = renderRunningActions(true, true);
 
     expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).toContain('aria-label="Send message to steer active turn"');
+    expect(markup).toContain('aria-label="Send message"');
     expect(markup).toContain('type="submit"');
   });
 
@@ -245,62 +256,5 @@ describe("ComposerPrimaryActions", () => {
 
     expect(markup).toContain('aria-label="Stop generation"');
     expect(markup).not.toContain('aria-label="Send message"');
-  });
-});
-
-const activeTurnProps = {
-  compact: false,
-  pendingAction: null,
-  showPlanFollowUpPrompt: false,
-  promptHasText: false,
-  isSendBusy: false,
-  isConnecting: false,
-  isEnvironmentUnavailable: false,
-  isPreparingWorktree: false,
-  preserveComposerFocusOnPointerDown: false,
-  onPreviousPendingQuestion: () => {},
-  onInterrupt: () => {},
-  onImplementPlanInNewThread: () => {},
-} as const;
-
-describe("active-turn primary action", () => {
-  it("shows stop while the active composer is empty", () => {
-    const markup = renderToStaticMarkup(
-      createElement(ComposerPrimaryActions, {
-        ...activeTurnProps,
-        isRunning: true,
-        hasSendableContent: false,
-      }),
-    );
-
-    expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).not.toContain("steer active turn");
-  });
-
-  it("keeps stop reachable while the active composer has content", () => {
-    const markup = renderToStaticMarkup(
-      createElement(ComposerPrimaryActions, {
-        ...activeTurnProps,
-        isRunning: true,
-        hasSendableContent: true,
-      }),
-    );
-
-    expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).not.toContain("steer active turn");
-  });
-
-  it("adds the steering send beside stop when Enter-to-send is unavailable", () => {
-    const markup = renderToStaticMarkup(
-      createElement(ComposerPrimaryActions, {
-        ...activeTurnProps,
-        isRunning: true,
-        hasSendableContent: true,
-        showSendWhileRunning: true,
-      }),
-    );
-
-    expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).toContain('aria-label="Send message to steer active turn"');
   });
 });
