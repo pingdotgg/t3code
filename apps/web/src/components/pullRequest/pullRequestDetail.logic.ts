@@ -937,3 +937,26 @@ const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
 export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): boolean {
   return ACTION_NEEDS_HOST_REFRESH[action];
 }
+
+/**
+ * Whether the thread beside this panel is already pinned to the pull request on
+ * screen — the decision behind offering Unlink rather than a second Link.
+ *
+ * The stored link keeps whatever URL it was created from, which for an
+ * agent-written href is often a subpage, so the shared change-request match is
+ * the primary test. The exact-URL fallback covers hosts that match cannot
+ * parse: this menu stores the detail URL verbatim, so without it an
+ * unrecognised host would link once and never offer the way back.
+ */
+export function isThreadLinkedToPullRequest(input: {
+  readonly linkedPullRequest: { readonly number: number; readonly url: string } | null;
+  readonly detail: { readonly number: number; readonly url: string } | null;
+  readonly matchesUrl: (linked: { readonly url: string }, targetUrl: string) => boolean;
+}): boolean {
+  const { linkedPullRequest, detail } = input;
+  if (linkedPullRequest === null || detail === null) return false;
+  return (
+    input.matchesUrl(linkedPullRequest, detail.url) ||
+    (linkedPullRequest.number === detail.number && linkedPullRequest.url === detail.url)
+  );
+}
