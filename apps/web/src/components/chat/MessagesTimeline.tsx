@@ -2162,11 +2162,11 @@ function WorkGroupToggleTimelineRow({
         />
       </span>
       {row.expanded ? (
-        <span className="font-medium text-foreground">
+        <span className="text-secondary-label">
           Show fewer {row.onlyToolEntries ? "tool calls" : "log entries"}
         </span>
       ) : (
-        <span className="font-medium text-foreground">
+        <span className="text-secondary-label">
           +{row.hiddenCount} previous {labelNoun}
         </span>
       )}
@@ -3137,8 +3137,11 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const showWarningIndicator = false;
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
   const toolPresentation = resolveTimelineToolPresentation(workEntry.toolTitle ?? workEntry.label);
-  const heading = toolPresentation?.displayName ?? toolWorkEntryHeading(workEntry);
-  const rawPreview = workEntryPreview(workEntry, workspaceRoot);
+  // Command rows read as the command itself; stdout and the full payload
+  // stay behind the expander instead of leaking into the collapsed line.
+  const command = workEntry.command?.trim().replaceAll(/\s+/g, " ");
+  const heading = command || (toolPresentation?.displayName ?? toolWorkEntryHeading(workEntry));
+  const rawPreview = command ? null : workEntryPreview(workEntry, workspaceRoot);
   const preview =
     rawPreview &&
     normalizeCompactToolLabel(rawPreview).toLowerCase() ===
@@ -3165,7 +3168,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     ? "font-medium text-warning"
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
-      : "font-medium text-foreground/82";
+      : workLogEntryIsToolLike(workEntry)
+        ? "text-secondary-label"
+        : "font-medium text-foreground/82";
   const turnSettled = !activity.activeTurnInProgress;
   const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
   const showSuccessIndicator =
