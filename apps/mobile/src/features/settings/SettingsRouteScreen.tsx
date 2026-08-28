@@ -34,7 +34,6 @@ import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/pu
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import {
@@ -586,7 +585,6 @@ function LegacySettingsSection() {
 }
 
 function AppSettingsSection() {
-  const icon = useThemeColor("--color-icon");
   const [updateState, setUpdateState] = useState<AppUpdateCheckState>("idle");
   const updateInFlight = useRef(false);
   const hiddenUpdateTapCount = useRef(0);
@@ -656,7 +654,7 @@ function AppSettingsSection() {
       <SymbolView
         name="info.circle"
         size={22}
-        tintColor={icon}
+        tintColorClassName={"accent-icon"}
         type="monochrome"
         weight="regular"
       />

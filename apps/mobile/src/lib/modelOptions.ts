@@ -104,6 +104,22 @@ export function resolveDefaultableModelSelection(
   return model?.isLegacy === true ? null : usable;
 }
 
+export function resolveNewTaskModelSelection(input: {
+  readonly draftSelection: ModelSelection | null;
+  readonly projectDefaultSelection: ModelSelection | null;
+  readonly stickySelection: ModelSelection | null;
+  readonly modelOptions: ReadonlyArray<ModelOption>;
+}): ModelSelection | null {
+  return (
+    input.draftSelection ??
+    input.projectDefaultSelection ??
+    input.stickySelection ??
+    input.modelOptions.find((option) => option.isDefault)?.selection ??
+    input.modelOptions[0]?.selection ??
+    null
+  );
+}
+
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
@@ -121,7 +137,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model.name,
-        subtitle: providerLabel,
+        subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
@@ -152,7 +168,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: fallbackModelSelection.model,
-        subtitle: providerLabel,
+        subtitle: "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver: fallbackModelSelection.instanceId,

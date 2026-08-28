@@ -1,8 +1,8 @@
 # Organizing threads
 
 Pin a thread from its context menu to keep it in the pinned section above your active work.
-Pinned threads are shown independently of their project, including when you connect to more than
-one environment.
+`mod+shift+p` pins or unpins the thread you have open. Pinned threads are shown independently of
+their project, including when you connect to more than one environment.
 
 Pinned threads follow the auto-settle policy in **Settings → General**. Choose exactly one policy:
 settle when a pull request merges or closes, settle after a configurable period of inactivity, or

@@ -11,5 +11,8 @@ To change themes:
 3. Choose a theme.
 4. Select **System**, **Light**, or **Dark**.
 
+Tap a theme card to use it for both light and dark appearance. To mix themes, tap the light or dark
+preview circle inside a card to change only that appearance.
+
 **System** follows the device appearance automatically. Theme, text, code, and terminal appearance
 preferences are stored on the device.
