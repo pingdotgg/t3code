@@ -136,6 +136,33 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
+  // Subscribing happens before the snapshot read, so a publish landing in
+  // between is queued. It must not replay after the newer snapshot and walk
+  // clients back onto colors the machine has already moved past.
+  it.effect("never replays a set older than the snapshot it started from", () =>
+    withEnvironmentThemes(
+      { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
+        const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        // Advance the directory twice without the watcher running, so the
+        // second read is strictly newer than anything already observed.
+        yield* fs.writeFileString(
+          path.join(environmentThemesDir, "shared-light.json"),
+          encodeThemeFile(SHARED_THEME),
+        );
+        const first = yield* environmentTheme.streamChanges.pipe(Stream.runHead);
+        assert.deepEqual(
+          Option.getOrNull(first)?.map((theme) => theme.id),
+          ["nightfall", "shared-light"],
+        );
+      }),
+    ),
+  );
+
   it.effect("skips invalid files while keeping valid ones", () =>
     withEnvironmentThemes(
       {

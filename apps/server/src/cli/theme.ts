@@ -73,7 +73,9 @@ export class ThemeSettingsWriteError extends Schema.TaggedErrorClass<ThemeSettin
 
 export class ThemeFileUnreadableError extends Schema.TaggedErrorClass<ThemeFileUnreadableError>()(
   "ThemeFileUnreadableError",
-  { filePath: Schema.String, cause: Schema.Defect() },
+  // Optional: a path that never existed has no underlying failure to carry,
+  // and a manufactured string there would only look like a real one.
+  { filePath: Schema.String, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
     return `Could not read ${this.filePath}.`;
@@ -107,13 +109,25 @@ export class ThemePublishError extends Schema.TaggedErrorClass<ThemePublishError
   }
 }
 
+const INVALID_THEME_ID_REASON =
+  "is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword)";
+
 export class ThemeIdInvalidError extends Schema.TaggedErrorClass<ThemeIdInvalidError>()(
   "ThemeIdInvalidError",
-  { themeId: Schema.String, fromFile: Schema.Boolean },
+  { themeId: Schema.String },
 ) {
   override get message(): string {
-    const remedy = this.fromFile ? " Pass one with --id." : "";
-    return `"${this.themeId}" is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword).${remedy}`;
+    return `"${this.themeId}" ${INVALID_THEME_ID_REASON}.`;
+  }
+}
+
+/** A filename that cannot be a theme id, where --id is the way out. */
+export class ThemeFileIdInvalidError extends Schema.TaggedErrorClass<ThemeFileIdInvalidError>()(
+  "ThemeFileIdInvalidError",
+  { themeId: Schema.String, filePath: Schema.String },
+) {
+  override get message(): string {
+    return `"${this.themeId}" ${INVALID_THEME_ID_REASON}. Pass one with --id.`;
   }
 }
 
@@ -246,7 +260,7 @@ const publishThemeFile = Effect.fn(function* (input: {
   const fileBasename = path.basename(input.filePath, ".json");
   const themeId = Option.getOrElse(input.explicitId, () => fileBasename);
   if (!isEnvironmentThemeId(themeId)) {
-    return yield* Effect.fail(new ThemeIdInvalidError({ themeId, fromFile: true }));
+    return yield* Effect.fail(new ThemeFileIdInvalidError({ themeId, filePath: input.filePath }));
   }
 
   yield* writeFileStringAtomically({
@@ -293,13 +307,11 @@ const themeSetCommand = Command.make("set", {
           explicitId: flags.id,
         });
       } else if (looksLikePath) {
-        return yield* Effect.fail(
-          new ThemeFileUnreadableError({ filePath: target, cause: "no such file" }),
-        );
+        return yield* Effect.fail(new ThemeFileUnreadableError({ filePath: target }));
       } else if (isEnvironmentThemeId(target)) {
         themeId = target;
       } else {
-        return yield* Effect.fail(new ThemeIdInvalidError({ themeId: target, fromFile: false }));
+        return yield* Effect.fail(new ThemeIdInvalidError({ themeId: target }));
       }
 
       yield* writeDefaultTheme({ settingsPath: paths.settingsPath, themeId });

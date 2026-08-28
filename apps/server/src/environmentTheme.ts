@@ -41,6 +41,12 @@ const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
 
 const THEME_FILE_SUFFIX = ".json";
 
+/** The published set with the sequence number it was observed at. */
+interface PublishedThemes {
+  readonly seq: number;
+  readonly themes: ReadonlyArray<EnvironmentTheme>;
+}
+
 export class EnvironmentThemeService extends Context.Service<
   EnvironmentThemeService,
   {
@@ -63,8 +69,14 @@ export class EnvironmentThemeService extends Context.Service<
 export const make = Effect.gen(function* () {
   const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
-  const changes = yield* PubSub.unbounded<ReadonlyArray<EnvironmentTheme>>();
-  const lastPublished = yield* Ref.make<ReadonlyArray<EnvironmentTheme>>([]);
+  /**
+   * Every observed set carries a sequence number, so a subscriber can drop
+   * queued events that predate the snapshot it started from. Without it a
+   * publish landing between subscribing and reading replays after the newer
+   * value and walks clients backwards onto stale colors.
+   */
+  const changes = yield* PubSub.unbounded<PublishedThemes>();
+  const published = yield* Ref.make<PublishedThemes>({ seq: 0, themes: [] });
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
 
@@ -103,14 +115,26 @@ export const make = Effect.gen(function* () {
     return themes;
   });
 
-  const publishIfChanged = Effect.gen(function* () {
+  /**
+   * Reads the directory and folds it into the sequenced state, publishing only
+   * a genuine change. Every reader goes through here, so the snapshot a client
+   * connects on and the events it then receives come from one ordered source
+   * rather than from disk and the queue independently.
+   */
+  const refresh = Effect.gen(function* () {
     const themes = yield* readThemes;
     // Structural equality over the whole decoded value: a hand-rolled field
     // list here silently drops republishes for any field it forgets.
-    const changed = yield* Ref.modify(lastPublished, (previous) =>
-      Equal.equals(previous, themes) ? [false, previous] : [true, themes],
+    const [changed, next] = yield* Ref.modify(
+      published,
+      (previous): readonly [readonly [boolean, PublishedThemes], PublishedThemes] => {
+        if (Equal.equals(previous.themes, themes)) return [[false, previous], previous];
+        const updated: PublishedThemes = { seq: previous.seq + 1, themes };
+        return [[true, updated], updated];
+      },
     );
-    if (changed) yield* PubSub.publish(changes, themes).pipe(Effect.asVoid);
+    if (changed) yield* PubSub.publish(changes, next).pipe(Effect.asVoid);
+    return next;
   });
 
   // The directory is created up front so the watcher has something to attach
@@ -126,19 +150,29 @@ export const make = Effect.gen(function* () {
 
   // Seeds the dedupe so a watch event that reports no actual change (a touch,
   // a rewrite with identical contents) does not retint every client.
-  yield* Ref.set(lastPublished, yield* readThemes);
-  yield* Stream.runForEach(watchEvents, () =>
-    publishIfChanged.pipe(Effect.ignoreCause({ log: true })),
-  ).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope), Effect.asVoid);
+  yield* refresh;
+  yield* Stream.runForEach(watchEvents, () => refresh.pipe(Effect.ignoreCause({ log: true }))).pipe(
+    Effect.ignoreCause({ log: true }),
+    Effect.forkIn(watcherScope),
+    Effect.asVoid,
+  );
 
   return {
-    current: readThemes,
+    current: Effect.map(refresh, (state) => state.themes),
     get streamChanges() {
       return Stream.unwrap(
         Effect.gen(function* () {
+          // Subscribe first so nothing published during the read is missed,
+          // then drop anything the snapshot already accounts for.
           const subscription = yield* PubSub.subscribe(changes);
-          const current = yield* readThemes;
-          return Stream.concat(Stream.make(current), Stream.fromSubscription(subscription));
+          const snapshot = yield* refresh;
+          return Stream.concat(
+            Stream.make(snapshot.themes),
+            Stream.fromSubscription(subscription).pipe(
+              Stream.filter((update) => update.seq > snapshot.seq),
+              Stream.map((update) => update.themes),
+            ),
+          );
         }),
       );
     },
