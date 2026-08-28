@@ -93,9 +93,12 @@ describe("normalizeDispatchCommand attachments", () => {
       expect(attachmentId.startsWith("thread-1-")).toBe(true);
       expect(attachmentId).not.toBe(`thread-1-${attachmentUuid}`);
       expect(NodeFS.existsSync(pendingPath)).toBe(true);
-      expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${attachmentId}.png`))).toBe(
-        true,
-      );
+      const claimedPngPath = NodePath.join(config.attachmentsDir, `${attachmentId}.png`);
+      expect(NodeFS.existsSync(claimedPngPath)).toBe(true);
+      // A copy, not a hard link: editing the delivered file must not mutate
+      // the retryable pending upload.
+      expect(NodeFS.statSync(claimedPngPath).ino).not.toBe(NodeFS.statSync(pendingPath).ino);
+      expect(NodeFS.readFileSync(claimedPngPath)).toEqual(bytes);
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -121,6 +124,45 @@ describe("normalizeDispatchCommand attachments", () => {
 
       expect(normalized.message.attachments).toHaveLength(2);
       expect(normalized.message.attachments[1]?.id.startsWith("thread-1-")).toBe(true);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("claims uploaded documents without changing their original extension", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const pendingId = `pending-${attachmentUuid}-pdf`;
+      const pendingPath = NodePath.join(config.attachmentsDir, `${pendingId}.pdf`);
+      NodeFS.writeFileSync(pendingPath, Buffer.from("report"));
+
+      const imageCommand = turnStartCommand({ attachments: [] });
+      if (imageCommand.type !== "thread.turn.start") {
+        throw new Error("Expected a thread.turn.start command.");
+      }
+      const normalized = yield* normalizeDispatchCommand({
+        ...imageCommand,
+        message: {
+          ...imageCommand.message,
+          attachments: [
+            {
+              type: "file",
+              id: pendingId,
+              name: "report.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 6,
+            },
+          ],
+        },
+      });
+      if (normalized.type !== "thread.turn.start") {
+        throw new Error("Expected a thread.turn.start command.");
+      }
+
+      const attachment = normalized.message.attachments[0]!;
+      expect(attachment.type).toBe("file");
+      expect(attachment.id).toMatch(/^thread-1-.*-pdf$/);
+      const claimedPath = NodePath.join(config.attachmentsDir, `${attachment.id}.pdf`);
+      expect(NodeFS.readFileSync(claimedPath)).toEqual(Buffer.from("report"));
+      expect(NodeFS.statSync(claimedPath).ino).not.toBe(NodeFS.statSync(pendingPath).ino);
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -312,7 +354,7 @@ describe("normalizeDispatchCommand attachments", () => {
           })),
         },
       }).pipe(Effect.flip);
-      expect(mismatchedType.message).toContain("image type");
+      expect(mismatchedType.message).toContain("attachment type");
     }).pipe(Effect.provide(testLayer)),
   );
 });
