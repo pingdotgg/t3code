@@ -275,16 +275,16 @@ index 5970e3e3a624b9498b8dedfc16831df03a274d0c..5ebff085788d813f1139eb6f9129fb21
 +  NSArray *headerLeftConfigs = config.headerLeftBarButtonItems ?: @[];
 +  NSArray *headerRightConfigs = config.headerRightBarButtonItems ?: @[];
 +  NSArray *headerCenterConfigs = config.headerCenterBarButtonItems ?: @[];
-+  // The key includes the config instance's identity: cached items capture
-+  // this config's event emitter in their press handlers, so a remounted
-+  // header-config view with value-equal configs must still rebuild — reusing
-+  // the old items would dispatch presses into the dead config's emitter.
++  // Retain the config in the key so its address cannot be reused while cached.
++  // Items capture this config's event emitter in their press handlers, so a
++  // remounted header-config view with value-equal configs must still rebuild
++  // instead of dispatching presses into the old config's emitter.
 +  // getUIBarButtonItem is stable for the lifetime of its React header
 +  // subview. Include those native identities in the key so React-backed
 +  // items can use the same cache without reusing a group after its view was
 +  // replaced.
 +  NSArray *headerItemsKey = @[
-+    @((uintptr_t)config),
++    config,
 +    headerLeftConfigs,
 +    headerRightConfigs,
 +    headerCenterConfigs,
