@@ -18,6 +18,7 @@ import {
   handoffReviewComments,
   isPullRequestVerdictStale,
   isStackedPullRequestBase,
+  isThreadLinkedToPullRequest,
   isThreadOwnPullRequest,
   latestPullRequestReviewOutcomes,
   newestPullRequestCommitAt,
@@ -1245,5 +1246,58 @@ describe("which actions need the host read again after they run", () => {
     ] as const) {
       expect(pullRequestActionNeedsHostRefresh(action)).toBe(false);
     }
+  });
+});
+
+describe("isThreadLinkedToPullRequest", () => {
+  // The real matcher: host + repository + number, path-suffix tolerant.
+  const matchesUrl = (linked: { readonly url: string }, targetUrl: string) => {
+    const parse = (url: string) => /^(https:\/\/[^/]+\/[^/]+\/[^/]+)\/pull\/(\d+)/u.exec(url);
+    const left = parse(linked.url);
+    const right = parse(targetUrl);
+    return left !== null && right !== null && left[1] === right[1] && left[2] === right[2];
+  };
+  const detail = { number: 42, url: "https://github.com/acme/repo/pull/42" };
+
+  it("treats a link stored from a subpage as the same pull request", () => {
+    expect(
+      isThreadLinkedToPullRequest({
+        linkedPullRequest: { number: 42, url: "https://github.com/acme/repo/pull/42/files" },
+        detail,
+        matchesUrl,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not claim a different pull request in the same repository", () => {
+    expect(
+      isThreadLinkedToPullRequest({
+        linkedPullRequest: { number: 43, url: "https://github.com/acme/repo/pull/43" },
+        detail,
+        matchesUrl,
+      }),
+    ).toBe(false);
+  });
+
+  it("still recognises its own link on a host the matcher cannot parse", () => {
+    // This menu stores the detail URL verbatim, so exact equality is the way
+    // back for a self-hosted forge the change-request parser does not know.
+    const selfHosted = { number: 7, url: "https://git.internal/team/repo/changes/7" };
+    expect(
+      isThreadLinkedToPullRequest({
+        linkedPullRequest: selfHosted,
+        detail: selfHosted,
+        matchesUrl,
+      }),
+    ).toBe(true);
+  });
+
+  it("is false while either side is missing", () => {
+    expect(isThreadLinkedToPullRequest({ linkedPullRequest: null, detail, matchesUrl })).toBe(
+      false,
+    );
+    expect(
+      isThreadLinkedToPullRequest({ linkedPullRequest: detail, detail: null, matchesUrl }),
+    ).toBe(false);
   });
 });
