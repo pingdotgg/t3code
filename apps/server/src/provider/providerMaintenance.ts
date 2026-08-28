@@ -398,10 +398,13 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     return resolver.resolve(resolutionOptions);
   }
   const legacy = resolver.resolve(resolutionOptions);
-  const timeoutFallback = makeManualOnlyProviderMaintenanceCapabilities({
-    provider: legacy.provider,
-    packageName: legacy.packageName,
-  });
+  const timeoutFallback = {
+    ...makeManualOnlyProviderMaintenanceCapabilities({
+      provider: legacy.provider,
+      packageName: legacy.packageName,
+    }),
+    latestVersion: null,
+  };
   const context: InstallationContext = {
     provider: legacy.provider,
     packageName: legacy.packageName ?? "",

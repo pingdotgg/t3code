@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { GrokMaintenanceResolver } from "./Drivers/GrokDriver.ts";
 import type { InstallationContext } from "./maintenance/definition.ts";
 import {
@@ -180,7 +180,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
-  it.effect("bounds total installation resolution time and falls back to manual updates", () =>
+  it.effect("bounds total installation resolution time without falling back to npm", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-maintenance-resolution-timeout");
       NodeFS.mkdirSync(tempDir, { recursive: true });
@@ -209,7 +209,43 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       yield* Deferred.await(resolutionStarted);
       yield* TestClock.adjust("10 seconds");
 
-      expect(yield* Fiber.join(fiber)).toEqual(packageToolUpdate.resolve());
+      const capabilities = yield* Fiber.join(fiber);
+      const requests: Array<string> = [];
+      const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+        installedPackageToolProvider,
+        capabilities,
+        { enableProviderUpdateChecks: true },
+      ).pipe(
+        Effect.provideService(ProviderVersionCache, new Map()),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() => {
+              requests.push(request.url);
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  { version: "9.9.9" },
+                  { headers: { "content-type": "application/json" } },
+                ),
+              );
+            }),
+          ),
+        ),
+      );
+
+      expect(capabilities).toEqual({
+        ...packageToolUpdate.resolve(),
+        latestVersion: null,
+      });
+      expect(Object.hasOwn(capabilities, "latestVersion")).toBe(true);
+      expect(requests).toEqual([]);
+      expect(provider.versionAdvisory).toMatchObject({
+        status: "unknown",
+        latestVersion: null,
+        canUpdate: false,
+        updateCommand: null,
+      });
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
