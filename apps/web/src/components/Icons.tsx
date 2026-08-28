@@ -214,6 +214,31 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const OmpIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 24 24"
+    fill="none"
+    className={cn("text-[#0F0F0F] dark:text-[#F5F5F5]", className)}
+  >
+    <rect
+      x="2.75"
+      y="2.75"
+      width="18.5"
+      height="18.5"
+      rx="4.5"
+      stroke="currentColor"
+      strokeWidth="1.5"
+    />
+    <path
+      d="M6.5 8.25h11M9.25 8.25V13.5a2.75 2.75 0 0 1-2.75 2.75M14.75 8.25v8"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}
