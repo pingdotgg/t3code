@@ -2698,17 +2698,19 @@ export function makeOpenCodeAdapter(
             ),
           ).pipe(
             Effect.timeout("10 seconds"),
-            Effect.mapError((cause) => {
-              if (OpenCodeRuntimeError.is(cause)) {
-                return toRequestError(cause);
-              }
-              promptTimedOut = true;
-              return new ProviderAdapterRequestError({
-                provider: PROVIDER,
-                method: "session.promptAsync",
-                detail: "OpenCode prompt submission did not complete within 10 seconds.",
-                cause,
-              });
+            Effect.catchTags({
+              OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
+              TimeoutError: (cause) => {
+                promptTimedOut = true;
+                return Effect.fail(
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "session.promptAsync",
+                    detail: "OpenCode prompt submission did not complete within 10 seconds.",
+                    cause,
+                  }),
+                );
+              },
             }),
             Effect.tapError((requestError) =>
               context.promptAdmission !== promptAdmission || context.activeTurnId !== turnId
@@ -2928,16 +2930,18 @@ export function makeOpenCodeAdapter(
             context.client.session.abort({ sessionID: context.openCodeSessionId }, { signal }),
           ).pipe(
             Effect.timeout("10 seconds"),
-            Effect.mapError((cause) =>
-              OpenCodeRuntimeError.is(cause)
-                ? toRequestError(cause)
-                : new ProviderAdapterRequestError({
+            Effect.catchTags({
+              OpenCodeRuntimeError: (cause) => Effect.fail(toRequestError(cause)),
+              TimeoutError: (cause) =>
+                Effect.fail(
+                  new ProviderAdapterRequestError({
                     provider: PROVIDER,
                     method: "session.abort",
                     detail: "OpenCode session abort did not complete within 10 seconds.",
                     cause,
                   }),
-            ),
+                ),
+            }),
             Effect.exit,
             Effect.map((exit) => ({ source: "request" as const, exit })),
           ),
