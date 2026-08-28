@@ -96,6 +96,9 @@ describe("t3 theme", () => {
       const published = NodePath.join(baseDir, "userdata", "themes", "nightfall.json");
       assert.equal(NodeFS.existsSync(published), true);
       assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+      // No rollback or staging residue after a successful set.
+      assert.equal(NodeFS.existsSync(`${published}.rollback`), false);
+      assert.equal(NodeFS.existsSync(`${published}.staging`), false);
     }),
   );
 
@@ -178,12 +181,55 @@ describe("t3 theme", () => {
     }),
   );
 
-  // An occupied destination the rollback could not put back -- here a
-  // symlink -- is refused outright rather than clobbered.
-  it.effect("refuses to publish over an entry it could not restore", () =>
+  // A symlink is a normal way to hand this command a theme -- desktop hooks
+  // symlink the current palette -- so the source is resolved, not refused.
+  it.effect("publishes a theme file through a symlinked source path", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const realFile = NodePath.join(baseDir, "real-nightfall.json");
+      NodeFS.writeFileSync(realFile, NIGHTFALL_THEME_JSON);
+      const linkPath = NodePath.join(baseDir, "nightfall.json");
+      NodeFS.symlinkSync(realFile, linkPath);
+
+      yield* runCli(["theme", "set", linkPath, "--base-dir", baseDir]);
+
+      assert.equal(
+        NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes", "nightfall.json")),
+        true,
+      );
+      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+    }),
+  );
+
+  // The staging entry is created fresh with O_EXCL, so a symlink planted at
+  // its predictable name is cleared, never followed and written through.
+  it.effect("never writes through a symlink at the staging path", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       const themesDir = NodePath.join(baseDir, "userdata", "themes");
+      NodeFS.mkdirSync(themesDir, { recursive: true });
+      const victim = NodePath.join(baseDir, "victim.txt");
+      NodeFS.writeFileSync(victim, "precious");
+      NodeFS.symlinkSync(victim, NodePath.join(themesDir, "nightfall.json.staging"));
+      const themeFile = NodePath.join(baseDir, "nightfall.json");
+      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+
+      yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]);
+
+      assert.equal(NodeFS.readFileSync(victim, "utf8"), "precious");
+      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+    }),
+  );
+
+  // Rollback moves the previous directory entry aside and back, so even an
+  // entry the watcher would never publish -- here a symlink -- comes back
+  // exactly as it was when the set fails.
+  it.effect("restores a non-theme destination entry when the set fails", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      writeSettings(baseDir, {});
+      const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
+      const themesDir = NodePath.join(userdataDir, "themes");
       NodeFS.mkdirSync(themesDir, { recursive: true });
       const outside = NodePath.join(baseDir, "outside.json");
       NodeFS.writeFileSync(outside, NIGHTFALL_THEME_JSON);
@@ -192,13 +238,13 @@ describe("t3 theme", () => {
       const themeFile = NodePath.join(baseDir, "nightfall.json");
       NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
 
-      const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
-        Effect.flip,
-      );
-
-      assert.include(String(failure), "Remove it, then run this again");
-      assert.equal(NodeFS.lstatSync(destination).isSymbolicLink(), true);
-      assert.equal(NodeFS.existsSync(settingsPathFor(baseDir)), false);
+      NodeFS.chmodSync(userdataDir, 0o555);
+      try {
+        yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(Effect.flip);
+        assert.equal(NodeFS.lstatSync(destination).isSymbolicLink(), true);
+      } finally {
+        NodeFS.chmodSync(userdataDir, 0o755);
+      }
     }),
   );
 

@@ -125,20 +125,6 @@ export const readThemeFileGuarded = (filePath: string, maxBytes: number): string
 };
 
 /**
- * Whether any directory entry occupies the path -- symlink, FIFO, anything --
- * without following it. Distinguishes "absent" from "present but not a theme
- * file", which a guarded read alone cannot.
- */
-export const themeEntryExists = (filePath: string): boolean => {
-  try {
-    NodeFS.lstatSync(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/**
  * Every theme the directory actually publishes. A file that is missing,
  * unreadable, malformed, colorless, or misnamed is simply skipped; the rest of
  * the set is unaffected. The one place that decides what "published" means, so
