@@ -28,8 +28,9 @@ describe("ComposerPendingApprovalPanel", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalPanel
         approval={{
-          requestId: ApprovalRequestId.make("approval-2"),
+          requestId: RuntimeRequestId.make("approval-2"),
           requestKind: "file-read",
+          responseCapability: "live" as const,
           createdAt: "2026-07-18T00:00:00.000Z",
           detail: "",
         }}
@@ -44,8 +45,9 @@ describe("ComposerPendingApprovalPanel", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalPanel
         approval={{
-          requestId: ApprovalRequestId.make("approval-safari"),
+          requestId: RuntimeRequestId.make("approval-safari"),
           requestKind: "mcp-elicitation",
+          responseCapability: "live" as const,
           createdAt: "2026-08-24T00:00:00.000Z",
           appName: "Safari",
           detail: "Allow ChatGPT to use Safari?",
@@ -64,8 +66,9 @@ describe("ComposerPendingApprovalPanel", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalPanel
         approval={{
-          requestId: ApprovalRequestId.make("approval-long-app-name"),
+          requestId: RuntimeRequestId.make("approval-long-app-name"),
           requestKind: "mcp-elicitation",
+          responseCapability: "live" as const,
           createdAt: "2026-08-24T00:00:00.000Z",
           appName,
           detail,

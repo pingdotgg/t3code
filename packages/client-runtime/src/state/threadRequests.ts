@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2ThreadProjection,
+  ProviderApprovalOption,
   ProviderRequestKind,
   RuntimeRequestId,
 } from "@t3tools/contracts";
@@ -10,6 +11,10 @@ export interface ThreadPendingApproval {
   readonly requestKind: ProviderRequestKind;
   readonly createdAt: string;
   readonly detail?: string;
+  /** App requesting access for mcp-elicitation approvals (#8058). */
+  readonly appName?: string;
+  /** Approval choices advertised by the provider (#8058); defaults apply when absent. */
+  readonly options?: ReadonlyArray<ProviderApprovalOption>;
   readonly responseCapability: "live" | "not_resumable";
 }
 
