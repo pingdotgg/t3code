@@ -1,6 +1,7 @@
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
+  CircleDotIcon,
   GitPullRequestIcon,
   SettingsIcon,
 } from "lucide-react";
@@ -10,7 +11,7 @@ import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-ro
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -157,14 +158,17 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             ? "usage"
             : location.pathname === "/pull-requests"
               ? "pull-requests"
-              : null,
+              : location.pathname === "/issues"
+                ? "issues"
+                : null,
   });
   const { environments } = useEnvironments();
-  // The page reads every connected server, so one of them offering pull requests is enough for
-  // the link to lead somewhere.
+  const primaryEnvironment = usePrimaryEnvironment();
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
   );
+  const issuesSupported =
+    primaryEnvironment?.serverConfig?.environment.capabilities.issues === true;
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -173,6 +177,10 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handlePullRequestsClick = useCallback(() => {
     closeMobileSidebar();
     void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
+  }, [closeMobileSidebar, navigate]);
+  const handleIssuesClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/issues", search: { involvement: "all", state: "open" } });
   }, [closeMobileSidebar, navigate]);
   const handleSettingsClick = useCallback(() => {
     closeMobileSidebar();
@@ -216,6 +224,13 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               icon={<GitPullRequestIcon />}
               label="Pull Requests"
               onClick={handlePullRequestsClick}
+            />
+          ) : null}
+          {issuesSupported ? (
+            <SidebarUtilityItem
+              icon={<CircleDotIcon />}
+              label="Issues"
+              onClick={handleIssuesClick}
             />
           ) : null}
           <SidebarUtilityItem

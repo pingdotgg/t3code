@@ -3,12 +3,14 @@ import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  issueSurfaceId,
   migratePersistedRightPanelState,
   pullRequestSurfaceId,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectSelectedRightPanelSurface,
   selectThreadRightPanelState,
+  updateIssueTabStatus,
   updatePullRequestTabStatus,
   useRightPanelStore,
 } from "./rightPanelStore";
@@ -171,6 +173,35 @@ describe("rightPanelStore", () => {
       migratePersistedRightPanelState({
         byThreadKey: {
           "env-1:pull-requests-panel": panelState,
+          "env-1:thread-A": panelState,
+        },
+      }),
+    ).toEqual({ byThreadKey: { "env-1:thread-A": panelState } });
+  });
+
+  it("drops the issues list's shared panel so a restart opens the page fresh", () => {
+    const id = issueSurfaceId({
+      projectId: "project-a",
+      repository: "pingdotgg/t3code",
+      number: 4909,
+    });
+    const panelState = {
+      isOpen: true,
+      activeSurfaceId: id,
+      surfaces: [
+        {
+          id,
+          kind: "issue" as const,
+          projectId: "project-a",
+          repository: "pingdotgg/t3code",
+          number: 4909,
+        },
+      ],
+    };
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:issues-panel": panelState,
           "env-1:thread-A": panelState,
         },
       }),
@@ -420,6 +451,147 @@ describe("rightPanelStore", () => {
     expect(state.activeSurfaceId).toBe(pullRequestSurfaceId(first));
   });
 
+  it("tracks one surface per issue", () => {
+    const first = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
+    const second = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4910 };
+    useRightPanelStore.getState().openIssue(refA, first);
+    useRightPanelStore.getState().openIssue(refA, second);
+    useRightPanelStore.getState().openIssue(refA, first);
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      issueSurfaceId(first),
+      issueSurfaceId(second),
+    ]);
+    expect(state.activeSurfaceId).toBe(issueSurfaceId(first));
+  });
+
+  it("keeps one issue read from two servers as two tabs", () => {
+    const local = {
+      environmentId: "local",
+      projectId: "project-a",
+      repository: "pingdotgg/t3code",
+      number: 4909,
+    };
+    const remote = { ...local, environmentId: "remote" };
+
+    useRightPanelStore.getState().openIssue(refA, local);
+    useRightPanelStore.getState().openIssue(refA, remote);
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      issueSurfaceId(local),
+      issueSurfaceId(remote),
+    ]);
+  });
+
+  it("keeps equal issue references from two providers as two tabs", () => {
+    const linear = {
+      projectId: "project-a",
+      repository: "ENG",
+      number: 12,
+      provider: "linear",
+    };
+    const github = { ...linear, provider: "github" };
+
+    useRightPanelStore.getState().openIssue(refA, linear);
+    useRightPanelStore.getState().openIssue(refA, github);
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      issueSurfaceId(linear),
+      issueSurfaceId(github),
+    ]);
+  });
+
+  it("keeps environment and provider positions distinct in issue tab ids", () => {
+    expect(
+      issueSurfaceId({
+        environmentId: "github",
+        projectId: "project-a",
+        repository: "ENG",
+        number: 12,
+      }),
+    ).not.toBe(
+      issueSurfaceId({
+        projectId: "project-a",
+        provider: "github",
+        repository: "ENG",
+        number: 12,
+      }),
+    );
+  });
+
+  it("keeps the issue browser one tab while the issue it shows changes", () => {
+    const target = {
+      projectId: "project-a",
+      provider: "github",
+      repository: "pingdotgg/t3code",
+      number: 4909,
+    };
+    useRightPanelStore.getState().openIssues(refA);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "issues",
+      surfaces: [{ id: "issues", kind: "issues", selected: null }],
+    });
+
+    useRightPanelStore.getState().selectIssueInPanel(refA, target);
+    // Reopening from the chooser must not throw away what the reader is reading.
+    useRightPanelStore.getState().openIssues(refA);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "issues",
+      surfaces: [{ id: "issues", kind: "issues", selected: target }],
+    });
+
+    useRightPanelStore.getState().selectIssueInPanel(refA, null);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "issues",
+      kind: "issues",
+      selected: null,
+    });
+  });
+
+  it("leaves per-issue surfaces alone when the browser's issue changes", () => {
+    const opened = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
+    const browsed = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4910 };
+    useRightPanelStore.getState().openIssue(refA, opened);
+    useRightPanelStore.getState().openIssues(refA);
+    useRightPanelStore.getState().selectIssueInPanel(refA, browsed);
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toEqual([
+      { id: issueSurfaceId(opened), kind: "issue", ...opened },
+      { id: "issues", kind: "issues", selected: browsed },
+    ]);
+    expect(state.activeSurfaceId).toBe("issues");
+  });
+
+  it("forgets a persisted browser selection that no longer names an issue", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "issues",
+            surfaces: [
+              { id: "issues", kind: "issues", selected: { repository: "pingdotgg/t3code" } },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "issues",
+          surfaces: [{ id: "issues", kind: "issues", selected: null }],
+        },
+      },
+    });
+  });
+
   it("keeps one pull request read from two servers as two tabs", () => {
     const local = {
       environmentId: "local",
@@ -539,6 +711,31 @@ describe("rightPanelStore", () => {
       expect(second).not.toBe(first);
       expect(second["pull-request:1"]).toEqual(status(true));
     });
+  });
+
+  it("keys issue status by the provider-specific surface id", () => {
+    const target = {
+      projectId: "project-a",
+      provider: "linear",
+      repository: "ENG",
+      number: 12,
+    };
+    useRightPanelStore.getState().openIssue(refA, target);
+    const surface = selectSelectedRightPanelSurface(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    );
+    expect(surface).not.toBeNull();
+
+    const status = {
+      projectId: target.projectId,
+      repository: target.repository,
+      number: target.number,
+      state: "closed" as const,
+      stateReason: "completed" as const,
+    };
+    const statuses = updateIssueTabStatus({}, surface!.id, status);
+    expect(statuses[surface!.id]).toEqual(status);
   });
 
   it("tracks one surface per terminal session", () => {

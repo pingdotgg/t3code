@@ -180,6 +180,9 @@ export const make = Effect.gen(function* () {
             // supports are all offered and a strategy the repository forbids fails on merge.
             mergeCapabilities: { merge: true, squash: true, rebase: true },
             viewerPermissions: bitbucketViewerPermissions({ canWrite }),
+            // Bitbucket keeps no link between a pull request and the issues it names: the tracker
+            // is switched off per repository, and a mention is only ever words in a description.
+            linkedIssues: [],
           }),
         ),
       );

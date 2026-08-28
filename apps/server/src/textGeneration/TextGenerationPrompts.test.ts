@@ -1,3 +1,4 @@
+import { TextGenerationError, WORK_ITEM_TASK_PROMPT_MAX_LENGTH } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -5,9 +6,97 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildWorkItemMatchPrompt,
+  buildWorkItemTaskPrompt,
+  fallbackWorkItemTaskPrompt,
+  resolveWorkItemTaskResult,
 } from "./TextGenerationPrompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
-import { TextGenerationError } from "@t3tools/contracts";
+
+describe("buildWorkItemTaskPrompt", () => {
+  const items = [
+    {
+      kind: "issue" as const,
+      provider: "linear",
+      repository: "ENG",
+      number: 12,
+      title: "Fix login",
+      url: "https://linear.app/acme/issue/ENG-12",
+      body: "Sessions expire too early.",
+    },
+    {
+      kind: "pull-request" as const,
+      provider: "github",
+      repository: "acme/app",
+      number: 34,
+      title: "Keep sessions alive",
+      url: "https://github.com/acme/app/pull/34",
+      body: "Refreshes sessions before expiry.",
+    },
+  ];
+
+  it("substitutes selected sources and changes shape by mode", () => {
+    const compoundPrompt = buildWorkItemTaskPrompt({ mode: "compound", items }).prompt;
+    const subtaskPrompt = buildWorkItemTaskPrompt({ mode: "subtasks", items }).prompt;
+
+    expect(compoundPrompt).toContain("ENG-12");
+    expect(compoundPrompt).toContain("Sessions expire too early.");
+    expect(compoundPrompt).toContain("acme/app#34");
+    expect(compoundPrompt).not.toBe(subtaskPrompt);
+  });
+
+  it("keeps a deterministic draft when AI is unavailable", () => {
+    const draft = fallbackWorkItemTaskPrompt({ mode: "subtasks", items });
+    expect(draft).toContain("Fix login");
+    expect(draft).toContain("https://linear.app/acme/issue/ENG-12");
+  });
+
+  it("falls back when a generated task exceeds the RPC prompt limit", () => {
+    const result = resolveWorkItemTaskResult(
+      { mode: "compound", items },
+      "x".repeat(WORK_ITEM_TASK_PROMPT_MAX_LENGTH + 1),
+    );
+
+    expect(result).toEqual({
+      prompt: fallbackWorkItemTaskPrompt({ mode: "compound", items }),
+      generated: false,
+    });
+    expect(result.prompt.length).toBeLessThanOrEqual(WORK_ITEM_TASK_PROMPT_MAX_LENGTH);
+  });
+});
+
+describe("buildWorkItemMatchPrompt", () => {
+  const source = {
+    kind: "issue" as const,
+    provider: "linear",
+    repository: "ENG",
+    number: 12,
+    title: "Sessions expire too early",
+    url: "https://linear.app/acme/issue/ENG-12",
+    body: "Users get signed out while they are active.",
+  };
+  const candidates = [
+    {
+      kind: "pull-request" as const,
+      provider: "github",
+      repository: "acme/app",
+      number: 34,
+      title: "Refresh active sessions",
+      url: "https://github.com/acme/app/pull/34",
+      body: "Refreshes the session before expiry.",
+    },
+  ];
+
+  it("substitutes candidate bodies and changes instructions by relationship", () => {
+    const related = buildWorkItemMatchPrompt({ relationship: "related", source, candidates });
+    const duplicate = buildWorkItemMatchPrompt({ relationship: "duplicate", source, candidates });
+
+    expect(related.prompt).toContain("Sessions expire too early");
+    expect(related.prompt).toContain("Refreshes the session before expiry.");
+    expect(duplicate.prompt).toContain("Refreshes the session before expiry.");
+    expect(related.prompt).not.toBe(duplicate.prompt);
+  });
+});
 
 describe("buildCommitMessagePrompt", () => {
   it("includes staged patch and summary in the prompt", () => {

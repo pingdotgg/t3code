@@ -168,6 +168,9 @@ export const make = Effect.gen(function* () {
             checks: [],
             mergeCapabilities: { merge: true, squash: true, rebase: false },
             viewerPermissions: AZURE_DEVOPS_VIEWER_PERMISSIONS,
+            // Azure DevOps links work items rather than issues, which are a different thing with
+            // states of their own. Reporting them as issues would name a page that cannot open.
+            linkedIssues: [],
             autoMergeEnabled: pullRequest.autoMergeEnabled,
           }),
         ),

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   decodeAwardEmojiJson,
+  decodeCitedIssuesJson,
+  decodeClosesIssuesJson,
   decodeCommitsJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
@@ -606,5 +608,39 @@ describe("gitLabAwardName", () => {
     expect(gitLabAwardName("thumbs-up")).toBe("thumbsup");
     expect(gitLabAwardName("laugh")).toBe("laughing");
     expect(gitLabAwardName("hooray")).toBe("tada");
+  });
+});
+
+describe("issue link decoding", () => {
+  const issuesJson = JSON.stringify([
+    {
+      iid: 12,
+      title: "The dialog closes on the wrong click",
+      web_url: "https://gitlab.com/acme/web/-/issues/12",
+      state: "opened",
+      references: { full: "acme/web#12" },
+    },
+    // Nothing names the project, which is the one field of a link that cannot be filled in
+    // from anywhere else.
+    { iid: 34, title: "Nameless", web_url: "https://gitlab.com/acme/web/-/issues/34" },
+  ]);
+
+  it("reads what the closes endpoint answered as a closure", () => {
+    const page = expectSuccess(decodeClosesIssuesJson(issuesJson));
+
+    expect(page.links.map((link) => [link.number, link.state, link.closesIssue])).toEqual([
+      [12, "open", true],
+    ]);
+    expect(page.rawCount).toBe(2);
+  });
+
+  it("reads the same rows as citations when they came from the words", () => {
+    // GitLab alone knows what merging will shut, and these were looked up from a description.
+    expect(
+      expectSuccess(decodeCitedIssuesJson(issuesJson)).map((link) => [
+        link.number,
+        link.closesIssue,
+      ]),
+    ).toEqual([[12, false]]);
   });
 });

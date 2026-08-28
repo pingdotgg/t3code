@@ -3,6 +3,7 @@ import { Children, isValidElement, type ReactNode } from "react";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
+import { ListRow } from "../sourceControl/ListRow";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 import { PullRequestRow } from "./PullRequestRow";
 import { pullRequestChecksState } from "./pullRequestPresentation";
@@ -73,7 +74,9 @@ function row(overrides: Partial<EnvironmentPullRequestEntry>): ReactNode {
 
 describe("PullRequestRow checks indicator", () => {
   function indicators(node: ReactNode): number {
-    return flatten(node).filter(
+    const row = flatten(node).find((element) => (element as { type?: unknown }).type === ListRow);
+    const meta = (row as { readonly props: { readonly meta: ReactNode } }).props.meta;
+    return flatten(meta).filter(
       (element) => (element as { type?: unknown }).type === PullRequestChecksPopover,
     ).length;
   }
@@ -81,5 +84,11 @@ describe("PullRequestRow checks indicator", () => {
   it("shows the indicator only for a row the host reported a rollup for", () => {
     expect(indicators(row({ checksState: "failing" }))).toBe(1);
     expect(indicators(row({}))).toBe(0);
+  });
+
+  it("uses the shared source control row frame", () => {
+    expect(
+      flatten(row({})).some((element) => (element as { type?: unknown }).type === ListRow),
+    ).toBe(true);
   });
 });

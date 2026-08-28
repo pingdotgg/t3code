@@ -636,6 +636,36 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const preserveProviderEnvironmentRedactions = (
+    materialized: ServerSettings,
+    persisted: ServerSettings,
+  ): ServerSettings => {
+    const providerInstances: Record<string, ProviderInstanceConfig> = {
+      ...materialized.providerInstances,
+    };
+    const persistedProviderInstances: Record<string, ProviderInstanceConfig> =
+      persisted.providerInstances;
+    for (const [instanceId, instance] of Object.entries(providerInstances)) {
+      if (!instance.environment) continue;
+      const redactedNames = new Set(
+        (persistedProviderInstances[instanceId]?.environment ?? [])
+          .filter((variable) => variable.valueRedacted)
+          .map((variable) => variable.name),
+      );
+      if (redactedNames.size === 0) continue;
+      providerInstances[instanceId] = {
+        ...instance,
+        environment: instance.environment.map((variable) =>
+          redactedNames.has(variable.name) ? { ...variable, valueRedacted: true } : variable,
+        ),
+      };
+    }
+    return {
+      ...materialized,
+      providerInstances: providerInstances as ServerSettings["providerInstances"],
+    };
+  };
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -739,16 +769,15 @@ const make = Effect.gen(function* () {
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
-          );
-          const next = yield* normalizeServerSettings(nextPersisted);
-          yield* writeSettingsAtomically(next);
-          yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(next);
+          const next = yield* normalizeServerSettings(applyServerSettingsPatch(current, patch));
           const materialized = yield* materializeProviderEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
+          const persisted = yield* persistProviderEnvironmentSecrets(current, next);
+          yield* writeSettingsAtomically(persisted);
+          yield* Cache.set(settingsCache, cacheKey, persisted);
+          yield* emitChange(persisted);
+          return resolveTextGenerationProvider(
+            preserveProviderEnvironmentRedactions(materialized, persisted),
+          );
         }),
       ),
     get streamChanges() {

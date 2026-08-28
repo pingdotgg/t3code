@@ -5,6 +5,7 @@ import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 
 /**
@@ -15,7 +16,7 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
  * Preview renders through the same component the saved body will be read through, which is the
  * only way to see what a host's markdown will actually become before it is sent.
  */
-export function PullRequestMarkdownEditor({
+export function SourceControlMarkdownEditor({
   value,
   cwd,
   environmentId,
@@ -61,24 +62,20 @@ export function PullRequestMarkdownEditor({
         onCancel();
       }}
     >
-      <div className="flex items-center gap-1">
-        <Button
-          size="xs"
-          variant={preview ? "ghost" : "outline"}
-          disabled={saving}
-          onClick={() => setPreview(false)}
-        >
-          Write
-        </Button>
-        <Button
-          size="xs"
-          variant={preview ? "outline" : "ghost"}
-          disabled={saving}
-          onClick={() => setPreview(true)}
-        >
-          Preview
-        </Button>
-      </div>
+      <ToggleGroup
+        size="xs"
+        variant="outline"
+        aria-label="Markdown view"
+        disabled={saving}
+        value={[preview ? "preview" : "write"]}
+        onValueChange={(next) => {
+          const value = next[0];
+          if (value) setPreview(value === "preview");
+        }}
+      >
+        <Toggle value="write">Write</Toggle>
+        <Toggle value="preview">Preview</Toggle>
+      </ToggleGroup>
       {preview ? (
         <div className="rounded-lg border border-border/60 px-3 py-2">
           {empty ? (
@@ -114,3 +111,6 @@ export function PullRequestMarkdownEditor({
     </div>
   );
 }
+
+/** Existing name kept for pull-request callers while issues share the same editor. */
+export const PullRequestMarkdownEditor = SourceControlMarkdownEditor;

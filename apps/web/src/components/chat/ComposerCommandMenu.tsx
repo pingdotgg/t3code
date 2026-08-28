@@ -4,6 +4,7 @@ import {
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
 import {
+  type IssueListEntry,
   type ProjectEntry,
   type ProviderDriverKind,
   type ServerProviderSkill,
@@ -21,11 +22,29 @@ import { memo, useLayoutEffect, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { cn } from "~/lib/utils";
+import { IssueStateGlyph } from "../issue/issuePresentation";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 
+export function composerIssueReference(issue: IssueListEntry): string {
+  return issue.provider === "linear"
+    ? `${issue.repository}-${issue.number}`
+    : `${issue.repository}#${issue.number}`;
+}
+
+export function serializeComposerIssueMention(issue: IssueListEntry): string {
+  return `[@${composerIssueReference(issue)}](${issue.url}) `;
+}
+
 export type ComposerCommandItem =
+  | {
+      id: string;
+      type: "issue";
+      issue: IssueListEntry;
+      label: string;
+      description: string;
+    }
   | {
       id: string;
       type: "path";
@@ -57,6 +76,25 @@ export type ComposerCommandItem =
       label: string;
       description: string;
     };
+
+export function buildComposerPathMenuItems(input: {
+  issues: ReadonlyArray<IssueListEntry>;
+  pathItems: ReadonlyArray<Extract<ComposerCommandItem, { type: "path" }>>;
+  query: string;
+  settledIssueQuery: string;
+}): ComposerCommandItem[] {
+  if (input.query !== input.settledIssueQuery) return [...input.pathItems];
+  return [
+    ...input.issues.slice(0, 8).map((issue) => ({
+      id: `issue:${issue.provider}:${issue.host}:${issue.projectId}:${issue.repository}:${issue.number}`,
+      type: "issue" as const,
+      issue,
+      label: issue.title,
+      description: composerIssueReference(issue),
+    })),
+    ...input.pathItems,
+  ];
+}
 
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   items: ComposerCommandItem[];
@@ -115,7 +153,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               {props.isLoading
                 ? props.triggerKind === "skill"
                   ? "Searching workspace skills..."
-                  : "Searching workspace files..."
+                  : "Searching workspace..."
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
                     ? "No skills found. Try / to browse provider commands."
@@ -161,15 +199,32 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         props.onSelect(props.item);
       }}
     >
-      {props.item.type === "path" ? (
+      {props.item.type === "issue" ? (
+        <IssueStateGlyph
+          state={props.item.issue.state}
+          stateReason={props.item.issue.stateReason}
+        />
+      ) : props.item.type === "path" ? (
         <PierreEntryIcon
           pathValue={props.item.path}
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
         />
       ) : null}
-      <span className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="min-w-0 max-w-[45%] shrink-0 truncate font-sans text-xs font-medium">
+      <span
+        className={cn(
+          "flex min-w-0 flex-1 gap-2",
+          props.item.type === "issue" ? "items-baseline gap-3" : "items-center",
+        )}
+      >
+        <span
+          className={cn(
+            props.item.type === "issue"
+              ? "min-w-0 flex-1 truncate"
+              : "min-w-0 max-w-[45%] shrink-0 truncate",
+            "font-sans text-xs font-medium",
+          )}
+        >
           {isSlashSkill ? (
             <>
               <span className="text-secondary-label">/skill:</span>
@@ -179,7 +234,13 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             props.item.label
           )}
         </span>
-        <span className="min-w-0 max-w-[48ch] flex-1 truncate text-left text-secondary-label text-xs">
+        <span
+          className={cn(
+            props.item.type === "issue"
+              ? "text-right text-secondary-label text-xs shrink-0"
+              : "min-w-0 max-w-[48ch] flex-1 truncate text-left text-secondary-label text-xs",
+          )}
+        >
           {props.item.description}
         </span>
         {skillSourceKind ? (

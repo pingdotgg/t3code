@@ -2,9 +2,12 @@ import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildCitedIssuesGraphQlQuery,
   buildReviewSubmissionJson,
   buildReviewerRequestJson,
   decodeBaseComparisonJson,
+  decodeCitedIssuesJson,
+  decodeLinkedIssuesJson,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
@@ -1359,5 +1362,98 @@ describe("how far a branch trails its base", () => {
 
   it("refuses a body that is not the answer to this question", () => {
     expect(Result.isSuccess(decodeBaseComparisonJson("{"))).toBe(false);
+  });
+});
+
+describe("linked issue resolution", () => {
+  it("reports when either bounded connection has more links", () => {
+    const result = expectSuccess(
+      decodeLinkedIssuesJson(
+        JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                closingIssuesReferences: {
+                  pageInfo: { hasNextPage: true },
+                  nodes: [
+                    {
+                      number: 12,
+                      title: "Fix the dialog",
+                      url: "https://github.com/acme/web/issues/12",
+                      state: "OPEN",
+                      repository: { nameWithOwner: "acme/web" },
+                    },
+                  ],
+                },
+                timelineItems: { pageInfo: { hasNextPage: false }, nodes: [] },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.links.map((link) => link.number)).toEqual([12]);
+  });
+});
+
+describe("cited issue resolution", () => {
+  it("asks for every reference at once, and leaves out what GitHub cannot name", () => {
+    const query = buildCitedIssuesGraphQlQuery([
+      { repository: "acme/web", number: 12 },
+      // Read out of prose, so a body may hold anything shaped like a path: it is left out
+      // rather than taking the batch down with it.
+      { repository: "apps/server/src", number: 34 },
+      { repository: "acme/web", number: 56 },
+    ]);
+
+    expect(query).toContain(
+      'c0: repository(owner: "acme", name: "web") { issueOrPullRequest(number: 12) { ...LinkedIssue } }',
+    );
+    expect(query).not.toContain("number: 34");
+    expect(query).toContain("number: 56");
+  });
+
+  it("has nothing to ask when no reference can be written into a document", () => {
+    expect(buildCitedIssuesGraphQlQuery([])).toBeNull();
+    expect(buildCitedIssuesGraphQlQuery([{ repository: "acme/web", number: 0 }])).toBeNull();
+  });
+
+  it("keeps the issues GitHub answered for, as citations rather than closures", () => {
+    const links = expectSuccess(
+      decodeCitedIssuesJson(
+        JSON.stringify({
+          data: {
+            c0: {
+              issueOrPullRequest: {
+                number: 12,
+                title: "The dialog closes on the wrong click",
+                url: "https://github.com/acme/web/issues/12",
+                state: "CLOSED",
+                repository: { nameWithOwner: "acme/web" },
+              },
+            },
+            // A number that turned out to be a pull request: the fragment is on `Issue`, so
+            // GitHub answers with an object holding nothing at all.
+            c1: { issueOrPullRequest: {} },
+            // A repository this account cannot see.
+            c2: null,
+          },
+        }),
+      ),
+    );
+
+    expect(links).toEqual([
+      {
+        repository: "acme/web",
+        number: 12,
+        title: "The dialog closes on the wrong click",
+        url: "https://github.com/acme/web/issues/12",
+        state: "closed",
+        // Only the host can say what merging closes, and this was read out of the words.
+        closesIssue: false,
+      },
+    ]);
   });
 });

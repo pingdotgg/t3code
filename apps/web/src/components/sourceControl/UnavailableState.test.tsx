@@ -2,7 +2,8 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
+import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
+import { UnavailableState } from "./UnavailableState";
 
 function textOf(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -11,21 +12,35 @@ function textOf(node: ReactNode): string {
   return textOf((node as ReactElement<{ children?: ReactNode }>).props.children);
 }
 
-describe("PullRequestsUnavailableState", () => {
+describe("UnavailableState", () => {
   it("can explain an unsupported environment without offering a futile retry", () => {
     const text = textOf(
-      PullRequestsUnavailableState({
-        title: "Pull requests unavailable",
-        error: "Update this environment's T3 Code server to browse pull requests.",
+      UnavailableState({
+        icon: null,
+        title: "Issues unavailable",
+        error: "Update this environment's T3 Code server to browse issues.",
       }),
     );
 
-    expect(text).toContain("Pull requests unavailable");
+    expect(text).toContain("Issues unavailable");
     expect(text).toContain("Update this environment's T3 Code server");
     expect(text).not.toContain("Retry");
   });
 
   it("retains the retry for transient load failures", () => {
+    expect(
+      textOf(
+        UnavailableState({
+          icon: null,
+          title: "Could not load issues",
+          error: "GitHub did not answer.",
+          onRetry: () => {},
+        }),
+      ),
+    ).toContain("Retry");
+  });
+
+  it("retains the retry and GitHub fallback together", () => {
     const html = renderToStaticMarkup(
       <PullRequestsUnavailableState
         error="GitHub did not answer."
