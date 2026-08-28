@@ -9,6 +9,7 @@ import {
   TurnId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -31,6 +32,7 @@ import {
   OrchestrationProjectionPipelineLive,
 } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
+import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -1272,6 +1274,111 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
         assert.isTrue(yield* exists(attachmentsRootDir));
         assert.isTrue(yield* exists(attachmentsSentinelPath));
         assert.isTrue(yield* exists(stateDirSentinelPath));
+      }),
+    );
+  },
+);
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-attachments-replay-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("replaying a superseded thread.deleted keeps the re-created thread's files", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const { attachmentsDir } = yield* ServerConfig;
+        const now = "2026-01-01T00:00:00.000Z";
+        const projectId = ProjectId.make("project-replay");
+        const retriedThreadId = ThreadId.make("thread-replay-retried");
+        const goneThreadId = ThreadId.make("thread-replay-gone");
+        const retriedAttachmentPath = path.join(
+          attachmentsDir,
+          "thread-replay-retried-00000000-0000-4000-8000-000000000001.png",
+        );
+        const goneAttachmentPath = path.join(
+          attachmentsDir,
+          "thread-replay-gone-00000000-0000-4000-8000-000000000002.png",
+        );
+        const threadCreated = (threadId: ThreadId, suffix: string) =>
+          eventStore.append({
+            type: "thread.created",
+            eventId: EventId.make(`evt-replay-create-${suffix}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make(`cmd-replay-create-${suffix}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-replay-create-${suffix}`),
+            metadata: {},
+            payload: {
+              threadId,
+              projectId,
+              title: `Thread ${suffix}`,
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5-codex",
+              },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+        const threadDeleted = (threadId: ThreadId, suffix: string) =>
+          eventStore.append({
+            type: "thread.deleted",
+            eventId: EventId.make(`evt-replay-delete-${suffix}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: CommandId.make(`cmd-replay-delete-${suffix}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-replay-delete-${suffix}`),
+            metadata: {},
+            payload: { threadId, deletedAt: now },
+          });
+
+        yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.make("evt-replay-project"),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-replay-project"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-replay-project"),
+          metadata: {},
+          payload: {
+            projectId,
+            title: "Replay",
+            workspaceRoot: "/tmp/project-replay",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        // A failed first send: create, roll back, then the draft retries the id.
+        yield* threadCreated(retriedThreadId, "retried-1");
+        yield* threadDeleted(retriedThreadId, "retried");
+        yield* threadCreated(retriedThreadId, "retried-2");
+        // A thread that was deleted for good.
+        yield* threadCreated(goneThreadId, "gone");
+        yield* threadDeleted(goneThreadId, "gone");
+
+        // Files on disk are not event-sourced: by the time anything replays,
+        // the retried thread's attachments already belong to its second life.
+        yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+        yield* fileSystem.writeFileString(retriedAttachmentPath, "second incarnation");
+        yield* fileSystem.writeFileString(goneAttachmentPath, "gone");
+
+        yield* projectionPipeline.bootstrap;
+
+        assert.isTrue(yield* exists(retriedAttachmentPath));
+        assert.isFalse(yield* exists(goneAttachmentPath));
       }),
     );
   },
@@ -2850,7 +2957,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
 
 const engineLayer = it.layer(
   OrchestrationEngineLive.pipe(
-    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+    Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(OrchestrationProjectionPipelineLive),
@@ -2965,6 +3072,149 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           faviconPath: "brand/icon.svg",
         },
       ]);
+    }),
+  );
+
+  it.effect("re-creating a deleted thread id starts from an empty projection", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const projectId = ProjectId.make("project-retry");
+      const threadId = ThreadId.make("thread-retry");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+      const createThread = (commandId: string, title: string) =>
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(commandId),
+          threadId,
+          projectId,
+          title,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+      const countRowsForThread = (table: string) =>
+        sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM ${sql(table)} WHERE thread_id = ${threadId}
+        `.pipe(Effect.map((rows) => rows[0]?.count ?? 0));
+      const perThreadTables = [
+        "projection_thread_messages",
+        "projection_thread_activities",
+        "projection_thread_sessions",
+        "projection_turns",
+        "projection_thread_proposed_plans",
+        "projection_pending_approvals",
+      ];
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-retry-project"),
+        projectId,
+        title: "Retry Project",
+        workspaceRoot: "/tmp/project-retry",
+        defaultModelSelection: modelSelection,
+        createdAt,
+      });
+
+      // First attempt: the thread gets a turn, a message, an activity, and a
+      // running session before its bootstrap fails and the server rolls back.
+      yield* createThread("cmd-retry-create-1", "First attempt");
+      yield* engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-retry-turn-1"),
+        threadId,
+        message: {
+          messageId: MessageId.make("message-retry-1"),
+          role: "user",
+          text: "first attempt",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-retry-activity-1"),
+        threadId,
+        activity: {
+          id: EventId.make("activity-retry-1"),
+          tone: "info",
+          kind: "approval.requested",
+          summary: "approval requested",
+          payload: { requestId: "request-retry-1" },
+          turnId: null,
+          createdAt,
+        },
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.proposed-plan.upsert",
+        commandId: CommandId.make("cmd-retry-plan-1"),
+        threadId,
+        proposedPlan: {
+          id: "plan-retry-1",
+          turnId: null,
+          planMarkdown: "# Plan",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-retry-session-1"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("turn-retry-1"),
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
+      for (const table of perThreadTables) {
+        assert.isAbove(yield* countRowsForThread(table), 0, `${table} should be populated`);
+      }
+      const populatedShell = Option.getOrThrow(yield* snapshotQuery.getThreadShellById(threadId));
+      assert.isTrue(populatedShell.hasPendingApprovals);
+      assert.isTrue(populatedShell.hasActionableProposedPlan);
+
+      yield* engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("cmd-retry-delete"),
+        threadId,
+      });
+      assert.isTrue(Option.isNone(yield* snapshotQuery.getThreadShellById(threadId)));
+
+      // Retry from the same draft reuses the thread id.
+      yield* createThread("cmd-retry-create-2", "Second attempt");
+
+      const shell = Option.getOrThrow(yield* snapshotQuery.getThreadShellById(threadId));
+      assert.strictEqual(shell.title, "Second attempt");
+      assert.isFalse(shell.hasPendingApprovals);
+      assert.isFalse(shell.hasActionableProposedPlan);
+      for (const table of perThreadTables) {
+        assert.strictEqual(yield* countRowsForThread(table), 0, `${table} should be empty`);
+      }
+      const detail = Option.getOrThrow(yield* snapshotQuery.getThreadDetailById(threadId));
+      assert.deepEqual(detail.messages, []);
+      assert.deepEqual(detail.activities, []);
+      assert.isNull(detail.latestTurn);
+      assert.isNull(detail.session);
     }),
   );
 });

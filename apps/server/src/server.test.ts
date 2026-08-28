@@ -116,6 +116,7 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
@@ -411,6 +412,7 @@ const buildAppUnderTest = (options?: {
     >;
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
+    threadDeletionReactor?: Partial<ThreadDeletionReactor["Service"]>;
     analyticsService?: Partial<AnalyticsService.AnalyticsService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
     checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
@@ -787,13 +789,20 @@ const buildAppUnderTest = (options?: {
         ),
       ),
       Layer.provide(
-        Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
-          readEvents: () => Stream.empty,
-          dispatch: () => Effect.succeed({ sequence: 0 }),
-          streamDomainEvents: Stream.empty,
-          latestSequence: Effect.succeed(0),
-          ...options?.layers?.orchestrationEngine,
-        }),
+        Layer.mergeAll(
+          Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
+            readEvents: () => Stream.empty,
+            dispatch: () => Effect.succeed({ sequence: 0 }),
+            streamDomainEvents: Stream.empty,
+            latestSequence: Effect.succeed(0),
+            ...options?.layers?.orchestrationEngine,
+          }),
+          Layer.mock(ThreadDeletionReactor)({
+            start: () => Effect.void,
+            drainThrough: () => Effect.void,
+            ...options?.layers?.threadDeletionReactor,
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
@@ -8473,6 +8482,111 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(yield* fileSystem.readDirectory(config.attachmentsDir), [
         `${pendingAttachmentId}.png`,
       ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("drains deletion cleanup through the re-created thread event", () =>
+    Effect.gen(function* () {
+      // A draft retry reuses the thread id its failed bootstrap deleted. The
+      // deletion reactor stops sessions and closes terminals by that id, so
+      // both thread.create paths use the created event as a fence, then drain
+      // cleanup before handing the new incarnation to resource-owning work.
+      const trace: Array<string> = [];
+      const drainRequested = yield* Deferred.make<void>();
+      const cleanupDone = yield* Deferred.make<void>();
+      yield* buildAppUnderTest({
+        layers: {
+          threadDeletionReactor: {
+            drainThrough: (sequence) =>
+              Effect.gen(function* () {
+                trace.push(`drain:${sequence}`);
+                yield* Deferred.succeed(drainRequested, undefined);
+                yield* Deferred.await(cleanupDone);
+              }),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                trace.push(command.type);
+                return { sequence: trace.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make("thread-retry-after-delete");
+      const wsUrl = yield* getWsServerUrl("/ws");
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const directCreate = yield* Effect.forkChild(
+              client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                type: "thread.create",
+                commandId: CommandId.make("cmd-retry-create"),
+                threadId,
+                projectId: defaultProjectId,
+                title: "Retry",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                createdAt,
+              }),
+            );
+            yield* Deferred.await(drainRequested);
+            assert.deepEqual(trace, ["thread.create", "drain:1"]);
+            yield* Deferred.succeed(cleanupDone, undefined);
+            yield* Fiber.join(directCreate);
+          }),
+        ),
+      );
+      assert.deepEqual(trace, ["thread.create", "drain:1"]);
+
+      // Cleanup is already released; the bootstrap path must still drain
+      // between creating the thread and starting its turn.
+      trace.length = 0;
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const bootstrapCreate = yield* Effect.forkChild(
+              client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                type: "thread.turn.start",
+                commandId: CommandId.make("cmd-retry-bootstrap"),
+                threadId,
+                message: {
+                  messageId: MessageId.make("msg-retry-bootstrap"),
+                  role: "user",
+                  text: "hello",
+                  attachments: [],
+                },
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                bootstrap: {
+                  createThread: {
+                    projectId: defaultProjectId,
+                    title: "Retry",
+                    modelSelection: defaultModelSelection,
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    branch: null,
+                    worktreePath: null,
+                    createdAt,
+                  },
+                  runSetupScript: false,
+                },
+                createdAt,
+              }),
+            );
+            yield* Fiber.join(bootstrapCreate);
+          }),
+        ),
+      );
+      assert.deepEqual(trace, ["thread.create", "drain:1", "thread.turn.start"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

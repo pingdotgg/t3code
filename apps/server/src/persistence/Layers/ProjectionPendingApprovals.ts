@@ -95,6 +95,15 @@ const makeProjectionPendingApprovalRepository = Effect.gen(function* () {
       `,
   });
 
+  const deleteProjectionPendingApprovalRowsByThread = SqlSchema.void({
+    Request: ListProjectionPendingApprovalsInput,
+    execute: ({ threadId }) =>
+      sql`
+        DELETE FROM projection_pending_approvals
+        WHERE thread_id = ${threadId}
+      `,
+  });
+
   const upsert: ProjectionPendingApprovalRepositoryShape["upsert"] = (row) =>
     upsertProjectionPendingApprovalRow(row).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionPendingApprovalRepository.upsert:query")),
@@ -123,11 +132,19 @@ const makeProjectionPendingApprovalRepository = Effect.gen(function* () {
       ),
     );
 
+  const deleteByThreadId: ProjectionPendingApprovalRepositoryShape["deleteByThreadId"] = (input) =>
+    deleteProjectionPendingApprovalRowsByThread(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionPendingApprovalRepository.deleteByThreadId:query"),
+      ),
+    );
+
   return {
     upsert,
     listByThreadId,
     getByRequestId,
     deleteByRequestId,
+    deleteByThreadId,
   } satisfies ProjectionPendingApprovalRepositoryShape;
 });
 
