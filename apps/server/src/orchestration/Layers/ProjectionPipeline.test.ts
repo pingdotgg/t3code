@@ -882,6 +882,7 @@ it.layer(
       const now = "2026-01-01T00:00:00.000Z";
       const threadId = ThreadId.make("Thread Revert.Files");
       const keepAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000001";
+      const keepFileAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000004-pdf";
       const removeAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000002";
       const otherThreadAttachmentId =
         "thread-revert-files-extra-00000000-0000-4000-8000-000000000003";
@@ -983,6 +984,13 @@ it.layer(
               mimeType: "image/png",
               sizeBytes: 5,
             },
+            {
+              type: "file",
+              id: keepFileAttachmentId,
+              name: "keep.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 5,
+            },
           ],
           turnId: TurnId.make("turn-keep"),
           streaming: false,
@@ -1045,9 +1053,11 @@ it.layer(
       });
 
       const keepPath = path.join(attachmentsDir, `${keepAttachmentId}.png`);
+      const keepFilePath = path.join(attachmentsDir, `${keepFileAttachmentId}.pdf`);
       const removePath = path.join(attachmentsDir, `${removeAttachmentId}.png`);
       yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
       yield* fileSystem.writeFileString(keepPath, "keep");
+      yield* fileSystem.writeFileString(keepFilePath, "keep");
       yield* fileSystem.writeFileString(removePath, "remove");
       const otherThreadPath = path.join(attachmentsDir, `${otherThreadAttachmentId}.png`);
       yield* fileSystem.writeFileString(otherThreadPath, "other");
@@ -1072,6 +1082,7 @@ it.layer(
       });
 
       assert.isTrue(yield* exists(keepPath));
+      assert.isTrue(yield* exists(keepFilePath));
       assert.isFalse(yield* exists(removePath));
       assert.isTrue(yield* exists(otherThreadPath));
     }),
@@ -1091,6 +1102,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
         const now = "2026-01-01T00:00:00.000Z";
         const threadId = ThreadId.make("Thread Delete.Files");
         const attachmentId = "thread-delete-files-00000000-0000-4000-8000-000000000001";
+        const fileAttachmentId = "thread-delete-files-00000000-0000-4000-8000-000000000003-pdf";
         const otherThreadAttachmentId =
           "thread-delete-files-extra-00000000-0000-4000-8000-000000000002";
 
@@ -1169,6 +1181,13 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
                 mimeType: "image/png",
                 sizeBytes: 5,
               },
+              {
+                type: "file",
+                id: fileAttachmentId,
+                name: "delete.pdf",
+                mimeType: "application/pdf",
+                sizeBytes: 6,
+              },
             ],
             turnId: null,
             streaming: false,
@@ -1178,14 +1197,17 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
         });
 
         const threadAttachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
+        const threadFileAttachmentPath = path.join(attachmentsDir, `${fileAttachmentId}.pdf`);
         const otherThreadAttachmentPath = path.join(
           attachmentsDir,
           `${otherThreadAttachmentId}.png`,
         );
         yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
         yield* fileSystem.writeFileString(threadAttachmentPath, "delete");
+        yield* fileSystem.writeFileString(threadFileAttachmentPath, "delete");
         yield* fileSystem.writeFileString(otherThreadAttachmentPath, "other-thread");
         assert.isTrue(yield* exists(threadAttachmentPath));
+        assert.isTrue(yield* exists(threadFileAttachmentPath));
         assert.isTrue(yield* exists(otherThreadAttachmentPath));
 
         yield* appendAndProject({
@@ -1205,6 +1227,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
         });
 
         assert.isFalse(yield* exists(threadAttachmentPath));
+        assert.isFalse(yield* exists(threadFileAttachmentPath));
         assert.isTrue(yield* exists(otherThreadAttachmentPath));
       }),
     );

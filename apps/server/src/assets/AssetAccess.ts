@@ -37,7 +37,7 @@ import {
   timingSafeEqualBase64Url,
 } from "../auth/utils.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { resolveAttachmentPathById } from "../attachmentStore.ts";
+import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -79,6 +79,13 @@ const AssetClaimsSchema = Schema.Union([
     version: Schema.Literal(1),
     kind: Schema.Literal("attachment"),
     attachmentId: Schema.String,
+    /** Decided at mint time. Absent tokens (from before this field) serve
+        inline, which is only ever the image case. */
+    download: Schema.optionalKey(Schema.Boolean),
+    /** Display name and mime the caller supplied at mint time; drive the
+        download filename and Content-Type. */
+    fileName: Schema.optionalKey(Schema.String),
+    mimeType: Schema.optionalKey(Schema.String),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -101,7 +108,13 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = { readonly kind: "file"; readonly path: string };
+export type ResolvedAsset = {
+  readonly kind: "file";
+  readonly path: string;
+  readonly download?: boolean;
+  readonly fileName?: string;
+  readonly mimeType?: string;
+};
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -286,13 +299,20 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           resource: input.resource,
         });
       }
+      // Generic files carry their extension inside the attachment id (that
+      // shape resolves the on-disk path); images do not. Only generic files
+      // download, images render inline in chat.
+      const isGenericFile = parseAttachmentFileExtension(input.resource.attachmentId) !== null;
       claims = {
         version: 1,
         kind: "attachment",
         attachmentId: input.resource.attachmentId,
+        ...(isGenericFile ? { download: true } : {}),
+        ...(input.resource.fileName !== undefined ? { fileName: input.resource.fileName } : {}),
+        ...(input.resource.mimeType !== undefined ? { mimeType: input.resource.mimeType } : {}),
         expiresAt,
       };
-      fileName = path.basename(attachmentPath);
+      fileName = input.resource.fileName ?? path.basename(attachmentPath);
       break;
     }
     case "project-favicon": {
@@ -464,7 +484,13 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => Option.none()),
     );
     return Option.isSome(info) && info.value.type === "File"
-      ? ({ kind: "file", path: attachmentPath } satisfies ResolvedAsset)
+      ? ({
+          kind: "file",
+          path: attachmentPath,
+          ...(claims.download ? { download: true } : {}),
+          ...(claims.fileName !== undefined ? { fileName: claims.fileName } : {}),
+          ...(claims.mimeType !== undefined ? { mimeType: claims.mimeType } : {}),
+        } satisfies ResolvedAsset)
       : null;
   }
 

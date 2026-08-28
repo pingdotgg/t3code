@@ -4,11 +4,16 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { base64UrlEncode, signPayload } from "../auth/utils.ts";
 import * as ServerConfig from "../config.ts";
 import { parseThreadSegmentFromAttachmentId } from "../attachmentStore.ts";
 import {
@@ -29,6 +34,19 @@ const uploadInput = {
   mimeType: "image/png",
   sizeBytes: 6,
 } as const;
+
+const LegacyAttachmentUploadClaims = Schema.Struct({
+  version: Schema.Literal(1),
+  kind: Schema.Literal("attachment-upload"),
+  attachmentId: Schema.String,
+  name: Schema.String,
+  mimeType: Schema.String,
+  sizeBytes: Schema.Number,
+  expiresAt: Schema.Number,
+});
+const encodeLegacyAttachmentUploadClaims = Schema.encodeEffect(
+  Schema.fromJsonString(LegacyAttachmentUploadClaims),
+);
 
 describe("AttachmentUpload", () => {
   it.effect("signs the attachment metadata and validates the upload token", () =>
@@ -56,6 +74,31 @@ describe("AttachmentUpload", () => {
       expect(yield* validateAttachmentUploadToken(`${payload}x.${signature}`)).toBeNull();
       expect(yield* validateAttachmentUploadToken(`${token}.extra`)).toBeNull();
       expect(yield* validateAttachmentUploadToken("garbage")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("accepts unexpired image upload tokens issued before file support", () =>
+    Effect.gen(function* () {
+      const issued = yield* issueAttachmentUploadUrl(uploadInput);
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const secret = yield* secretStore.getOrCreateRandom("asset-access-signing-key", 32);
+      const encodedPayload = base64UrlEncode(
+        yield* encodeLegacyAttachmentUploadClaims({
+          version: 1,
+          kind: "attachment-upload",
+          attachmentId: issued.attachmentId,
+          name: uploadInput.name,
+          mimeType: uploadInput.mimeType,
+          sizeBytes: uploadInput.sizeBytes,
+          expiresAt: issued.expiresAt,
+        }),
+      );
+      const legacyToken = `${encodedPayload}.${signPayload(encodedPayload, secret)}`;
+
+      expect(yield* validateAttachmentUploadToken(legacyToken)).toMatchObject({
+        type: "image",
+        attachmentId: issued.attachmentId,
+      });
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -105,6 +148,85 @@ describe("AttachmentUpload", () => {
       expect(
         NodeFS.readdirSync(config.attachmentsDir).filter((entry) => entry.endsWith(".part")),
       ).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("streams generic files to a path with their original extension", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const issued = yield* issueAttachmentUploadUrl({
+        type: "file",
+        name: "report.PDF",
+        mimeType: "application/pdf",
+        sizeBytes: 6,
+      });
+      const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
+      const claims = yield* validateAttachmentUploadToken(token);
+      if (!claims) {
+        throw new Error("Expected valid upload claims.");
+      }
+
+      expect(
+        yield* storeAttachmentUpload(
+          claims,
+          Stream.make(new Uint8Array([1, 2, 3]), new Uint8Array([4, 5, 6])),
+        ),
+      ).toEqual({ ok: true });
+      expect(issued.attachmentId).toMatch(/-pdf$/);
+      expect(
+        NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${issued.attachmentId}.pdf`)),
+      ).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
+
+      yield* deletePendingAttachment(issued.attachmentId);
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("removes partial streamed uploads that exceed their signed size", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const issued = yield* issueAttachmentUploadUrl(uploadInput);
+      const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
+      const claims = yield* validateAttachmentUploadToken(token);
+      if (!claims) {
+        throw new Error("Expected valid upload claims.");
+      }
+
+      expect(yield* storeAttachmentUpload(claims, Stream.make(new Uint8Array(7)))).toMatchObject({
+        ok: false,
+        status: 400,
+      });
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("removes partial streamed uploads when the upload is interrupted", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const issued = yield* issueAttachmentUploadUrl(uploadInput);
+      const token = issued.relativeUrl.slice(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`.length);
+      const claims = yield* validateAttachmentUploadToken(token);
+      if (!claims) {
+        throw new Error("Expected valid upload claims.");
+      }
+
+      const nextChunkRequested = yield* Deferred.make<void>();
+      const body = Stream.make(new Uint8Array([1, 2, 3])).pipe(
+        Stream.concat(
+          Stream.fromEffect(
+            Deferred.succeed(nextChunkRequested, undefined).pipe(Effect.andThen(Effect.never)),
+          ),
+        ),
+      );
+      const upload = yield* storeAttachmentUpload(claims, body).pipe(Effect.forkScoped);
+
+      yield* Deferred.await(nextChunkRequested);
+      expect(
+        NodeFS.readdirSync(config.attachmentsDir).filter((entry) => entry.endsWith(".part")),
+      ).toHaveLength(1);
+
+      yield* Fiber.interrupt(upload);
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
     }).pipe(Effect.provide(testLayer)),
   );
 
