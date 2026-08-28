@@ -3,8 +3,13 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom } from "effect/unstable/reactivity";
+import { WS_METHODS } from "@t3tools/contracts";
 
-import { createAtomCommandScheduler, createEnvironmentCommand } from "./runtime.ts";
+import {
+  createAtomCommandScheduler,
+  createEnvironmentCommand,
+  createEnvironmentRpcCommand,
+} from "./runtime.ts";
 import {
   type ArchiveThreadInput,
   type CancelQueuedRunInput,
@@ -310,6 +315,12 @@ export function createThreadEnvironmentAtoms<R, E>(
         mode: "serial",
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
       },
+    }),
+    uploadFeedback: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:upload-feedback",
+      tag: WS_METHODS.providerUploadFeedback,
+      scheduler,
+      concurrency,
     }),
   };
 }

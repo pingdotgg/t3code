@@ -566,7 +566,9 @@ describe("MessagesTimeline", () => {
   it("anchors a sent attachment message using its measured height", () => {
     const onAnchorReady = vi.fn();
     const onAnchorSizeChanged = vi.fn();
-    const firstEntry = buildUserTimelineEntry("First prompt.");
+    // Since #7897 only the first user row after the live edge may anchor, so
+    // the preceding row is an assistant reply rather than an older prompt.
+    const firstEntry = buildAssistantTimelineEntry("Earlier reply.");
     const secondEntry = {
       ...buildUserTimelineEntry("Newest prompt."),
       id: "entry-2",

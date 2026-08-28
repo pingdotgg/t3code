@@ -7,8 +7,8 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Console from "effect/Console";
 import * as Cause from "effect/Cause";
+import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
