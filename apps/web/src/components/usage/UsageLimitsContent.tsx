@@ -80,7 +80,7 @@ export function UsageLimitsContent() {
           <section className="grid gap-4 lg:grid-cols-2">
             {ordered.map((entry) => (
               <ProviderLimitsCard
-                key={`${entry.provider}:${entry.environmentLabels.join(",")}`}
+                key={`${entry.provider}:${entry.limits.email ?? entry.environmentLabels.join(",")}`}
                 entry={entry}
                 nowMs={nowMs}
                 multiEnvironment={environments.length > 1}
@@ -133,9 +133,14 @@ function ProviderLimitsCard({
         </p>
       )}
 
-      {multiEnvironment ? (
-        <span className="text-xs text-muted-foreground">
-          Reported by {entry.environmentLabels.join(", ")}
+      {limits.email !== null || multiEnvironment ? (
+        <span className="truncate text-xs text-muted-foreground">
+          {[
+            limits.email,
+            multiEnvironment ? `Reported by ${entry.environmentLabels.join(", ")}` : null,
+          ]
+            .filter((part) => part !== null)
+            .join(" · ")}
         </span>
       ) : null}
     </div>

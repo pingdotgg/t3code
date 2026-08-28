@@ -40,11 +40,13 @@ import { codexAppServerArgs } from "../provider/Layers/codexLaunchArgs.ts";
 import {
   claudePlanLabel,
   parseClaudeOauthCredentials,
+  parseClaudeProfileEmail,
   parseClaudeUsageWindows,
 } from "./usageLimitsClaude.ts";
 import { codexPlanLabel, mapCodexRateLimits, parseCodexAuthKind } from "./usageLimitsCodex.ts";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 
 /** The OAuth endpoints require the same beta marker the Claude CLI sends. */
 const CLAUDE_OAUTH_BETA_HEADER = "oauth-2025-04-20";
@@ -87,10 +89,20 @@ export const layerTest = Layer.succeed(
 function makeProviderLimits(provider: UsageProviderKind) {
   return (
     availability: ProviderUsageLimits["availability"],
-    plan: string | null,
-    message: string | null,
-    windows: ProviderUsageLimits["windows"] = [],
-  ): ProviderUsageLimits => ({ provider, availability, plan, windows, message });
+    fields: {
+      readonly plan?: string | null;
+      readonly email?: string | null;
+      readonly message?: string | null;
+      readonly windows?: ProviderUsageLimits["windows"];
+    } = {},
+  ): ProviderUsageLimits => ({
+    provider,
+    availability,
+    plan: fields.plan ?? null,
+    email: fields.email ?? null,
+    windows: fields.windows ?? [],
+    message: fields.message ?? null,
+  });
 }
 const claudeLimits = makeProviderLimits("claude");
 const codexLimits = makeProviderLimits("codex");
@@ -172,52 +184,87 @@ export const make = Effect.gen(function* () {
     return null;
   });
 
-  const readClaudeLimits = Effect.fn("UsageLimitsService.readClaudeLimits")(function* () {
-    const credentials = yield* readClaudeCredentials();
-    if (credentials === null) {
-      return claudeLimits("unsupported", null, SUBSCRIPTION_ONLY_MESSAGE);
-    }
-
-    const plan = claudePlanLabel(credentials.subscriptionType);
-    const request = HttpClientRequest.get(CLAUDE_USAGE_URL).pipe(
+  const claudeOauthRequest = (url: string, accessToken: string) =>
+    HttpClientRequest.get(url).pipe(
       HttpClientRequest.setHeaders({
-        authorization: `Bearer ${credentials.accessToken}`,
+        authorization: `Bearer ${accessToken}`,
         "anthropic-beta": CLAUDE_OAUTH_BETA_HEADER,
       }),
     );
-    const response = yield* httpClient.execute(request).pipe(
-      Effect.timeoutOption(REQUEST_TIMEOUT_MS),
-      Effect.orElseSucceed(() => Option.none()),
+
+  /**
+   * Best-effort account email from the OAuth profile endpoint. The email
+   * only disambiguates cards; a failure here must never degrade the limit
+   * figures, so every failure mode collapses to null.
+   */
+  const readClaudeProfileEmail = Effect.fn("UsageLimitsService.readClaudeProfileEmail")(
+    function* (accessToken: string) {
+      const response = yield* httpClient.execute(
+        claudeOauthRequest(CLAUDE_PROFILE_URL, accessToken),
+      );
+      if (response.status < 200 || response.status >= 300) return null;
+      const payload = yield* response.json;
+      return parseClaudeProfileEmail(payload);
+    },
+    Effect.timeoutOption(REQUEST_TIMEOUT_MS),
+    (effect) =>
+      effect.pipe(
+        Effect.map((email) => Option.getOrNull(email)),
+        Effect.orElseSucceed(() => null),
+      ),
+  );
+
+  const readClaudeLimits = Effect.fn("UsageLimitsService.readClaudeLimits")(function* () {
+    const credentials = yield* readClaudeCredentials();
+    if (credentials === null) {
+      return claudeLimits("unsupported", { message: SUBSCRIPTION_ONLY_MESSAGE });
+    }
+
+    const plan = claudePlanLabel(credentials.subscriptionType);
+    const [response, email] = yield* Effect.all(
+      [
+        httpClient.execute(claudeOauthRequest(CLAUDE_USAGE_URL, credentials.accessToken)).pipe(
+          Effect.timeoutOption(REQUEST_TIMEOUT_MS),
+          Effect.orElseSucceed(() => Option.none()),
+        ),
+        readClaudeProfileEmail(credentials.accessToken),
+      ],
+      { concurrency: "unbounded" },
     );
     if (Option.isNone(response)) {
-      return claudeLimits("unavailable", plan, "Claude's limit service could not be reached.");
+      return claudeLimits("unavailable", {
+        plan,
+        email,
+        message: "Claude's limit service could not be reached.",
+      });
     }
     const status = response.value.status;
     if (status === 401 || status === 403) {
-      return claudeLimits(
-        "unauthenticated",
+      return claudeLimits("unauthenticated", {
         plan,
-        "The stored Claude sign-in was rejected. Open Claude Code to refresh it, then retry.",
-      );
+        email,
+        message:
+          "The stored Claude sign-in was rejected. Open Claude Code to refresh it, then retry.",
+      });
     }
     if (status < 200 || status >= 300) {
-      return claudeLimits(
-        "unavailable",
+      return claudeLimits("unavailable", {
         plan,
-        `Claude's limit service answered with status ${status}.`,
-      );
+        email,
+        message: `Claude's limit service answered with status ${status}.`,
+      });
     }
 
     const payload = yield* response.value.json.pipe(Effect.orElseSucceed(() => null));
     const windows = parseClaudeUsageWindows(payload);
     if (windows.length === 0) {
-      return claudeLimits(
-        "unavailable",
+      return claudeLimits("unavailable", {
         plan,
-        "Claude's limit service answered in a shape this version does not understand.",
-      );
+        email,
+        message: "Claude's limit service answered in a shape this version does not understand.",
+      });
     }
-    return claudeLimits("available", plan, null, windows);
+    return claudeLimits("available", { plan, email, windows });
   });
 
   /**
@@ -283,7 +330,7 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.succeed(null)),
     );
     if (settings === null) {
-      return codexLimits("unavailable", null, "Server settings could not be read.");
+      return codexLimits("unavailable", { message: "Server settings could not be read." });
     }
     const codexSettings = settings.providers.codex;
     const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
@@ -301,7 +348,7 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
     const authKind = raw === null ? "none" : parseCodexAuthKind(raw);
     if (authKind === "apiKey") {
-      return codexLimits("unsupported", null, SUBSCRIPTION_ONLY_MESSAGE);
+      return codexLimits("unsupported", { message: SUBSCRIPTION_ONLY_MESSAGE });
     }
 
     const response = yield* requestCodexAccountLimits({
@@ -313,29 +360,34 @@ export const make = Effect.gen(function* () {
       // Without local credential evidence, a dead app server most likely
       // means Codex is absent or signed out rather than broken.
       return authKind === "chatgpt"
-        ? codexLimits("unavailable", null, "Codex's app server could not be reached.")
-        : codexLimits("unauthenticated", null, "Codex is not signed in on this environment.");
+        ? codexLimits("unavailable", { message: "Codex's app server could not be reached." })
+        : codexLimits("unauthenticated", {
+            message: "Codex is not signed in on this environment.",
+          });
     }
     const account = response.account;
     if (account === null && response.requiresOpenaiAuth) {
-      return codexLimits("unauthenticated", null, "Codex is not signed in on this environment.");
+      return codexLimits("unauthenticated", {
+        message: "Codex is not signed in on this environment.",
+      });
     }
     if (account !== null && (account.type === "apiKey" || account.type === "amazonBedrock")) {
-      return codexLimits("unsupported", null, SUBSCRIPTION_ONLY_MESSAGE);
+      return codexLimits("unsupported", { message: SUBSCRIPTION_ONLY_MESSAGE });
     }
 
+    const chatgptAccount = account !== null && account.type === "chatgpt" ? account : null;
+    const rawEmail = chatgptAccount?.email ?? null;
+    const email = rawEmail !== null && rawEmail.trim().length > 0 ? rawEmail.trim() : null;
     const { windows, planType } = mapCodexRateLimits(response.rateLimits);
-    const plan = codexPlanLabel(
-      planType ?? (account !== null && account.type === "chatgpt" ? account.planType : null),
-    );
+    const plan = codexPlanLabel(planType ?? chatgptAccount?.planType ?? null);
     if (windows.length === 0) {
-      return codexLimits(
-        "unavailable",
+      return codexLimits("unavailable", {
         plan,
-        "Codex answered in a shape this version does not understand.",
-      );
+        email,
+        message: "Codex answered in a shape this version does not understand.",
+      });
     }
-    return codexLimits("available", plan, null, windows);
+    return codexLimits("available", { plan, email, windows });
   });
 
   const readLimits = Effect.fn("UsageLimitsService.readLimits")(function* () {

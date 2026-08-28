@@ -219,10 +219,11 @@ export function useUsageLimits(): UsageLimitsView {
   // (worktree servers) resolve the same credentials and must not repeat the
   // card, but two environments signed into different accounts must both stay
   // visible: hiding one could hide the account that is about to hit a limit.
-  // Reset instants identify the account well enough for that grouping - the
-  // windows follow the account's own clock, while utilization drifts between
-  // fetches. Failure answers only surface when no environment produced
-  // figures for the provider, best-ranked first.
+  // The account email is the identity when the provider reports one; without
+  // it, reset instants identify the account well enough - the windows follow
+  // the account's own clock, while utilization drifts between fetches.
+  // Failure answers only surface when no environment produced figures for
+  // the provider, best-ranked first.
   const providers = useMemo(() => {
     interface ProviderMerge {
       readonly accounts: Map<string, { limits: ProviderUsageLimits; labels: string[] }>;
@@ -238,10 +239,13 @@ export function useUsageLimits(): UsageLimitsView {
           byProvider.set(limits.provider, merge);
         }
         if (limits.availability === "available") {
-          const accountKey = JSON.stringify([
-            limits.plan,
-            limits.windows.map((window) => [window.id, window.resetsAt]),
-          ]);
+          const accountKey =
+            limits.email !== null
+              ? `email:${limits.email}`
+              : `windows:${JSON.stringify([
+                  limits.plan,
+                  limits.windows.map((window) => [window.id, window.resetsAt]),
+                ])}`;
           const account = merge.accounts.get(accountKey);
           if (account === undefined) {
             merge.accounts.set(accountKey, { limits, labels: [environment.label] });

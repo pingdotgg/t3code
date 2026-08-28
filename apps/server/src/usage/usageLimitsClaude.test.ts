@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   claudePlanLabel,
   parseClaudeOauthCredentials,
+  parseClaudeProfileEmail,
   parseClaudeUsageWindows,
 } from "./usageLimitsClaude.ts";
 
@@ -45,6 +46,17 @@ describe("claudePlanLabel", () => {
     expect(claudePlanLabel("supermax")).toBe("Claude Supermax");
     expect(claudePlanLabel(null)).toBeNull();
     expect(claudePlanLabel("  ")).toBeNull();
+  });
+});
+
+describe("parseClaudeProfileEmail", () => {
+  it("reads the account email and tolerates junk", () => {
+    expect(
+      parseClaudeProfileEmail({ account: { email: "user@example.com", full_name: "User" } }),
+    ).toBe("user@example.com");
+    expect(parseClaudeProfileEmail({ account: { email: "  " } })).toBeNull();
+    expect(parseClaudeProfileEmail({ account: null })).toBeNull();
+    expect(parseClaudeProfileEmail(null)).toBeNull();
   });
 });
 

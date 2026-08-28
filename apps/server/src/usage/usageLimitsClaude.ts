@@ -44,6 +44,15 @@ export function parseClaudeOauthCredentials(raw: string): ClaudeOauthCredentials
   };
 }
 
+/** The signed-in account's email, from the OAuth profile endpoint. */
+export function parseClaudeProfileEmail(document: unknown): string | null {
+  if (typeof document !== "object" || document === null) return null;
+  const account = (document as Record<string, unknown>).account;
+  if (typeof account !== "object" || account === null) return null;
+  const email = (account as Record<string, unknown>).email;
+  return typeof email === "string" && email.trim().length > 0 ? email.trim() : null;
+}
+
 const PLAN_LABELS: Record<string, string> = {
   free: "Claude Free",
   pro: "Claude Pro",

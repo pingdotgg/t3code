@@ -68,6 +68,12 @@ export const ProviderUsageLimits = Schema.Struct({
   availability: UsageLimitsAvailability,
   /** Subscription plan label, e.g. "Claude Max". Null when unknown. */
   plan: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * Email of the signed-in account, when the provider exposes one. This is
+   * what tells two accounts apart when environments report different
+   * sign-ins of the same provider.
+   */
+  email: Schema.NullOr(TrimmedNonEmptyString),
   /** Empty unless `availability` is `available`. */
   windows: Schema.Array(UsageLimitWindow),
   /**
