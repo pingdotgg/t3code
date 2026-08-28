@@ -32,6 +32,9 @@ Modifiers: `mod` (`cmd` on macOS, `ctrl` elsewhere), `cmd` / `meta`, `ctrl` / `c
 
 Examples: `mod+j`, `mod+shift+d`, `ctrl+l`, `cmd+k`.
 
+Modified Tab shortcuts such as `ctrl+tab` and `ctrl+shift+tab` can be recorded in Settings. Plain
+Tab and Shift+Tab continue to move focus instead of being recorded.
+
 ## Commands
 
 Commands are IDs like `terminal.toggle`, `commandPalette.toggle`, `preview.refresh`, and
