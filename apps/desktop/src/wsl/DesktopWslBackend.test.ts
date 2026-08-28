@@ -155,6 +155,79 @@ describe("DesktopWslBackend", () => {
     );
   });
 
+  it.effect("allocates a secondary port the WSL distro is not already listening on", () => {
+    const probedDistros: (string | null)[] = [];
+    let resolveWslInput: { readonly port: number; readonly distro: string | null } | undefined;
+    const primary = makeStubInstance({
+      id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
+      label: "Windows",
+      snapshot: primarySnapshot,
+    });
+    const wsl = makeStubInstance({
+      id: DesktopBackendPool.BackendInstanceId("wsl:Ubuntu"),
+      label: "WSL (Ubuntu)",
+      snapshot: primarySnapshot,
+    });
+    const poolLayer = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+      get: () => Effect.succeed(Option.none<DesktopBackendPool.DesktopBackendInstance>()),
+      list: Effect.succeed([primary]),
+      primary: Effect.succeed(primary),
+      register: () => Effect.succeed(wsl),
+      unregister: () => Effect.die("unexpected unregister"),
+    } satisfies DesktopBackendPool.DesktopBackendPool["Service"]);
+    const recordingConfigurationLayer = Layer.succeed(
+      DesktopBackendConfiguration.DesktopBackendConfiguration,
+      {
+        resolvePrimary: Effect.die("unexpected resolvePrimary"),
+        resolvePrimaryLabel: Effect.succeed("Windows"),
+        // startNew calls this while building the pool spec, so recording here
+        // captures the allocated port without running the returned effect.
+        resolveWsl: (input) => {
+          resolveWslInput = input;
+          return Effect.die("unexpected resolveWsl");
+        },
+      } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
+    );
+
+    return Effect.gen(function* () {
+      const backend = yield* DesktopWslBackend.DesktopWslBackend;
+
+      yield* backend.reconcile;
+
+      // The scan starts one above the primary's 3773; 3774 and 3775 look free
+      // from Windows but are already held inside the distro that will bind.
+      assert.deepEqual(resolveWslInput, { port: 3776, distro: "Ubuntu" });
+      // One wsl.exe round trip for the whole scan, not one per candidate.
+      assert.deepEqual(probedDistros, ["Ubuntu"]);
+    }).pipe(
+      Effect.provide(
+        DesktopWslBackend.layer.pipe(
+          Layer.provideMerge(poolLayer),
+          Layer.provideMerge(recordingConfigurationLayer),
+          Layer.provideMerge(serverExposureLayer),
+          Layer.provideMerge(netLayer),
+          Layer.provideMerge(
+            DesktopAppSettings.layerTest({
+              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+              wslBackendEnabled: true,
+              wslDistro: "Ubuntu",
+              wslOnly: false,
+            }),
+          ),
+          Layer.provideMerge(
+            DesktopWslEnvironment.layerTest({
+              isAvailable: true,
+              probeListeningPorts: (distro) => {
+                probedDistros.push(distro);
+                return Option.some(new Set([3774, 3775]));
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("retries an unchanged WSL instance when it is idle after failed preflight", () => {
     let startCount = 0;
     const primary = makeStubInstance({

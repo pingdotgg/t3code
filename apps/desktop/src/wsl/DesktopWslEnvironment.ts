@@ -23,6 +23,13 @@ const PROBE_TIMEOUT = Duration.seconds(10);
 const TOOLCHAIN_TIMEOUT = Duration.seconds(10);
 const BUILD_TIMEOUT = Duration.minutes(5);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
+// Matches PRE_WARM_TIMEOUT rather than the 5s its neighbours use: in wsl-only
+// mode this is the first wsl.exe call of the session, so it pays the VM's cold
+// start, while getDistroIp and getUserHome always run after the VM is up. A
+// warm round trip is ~100ms, so the extra headroom only ever applies to a distro
+// that is genuinely slow to boot -- and timing out here silently drops back to
+// the Windows-only scan this probe exists to correct.
+const LISTENING_PORTS_TIMEOUT = PRE_WARM_TIMEOUT;
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
 
@@ -79,6 +86,14 @@ export class DesktopWslEnvironment extends Context.Service<
     // (the backend can be listening for 30+ seconds before wslhost starts
     // forwarding 127.0.0.1:port to WSL-side localhost).
     readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
+    // TCP ports that already have a listener inside the distro, or None when the
+    // probe could not run. A Windows-side bind check says nothing about these:
+    // WSL2's localhost forwarding does not reserve a WSL-side listener's port in
+    // the Windows port namespace, so a port can look free on Windows and still
+    // be taken in the distro the backend actually binds in.
+    readonly probeListeningPorts: (
+      distro: string | null,
+    ) => Effect.Effect<Option.Option<ReadonlySet<number>>>;
     readonly ensureNodePty: (
       distro: string | null,
       windowsRepoRoot: string,
@@ -721,6 +736,74 @@ const getDistroIpImpl = (
     Effect.orElseSucceed(() => Option.none<string>()),
   );
 
+// /proc/net/tcp{,6} rows are "<sl> <hexAddr>:<hexPort> <hexAddr>:<hexPort> <st> ...",
+// where st 0A is TCP_LISTEN. Reading the files beats `ss`/`netstat`, which
+// minimal distro images often omit. Any listener blocks the WSL backend's
+// 0.0.0.0 bind regardless of the address it holds, so the address is ignored.
+const PROC_NET_TCP_LISTEN_STATE = "0A";
+
+export const parseWslListeningPorts = (stdout: string): Option.Option<ReadonlySet<number>> => {
+  const ports = new Set<number>();
+  let sawTable = false;
+
+  for (const line of stdout.split("\n")) {
+    const fields = line.trim().split(/\s+/);
+    const localAddress = fields[1];
+    if (localAddress === undefined) continue;
+    if (localAddress === "local_address") {
+      sawTable = true;
+      continue;
+    }
+    if (fields[3] !== PROC_NET_TCP_LISTEN_STATE) continue;
+    const separator = localAddress.lastIndexOf(":");
+    if (separator === -1) continue;
+    const port = Number.parseInt(localAddress.slice(separator + 1), 16);
+    if (Number.isInteger(port) && port > 0) ports.add(port);
+  }
+
+  // Without a header row we never read a real table (missing file, wsl.exe
+  // noise, truncated output). Report "unknown" rather than "nothing is
+  // listening", so callers keep their previous behavior instead of trusting an
+  // empty set.
+  return sawTable ? Option.some<ReadonlySet<number>>(ports) : Option.none();
+};
+
+export const probeWslListeningPorts = (
+  distro: string | null,
+): Effect.Effect<
+  Option.Option<ReadonlySet<number>>,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const command = ChildProcess.make(
+        "wsl.exe",
+        [...buildDistroArgs(distro), "--", "sh", "-c", "cat /proc/net/tcp /proc/net/tcp6"],
+        {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+          killSignal: "SIGTERM",
+          forceKillAfter: PROCESS_TERMINATE_GRACE,
+        },
+      );
+      const handle = yield* spawner.spawn(command);
+      const stdoutBytes = yield* Stream.runCollect(handle.stdout);
+      // Deliberately not gated on the exit code: `cat` reports failure when a
+      // kernel without IPv6 has no /proc/net/tcp6, and the IPv4 table it did
+      // print is still worth reading. parseWslListeningPorts decides whether the
+      // output is a real table.
+      yield* handle.exitCode;
+      return parseWslListeningPorts(decodeUtf8(concatChunks(stdoutBytes)));
+    }),
+  ).pipe(
+    Effect.timeoutOption(LISTENING_PORTS_TIMEOUT),
+    Effect.map(Option.flatten),
+    Effect.orElseSucceed(() => Option.none<ReadonlySet<number>>()),
+  );
+
 const getUserHomeImpl = (
   distro: string | null,
 ): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
@@ -778,6 +861,7 @@ export interface DesktopWslEnvironmentTestStub {
   readonly windowsToWslPath?: (distro: string | null, windowsPath: string) => Option.Option<string>;
   readonly getUserHome?: (distro: string | null) => Option.Option<string>;
   readonly getDistroIp?: (distro: string | null) => Option.Option<string>;
+  readonly probeListeningPorts?: (distro: string | null) => Option.Option<ReadonlySet<number>>;
   readonly ensureNodePty?: (
     distro: string | null,
     windowsRepoRoot: string,
@@ -800,6 +884,8 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
         Effect.succeed(stub.windowsToWslPath?.(distro, windowsPath) ?? Option.none()),
       getUserHome: (distro) => Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>()),
       getDistroIp: (distro) => Effect.succeed(stub.getDistroIp?.(distro) ?? Option.none<string>()),
+      probeListeningPorts: (distro) =>
+        Effect.succeed(stub.probeListeningPorts?.(distro) ?? Option.none<ReadonlySet<number>>()),
       ensureNodePty: (distro, windowsRepoRoot, options) =>
         Effect.succeed(
           stub.ensureNodePty?.(distro, windowsRepoRoot, options) ?? {
@@ -866,6 +952,11 @@ export const layer = Layer.effect(
     const getDistroIp = (distro: string | null) =>
       provideSpawner(getDistroIpImpl(distro)).pipe(Effect.withSpan("desktop.wsl.getDistroIp"));
 
+    const probeListeningPorts = (distro: string | null) =>
+      provideSpawner(probeWslListeningPorts(distro)).pipe(
+        Effect.withSpan("desktop.wsl.probeListeningPorts"),
+      );
+
     const probeDistros = provideSpawner(probeWslDistros).pipe(
       Effect.withSpan("desktop.wsl.probeDistros"),
     );
@@ -882,6 +973,7 @@ export const layer = Layer.effect(
       windowsToWslPath,
       getUserHome,
       getDistroIp,
+      probeListeningPorts,
       ensureNodePty: (distro, windowsRepoRoot, options) =>
         provideSpawner(ensureNodePtyImpl(distro, windowsRepoRoot, windowsToWslPath, options)).pipe(
           Effect.withSpan("desktop.wsl.ensureNodePty"),

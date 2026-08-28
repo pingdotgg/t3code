@@ -18,7 +18,8 @@
 // avoid colliding with the primary or with a previously-registered WSL
 // instance that's still tearing down. The scan only checks loopback
 // (127.0.0.1) since the WSL backend is loopback-only — the primary
-// owns LAN exposure when the user opts in.
+// owns LAN exposure when the user opts in — and skips ports the distro
+// itself already listens on, which the Windows-side check cannot see.
 
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -77,11 +78,15 @@ const buildLabel = (distro: string | null): string =>
 // Loopback-only port scan starting one above the primary's port. The
 // WSL backend is reachable via 127.0.0.1 from Windows (wslhost
 // auto-forwards), so we only need to verify the IPv4 loopback can bind.
+// `portsHeldInDistro` covers the other half: the backend binds inside the
+// distro, whose listeners are invisible to a Windows-side bind check.
 const scanForWslPort = Effect.fn("desktop.wslBackend.scanForWslPort")(function* (
   startPort: number,
+  portsHeldInDistro: ReadonlySet<number>,
 ): Effect.fn.Return<number, NetService.NetError, NetService.NetService> {
   const net = yield* NetService.NetService;
   for (let port = startPort; port <= MAX_TCP_PORT; port += 1) {
+    if (portsHeldInDistro.has(port)) continue;
     if (yield* net.canListenOnHost(port, "127.0.0.1")) {
       return port;
     }
@@ -136,7 +141,14 @@ export const layer = Layer.effect(
       readonly distro: string | null;
     }) {
       const primaryConfig = yield* serverExposure.backendConfig;
-      const port = yield* scanForWslPort(primaryConfig.port + 1).pipe(
+      // reconcile pre-warms the distro before calling us, so this is one extra
+      // round trip against an already-running VM. A failed probe (None) leaves
+      // the Windows-only scan in place rather than blocking the backend.
+      const distroPorts = yield* wslEnvironment.probeListeningPorts(input.distro);
+      const port = yield* scanForWslPort(
+        primaryConfig.port + 1,
+        Option.getOrElse(distroPorts, () => new Set<number>()),
+      ).pipe(
         Effect.provideService(NetService.NetService, net),
         Effect.map((value) => Option.some(value)),
         Effect.catch((error) =>
