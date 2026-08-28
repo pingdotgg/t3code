@@ -1,6 +1,7 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { MenuAction } from "@react-native-menu/menu";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -11,9 +12,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { resolveFileSelectionNavigationAction } from "../../lib/adaptive-navigation";
@@ -473,6 +475,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const navigation = useNavigation();
   const { fileInspector, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const iconColor = useUniwindTheme()["--color-icon"];
+  const isAndroid = Platform.OS === "android";
   const params = props.route.params;
   const relativePath = normalizeRoutePath(params.path);
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
@@ -554,6 +557,91 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   );
   useRegisterWorkspaceInspector(fileInspector.supported ? renderWorkspaceInspector : undefined);
 
+  const fileMenuActions = useMemo(() => {
+    if (relativePath === null) return [];
+    const canToggleMode = canPreview && !isImageFile;
+    return [
+      canToggleMode
+        ? ({
+            id: "preview",
+            title: "Preview",
+            icon: "eye",
+            inline: true,
+            onPress: () => setModeOverride({ path: relativePath, mode: "preview" }),
+          } as const)
+        : null,
+      canToggleMode
+        ? ({
+            id: "source",
+            title: "Source",
+            icon: "doc.text",
+            inline: true,
+            onPress: () => setModeOverride({ path: relativePath, mode: "source" }),
+          } as const)
+        : null,
+      {
+        id: "copy-path",
+        title: "Copy path",
+        icon: "doc.on.doc",
+        inline: false,
+        onPress: () => copyTextWithHaptic(relativePath),
+      } as const,
+      isBrowserFile && typeof assetPreviewUri === "string"
+        ? ({
+            id: "open-browser",
+            title: Platform.OS === "ios" ? "Open in Safari" : "Open in browser",
+            icon: "safari",
+            inline: false,
+            onPress: () => tryOpenExternalUrl(assetPreviewUri, "file-preview"),
+          } as const)
+        : null,
+      resolvedActiveMode === "preview" && (isBrowserFile || isImageFile)
+        ? ({
+            id: "refresh",
+            title: "Refresh",
+            icon: "arrow.clockwise",
+            inline: false,
+            onPress: () => setPreviewRevision((current) => current + 1),
+          } as const)
+        : null,
+    ].filter((action) => action !== null);
+  }, [assetPreviewUri, canPreview, isBrowserFile, isImageFile, relativePath, resolvedActiveMode]);
+
+  const androidFileMenuActions = useMemo<MenuAction[]>(
+    () =>
+      fileMenuActions.map((action) => ({
+        id: action.id,
+        title: action.title,
+        image: action.icon,
+        state: action.id === resolvedActiveMode ? "on" : undefined,
+      })),
+    [fileMenuActions, resolvedActiveMode],
+  );
+  const handleAndroidFileMenuAction = useCallback(
+    (event: { nativeEvent: { event: string } }) => {
+      const action = fileMenuActions.find(({ id }) => id === event.nativeEvent.event);
+      void action?.onPress();
+    },
+    [fileMenuActions],
+  );
+  const handleReturnToThread = useCallback(() => {
+    if (environmentId !== null && threadId !== null) {
+      navigation.dispatch(
+        StackActions.replace("Thread", {
+          environmentId: String(environmentId),
+          threadId: String(threadId),
+        }),
+      );
+    }
+  }, [environmentId, navigation, threadId]);
+  const handleBack = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    handleReturnToThread();
+  }, [handleReturnToThread, navigation]);
+
   if (selectedThread === null || environmentId === null || threadId === null) {
     return <LoadingScreen message="Opening file..." messagePlacement="above-spinner" />;
   }
@@ -582,6 +670,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             // Static header config lives in Stack.tsx (SOLID_HEADER_OPTIONS: solid
             // sheet-colored header — this route's content scrolls internally, so
             // there is nothing for glass to sample). Only dynamic values here.
+            headerShown: !isAndroid,
             headerTintColor: iconColor,
             headerTitle: basename(relativePath),
             title: basename(relativePath),
@@ -589,19 +678,40 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
               Platform.OS === "ios" && headerSubtitle.length > 0 ? headerSubtitle : undefined,
           }}
         />
+        {isAndroid ? (
+          <AndroidScreenHeader
+            title={basename(relativePath)}
+            subtitle={headerSubtitle}
+            onBack={handleBack}
+            trailing={
+              <>
+                {fileInspector.supported ? (
+                  <AndroidHeaderIconButton
+                    accessibilityLabel={
+                      panes.auxiliaryPaneVisible ? "Hide file navigator" : "Show file navigator"
+                    }
+                    icon="sidebar.right"
+                    onPress={toggleAuxiliaryPane}
+                  />
+                ) : null}
+                <ControlPillMenu
+                  actions={androidFileMenuActions}
+                  isAnchoredToRight
+                  title="File actions"
+                  onPressAction={handleAndroidFileMenuAction}
+                >
+                  <AndroidHeaderIconButton accessibilityLabel="File actions" icon="ellipsis" />
+                </ControlPillMenu>
+              </>
+            }
+          />
+        ) : null}
         <WorkspaceSidebarToolbar>
           {fileInspector.supported ? (
             <NativeHeaderToolbar.Button
               accessibilityLabel="Return to chat"
               icon="chevron.left"
-              onPress={() => {
-                navigation.dispatch(
-                  StackActions.replace("Thread", {
-                    environmentId: String(environmentId),
-                    threadId: String(threadId),
-                  }),
-                );
-              }}
+              onPress={handleReturnToThread}
             />
           ) : null}
         </WorkspaceSidebarToolbar>
@@ -617,50 +727,33 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             />
           ) : null}
           <NativeHeaderToolbar.Menu accessibilityLabel="File actions" icon="ellipsis">
-            {canPreview && !isImageFile ? (
+            {fileMenuActions.some(({ inline }) => inline) ? (
               <NativeHeaderToolbar.Menu inline>
-                <NativeHeaderToolbar.MenuAction
-                  icon="eye"
-                  isOn={resolvedActiveMode === "preview"}
-                  onPress={() => setModeOverride({ path: relativePath, mode: "preview" })}
-                >
-                  Preview
-                </NativeHeaderToolbar.MenuAction>
-                <NativeHeaderToolbar.MenuAction
-                  icon="doc.text"
-                  isOn={resolvedActiveMode === "source"}
-                  onPress={() => setModeOverride({ path: relativePath, mode: "source" })}
-                >
-                  Source
-                </NativeHeaderToolbar.MenuAction>
+                {fileMenuActions
+                  .filter(({ inline }) => inline)
+                  .map((action) => (
+                    <NativeHeaderToolbar.MenuAction
+                      key={action.id}
+                      icon={action.icon}
+                      isOn={action.id === resolvedActiveMode}
+                      onPress={action.onPress}
+                    >
+                      {action.title}
+                    </NativeHeaderToolbar.MenuAction>
+                  ))}
               </NativeHeaderToolbar.Menu>
             ) : null}
-            <NativeHeaderToolbar.MenuAction
-              icon="doc.on.doc"
-              onPress={() => copyTextWithHaptic(relativePath)}
-            >
-              Copy path
-            </NativeHeaderToolbar.MenuAction>
-            {isBrowserFile && typeof assetPreviewUri === "string" ? (
-              <NativeHeaderToolbar.MenuAction
-                icon="safari"
-                onPress={() => {
-                  void tryOpenExternalUrl(assetPreviewUri, "file-preview");
-                }}
-              >
-                Open in Safari
-              </NativeHeaderToolbar.MenuAction>
-            ) : null}
-            {resolvedActiveMode === "preview" && (isBrowserFile || isImageFile) ? (
-              <NativeHeaderToolbar.MenuAction
-                icon="arrow.clockwise"
-                onPress={() => {
-                  setPreviewRevision((current) => current + 1);
-                }}
-              >
-                Refresh
-              </NativeHeaderToolbar.MenuAction>
-            ) : null}
+            {fileMenuActions
+              .filter(({ inline }) => !inline)
+              .map((action) => (
+                <NativeHeaderToolbar.MenuAction
+                  key={action.id}
+                  icon={action.icon}
+                  onPress={action.onPress}
+                >
+                  {action.title}
+                </NativeHeaderToolbar.MenuAction>
+              ))}
           </NativeHeaderToolbar.Menu>
         </NativeHeaderToolbar>
         <FileContent
