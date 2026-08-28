@@ -2374,6 +2374,12 @@ export const buildWslRuntimeArchiveArgs = (
   ...WSL_RUNTIME_ARCHIVE_CONTENT_ROOTS,
 ];
 
+export const parseWslRuntimeArchiveMembers = (listing: string): ReadonlyArray<string> =>
+  listing
+    .split(/\r?\n/)
+    .map((member) => member.replace(/^\.\//, "").replace(/\/$/, ""))
+    .filter((member) => member.length > 0);
+
 export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (input: {
   readonly sourceDir: string;
   readonly archivePath: string;
@@ -2826,10 +2832,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
         new Error(`tar could not list WSL runtime archive: ${listing.stderr.trim()}`),
       );
     }
-    const members = listing.stdout
-      .split("\n")
-      .map((member) => member.replace(/^\.\//, "").replace(/\/$/, ""))
-      .filter((member) => member.length > 0);
+    const members = parseWslRuntimeArchiveMembers(listing.stdout);
     const forbiddenMember = members.find((member) =>
       WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)),
     );

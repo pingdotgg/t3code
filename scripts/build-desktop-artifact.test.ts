@@ -17,6 +17,7 @@ import {
   BundleNotSelfContainedError,
   BuildCommandFailedError,
   buildWslRuntimeArchiveArgs,
+  parseWslRuntimeArchiveMembers,
   DesktopDmgBackgroundSourceMissingError,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
@@ -1496,6 +1497,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "apps/server/dist",
       "node_modules",
     ]);
+  });
+
+  it("parses Windows bsdtar member listings with CRLF line endings", () => {
+    assert.deepStrictEqual(
+      parseWslRuntimeArchiveMembers(
+        "./apps/server/dist/bin.mjs\r\nnode_modules/node-pty/package.json\r\n",
+      ),
+      ["apps/server/dist/bin.mjs", "node_modules/node-pty/package.json"],
+    );
   });
 
   it("keeps Windows tar targets colon-free so GNU tar does not read them as remote hosts", () => {
