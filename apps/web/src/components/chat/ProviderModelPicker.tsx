@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
+import { Badge } from "../ui/badge";
 import { buttonVariants } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -180,9 +181,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>
           {selectedModel?.isUnavailable ? (
-            <span className="shrink-0 text-[10px] font-medium text-muted-foreground">
+            <Badge variant="outline" size="sm">
               Unavailable
-            </span>
+            </Badge>
           ) : null}
         </span>
         <span aria-hidden="true" className="flex items-center">

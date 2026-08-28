@@ -332,15 +332,16 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             .pipe(Effect.flatMap(runAgainstServer), Effect.scoped)
         : serverOwner.withServer(runAgainstServer);
     const rawOutput = yield* serverOutput.pipe(
-      Effect.mapError((cause) =>
-        OpenCodeRuntime.OpenCodeRuntimeError.is(cause)
-          ? new TextGenerationError({
+      Effect.catchTags({
+        OpenCodeRuntimeError: (cause) =>
+          Effect.fail(
+            new TextGenerationError({
               operation: input.operation,
               detail: OpenCodeRuntime.openCodeRuntimeErrorDetail(cause),
               cause,
-            })
-          : cause,
-      ),
+            }),
+          ),
+      }),
     );
 
     const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson));

@@ -9,6 +9,7 @@ import {
 } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
+import { Badge } from "../ui/badge";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -77,9 +78,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
             </span>
           ) : null}
           {props.unavailable ? (
-            <span className="shrink-0 rounded border border-border bg-muted/50 px-1 py-px text-[10px] font-medium leading-none text-muted-foreground">
+            <Badge variant="outline" size="sm">
               Unavailable
-            </span>
+            </Badge>
           ) : null}
         </div>
         {props.showProvider && (
