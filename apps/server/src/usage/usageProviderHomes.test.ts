@@ -109,6 +109,29 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
       }),
     );
 
+    it.effect("prefers the shadow-overlay shared home over an inert instance CODEX_HOME", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const settings = decodeSettings({
+          providerInstances: {
+            // With a shadow overlay the runtime overrides CODEX_HOME, and
+            // the shadow's sessions symlink back to the shared home.
+            codex_shadow: {
+              driver: "codex",
+              config: { shadowHomePath: "~/.codex-shadow" },
+              environment: [
+                { name: "CODEX_HOME", value: path.join(NodeOS.homedir(), ".codex-env") },
+              ],
+            },
+          },
+        });
+
+        const homes = yield* resolveUsageProviderHomes(settings, {});
+
+        expect(homes.codexSessionDirs).toEqual([path.join(NodeOS.homedir(), ".codex", "sessions")]);
+      }),
+    );
+
     it.effect("ignores the server's ambient CLAUDE_CONFIG_DIR", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

@@ -87,12 +87,16 @@ export const resolveUsageProviderHomes = Effect.fn("resolveUsageProviderHomes")(
       );
       if (config === null) continue;
       const layout = yield* resolveCodexHomeLayout(config);
-      // The runtime only exports CODEX_HOME from `homePath` when it is set,
-      // so with an empty `homePath` an instance-level CODEX_HOME reaches the
-      // CLI and decides where sessions land.
+      // The runtime overrides CODEX_HOME whenever the layout yields an
+      // effective home (explicit homePath, or a shadow overlay whose
+      // sessions symlink back to the shared home). Only without one does an
+      // instance-level CODEX_HOME reach the CLI and decide where sessions
+      // land.
       const environment = mergeProviderInstanceEnvironment(envelope.environment, {});
       const environmentHome =
-        config.homePath.trim().length === 0 ? environmentHomePath(environment["CODEX_HOME"]) : null;
+        layout.effectiveHomePath === undefined
+          ? environmentHomePath(environment["CODEX_HOME"])
+          : null;
       pushUnique(codexSessionDirs, path.join(environmentHome ?? layout.sharedHomePath, "sessions"));
     }
   }
