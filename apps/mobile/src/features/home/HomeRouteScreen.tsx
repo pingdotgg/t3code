@@ -9,6 +9,7 @@ import { useProjects, useThreadShells } from "../../state/entities";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { shouldOfferSidebarReveal } from "../../lib/layout";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
@@ -25,7 +26,7 @@ import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
 export function HomeRouteScreen() {
-  const { layout } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
@@ -123,6 +124,18 @@ export function HomeRouteScreen() {
           }
         />
         <WorkspaceEmptyDetail
+          // Android draws no header on this route, so the pane itself has to
+          // offer the sidebar back. iOS gets it from WorkspaceSidebarToolbar.
+          onShowSidebar={
+            shouldOfferSidebarReveal({
+              primarySidebarVisible: panes.primarySidebarVisible,
+              // iOS carries it in this route's navigation bar; Android draws
+              // no header here at all.
+              hasHeaderSidebarToggle: Platform.OS !== "android",
+            })
+              ? togglePrimarySidebar
+              : undefined
+          }
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
         />
       </>
