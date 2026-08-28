@@ -42,6 +42,7 @@ import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
+import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -147,6 +148,21 @@ export function deriveProviderModelsForDisplay(input: {
       },
   );
   return [...serverModels, ...customModels];
+}
+
+function ProviderAuthEmail(props: { readonly email: string | undefined }) {
+  const email = props.email?.trim();
+  if (!email) return null;
+
+  return (
+    <RedactedSensitiveText
+      value={email}
+      ariaLabel="Toggle account email visibility"
+      revealTooltip="Click to reveal email"
+      hideTooltip="Click to hide email"
+      className="max-w-full truncate"
+    />
+  );
 }
 
 function ProviderEnvironmentSection(props: {
@@ -420,6 +436,7 @@ export function ProviderInstanceCard({
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const rawSummary = getProviderSummary(liveProvider);
   const summary = enabled ? rawSummary : { headline: "Disabled", detail: null };
+  const authEmail = liveProvider?.auth.email;
   const showEditorStatus = enabled && (statusKey === "warning" || statusKey === "error");
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
@@ -636,12 +653,12 @@ export function ProviderInstanceCard({
   }
 
   return (
-    <div className="min-w-0">
+    <div className="min-w-0 lg:flex lg:h-full lg:min-h-0 lg:flex-col">
       <div
         inert={readOnly}
         aria-disabled={readOnly || undefined}
         className={cn(
-          "flex min-h-16 items-center justify-between gap-3 border-b border-border/70 px-4 py-3",
+          "flex min-h-16 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-4 py-3",
           readOnly && "opacity-50 select-none",
         )}
       >
@@ -755,7 +772,7 @@ export function ProviderInstanceCard({
         </div>
       </div>
 
-      <div className="flex h-11 border-b border-border/70 px-1">
+      <div className="flex h-11 shrink-0 border-b border-border/70 px-1">
         {driverOption !== undefined ? (
           <button
             type="button"
@@ -779,9 +796,21 @@ export function ProviderInstanceCard({
       <div
         inert={readOnly}
         aria-disabled={readOnly || undefined}
-        className={cn("px-4 py-5", readOnly && "opacity-50 select-none")}
+        className={cn("lg:min-h-0 lg:flex-1", readOnly && "opacity-50 select-none")}
       >
-        <div className="space-y-5" hidden={visibleTab !== "configuration"}>
+        <div
+          className="space-y-5 px-4 py-5 lg:h-full lg:overflow-y-auto"
+          hidden={visibleTab !== "configuration"}
+        >
+          {authEmail?.trim() ? (
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-foreground">Account email</div>
+              <div className="mt-1.5 flex min-h-8 min-w-0 items-center">
+                <ProviderAuthEmail email={authEmail} />
+              </div>
+            </div>
+          ) : null}
+
           <div>
             <label htmlFor={`provider-instance-${instanceId}-display-name`} className="block">
               <span className="text-xs font-medium text-foreground">Display name</span>
@@ -838,7 +867,7 @@ export function ProviderInstanceCard({
           ) : null}
         </div>
         {driverOption !== undefined ? (
-          <div hidden={visibleTab !== "models"}>
+          <div className="px-4 py-5 lg:h-full lg:min-h-0" hidden={visibleTab !== "models"}>
             <ProviderModelsSection
               instanceId={instanceId}
               driverKind={driverKind}

@@ -18,6 +18,7 @@ const runtimeMock = {
   state: {
     startCalls: [] as string[],
     promptUrls: [] as string[],
+    promptParts: [] as ReadonlyArray<unknown>[],
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
     sessionCreateError: undefined as unknown,
@@ -30,6 +31,7 @@ const runtimeMock = {
   reset() {
     this.state.startCalls.length = 0;
     this.state.promptUrls.length = 0;
+    this.state.promptParts.length = 0;
     this.state.authHeaders.length = 0;
     this.state.closeCalls.length = 0;
     this.state.sessionCreateError = undefined;
@@ -73,8 +75,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
           }
           return runtimeMock.state.sessionResult ?? { data: { id: `${baseUrl}/session` } };
         },
-        prompt: async () => {
+        prompt: async (input: { readonly parts: ReadonlyArray<unknown> }) => {
           runtimeMock.state.promptUrls.push(baseUrl);
+          runtimeMock.state.promptParts.push(input.parts);
           runtimeMock.state.authHeaders.push(
             serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
           );
@@ -187,6 +190,45 @@ const advanceIdleClock = Effect.gen(function* () {
 });
 
 it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
+  it.effect("excludes generic files from thread title generation", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [{ type: "text", text: '{"title":"Review uploaded report"}' }],
+          },
+        };
+
+        yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Review these attachments.",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          attachments: [
+            {
+              type: "image",
+              id: "thread-image-attachment",
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 3,
+            },
+            {
+              type: "file",
+              id: "thread-report-attachment-pdf",
+              name: "report.pdf",
+              mimeType: "application/pdf",
+              sizeBytes: 42,
+            },
+          ],
+        });
+
+        expect(runtimeMock.state.promptParts[0]).toEqual([
+          expect.objectContaining({ type: "text" }),
+          expect.objectContaining({ type: "file", filename: "screenshot.png" }),
+        ]);
+      }),
+    ),
+  );
+
   it.effect("reuses a warm server across back-to-back requests and closes it after idling", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
