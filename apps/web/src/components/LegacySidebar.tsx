@@ -22,7 +22,7 @@ import {
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
-import { LinuxIcon } from "./LinuxIcon";
+import { getEnvironmentIcon } from "./Icons";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -397,8 +397,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const remoteEnvLabel = environment?.label ?? null;
   // A desktop-local secondary backend (e.g. the WSL backend) shows up as a
   // bearer environment whose connection id is prefixed "local:". It runs on the
-  // user's own machine, so the cloud icon is misleading — label it "Local" and
-  // suppress the cloud icon (the project header already shows a container icon
+  // user's own machine, so the cloud icon is misleading, label it "Local" and
+  // suppress the cloud icon (the project header already shows a Linux icon
   // for desktop-local projects, see sidebarProjectGrouping).
   const isDesktopLocalThread =
     environment !== null && isDesktopLocalConnectionTarget(environment.entry.target);
@@ -1123,6 +1123,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isManualProjectSorting,
     dragHandleProps,
   } = props;
+  const EnvironmentIcon = getEnvironmentIcon({
+    isPrimary: false,
+    isDesktopLocal: project.allRemoteMembersAreDesktopLocal,
+  });
   const threadSortOrder = useClientSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
   );
@@ -2328,7 +2332,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               }
             >
               {project.allRemoteMembersAreDesktopLocal ? (
-                <LinuxIcon className="size-3" />
+                <EnvironmentIcon className="size-3" />
               ) : (
                 <CloudIcon className="size-3" />
               )}

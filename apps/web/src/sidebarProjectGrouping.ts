@@ -18,7 +18,7 @@ export interface SidebarProjectSnapshot extends Project {
   // desktopLocal env (today: the WSL backend). The sidebar uses this
   // to differentiate "lives on this machine but in a sandbox" from
   // "lives on a real remote" so the project header can pick a
-  // container icon instead of the generic cloud icon.
+  // Linux icon instead of the generic cloud icon.
   allRemoteMembersAreDesktopLocal: boolean;
   memberProjects: readonly SidebarProjectGroupMember[];
   memberProjectRefs: readonly ScopedProjectRef[];

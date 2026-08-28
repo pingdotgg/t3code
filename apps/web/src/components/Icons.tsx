@@ -1,7 +1,17 @@
 import React, { type SVGProps, useId } from "react";
+import { CloudIcon, MonitorIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
+import { LinuxIcon } from "./LinuxIcon";
+
+export { LinuxIcon };
 
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
+
+export function getEnvironmentIcon(input: { isPrimary: boolean; isDesktopLocal: boolean }): Icon {
+  if (input.isPrimary) return MonitorIcon;
+  if (input.isDesktopLocal) return LinuxIcon;
+  return CloudIcon;
+}
 
 export const GitHubIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 1024 1024" fill="none">

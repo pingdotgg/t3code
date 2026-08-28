@@ -1,9 +1,8 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { CloudIcon, MonitorIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
-import { LinuxIcon } from "./LinuxIcon";
+import { getEnvironmentIcon } from "./Icons";
 import {
   Select,
   SelectGroup,
@@ -32,11 +31,10 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   const activeEnvironment = useMemo(() => {
     return availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
   }, [availableEnvironments, environmentId]);
-  const EnvironmentIcon = activeEnvironment?.isPrimary
-    ? MonitorIcon
-    : activeEnvironment?.isDesktopLocal
-      ? LinuxIcon
-      : CloudIcon;
+  const EnvironmentIcon = getEnvironmentIcon({
+    isPrimary: activeEnvironment?.isPrimary ?? false,
+    isDesktopLocal: activeEnvironment?.isDesktopLocal ?? false,
+  });
 
   const environmentItems = useMemo(
     () =>
@@ -104,20 +102,17 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
       <SelectPopup>
         <SelectGroup>
           <SelectGroupLabel>Run on</SelectGroupLabel>
-          {availableEnvironments.map((env) => (
-            <SelectItem key={env.environmentId} value={env.environmentId}>
-              <span className="inline-flex items-center gap-1.5">
-                {env.isPrimary ? (
-                  <MonitorIcon className="size-3" />
-                ) : env.isDesktopLocal ? (
-                  <LinuxIcon className="size-3" />
-                ) : (
-                  <CloudIcon className="size-3" />
-                )}
-                {env.label}
-              </span>
-            </SelectItem>
-          ))}
+          {availableEnvironments.map((env) => {
+            const EnvironmentOptionIcon = getEnvironmentIcon(env);
+            return (
+              <SelectItem key={env.environmentId} value={env.environmentId}>
+                <span className="inline-flex items-center gap-1.5">
+                  <EnvironmentOptionIcon className="size-3" />
+                  {env.label}
+                </span>
+              </SelectItem>
+            );
+          })}
         </SelectGroup>
       </SelectPopup>
     </Select>

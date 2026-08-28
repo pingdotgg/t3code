@@ -167,7 +167,7 @@ import {
   type SnoozePreset,
 } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
-import { LinuxIcon } from "./LinuxIcon";
+import { getEnvironmentIcon } from "./Icons";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import {
@@ -780,6 +780,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const EnvironmentIcon = getEnvironmentIcon({
+    isPrimary: false,
+    isDesktopLocal: props.isDesktopLocalEnvironment,
+  });
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -1577,11 +1581,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               >
                 {isRemote ? (
                   <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                    {props.isDesktopLocalEnvironment ? (
-                      <LinuxIcon aria-hidden className="size-3.5" />
-                    ) : (
-                      <ServerIcon aria-hidden className="size-3.5" />
-                    )}
+                    <EnvironmentIcon aria-hidden className="size-3.5" />
                   </span>
                 ) : null}
                 {driverKind ? (
