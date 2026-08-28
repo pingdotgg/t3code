@@ -10,6 +10,7 @@ import {
   AuthTokenExchangeGrantType,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  type DpopFailureReason,
   EnvironmentId,
   EventId,
   GitCommandError,
@@ -1115,6 +1116,7 @@ const exchangeAccessToken = (
       readonly _tag?: string;
       readonly code?: string;
       readonly reason?: string;
+      readonly dpopFailureReason?: DpopFailureReason;
       readonly traceId?: string;
     }>(response);
     return {
@@ -1797,6 +1799,38 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("reports clock skew for a future-dated DPoP token exchange proof", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const credentialResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: ownerCookie },
+        body: yield* HttpBody.json({}),
+      });
+      const credential = (yield* credentialResponse.json) as { readonly credential: string };
+      const tokenUrl = yield* getHttpServerUrl("/oauth/token");
+      const now = yield* DateTime.now;
+      const dpop = makeDpopProof({
+        method: "POST",
+        url: tokenUrl,
+        iat: Math.floor(now.epochMilliseconds / 1_000) + 25,
+      });
+
+      const exchange = yield* exchangeAccessToken(credential.credential, {
+        headers: { dpop: dpop.proof },
+        scope: "orchestration:read orchestration:operate terminal:operate review:write",
+      });
+
+      assert.equal(exchange.response.status, 401);
+      assert.equal(exchange.body._tag, "EnvironmentAuthInvalidError");
+      assert.equal(exchange.body.code, "auth_invalid");
+      assert.equal(exchange.body.reason, "invalid_credential");
+      assert.equal(exchange.body.dpopFailureReason, "time_window");
+      assert.equal(typeof exchange.body.traceId, "string");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("rejects replayed DPoP proofs across token exchanges", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -1846,6 +1880,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(replayBootstrap.body._tag, "EnvironmentAuthInvalidError");
       assert.equal(replayBootstrap.body.code, "auth_invalid");
       assert.equal(replayBootstrap.body.reason, "invalid_credential");
+      assert.equal(replayBootstrap.body.dpopFailureReason, "replay");
       assert.equal(typeof replayBootstrap.body.traceId, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -1921,6 +1956,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(bootstrap.body._tag, "EnvironmentAuthInvalidError");
       assert.equal(bootstrap.body.code, "auth_invalid");
       assert.equal(bootstrap.body.reason, "invalid_credential");
+      assert.equal(bootstrap.body.dpopFailureReason, "request_mismatch");
       assert.equal(typeof bootstrap.body.traceId, "string");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

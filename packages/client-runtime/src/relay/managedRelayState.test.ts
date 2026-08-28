@@ -1,8 +1,9 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import type {
-  RelayClientDeviceRecord,
-  RelayClientEnvironmentRecord,
-  RelayEnvironmentStatusResponse,
+import {
+  RelayAuthInvalidError,
+  type RelayClientDeviceRecord,
+  type RelayClientEnvironmentRecord,
+  type RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -12,6 +13,7 @@ import * as Stream from "effect/Stream";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, vi } from "vite-plus/test";
 
+import { DPOP_UNKNOWN_HINT } from "./errorPresentation.ts";
 import * as ManagedRelay from "./managedRelay.ts";
 import {
   createManagedRelayQueryManager,
@@ -419,6 +421,33 @@ describe("createManagedRelayQueryManager", () => {
         error: "Could not get relay environment status.",
         errorTraceId: "trace-status",
       });
+    });
+  });
+
+  it("presents clock skew as one possible cause for snapshot requests from older relays", async () => {
+    const manager = createManager({
+      getEnvironmentStatus: () =>
+        Effect.fail(
+          new ManagedRelay.ManagedRelayRequestFailedError({
+            action: "get relay environment status",
+            cause: new Error("Relay request failed."),
+            relayError: new RelayAuthInvalidError({
+              code: "auth_invalid",
+              reason: "invalid_dpop",
+              traceId: "trace-status",
+            }),
+            traceId: "trace-status",
+          }),
+        ),
+    });
+    setSession();
+    const atom = manager.environmentStatusAtom({ accountId: "account-1", environment });
+
+    registry.get(atom);
+    await vi.waitFor(() => {
+      expect(readManagedRelaySnapshotState(registry.get(atom)).error).toBe(
+        `Relay rejected the DPoP proof. ${DPOP_UNKNOWN_HINT}`,
+      );
     });
   });
 });

@@ -10,7 +10,11 @@ import {
   resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
-import { environmentMismatchError, mapRemoteEnvironmentError } from "../connection/errors.ts";
+import {
+  environmentMismatchError,
+  mapRemoteDpopEnvironmentError,
+  mapRemoteEnvironmentError,
+} from "../connection/errors.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "../connection/model.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
@@ -69,7 +73,7 @@ const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
     ? error
-    : mapRemoteEnvironmentError(error);
+    : mapRemoteDpopEnvironmentError(error);
 }
 
 const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescriptor")(function* (
@@ -276,7 +280,7 @@ export const make = Effect.gen(function* () {
         scopes: presentation.scopes,
         clientMetadata: presentation.metadata,
       }).pipe(
-        Effect.mapError(mapRemoteEnvironmentError),
+        Effect.mapError(mapRemoteDpopEnvironmentError),
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.withSpan("environment.authorization.accessToken.exchange"),
       );

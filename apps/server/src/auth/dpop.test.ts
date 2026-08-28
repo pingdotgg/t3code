@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as PlatformError from "effect/PlatformError";
 
 import { SecretStorePersistError } from "./ServerSecretStore.ts";
-import { mapDpopReplayStoreError } from "./dpop.ts";
+import { mapDpopFailureReason, mapDpopReplayStoreError } from "./dpop.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new SecretStorePersistError({
@@ -23,6 +23,7 @@ describe("mapDpopReplayStoreError", () => {
     expect(error._tag).toBe("ServerAuthInvalidCredentialError");
     if (error._tag === "ServerAuthInvalidCredentialError") {
       expect(error.cause).toBe(cause);
+      expect(error.dpopFailureReason).toBe("replay");
     }
   });
 
@@ -32,6 +33,26 @@ describe("mapDpopReplayStoreError", () => {
     expect(error._tag).toBe("ServerAuthDpopReplayStateRecordError");
     if (error._tag === "ServerAuthDpopReplayStateRecordError") {
       expect(error.message).toBe("Failed to record DPoP proof replay state.");
+    }
+  });
+});
+
+describe("mapDpopFailureReason", () => {
+  it("maps verifier failures to safe client-facing categories", () => {
+    const mappings = [
+      ["time_window", "time_window"],
+      ["key_mismatch", "key_mismatch"],
+      ["method_mismatch", "request_mismatch"],
+      ["url_mismatch", "request_mismatch"],
+      ["access_token_hash_mismatch", "token_mismatch"],
+      ["missing_proof", "invalid_proof"],
+      ["malformed_proof", "invalid_proof"],
+      ["invalid_signature", "invalid_proof"],
+      ["invalid_proof", "invalid_proof"],
+    ] as const;
+
+    for (const [code, expected] of mappings) {
+      expect(mapDpopFailureReason(code)).toBe(expected);
     }
   });
 });

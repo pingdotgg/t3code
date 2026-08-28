@@ -49,6 +49,12 @@ records instead carry OTLP resource, scope, and optional status fields.
 The `TraceRecord`, `EffectTraceRecord`, and `OtlpTraceRecord` schemas live in
 `packages/shared/src/observability.ts`.
 
+DPoP proof failures include the safe `environment.dpop.failure_code` span
+attribute. A `time_window` failure means that a signed proof was too old or too
+far in the future for the environment server's allowed window. It can point to
+a date or time problem on either device, but it can also result from a delayed
+request.
+
 ### Metrics
 
 Metrics are not written to a local file.

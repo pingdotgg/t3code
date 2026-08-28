@@ -462,6 +462,43 @@ describe("ManagedRelayClient", () => {
     }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
   });
 
+  it.effect("accepts generic DPoP errors from relays without the optional reason", () => {
+    const fetchFn = (() =>
+      Promise.resolve(
+        Response.json(
+          {
+            _tag: "RelayAuthInvalidError",
+            code: "auth_invalid",
+            reason: "invalid_dpop",
+            traceId: "trace-old-relay",
+          },
+          { status: 401 },
+        ),
+      )) satisfies typeof globalThis.fetch;
+
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      const error = yield* relayClient
+        .listEnvironments({ clerkToken: "clerk-token" })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ManagedRelayRequestFailedError",
+        traceId: "trace-old-relay",
+        relayError: {
+          _tag: "RelayAuthInvalidError",
+          reason: "invalid_dpop",
+        },
+      });
+      if (
+        error._tag === "ManagedRelayRequestFailedError" &&
+        error.relayError?._tag === "RelayAuthInvalidError"
+      ) {
+        expect(error.relayError.dpopFailureReason).toBeUndefined();
+      }
+    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
+  });
+
   it.effect("lists account devices through the Clerk bearer client endpoint", () => {
     const fetchFn = ((input, init) => {
       expect(String(input)).toBe("https://relay.example.test/v1/client/devices");
