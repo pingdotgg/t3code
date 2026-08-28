@@ -177,7 +177,7 @@ import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
@@ -3549,8 +3549,10 @@ export default function Sidebar() {
                     <ChevronDownIcon className="-mr-px size-4 shrink-0" />
                   </MenuTrigger>
                   <MenuPopup align="start" className="w-(--anchor-width)">
-                    {projectGroups.length >= 5 ? (
-                      <div className="sticky -top-1 z-10 -mx-1 -mt-1 mb-1 rounded-t-[calc(var(--radius-lg)-1px)] border-b border-border bg-popover">
+                    {/* Stay mounted while a query is set even if the list shrinks
+                        below the threshold, or the filter would become unclearable. */}
+                    {projectGroups.length >= 5 || projectScopeSearchQuery.length > 0 ? (
+                      <div className="sticky -top-1 z-10 -mx-1 -mt-1 mb-1 rounded-t-[calc(var(--radius-lg)-1px)] border-b border-border bg-[color-mix(in_srgb,var(--popover)_18%,color-mix(in_srgb,var(--popover)_var(--glass-opacity),transparent))] backdrop-blur-(--glass-blur)">
                         <div className="flex h-8 items-center gap-2 px-2">
                           <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
                           <Input
@@ -3572,6 +3574,9 @@ export default function Sidebar() {
                         </div>
                       </div>
                     ) : null}
+                    {normalizedProjectScopeQuery && filteredProjectScopeGroups.length === 0 ? (
+                      <MenuItem disabled>No projects found</MenuItem>
+                    ) : null}
                     <MenuRadioGroup
                       value={projectScopeKey ?? "all"}
                       onValueChange={(value) =>
@@ -3588,11 +3593,6 @@ export default function Sidebar() {
                           <span className="min-w-0 truncate text-sm">All projects</span>
                         </MenuRadioItem>
                       )}
-                      {normalizedProjectScopeQuery && filteredProjectScopeGroups.length === 0 ? (
-                        <div className="px-2 py-3 text-center text-sm text-muted-foreground">
-                          No projects found
-                        </div>
-                      ) : null}
                       {filteredProjectScopeGroups.map((project) => {
                         const scopeKey = project.projectKey;
                         return (
