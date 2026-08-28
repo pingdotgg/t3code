@@ -270,6 +270,47 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
     }),
   );
 
+  it.effect("includes discovered filesystem skills even when ACP startup fails", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-grok-skills-snap-" });
+          const grokHome = path.join(dir, "grok-home");
+          const skillDir = path.join(grokHome, "skills", "unslop");
+          const grokPath = path.join(dir, "grok");
+          yield* fs.makeDirectory(skillDir, { recursive: true });
+          yield* fs.writeFileString(
+            path.join(skillDir, "SKILL.md"),
+            ["---", "name: unslop", "description: Cut AI tells.", "---", "", "# Unslop"].join("\n"),
+          );
+          yield* fs.writeFileString(
+            grokPath,
+            ["#!/bin/sh", 'printf "grok-cli 0.0.99\\n"', "exit 0", ""].join("\n"),
+          );
+          yield* fs.chmod(grokPath, 0o755);
+
+          return yield* checkGrokProviderStatus(
+            decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            { ...process.env, GROK_HOME: grokHome },
+          );
+        }),
+      );
+
+      expect(snapshot.status).toBe("error");
+      expect(snapshot.message).toContain("ACP startup failed");
+      expect(snapshot.skills).toEqual([
+        expect.objectContaining({
+          name: "unslop",
+          enabled: true,
+          scope: "user",
+          description: "Cut AI tells.",
+        }),
+      ]);
+    }),
+  );
+
   it.effect("reports authenticated after successful Grok ACP discovery", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
