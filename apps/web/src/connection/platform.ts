@@ -59,6 +59,7 @@ import {
   type DesktopSecondaryBootstrapsRead,
 } from "./desktopLocal";
 import { connectionStorageLayer } from "./storage";
+import { clientPresentationMetadata } from "./clientMetadata";
 
 let nextObservedRpcRequestId = 0;
 
@@ -115,15 +116,16 @@ const wakeupsLayer = Wakeups.layer({
 });
 
 function clientMetadata() {
-  const desktop = window.desktopBridge !== undefined;
-  const platform = navigator.platform.trim();
-  return {
-    label: desktop ? "T3 Code Desktop" : "T3 Code Web",
-    deviceType: "desktop" as const,
-    ...(platform === "" ? {} : { os: platform }),
-    surface: desktop ? ("desktop" as const) : ("web" as const),
-    ...(APP_VERSION === "0.0.0" ? {} : { appVersion: APP_VERSION }),
-  };
+  return clientPresentationMetadata({
+    appVersion: APP_VERSION,
+    hosted: isHostedStaticApp(),
+    identity: {
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      maxTouchPoints: navigator.maxTouchPoints,
+    },
+    desktopBridge: window.desktopBridge,
+  });
 }
 
 function sshPreparationError(cause: unknown) {

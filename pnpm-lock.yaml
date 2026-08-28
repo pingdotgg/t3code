@@ -170,6 +170,9 @@ importers:
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
+      acorn:
+        specifier: 8.16.0
+        version: 8.16.0
       cross-env:
         specifier: ^10.1.0
         version: 10.1.0

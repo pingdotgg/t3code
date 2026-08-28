@@ -34,6 +34,14 @@ vi.mock("expo-constants", () => ({
 }));
 
 vi.mock("expo-device", () => ({
+  deviceType: 1,
+  DeviceType: {
+    UNKNOWN: 0,
+    PHONE: 1,
+    TABLET: 2,
+    DESKTOP: 3,
+    TV: 4,
+  },
   osVersion: "18.4.1",
   modelName: "iPhone 15 Pro",
 }));

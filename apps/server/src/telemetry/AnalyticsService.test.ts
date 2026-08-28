@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as ServerConfig from "../config.ts";
 import { getTelemetryIdentifier } from "./Identify.ts";
@@ -20,6 +21,11 @@ interface RecordedBatchRequest {
       readonly properties?: {
         readonly index?: number;
         readonly clientType?: string;
+        readonly serverOs?: string;
+        readonly serverArch?: string;
+        readonly serverAppVersion?: string;
+        readonly serverMode?: string;
+        readonly t3CodeVersion?: string;
       };
     }>;
   } | null;
@@ -31,6 +37,11 @@ interface RecordedBatchBody {
     readonly properties?: {
       readonly index?: number;
       readonly clientType?: string;
+      readonly serverOs?: string;
+      readonly serverArch?: string;
+      readonly serverAppVersion?: string;
+      readonly serverMode?: string;
+      readonly t3CodeVersion?: string;
     };
   }>;
 }
@@ -71,6 +82,12 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       );
       const runtimeLayer = telemetryLayer.pipe(
         Layer.provide(configLayer),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(HostProcessPlatform, "linux"),
+            Layer.succeed(HostProcessArchitecture, "arm64"),
+          ),
+        ),
         Layer.provideMerge(NodeHttpServer.layerTest),
       );
 
@@ -114,6 +131,18 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       assert.equal(
         batchRequests.every((request) =>
           request.body.batch.every((event) => event.properties?.clientType === "cli-web-client"),
+        ),
+        true,
+      );
+      assert.equal(
+        batchRequests.every((request) =>
+          request.body.batch.every(
+            (event) =>
+              event.properties?.serverOs === "Linux" &&
+              event.properties.serverArch === "arm64" &&
+              event.properties.serverAppVersion === event.properties.t3CodeVersion &&
+              event.properties.serverMode === "web",
+          ),
         ),
         true,
       );

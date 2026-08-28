@@ -223,7 +223,8 @@ describe("ConnectionResolver", () => {
         environmentId: ENVIRONMENT_ID,
         label: "Primary",
         httpBaseUrl: "http://127.0.0.1:3777",
-        socketUrl: "ws://127.0.0.1:3777/ws?clientSurface=web",
+        socketUrl:
+          "ws://127.0.0.1:3777/ws?clientSurface=web&clientDeviceType=desktop&connectionMethod=direct",
         httpAuthorization: null,
         target,
       });
@@ -232,11 +233,14 @@ describe("ConnectionResolver", () => {
 
   it.effect("authorizes a desktop primary environment with its platform bearer token", () =>
     Effect.gen(function* () {
-      const bearerInputs = yield* Ref.make<ReadonlyArray<string>>([]);
+      const bearerInputs = yield* Ref.make<ReadonlyArray<{ token: string; method: string }>>([]);
       const brokerLayer = yield* makeDependencies({
         primaryBearerToken: "desktop-bearer",
         authorizeBearer: (input) =>
-          Ref.update(bearerInputs, (values) => [...values, input.bearerToken]).pipe(
+          Ref.update(bearerInputs, (values) => [
+            ...values,
+            { token: input.bearerToken, method: input.connectionMethod },
+          ]).pipe(
             Effect.as({
               environmentId: input.expectedEnvironmentId,
               label: "Primary",
@@ -262,13 +266,13 @@ describe("ConnectionResolver", () => {
         httpAuthorization: { _tag: "Bearer", token: "desktop-bearer" },
         target,
       });
-      expect(yield* Ref.get(bearerInputs)).toEqual(["desktop-bearer"]);
+      expect(yield* Ref.get(bearerInputs)).toEqual([{ token: "desktop-bearer", method: "direct" }]);
     }),
   );
 
   it.effect("uses the registered bearer profile without re-reading the profile store", () =>
     Effect.gen(function* () {
-      const bearerInputs = yield* Ref.make<ReadonlyArray<string>>([]);
+      const bearerInputs = yield* Ref.make<ReadonlyArray<{ token: string; method: string }>>([]);
       const target = new BearerConnectionTarget({
         environmentId: ENVIRONMENT_ID,
         label: "Saved",
@@ -284,7 +288,10 @@ describe("ConnectionResolver", () => {
       const brokerLayer = yield* makeDependencies({
         credentials: [["saved-1", new BearerConnectionCredential({ token: "secret-bearer" })]],
         authorizeBearer: (input) =>
-          Ref.update(bearerInputs, (values) => [...values, input.bearerToken]).pipe(
+          Ref.update(bearerInputs, (values) => [
+            ...values,
+            { token: input.bearerToken, method: input.connectionMethod },
+          ]).pipe(
             Effect.as({
               environmentId: input.expectedEnvironmentId,
               label: "Saved",
@@ -302,7 +309,7 @@ describe("ConnectionResolver", () => {
       expect(
         (yield* broker.prepare(catalogEntry(target, Option.some(profile)))).socketUrl,
       ).toContain("wsTicket=ticket");
-      expect(yield* Ref.get(bearerInputs)).toEqual(["secret-bearer"]);
+      expect(yield* Ref.get(bearerInputs)).toEqual([{ token: "secret-bearer", method: "direct" }]);
     }),
   );
 
@@ -411,6 +418,7 @@ describe("ConnectionResolver", () => {
   it.effect("delegates SSH launch to the platform gateway before remote authorization", () =>
     Effect.gen(function* () {
       const preparedTargets = yield* Ref.make<ReadonlyArray<DesktopSshEnvironmentTarget>>([]);
+      const connectionMethods = yield* Ref.make<ReadonlyArray<string>>([]);
       const target = new SshConnectionTarget({
         environmentId: ENVIRONMENT_ID,
         label: "SSH",
@@ -435,6 +443,19 @@ describe("ConnectionResolver", () => {
               bearerToken: "ssh-bearer",
             }),
           ),
+        authorizeBearer: (input) =>
+          Ref.update(connectionMethods, (methods) => [...methods, input.connectionMethod]).pipe(
+            Effect.as({
+              environmentId: input.expectedEnvironmentId,
+              label: "SSH",
+              httpBaseUrl: input.httpBaseUrl,
+              socketUrl: "wss://environment.example.test/ws?wsTicket=bearer",
+              httpAuthorization: {
+                _tag: "Bearer" as const,
+                token: input.bearerToken,
+              },
+            }),
+          ),
       });
       const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
 
@@ -442,6 +463,7 @@ describe("ConnectionResolver", () => {
         (yield* broker.prepare(catalogEntry(target, Option.some(profile)))).socketUrl,
       ).toContain("wsTicket=bearer");
       expect(yield* Ref.get(preparedTargets)).toEqual([SSH_TARGET]);
+      expect(yield* Ref.get(connectionMethods)).toEqual(["ssh"]);
     }),
   );
 

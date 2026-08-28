@@ -10,6 +10,14 @@ import { authClientMetadata } from "./authClientMetadata";
 
 const mobilePlatform = vi.hoisted(() => ({ OS: "ios" as "ios" | "android" }));
 const mobileDevice = vi.hoisted(() => ({
+  deviceType: 1,
+  DeviceType: {
+    UNKNOWN: 0,
+    PHONE: 1,
+    TABLET: 2,
+    DESKTOP: 3,
+    TV: 4,
+  },
   osVersion: "18.4.1",
   modelName: "iPhone 15 Pro",
 }));
@@ -29,6 +37,7 @@ vi.mock("expo-device", () => mobileDevice);
 describe("mobile remote connection records", () => {
   afterEach(() => {
     mobilePlatform.OS = "ios";
+    mobileDevice.deviceType = mobileDevice.DeviceType.PHONE;
     mobileDevice.osVersion = "18.4.1";
     mobileDevice.modelName = "iPhone 15 Pro";
   });
@@ -53,6 +62,17 @@ describe("mobile remote connection records", () => {
       os: "Android",
       osMajorVersion: 15,
       deviceModel: "Pixel 9",
+    });
+  });
+
+  it("identifies native tablets separately from phones", () => {
+    mobileDevice.deviceType = mobileDevice.DeviceType.TABLET;
+    mobileDevice.modelName = "iPad Pro 13-inch";
+
+    expect(authClientMetadata()).toMatchObject({
+      deviceType: "tablet",
+      os: "iOS",
+      deviceModel: "iPad Pro 13-inch",
     });
   });
 

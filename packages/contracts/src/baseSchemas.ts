@@ -80,6 +80,27 @@ export type RpcClientId = typeof RpcClientId.Type;
 export const ClientSurface = Schema.Literals(["web", "desktop", "mobile"]);
 export type ClientSurface = typeof ClientSurface.Type;
 
+export const ClientOs = Schema.Literals([
+  "macOS",
+  "Windows",
+  "Linux",
+  "iOS",
+  "Android",
+  "ChromeOS",
+  "other",
+  "unknown",
+]);
+export type ClientOs = typeof ClientOs.Type;
+
+export const ClientDeviceType = Schema.Literals(["desktop", "phone", "tablet", "unknown"]);
+export type ClientDeviceType = typeof ClientDeviceType.Type;
+
+export const ClientWebDeployment = Schema.Literals(["hosted", "server"]);
+export type ClientWebDeployment = typeof ClientWebDeployment.Type;
+
+export const ClientConnectionMethod = Schema.Literals(["direct", "ssh", "relay", "unknown"]);
+export type ClientConnectionMethod = typeof ClientConnectionMethod.Type;
+
 export const ProviderItemId = makeEntityId("ProviderItemId");
 export type ProviderItemId = typeof ProviderItemId.Type;
 export const RuntimeSessionId = makeEntityId("RuntimeSessionId");
