@@ -3168,6 +3168,52 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("still surfaces the pause when overage is exhausted too", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "hello", attachments: [] });
+
+      const nowMs = yield* Clock.currentTimeMillis;
+      const resetsAt = Math.floor(nowMs / 1000) + 60 * 60;
+      // The overage-exhausted / out-of-credits shape: the base window and the
+      // overage it would have spent both reject, with neither isUsingOverage
+      // nor overageInUse set to say anything is still covered. Nothing is
+      // carrying the turn here, so staying quiet would be the silent spin
+      // this row exists to prevent.
+      harness.query.emit({
+        type: "rate_limit_event",
+        rate_limit_info: {
+          status: "rejected",
+          rateLimitType: "five_hour",
+          resetsAt,
+          overageStatus: "rejected",
+        },
+        session_id: "sdk-session-dual-reject",
+        uuid: "rate-limit-dual-reject",
+      } as unknown as SDKMessage);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      assert.equal(runtimeEvents.filter((event) => event.type === "runtime.warning").length, 1);
+
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("keeps one row per window when two Claude limits interleave", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
