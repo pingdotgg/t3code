@@ -894,6 +894,25 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       }),
   );
 
+  it.effect(
+    "reads a removed permissions endpoint that answers 404 as granted rather than failing the merge",
+    () =>
+      Effect.gen(function* () {
+        mockedRequest.mockReturnValue(
+          Effect.fail(
+            new BitbucketApi.BitbucketResponseError({
+              operation: "request",
+              status: 404,
+              responseBodyLength: 0,
+            }),
+          ),
+        );
+        const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+        assert.isTrue(yield* api.getRepositoryPermission({ repository: "acme/web" }));
+      }),
+  );
+
   it.effect("still fails the permission read on a failure that is not the removed endpoint", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValue(
