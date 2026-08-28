@@ -48,7 +48,6 @@ import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";

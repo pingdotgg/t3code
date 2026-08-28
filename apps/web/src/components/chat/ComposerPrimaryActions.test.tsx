@@ -84,7 +84,7 @@ function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent:
   );
 }
 
-function renderSendButton() {
+function renderSendButton(sendDisabledReason: string | null = null) {
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
       compact: true,

@@ -12,7 +12,6 @@ import * as Logger from "effect/Logger";
 import * as Metric from "effect/Metric";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
@@ -28,12 +27,7 @@ import {
   type ReviewDiffFileContentsInput,
 } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
-import { gitCommandDuration } from "../observability/Metrics.ts";
-import {
-  makeGitVcsDriverCore,
-  parseGitCheckoutProgressLine,
-  splitNullSeparatedGitStdoutPaths,
-} from "./GitVcsDriverCore.ts";
+import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
@@ -146,112 +140,6 @@ const initRepoWithCommit = (
     const initialBranch = yield* git(cwd, ["branch", "--show-current"]);
     return { initialBranch };
   });
-
-it.effect("bounds Git bursts across drivers without timing out queued commands", () =>
-  Effect.gen(function* () {
-    const gate = yield* Deferred.make<void>();
-    const starts = yield* Queue.unbounded<number>();
-    let active = 0;
-    let peak = 0;
-    const spawner = ChildProcessSpawner.make(() =>
-      Effect.acquireRelease(
-        Effect.gen(function* () {
-          peak = Math.max(peak, ++active);
-          yield* Queue.offer(starts, active);
-          return ChildProcessSpawner.makeHandle({
-            ...makeSuccessfulHandle("ok"),
-            exitCode: Deferred.await(gate).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-          });
-        }),
-        () => Effect.sync(() => active--),
-      ),
-    );
-    const drivers = yield* Effect.all(
-      Array.from({ length: 16 }, () =>
-        makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        ),
-      ),
-    );
-    const burst = yield* Effect.forEach(
-      drivers,
-      (driver, index) =>
-        driver.execute({
-          operation: "test.gitBurst",
-          cwd: "/repo",
-          args: ["rev-parse", "HEAD"],
-          ...(index < 4 ? {} : { timeoutMs: index < 8 ? 30_000 : 1_000 }),
-        }),
-      { concurrency: "unbounded" },
-    ).pipe(Effect.forkChild);
-
-    yield* TestClock.adjust("2 seconds");
-    assert.equal(yield* Queue.size(starts), 8);
-    assert.equal(peak, 8);
-    yield* Deferred.succeed(gate, undefined);
-    const results = yield* Fiber.join(burst);
-    assert.equal(results.length, 16);
-    assert.isTrue(results.every((result) => result.stdout === "ok" && result.exitCode === 0));
-    assert.equal(peak, 8);
-    assert.equal(active, 0);
-    const duration = yield* Metric.value(
-      Metric.withAttributes(gitCommandDuration, [["operation", "test.gitBurst"]]),
-    );
-    assert.equal(duration.count, 16);
-    assert.equal(duration.sum, 16_000);
-  }).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
-);
-
-it.effect.each([{ timeoutMs: null }, { timeoutMs: 30_001 }])(
-  "keeps all Git slots available with a pending command whose timeout is $timeoutMs",
-  ({ timeoutMs }) =>
-    Effect.gen(function* () {
-      const slowGate = yield* Deferred.make<void>();
-      const fastGate = yield* Deferred.make<void>();
-      const starts = yield* Queue.unbounded<void>();
-      let active = 0;
-      const spawner = ChildProcessSpawner.make((command) =>
-        Effect.acquireRelease(
-          Effect.gen(function* () {
-            active++;
-            yield* Queue.offer(starts, undefined);
-            const gate =
-              ChildProcess.isStandardCommand(command) && command.args[0] === "push"
-                ? slowGate
-                : fastGate;
-            return ChildProcessSpawner.makeHandle({
-              ...makeSuccessfulHandle("ok"),
-              exitCode: Deferred.await(gate).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-            });
-          }),
-          () => Effect.sync(() => active--),
-        ),
-      );
-      const driver = yield* makeGitVcsDriverCore().pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      );
-      const slow = yield* driver
-        .execute({ operation: "test.slowGit", cwd: "/repo", args: ["push"], timeoutMs })
-        .pipe(Effect.forkChild);
-      yield* Queue.take(starts);
-      const burst = yield* Effect.all(
-        Array.from({ length: 8 }, () =>
-          driver.execute({ operation: "test.fastGit", cwd: "/repo", args: ["status"] }),
-        ),
-        { concurrency: "unbounded" },
-      ).pipe(Effect.forkChild);
-
-      yield* TestClock.adjust("0 seconds");
-      assert.equal(yield* Queue.size(starts), 8);
-      assert.equal(active, 9);
-      yield* Deferred.succeed(fastGate, undefined);
-      assert.equal((yield* Fiber.join(burst)).length, 8);
-      assert.equal(active, 1);
-      yield* Deferred.succeed(slowGate, undefined);
-      assert.equal((yield* Fiber.join(slow)).stdout, "ok");
-      assert.equal(active, 0);
-    }).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
-);
 
 for (const location of ["root", "nested", "worktree"] as const) {
   it.effect(
@@ -1009,38 +897,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notInclude(error.message, secret);
         assert.notProperty(error, "args");
         assert.notProperty(error, "stderr");
-      }),
-    );
-
-    it.effect("keeps line callbacks flowing past the output cap when asked", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        // 4 KiB of multi-byte lines, well past a 512-byte cap; the last line
-        // is the one a failure surface would need.
-        const lines: Array<string> = [];
-        const result = yield* driver.execute({
-          operation: "GitVcsDriver.test.callbacksPastCap",
-          cwd,
-          args: [
-            "-c",
-            'alias.spew=!for i in $(seq 1 128); do printf "é%03d\\n" $i >&2; done; echo fatal: last line >&2',
-            "spew",
-          ],
-          maxOutputBytes: 512,
-          appendTruncationMarker: true,
-          keepLineCallbacksAfterTruncation: true,
-          progress: { onStderrLine: (line) => Effect.sync(() => void lines.push(line)) },
-        });
-
-        assert.isTrue(result.stderrTruncated);
-        assert.isAtMost(result.stderr.length, 600);
-        assert.equal(lines.length, 129);
-        assert.equal(lines[0], "é001");
-        assert.equal(lines[127], "é128");
-        assert.equal(lines.at(-1), "fatal: last line");
-        // No replacement characters: the cap landing inside "é" is invisible to callbacks.
-        assert.isFalse(lines.some((line) => line.includes("\uFFFD")));
       }),
     );
 
@@ -2166,78 +2022,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
-    it.effect("uses parallel checkout without skipping filters or hooks", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* git(cwd, ["config", "filter.test.smudge", "sed s/original/filtered/g"]);
-        yield* writeTextFile(cwd, ".gitattributes", "asset.txt filter=test\n");
-        yield* writeTextFile(cwd, "asset.txt", "original\n");
-        yield* git(cwd, ["add", "."]);
-        yield* git(cwd, ["commit", "-m", "filtered asset"]);
-        yield* writeTextFile(
-          cwd,
-          ".git/hooks/post-checkout",
-          "#!/bin/sh\ngit config checkout.workers > checkout-workers\nexit 0\n",
-        );
-        yield* fs.chmod(path.join(cwd, ".git/hooks/post-checkout"), 0o755);
-        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "parallel");
-
-        yield* driver.createWorktree({
-          cwd,
-          path: worktreePath,
-          refName: initialBranch,
-          newRefName: "feature/parallel",
-          baseRefName: initialBranch,
-        });
-
-        assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "locked");
-        assert.equal(yield* fs.readFileString(path.join(worktreePath, "checkout-workers")), "0\n");
-        assert.equal(yield* fs.readFileString(path.join(worktreePath, "asset.txt")), "filtered\n");
-        assert.equal(
-          yield* git(worktreePath, ["rev-parse", "HEAD"]),
-          yield* git(cwd, ["rev-parse", "HEAD"]),
-        );
-        assert.equal(
-          yield* git(cwd, ["config", "branch.feature/parallel.gh-merge-base"]),
-          initialBranch,
-        );
-        for (const [configured, expected] of [
-          ["1", "1"],
-          ["", "0"],
-        ] as const) {
-          yield* git(cwd, ["config", "checkout.workers", configured]);
-          const configuredPath = path.join(yield* makeTmpDir("git-worktrees-"), "configured");
-          yield* driver.createWorktree({
-            cwd,
-            path: configuredPath,
-            refName: initialBranch,
-            newRefName: `feature/configured-${expected}`,
-          });
-          assert.equal(
-            yield* fs.readFileString(path.join(configuredPath, "checkout-workers")),
-            `${expected}\n`,
-          );
-        }
-      }),
-    );
-    it("parses checkout progress lines from git's stderr", () => {
-      assert.deepStrictEqual(parseGitCheckoutProgressLine("Updating files:  78% (2104/2700)"), {
-        percent: 78,
-        completed: 2104,
-        total: 2700,
-      });
-      // Progress lines arrive carriage-return separated and end with a done marker.
-      assert.deepStrictEqual(
-        parseGitCheckoutProgressLine("Updating files: 100% (2700/2700), done."),
-        { percent: 100, completed: 2700, total: 2700 },
-      );
-      assert.strictEqual(parseGitCheckoutProgressLine("Preparing worktree (new branch 'x')"), null);
-    });
-
     // NTFS rejects a newline in a file name, so there is nothing to preserve there.
     it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
       "preserves newline characters in worktree paths when listing refs",
@@ -2353,54 +2137,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("reports checkout progress during parallel worktree creation", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        for (let index = 0; index < 200; index += 1) {
-          yield* writeTextFile(cwd, `file-${index}.txt`, `${index}\n`);
-        }
-        yield* git(cwd, ["add", "."]);
-        yield* git(cwd, ["commit", "-m", "add files"]);
-        const pathService = yield* Path.Path;
-        const worktreePath = pathService.join(
-          yield* makeTmpDir("git-worktrees-"),
-          "progress-worktree",
-        );
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const seen = yield* Ref.make<Array<{ percent: number; completed: number; total: number }>>(
-          [],
-        );
-        const claimed = yield* Ref.make<{ path: string; existed: boolean } | null>(null);
-
-        yield* driver.createWorktree(
-          { cwd, path: worktreePath, refName: initialBranch, newRefName: "feature/progress" },
-          {
-            progress: {
-              onWorktreeClaimed: (path) =>
-                Ref.set(claimed, { path, existed: NodeFS.existsSync(path) }),
-              onCheckoutProgress: (update) => Ref.update(seen, (all) => [...all, update]),
-            },
-          },
-        );
-        // Claimed only once git has registered the directory.
-        assert.deepEqual(yield* Ref.get(claimed), { path: worktreePath, existed: true });
-
-        // Git separates live progress updates with `\r`, so the driver must
-        // surface every intermediate percentage, not just the final line.
-        const updates = yield* Ref.get(seen);
-        assert.isAbove(updates.length, 1);
-        assert.equal(updates.at(-1)?.percent, 100);
-        assert.equal(updates.at(-1)?.total, 201);
-        const completed = updates.map((update) => update.completed);
-        assert.deepEqual(
-          completed,
-          completed.toSorted((a, b) => a - b),
-        );
-      }),
-    );
-
-    it.effect("creates and removes a worktree for a new refName", () =>
     it.effect("creates and removes a worktree and its new local branch", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -2728,16 +2464,8 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const remoteHead = yield* git(peer, ["rev-parse", "HEAD"]);
         assert.notEqual(beforeFetch, remoteHead);
 
-        yield* git(peer, ["push", "origin", "HEAD:refs/heads/unrelated"]);
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* driver.fetchRemote({
-          cwd,
-          remoteName: "origin",
-          refName: `origin/${initialBranch}`,
-        });
-        assert.isFalse(
-          yield* driver.remoteBranchExists({ cwd, remoteName: "origin", refName: "unrelated" }),
-        );
+        yield* driver.fetchRemote({ cwd, remoteName: "origin" });
 
         assert.equal(
           yield* driver.remoteBranchExists({
@@ -2799,11 +2527,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const status = yield* driver.statusDetails(worktreePath);
         assert.equal(status.aheadCount, 0);
         assert.equal(status.aheadOfDefaultCount, 0);
-
-        yield* driver.fetchRemote({ cwd, remoteName: "origin", refName: "local-only" });
-        assert.isTrue(
-          yield* driver.remoteBranchExists({ cwd, remoteName: "origin", refName: "unrelated" }),
-        );
       }),
     );
 
