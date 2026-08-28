@@ -9,7 +9,6 @@ import { AppText as Text } from "./AppText";
 import { T3Wordmark } from "./T3Wordmark";
 import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../lib/mobileBranding";
-import { useThemeColor } from "../lib/useThemeColor";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../native/native-glass";
 
 // Native leading items inherit different UIKit margins than title views.
@@ -37,9 +36,6 @@ export function CompactBrandTitle(
     readonly nativeLeadingItem?: boolean;
   } = {},
 ) {
-  const iconColor = useThemeColor("--color-icon");
-  const mutedColor = useThemeColor("--color-foreground-muted");
-  const subtleColor = useThemeColor("--color-subtle");
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   const titleOffset = brandTitleOffset(props.nativeLeadingItem === true);
 
@@ -49,42 +45,20 @@ export function CompactBrandTitle(
       accessibilityLabel="T3 Code, Threads"
       accessible
       role="heading"
-      style={{
-        alignItems: "center",
-        flexDirection: "row",
-        gap: 6,
-        marginLeft: titleOffset,
-      }}
+      className="flex-row items-center gap-1.5"
+      style={{ marginLeft: titleOffset }}
     >
-      <T3Wordmark color={iconColor} height={15} />
+      <T3Wordmark colorClassName="accent-icon" height={15} />
       <Text
         allowFontScaling={props.allowFontScaling}
-        style={{
-          color: mutedColor,
-          fontFamily: "DMSans-Medium",
-          fontSize: 21,
-          letterSpacing: -0.5,
-        }}
+        className="font-t3-medium text-[21px] tracking-[-0.5px] text-foreground-muted"
       >
         Code
       </Text>
-      <View
-        style={{
-          backgroundColor: subtleColor,
-          borderRadius: 999,
-          paddingHorizontal: 6,
-          paddingVertical: 2,
-        }}
-      >
+      <View className="rounded-full bg-subtle px-1.5 py-0.5">
         <Text
           allowFontScaling={props.allowFontScaling}
-          style={{
-            color: mutedColor,
-            fontFamily: "DMSans-Bold",
-            fontSize: 9,
-            letterSpacing: 0.9,
-            textTransform: "uppercase",
-          }}
+          className="font-t3-bold text-[9px] tracking-[0.9px] text-foreground-muted uppercase"
         >
           {stageLabel}
         </Text>
