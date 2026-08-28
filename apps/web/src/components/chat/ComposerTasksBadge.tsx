@@ -1,4 +1,4 @@
-import { ListTodoIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ListTodoIcon, XIcon } from "lucide-react";
 import { memo } from "react";
 
 import { formatDuration } from "../../session-logic";
@@ -174,11 +174,16 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
   readonly steps: readonly ComposerTaskStep[];
 }) {
   return (
-    <div className="chat-composer-top-drawer" data-chat-composer-tasks-drawer="true">
+    <div
+      className="chat-composer-top-drawer"
+      data-chat-composer-collapsed-controls="true"
+      data-chat-composer-tasks-drawer="true"
+    >
       <div className="flex items-center gap-1 px-3 py-1.5 sm:px-4">
         <button
           type="button"
           aria-expanded="true"
+          aria-label={`Collapse tasks. ${progress.completedSteps} of ${progress.totalSteps} complete.`}
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 self-stretch text-left text-xs text-muted-foreground hover:text-foreground"
           onClick={onCollapse}
           onPointerDown={(event) => event.preventDefault()}
@@ -188,6 +193,7 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
           <span className="tabular-nums">
             {progress.completedSteps}/{progress.totalSteps}
           </span>
+          <ChevronDownIcon aria-hidden className="ml-auto size-3.5 shrink-0" />
         </button>
         <Button
           size="icon-micro"
@@ -200,7 +206,13 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
           <XIcon aria-hidden className="size-3" />
         </Button>
       </div>
-      <div className="space-y-px px-3 pb-4 sm:px-4" role="list">
+      <div
+        aria-label={`Task list. ${progress.completedSteps} of ${progress.totalSteps} complete.`}
+        className="max-h-[min(24rem,40dvh)] space-y-px overflow-y-auto overscroll-contain px-3 pb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 sm:px-4"
+        data-composer-tasks-list="true"
+        role="list"
+        tabIndex={0}
+      >
         {keyedTaskSteps(steps).map(({ key, step }) => (
           <div key={key} className="flex items-baseline gap-2 text-xs leading-5" role="listitem">
             <span
