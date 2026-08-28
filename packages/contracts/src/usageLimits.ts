@@ -29,7 +29,7 @@ export const USAGE_LIMITS_CONTRACT_VERSION = 1 as const;
  * transcript-based usage aggregation, so the usage-summary contract must not
  * imply one exists.
  */
-export const UsageLimitsProviderKind = Schema.Literals(["claude", "codex", "grok"]);
+export const UsageLimitsProviderKind = Schema.Literals(["claude", "codex", "grok", "opencode"]);
 export type UsageLimitsProviderKind = typeof UsageLimitsProviderKind.Type;
 
 /**

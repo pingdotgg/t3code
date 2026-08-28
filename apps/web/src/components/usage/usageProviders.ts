@@ -1,6 +1,6 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
+import type { UsageLimitsProviderKind, UsageProviderKind } from "@t3tools/contracts";
 
-import { ClaudeAI, GrokIcon, type Icon, OpenAI } from "../Icons";
+import { ClaudeAI, GrokIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
 
 type UsageProviderPresentation = {
   readonly label: string;
@@ -9,9 +9,9 @@ type UsageProviderPresentation = {
 };
 
 /**
- * Exhaustive presentation for providers supported by the usage contract.
- * Declaration order is reused by every chart and table, so adding a provider
- * only requires its contract support and one entry here.
+ * Exhaustive presentation, keyed by the wider limits union: the Limits view
+ * also presents providers (OpenCode) that report subscription limits without
+ * having transcript-based usage series.
  */
 export const PROVIDER_PRESENTATION = {
   codex: {
@@ -30,10 +30,18 @@ export const PROVIDER_PRESENTATION = {
     color: "color-mix(in oklab, var(--contrast-foreground) 72%, var(--background))",
     mark: GrokIcon,
   },
-} satisfies Record<UsageProviderKind, UsageProviderPresentation>;
+  opencode: {
+    label: "OpenCode",
+    color: "var(--foreground)",
+    mark: OpenCodeIcon,
+  },
+} satisfies Record<UsageLimitsProviderKind, UsageProviderPresentation>;
 
-/** Stable provider reading order across charts, summaries, tables, and hover rows. */
-export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
+/**
+ * Stable provider reading order across charts, summaries, tables, and hover
+ * rows. Only providers with transcript-based usage series belong here.
+ */
+export const PROVIDER_ORDER: readonly UsageProviderKind[] = ["codex", "claude", "grok"];
 
 /** Providers with real activity, independent of the metric currently displayed. */
 export function providersWithUsage(

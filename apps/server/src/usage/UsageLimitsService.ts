@@ -8,9 +8,10 @@
  * or the macOS login keychain) against Anthropic's OAuth usage endpoint, and
  * Codex's ChatGPT sign-in via a short-lived `codex app-server` asked for
  * `account/rateLimits/read`, and Grok's OIDC sign-in (from `auth.json` under
- * the Grok home) against the Grok CLI backend's billing endpoint. API-key
- * auth has no rate windows; those providers answer `unsupported` in-band
- * instead of failing the RPC.
+ * the Grok home) against the Grok CLI backend's billing endpoint, and
+ * OpenCode's Zen API key (from `auth.json` under its XDG data dir) against
+ * the Zen usage endpoint. API-key auth has no rate windows; those providers
+ * answer `unsupported` in-band instead of failing the RPC.
  *
  * @module UsageLimitsService
  */
@@ -55,6 +56,11 @@ import {
   parseGrokUserProfile,
   resolveGrokProxyBaseUrl,
 } from "./usageLimitsGrok.ts";
+import {
+  parseOpenCodeAuthState,
+  parseOpenCodeErrorType,
+  parseOpenCodeUsageWindows,
+} from "./usageLimitsOpenCode.ts";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
@@ -62,6 +68,9 @@ const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 /** Paths on the Grok CLI's chat proxy; the base URL is resolved per read. */
 const GROK_BILLING_PATH = "/billing?format=credits";
 const GROK_USER_PATH = "/user?include=subscription";
+
+/** Zen's usage route lives on the console origin, not the inference API. */
+const OPENCODE_ZEN_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
 
 /** The OAuth endpoints require the same beta marker the Claude CLI sends. */
 const CLAUDE_OAUTH_BETA_HEADER = "oauth-2025-04-20";
@@ -122,6 +131,7 @@ function makeProviderLimits(provider: UsageLimitsProviderKind) {
 const claudeLimits = makeProviderLimits("claude");
 const codexLimits = makeProviderLimits("codex");
 const grokLimits = makeProviderLimits("grok");
+const opencodeLimits = makeProviderLimits("opencode");
 
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -530,16 +540,114 @@ export const make = Effect.gen(function* () {
     return grokLimits("available", { plan, email, windows });
   });
 
+  /**
+   * Finds the CLI's Zen API key, or the fact that OpenCode is signed in only
+   * to pass-through providers, or null when there is no sign-in at all.
+   * Mirrors the CLI's own precedence: an ambient key wins, then the injected
+   * auth document, then `auth.json` under the XDG data dir.
+   */
+  const readOpenCodeAuthState = Effect.fn("UsageLimitsService.readOpenCodeAuthState")(function* () {
+    const environment = process.env;
+    const envKey = environment.OPENCODE_API_KEY?.trim();
+    if (envKey !== undefined && envKey.length > 0) {
+      return { kind: "zen", key: envKey } as const;
+    }
+    const injected = environment.OPENCODE_AUTH_CONTENT;
+    if (injected !== undefined && injected.trim().length > 0) {
+      const state = parseOpenCodeAuthState(injected);
+      if (state !== null) return state;
+    }
+
+    // OpenCode settings do not model a home dir; the CLI resolves its data
+    // dir through xdg-basedir on every platform, so honor the same override.
+    const xdgData = environment.XDG_DATA_HOME?.trim();
+    const dataDir =
+      xdgData !== undefined && xdgData.length > 0
+        ? xdgData
+        : path.join(NodeOS.homedir(), ".local", "share");
+    const raw = yield* fileSystem
+      .readFileString(path.join(dataDir, "opencode", "auth.json"))
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    return raw === null ? null : parseOpenCodeAuthState(raw);
+  });
+
+  const readOpenCodeLimits = Effect.fn("UsageLimitsService.readOpenCodeLimits")(function* () {
+    const auth = yield* readOpenCodeAuthState();
+    if (auth === null) {
+      return opencodeLimits("unauthenticated", {
+        message: "OpenCode is not signed in on this environment.",
+      });
+    }
+    if (auth.kind !== "zen") {
+      return opencodeLimits("unsupported", {
+        message:
+          "OpenCode is signed in through other providers here; those report their own limits. Zen windows only exist for an OpenCode Zen sign-in.",
+      });
+    }
+
+    const response = yield* httpClient
+      .execute(
+        HttpClientRequest.get(OPENCODE_ZEN_USAGE_URL).pipe(
+          HttpClientRequest.setHeaders({
+            authorization: `Bearer ${auth.key}`,
+            accept: "application/json",
+          }),
+        ),
+      )
+      .pipe(
+        Effect.timeoutOption(REQUEST_TIMEOUT_MS),
+        Effect.orElseSucceed(() => Option.none()),
+      );
+    if (Option.isNone(response)) {
+      return opencodeLimits("unavailable", {
+        message: "OpenCode Zen's usage service could not be reached.",
+      });
+    }
+    const status = response.value.status;
+    if (status === 401) {
+      return opencodeLimits("unauthenticated", {
+        message:
+          "The stored OpenCode Zen key was rejected. Sign in with opencode again, then retry.",
+      });
+    }
+    if (status === 403) {
+      // Zen answers 403 EntitlementError for keys on pay-as-you-go credits:
+      // a valid sign-in, but with no subscription windows to report.
+      const body = yield* response.value.json.pipe(Effect.orElseSucceed(() => null));
+      return parseOpenCodeErrorType(body) === "EntitlementError"
+        ? opencodeLimits("unsupported", { message: SUBSCRIPTION_ONLY_MESSAGE })
+        : opencodeLimits("unauthenticated", {
+            message:
+              "The stored OpenCode Zen key was rejected. Sign in with opencode again, then retry.",
+          });
+    }
+    if (status < 200 || status >= 300) {
+      return opencodeLimits("unavailable", {
+        message: `OpenCode Zen's usage service answered with status ${status}.`,
+      });
+    }
+
+    const payload = yield* response.value.json.pipe(Effect.orElseSucceed(() => null));
+    const windows = parseOpenCodeUsageWindows(payload);
+    if (windows.length === 0) {
+      return opencodeLimits("unavailable", {
+        message:
+          "OpenCode Zen's usage service answered in a shape this version does not understand.",
+      });
+    }
+    return opencodeLimits("available", { plan: "OpenCode Go", windows });
+  });
+
   const readLimits = Effect.fn("UsageLimitsService.readLimits")(function* () {
-    const [claude, codex, grok] = yield* Effect.all(
-      [readClaudeLimits(), readCodexLimits(), readGrokLimits()],
+    const [claude, codex, grok, opencode] = yield* Effect.all(
+      [readClaudeLimits(), readCodexLimits(), readGrokLimits(), readOpenCodeLimits()],
       { concurrency: "unbounded" },
     );
     const readAt = yield* DateTime.now;
     return {
       contractVersion: USAGE_LIMITS_CONTRACT_VERSION,
       readAt: DateTime.formatIso(readAt),
-      providers: [claude, codex, grok],
+      providers: [claude, codex, grok, opencode],
     } satisfies UsageLimitsSummary;
   });
 

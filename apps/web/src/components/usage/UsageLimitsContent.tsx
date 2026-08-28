@@ -14,7 +14,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 /** Display order; providers not yet reporting render as placeholders. */
-const LIMITS_PROVIDER_ORDER: readonly UsageLimitsProviderKind[] = ["claude", "codex", "grok"];
+const LIMITS_PROVIDER_ORDER: readonly UsageLimitsProviderKind[] = [
+  "claude",
+  "codex",
+  "grok",
+  "opencode",
+];
 
 /**
  * The "Limits" half of the usage page: how much of each subscription rate
