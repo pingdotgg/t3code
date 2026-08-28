@@ -48,6 +48,7 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProjectRunSetupScriptError,
   ProviderUploadFeedbackError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
@@ -68,6 +69,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { setupProjectScript } from "@t3tools/shared/projectScripts";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
@@ -633,7 +635,11 @@ const makeWsRpcLayer = (
 
       const appendSetupScriptActivity = (input: {
         readonly threadId: ThreadId;
-        readonly kind: "setup-script.requested" | "setup-script.started" | "setup-script.failed";
+        readonly kind:
+          | "setup-script.requested"
+          | "setup-script.started"
+          | "setup-script.succeeded"
+          | "setup-script.failed";
         readonly summary: string;
         readonly createdAt: string;
         readonly payload: Record<string, unknown>;
@@ -943,6 +949,7 @@ const makeWsRpcLayer = (
             readonly scriptId: string;
             readonly scriptName: string;
             readonly terminalId: string;
+            readonly logPath?: string;
           }) =>
             Effect.gen(function* () {
               const startedAt = yield* nowIso;
@@ -951,6 +958,9 @@ const makeWsRpcLayer = (
                 scriptName: input.scriptName,
                 terminalId: input.terminalId,
                 worktreePath: input.worktreePath,
+                ...(input.logPath === undefined ? {} : { logPath: input.logPath }),
+                status: "running" as const,
+                startedAt,
               };
               yield* Effect.all([
                 appendSetupScriptActivity({
@@ -986,6 +996,44 @@ const makeWsRpcLayer = (
               );
             });
 
+          const recordSetupScriptFinished = (input: {
+            readonly worktreePath: string;
+            readonly result: Extract<
+              ProjectSetupScriptRunner.ProjectSetupScriptRunnerResult,
+              { status: "succeeded" | "failed" }
+            >;
+          }) => {
+            const payload = {
+              scriptId: input.result.scriptId,
+              scriptName: input.result.scriptName,
+              terminalId: input.result.terminalId,
+              worktreePath: input.worktreePath,
+              exitCode: input.result.exitCode,
+              startedAt: input.result.startedAt,
+              finishedAt: input.result.finishedAt,
+              logPath: input.result.logPath,
+              status: input.result.status,
+            };
+            if (input.result.status === "succeeded") {
+              return appendSetupScriptActivity({
+                threadId: command.threadId,
+                kind: "setup-script.succeeded",
+                summary: "Setup script succeeded",
+                createdAt: input.result.finishedAt,
+                payload,
+                tone: "info",
+              }).pipe(Effect.ignoreCause({ log: false }));
+            }
+            return appendSetupScriptActivity({
+              threadId: command.threadId,
+              kind: "setup-script.failed",
+              summary: "Setup script failed",
+              createdAt: input.result.finishedAt,
+              payload,
+              tone: "error",
+            }).pipe(Effect.ignoreCause({ log: false }));
+          };
+
           const runSetupProgram = () =>
             Effect.gen(function* () {
               if (!bootstrap?.runSetupScript || !targetWorktreePath) {
@@ -993,12 +1041,21 @@ const makeWsRpcLayer = (
               }
               const worktreePath = targetWorktreePath;
               const requestedAt = yield* nowIso;
-              yield* projectSetupScriptRunner
+              const run = projectSetupScriptRunner
                 .runForThread({
                   threadId: command.threadId,
                   ...(targetProjectId ? { projectId: targetProjectId } : {}),
                   ...(targetProjectCwd ? { projectCwd: targetProjectCwd } : {}),
                   worktreePath,
+                  onSpawn: (info) =>
+                    recordSetupScriptStarted({
+                      requestedAt,
+                      worktreePath,
+                      scriptId: info.scriptId,
+                      scriptName: info.scriptName,
+                      terminalId: info.terminalId,
+                      logPath: info.logPath,
+                    }),
                 })
                 .pipe(
                   Effect.matchEffect({
@@ -1009,19 +1066,40 @@ const makeWsRpcLayer = (
                         worktreePath,
                       }),
                     onSuccess: (setupResult) => {
-                      if (setupResult.status !== "started") {
+                      if (setupResult.status === "no-script") {
                         return Effect.void;
                       }
-                      return recordSetupScriptStarted({
-                        requestedAt,
+                      return recordSetupScriptFinished({
                         worktreePath,
-                        scriptId: setupResult.scriptId,
-                        scriptName: setupResult.scriptName,
-                        terminalId: setupResult.terminalId,
+                        result: setupResult,
                       });
                     },
                   }),
                 );
+              let shouldAwait = true;
+              const project =
+                targetProjectId !== undefined
+                  ? yield* projectionSnapshotQuery.getProjectShellById(targetProjectId).pipe(
+                      Effect.map(Option.getOrUndefined),
+                      Effect.orElseSucceed(() => undefined),
+                    )
+                  : targetProjectCwd !== undefined
+                    ? yield* projectionSnapshotQuery
+                        .getActiveProjectByWorkspaceRoot(targetProjectCwd)
+                        .pipe(
+                          Effect.map(Option.getOrUndefined),
+                          Effect.orElseSucceed(() => undefined),
+                        )
+                    : undefined;
+              const script = project ? setupProjectScript(project.scripts) : null;
+              if (script) {
+                shouldAwait = script.awaitSetupScript !== false;
+              }
+              if (shouldAwait) {
+                yield* run;
+                return;
+              }
+              yield* Effect.forkDetach(run);
             });
 
           const bootstrapProgram = Effect.gen(function* () {
@@ -2010,6 +2088,115 @@ const makeWsRpcLayer = (
                   }),
               ),
             ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsRunSetupScript]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsRunSetupScript,
+            Effect.gen(function* () {
+              const thread = yield* projectionSnapshotQuery
+                .getThreadShellById(ThreadId.make(input.threadId))
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectRunSetupScriptError({
+                        threadId: input.threadId,
+                        operation: "resolveThread",
+                        cause,
+                      }),
+                  ),
+                );
+              const resolved = Option.getOrUndefined(thread);
+              if (!resolved?.worktreePath) {
+                return yield* new ProjectRunSetupScriptError({
+                  threadId: input.threadId,
+                  operation: "missingWorktree",
+                });
+              }
+              const worktreePath = resolved.worktreePath;
+              const requestedAt = yield* nowIso;
+              return yield* projectSetupScriptRunner
+                .runForThread({
+                  threadId: input.threadId,
+                  projectId: resolved.projectId,
+                  worktreePath,
+                  onSpawn: (info) =>
+                    Effect.all([
+                      appendSetupScriptActivity({
+                        threadId: ThreadId.make(input.threadId),
+                        kind: "setup-script.requested",
+                        summary: "Starting setup script",
+                        createdAt: requestedAt,
+                        payload: {
+                          scriptId: info.scriptId,
+                          scriptName: info.scriptName,
+                          terminalId: info.terminalId,
+                          worktreePath,
+                          logPath: info.logPath,
+                          status: "running",
+                          startedAt: info.startedAt,
+                        },
+                        tone: "info",
+                      }),
+                      appendSetupScriptActivity({
+                        threadId: ThreadId.make(input.threadId),
+                        kind: "setup-script.started",
+                        summary: "Setup script started",
+                        createdAt: info.startedAt,
+                        payload: {
+                          scriptId: info.scriptId,
+                          scriptName: info.scriptName,
+                          terminalId: info.terminalId,
+                          worktreePath,
+                          logPath: info.logPath,
+                          status: "running",
+                          startedAt: info.startedAt,
+                        },
+                        tone: "info",
+                      }),
+                    ]).pipe(Effect.asVoid, Effect.ignoreCause({ log: false })),
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectRunSetupScriptError({
+                        threadId: input.threadId,
+                        operation: "runSetupScript",
+                        worktreePath,
+                        cause,
+                      }),
+                  ),
+                  Effect.tap((result) => {
+                    if (result.status === "no-script") {
+                      return Effect.void;
+                    }
+                    return appendSetupScriptActivity({
+                      threadId: ThreadId.make(input.threadId),
+                      kind:
+                        result.status === "succeeded"
+                          ? "setup-script.succeeded"
+                          : "setup-script.failed",
+                      summary:
+                        result.status === "succeeded"
+                          ? "Setup script succeeded"
+                          : "Setup script failed",
+                      createdAt: result.finishedAt,
+                      payload: {
+                        scriptId: result.scriptId,
+                        scriptName: result.scriptName,
+                        terminalId: result.terminalId,
+                        worktreePath,
+                        exitCode: result.exitCode,
+                        startedAt: result.startedAt,
+                        finishedAt: result.finishedAt,
+                        logPath: result.logPath,
+                        status: result.status,
+                      },
+                      tone: result.status === "succeeded" ? "info" : "error",
+                    }).pipe(Effect.ignoreCause({ log: false }));
+                  }),
+                );
+            }),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.shellOpenInEditor]: (input) =>

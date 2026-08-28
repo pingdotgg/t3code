@@ -21,6 +21,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
+import { setupScriptStateFromActivities } from "@t3tools/shared/projectScripts";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
@@ -123,6 +124,11 @@ export function useThreadComposerState() {
       ),
     });
   }, [feedbackSubmissionsByThreadKey, selectedThreadDetail, selectedThreadKey]);
+  const setupScriptState = useMemo(
+    () =>
+      selectedThreadDetail ? setupScriptStateFromActivities(selectedThreadDetail.activities) : null,
+    [selectedThreadDetail],
+  );
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
@@ -395,6 +401,7 @@ export function useThreadComposerState() {
 
   return {
     selectedThreadFeed,
+    setupScriptState,
     selectedThreadQueueCount,
     activeWorkStartedAt,
     draftMessage,

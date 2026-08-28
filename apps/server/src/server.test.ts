@@ -7866,16 +7866,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         );
         const runForThread = vi.fn(
           (
-            _: Parameters<
+            input: Parameters<
               ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
             >[0],
           ) =>
-            Effect.succeed({
-              status: "started" as const,
-              scriptId: "setup",
-              scriptName: "Setup",
-              terminalId: "setup-setup",
-              cwd: "/tmp/bootstrap-worktree",
+            Effect.gen(function* () {
+              yield* (
+                input.onSpawn?.({
+                  scriptId: "setup",
+                  scriptName: "Setup",
+                  terminalId: "setup-setup",
+                  cwd: "/tmp/bootstrap-worktree",
+                  logPath: "/tmp/setup.log",
+                  startedAt: "2026-01-01T00:00:00.000Z",
+                }) ?? Effect.void
+              );
+              return {
+                status: "succeeded" as const,
+                scriptId: "setup",
+                scriptName: "Setup",
+                terminalId: "setup-setup",
+                cwd: "/tmp/bootstrap-worktree",
+                exitCode: 0,
+                startedAt: "2026-01-01T00:00:00.000Z",
+                finishedAt: "2026-01-01T00:00:01.000Z",
+                logPath: "/tmp/setup.log",
+              };
             }),
         );
 
@@ -7945,12 +7961,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           ),
         );
 
-        assert.equal(response.sequence, 5);
+        assert.equal(response.sequence, 6);
         assert.deepEqual(
           dispatchedCommands.map((command) => command.type),
           [
             "thread.create",
             "thread.meta.update",
+            "thread.activity.append",
             "thread.activity.append",
             "thread.activity.append",
             "thread.turn.start",
@@ -7978,12 +7995,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           "resolve-remote-commit",
           "create-worktree",
         ]);
-        assert.deepEqual(runForThread.mock.calls[0]?.[0], {
-          threadId: ThreadId.make("thread-bootstrap"),
-          projectId: defaultProjectId,
-          projectCwd: "/tmp/project",
-          worktreePath: "/tmp/bootstrap-worktree",
-        });
+        const setupCall = runForThread.mock.calls[0]?.[0];
+        assert.equal(setupCall?.threadId, ThreadId.make("thread-bootstrap"));
+        assert.equal(setupCall?.projectId, defaultProjectId);
+        assert.equal(setupCall?.projectCwd, "/tmp/project");
+        assert.equal(setupCall?.worktreePath, "/tmp/bootstrap-worktree");
         assert.deepEqual(refreshStatus.mock.calls[0]?.[0], "/tmp/bootstrap-worktree");
 
         const setupActivities = dispatchedCommands.filter(
@@ -7992,14 +8008,133 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         );
         assert.deepEqual(
           setupActivities.map((command) => command.activity.kind),
-          ["setup-script.requested", "setup-script.started"],
+          ["setup-script.requested", "setup-script.started", "setup-script.succeeded"],
         );
-        const finalCommand = dispatchedCommands[4];
+        const finalCommand = dispatchedCommands[5];
         assertTrue(finalCommand?.type === "thread.turn.start");
         if (finalCommand?.type === "thread.turn.start") {
           assert.equal(finalCommand.bootstrap, undefined);
         }
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("waits for the setup script to finish before dispatching the first turn start", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const setupStarted = yield* Deferred.make<void>();
+      const releaseSetup = yield* Deferred.make<void>();
+      const createWorktree = vi.fn(
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+          Effect.succeed({
+            worktree: {
+              refName: "t3code/bootstrap-refName",
+              path: "/tmp/bootstrap-worktree",
+            },
+          }),
+      );
+      const runForThread = vi.fn(
+        (
+          input: Parameters<
+            ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
+          >[0],
+        ) =>
+          Effect.gen(function* () {
+            yield* (
+              input.onSpawn?.({
+                scriptId: "setup",
+                scriptName: "Setup",
+                terminalId: "setup-setup",
+                cwd: "/tmp/bootstrap-worktree",
+                logPath: "/tmp/setup.log",
+                startedAt: "2026-01-01T00:00:00.000Z",
+              }) ?? Effect.void
+            );
+            yield* Deferred.succeed(setupStarted, undefined);
+            yield* Deferred.await(releaseSetup);
+            return {
+              status: "succeeded" as const,
+              scriptId: "setup",
+              scriptName: "Setup",
+              terminalId: "setup-setup",
+              cwd: "/tmp/bootstrap-worktree",
+              exitCode: 0,
+              startedAt: "2026-01-01T00:00:00.000Z",
+              finishedAt: "2026-01-01T00:00:01.000Z",
+              logPath: "/tmp/setup.log",
+            };
+          }),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: {
+            createWorktree,
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+          projectSetupScriptRunner: {
+            runForThread,
+          },
+        },
+      });
+
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const rpcFiber = yield* Effect.forkChild(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.turn.start",
+              commandId: CommandId.make("cmd-bootstrap-await-setup"),
+              threadId: ThreadId.make("thread-bootstrap-await-setup"),
+              message: {
+                messageId: MessageId.make("msg-bootstrap-await-setup"),
+                role: "user",
+                text: "hello",
+                attachments: [],
+              },
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              bootstrap: {
+                createThread: {
+                  projectId: defaultProjectId,
+                  title: "Bootstrap Thread",
+                  modelSelection: defaultModelSelection,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  branch: "main",
+                  worktreePath: null,
+                  createdAt,
+                },
+                prepareWorktree: {
+                  projectCwd: "/tmp/project",
+                  baseBranch: "main",
+                  branch: "t3code/bootstrap-refName",
+                },
+                runSetupScript: true,
+              },
+              createdAt,
+            }),
+          ),
+        ),
+      );
+
+      yield* Deferred.await(setupStarted);
+      assert.equal(
+        dispatchedCommands.some((command) => command.type === "thread.turn.start"),
+        false,
+      );
+      yield* Deferred.succeed(releaseSetup, undefined);
+      yield* Fiber.join(rpcFiber);
+      assert.equal(dispatchedCommands.at(-1)?.type, "thread.turn.start");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect(
@@ -8128,7 +8263,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             new ProjectSetupScriptRunner.ProjectSetupScriptOperationError({
               threadId: input.threadId,
               worktreePath: input.worktreePath,
-              operation: "openTerminal",
+              operation: "spawn",
               cause: { message: "pty unavailable" },
             }),
           ),
@@ -8225,16 +8360,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       const runForThread = vi.fn(
         (
-          _: Parameters<
+          input: Parameters<
             ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
           >[0],
         ) =>
-          Effect.succeed({
-            status: "started" as const,
-            scriptId: "setup",
-            scriptName: "Setup",
-            terminalId: "setup-setup",
-            cwd: "/tmp/bootstrap-worktree",
+          Effect.gen(function* () {
+            yield* (
+              input.onSpawn?.({
+                scriptId: "setup",
+                scriptName: "Setup",
+                terminalId: "setup-setup",
+                cwd: "/tmp/bootstrap-worktree",
+                logPath: "/tmp/setup.log",
+                startedAt: "2026-01-01T00:00:00.000Z",
+              }) ?? Effect.void
+            );
+            return {
+              status: "succeeded" as const,
+              scriptId: "setup",
+              scriptName: "Setup",
+              terminalId: "setup-setup",
+              cwd: "/tmp/bootstrap-worktree",
+              exitCode: 0,
+              startedAt: "2026-01-01T00:00:00.000Z",
+              finishedAt: "2026-01-01T00:00:01.000Z",
+              logPath: "/tmp/setup.log",
+            };
           }),
       );
       let setupActivityAppendAttempt = 0;
@@ -8314,10 +8465,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assert.equal(response.sequence, 4);
+      assert.equal(response.sequence, 5);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.meta.update", "thread.activity.append", "thread.turn.start"],
+        [
+          "thread.create",
+          "thread.meta.update",
+          "thread.activity.append",
+          "thread.activity.append",
+          "thread.turn.start",
+        ],
       );
       const setupActivities = dispatchedCommands.filter(
         (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
@@ -8325,7 +8482,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.deepEqual(
         setupActivities.map((command) => command.activity.kind),
-        ["setup-script.requested"],
+        ["setup-script.requested", "setup-script.succeeded"],
       );
       assertTrue(
         setupActivities.every((command) => command.activity.kind !== "setup-script.failed"),

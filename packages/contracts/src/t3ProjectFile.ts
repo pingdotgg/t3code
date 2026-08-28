@@ -29,7 +29,8 @@ export const T3ProjectFileScript = Schema.Struct({
     description: "Display name for the script, shown in the T3 Code scripts menu.",
   }),
   command: trimmedNonEmpty({
-    description: "Shell command executed in a T3 Code terminal at the project root.",
+    description:
+      "Shell command to run. Scripts with runOnWorktreeCreate execute as a process in the new worktree; other scripts run in a T3 Code terminal at the project root.",
   }),
   icon: Schema.optionalKey(
     ProjectScriptIcon.annotate({
@@ -39,7 +40,19 @@ export const T3ProjectFileScript = Schema.Struct({
   runOnWorktreeCreate: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:
-        "When true, the script runs automatically after a worktree is created for a new thread.",
+        "When true, the script runs automatically as a process in the new worktree after it is created for a thread. The first agent turn waits until it finishes unless awaitSetupScript is false.",
+    }),
+  ),
+  awaitSetupScript: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "When true (the default), T3 Code waits for this worktree setup script to finish before starting the first agent turn. Set false to start the turn immediately.",
+    }),
+  ),
+  setupScriptTimeoutMs: Schema.optionalKey(
+    Schema.Int.check(Schema.isGreaterThan(0)).annotate({
+      description:
+        "Milliseconds to wait for this worktree setup script before failing it. Defaults to 600000 (10 minutes).",
     }),
   ),
   previewUrl: Schema.optionalKey(

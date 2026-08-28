@@ -4656,7 +4656,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
               new ProjectSetupScriptRunner.ProjectSetupScriptOperationError({
                 threadId: input.threadId,
                 worktreePath: input.worktreePath,
-                operation: "openTerminal",
+                operation: "spawn",
                 cause: new Error("terminal start failed"),
               }),
             ),

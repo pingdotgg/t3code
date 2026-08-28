@@ -58,6 +58,7 @@ import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
+import type { SetupScriptState } from "@t3tools/shared/projectScripts";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import type {
   PendingApproval,
@@ -88,6 +89,8 @@ export interface ThreadDetailScreenProps {
   readonly connectionError: string | null;
   readonly environmentLabel: string | null;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
+  readonly setupScriptState?: SetupScriptState | null;
+  readonly onRerunSetupScript?: () => void;
   readonly activeWorkStartedAt: string | null;
   readonly activePendingApproval: PendingApproval | null;
   readonly respondingApprovalId: ApprovalRequestId | null;
@@ -767,6 +770,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                 onExpandedChange={setComposerExpanded}
                 onEditorFocusChange={handleOwnedInputFocusChange}
+                setupScriptState={props.setupScriptState}
+                onRerunSetupScript={props.onRerunSetupScript}
               />
             </View>
           </View>

@@ -298,3 +298,42 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
     } as any);
   }
 }
+
+export const ProjectRunSetupScriptInput = Schema.Struct({
+  threadId: TrimmedNonEmptyString,
+});
+export type ProjectRunSetupScriptInput = typeof ProjectRunSetupScriptInput.Type;
+
+export const ProjectRunSetupScriptResult = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("no-script"),
+  }),
+  Schema.Struct({
+    status: Schema.Literals(["succeeded", "failed"]),
+    scriptId: TrimmedNonEmptyString,
+    scriptName: TrimmedNonEmptyString,
+    terminalId: TrimmedNonEmptyString,
+    cwd: TrimmedNonEmptyString,
+    exitCode: Schema.NullOr(Schema.Int),
+    startedAt: TrimmedNonEmptyString,
+    finishedAt: TrimmedNonEmptyString,
+    logPath: TrimmedNonEmptyString,
+  }),
+]);
+export type ProjectRunSetupScriptResult = typeof ProjectRunSetupScriptResult.Type;
+
+export class ProjectRunSetupScriptError extends Schema.TaggedErrorClass<ProjectRunSetupScriptError>()(
+  "ProjectRunSetupScriptError",
+  {
+    threadId: TrimmedNonEmptyString,
+    operation: Schema.Literals(["resolveThread", "missingWorktree", "runSetupScript"]),
+    worktreePath: Schema.optional(TrimmedNonEmptyString),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.operation === "missingWorktree"
+      ? `Thread '${this.threadId}' has no worktree to run a setup script in.`
+      : `Setup script operation '${this.operation}' failed for thread '${this.threadId}'.`;
+  }
+}

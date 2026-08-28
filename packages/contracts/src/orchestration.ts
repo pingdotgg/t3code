@@ -273,6 +273,16 @@ export const ProjectScript = Schema.Struct({
    * the moment this script starts. Ignored without `previewUrl` or on web.
    */
   autoOpenPreview: Schema.optional(Schema.Boolean),
+  /**
+   * When false, the first agent turn may start while the worktree setup
+   * script is still running. Defaults to true: the turn waits for the script.
+   */
+  awaitSetupScript: Schema.optional(Schema.Boolean),
+  /**
+   * Milliseconds to wait for a `runOnWorktreeCreate` script before failing.
+   * Defaults to ten minutes.
+   */
+  setupScriptTimeoutMs: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
 });
 export type ProjectScript = typeof ProjectScript.Type;
 

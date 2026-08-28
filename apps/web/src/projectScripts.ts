@@ -14,6 +14,8 @@ export interface ProjectScriptInput {
   readonly runOnWorktreeCreate: ProjectScript["runOnWorktreeCreate"];
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
   readonly autoOpenPreview: boolean;
+  readonly awaitSetupScript?: ProjectScript["awaitSetupScript"];
+  readonly setupScriptTimeoutMs?: ProjectScript["setupScriptTimeoutMs"];
 }
 
 export function buildProjectScript(id: string, input: ProjectScriptInput): ProjectScript {
@@ -29,6 +31,10 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
           previewUrl: input.previewUrl,
           autoOpenPreview: input.autoOpenPreview,
         }),
+    ...(input.awaitSetupScript === undefined ? {} : { awaitSetupScript: input.awaitSetupScript }),
+    ...(input.setupScriptTimeoutMs === undefined
+      ? {}
+      : { setupScriptTimeoutMs: input.setupScriptTimeoutMs }),
   };
 }
 

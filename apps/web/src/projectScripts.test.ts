@@ -3,6 +3,7 @@ import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
   setupProjectScript,
+  setupScriptStateFromActivities,
 } from "@t3tools/shared/projectScripts";
 
 import {
@@ -128,5 +129,25 @@ describe("projectScripts helpers", () => {
         worktreePath: null,
       }),
     ).toBe("/repo");
+  });
+
+  it("resolves setup script status from thread activities", () => {
+    expect(
+      setupScriptStateFromActivities([
+        { kind: "setup-script.started", payload: { scriptName: "Setup" } },
+        {
+          kind: "setup-script.failed",
+          payload: { scriptName: "Setup", exitCode: 1, logPath: "/tmp/setup.log" },
+        },
+      ]),
+    ).toEqual({
+      status: "failed",
+      exitCode: 1,
+      startedAt: null,
+      finishedAt: null,
+      logPath: "/tmp/setup.log",
+      scriptName: "Setup",
+      terminalId: null,
+    });
   });
 });

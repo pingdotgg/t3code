@@ -643,6 +643,12 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         keybinding: null,
         previewUrl: fileScript.previewUrl ?? null,
         autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
+        ...(fileScript.awaitSetupScript === undefined
+          ? {}
+          : { awaitSetupScript: fileScript.awaitSetupScript }),
+        ...(fileScript.setupScriptTimeoutMs === undefined
+          ? {}
+          : { setupScriptTimeoutMs: fileScript.setupScriptTimeoutMs }),
       };
       const result = await submitScript(null, payload);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

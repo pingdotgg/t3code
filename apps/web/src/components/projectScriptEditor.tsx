@@ -83,6 +83,8 @@ export interface NewProjectScriptInput {
   previewUrl: string | null;
   /** When true, automatically open the preview panel pointed at `previewUrl`. */
   autoOpenPreview: boolean;
+  awaitSetupScript?: boolean;
+  setupScriptTimeoutMs?: number;
 }
 
 export type ProjectScriptActionResult = AtomCommandResult<void, unknown>;
@@ -119,6 +121,10 @@ export function editorRequestForScript(
       keybinding: keybindingValueForCommand(keybindings, commandForProjectScript(script.id)),
       previewUrl: script.previewUrl ?? null,
       autoOpenPreview: script.autoOpenPreview ?? false,
+      ...(script.awaitSetupScript === undefined ? {} : { awaitSetupScript: script.awaitSetupScript }),
+      ...(script.setupScriptTimeoutMs === undefined
+        ? {}
+        : { setupScriptTimeoutMs: script.setupScriptTimeoutMs }),
     },
   };
 }
@@ -222,6 +228,12 @@ export function ProjectScriptEditorDialog({
         keybinding: keybindingRule?.key ?? null,
         previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
         autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
+        ...(request.initial.awaitSetupScript === undefined
+          ? {}
+          : { awaitSetupScript: request.initial.awaitSetupScript }),
+        ...(request.initial.setupScriptTimeoutMs === undefined
+          ? {}
+          : { setupScriptTimeoutMs: request.initial.setupScriptTimeoutMs }),
       } satisfies NewProjectScriptInput;
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : "Failed to save action.");

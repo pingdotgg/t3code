@@ -127,6 +127,9 @@ import {
   ProjectWriteFileError,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
+  ProjectRunSetupScriptError,
+  ProjectRunSetupScriptInput,
+  ProjectRunSetupScriptResult,
 } from "./project.ts";
 import {
   TerminalAttachInput,
@@ -216,6 +219,7 @@ export const WS_METHODS = {
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  projectsRunSetupScript: "projects.runSetupScript",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -666,6 +670,12 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
 });
 
+export const WsProjectsRunSetupScriptRpc = Rpc.make(WS_METHODS.projectsRunSetupScript, {
+  payload: ProjectRunSetupScriptInput,
+  success: ProjectRunSetupScriptResult,
+  error: Schema.Union([ProjectRunSetupScriptError, EnvironmentAuthorizationError]),
+});
+
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -1066,6 +1076,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsProjectsRunSetupScriptRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,

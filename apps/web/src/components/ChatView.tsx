@@ -51,7 +51,11 @@ import {
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import {
+  projectScriptCwd,
+  projectScriptRuntimeEnv,
+  setupScriptStateFromActivities,
+} from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import {
   getTerminalLabel,
@@ -183,6 +187,7 @@ import {
   GitBranchIcon,
   Minimize2Icon,
   PaperclipIcon,
+  WrenchIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
@@ -1280,6 +1285,9 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
+  const runSetupScript = useAtomCommand(projectEnvironment.runSetupScript, {
+    reportFailure: false,
+  });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
   });
@@ -4811,6 +4819,33 @@ function ChatViewContent(props: ChatViewProps) {
     isUnsnoozing,
     isUnsettling,
   ]);
+  const [rerunningSetupThreadId, setRerunningSetupThreadId] = useState<string | null>(null);
+  const isRerunningSetup = rerunningSetupThreadId !== null && rerunningSetupThreadId === activeThreadId;
+  const handleRerunSetupScript = useCallback(async () => {
+    if (!activeThreadId) {
+      return;
+    }
+    const threadId = activeThreadId;
+    setRerunningSetupThreadId(threadId);
+    try {
+      const result = await runSetupScript({
+        environmentId,
+        input: { threadId },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to rerun setup",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    } finally {
+      setRerunningSetupThreadId((current) => (current === threadId ? null : current));
+    }
+  }, [activeThreadId, environmentId, runSetupScript]);
   // Session-scoped dismissals, one key per (thread, snapshot). A set rather
   // than a single slot so dismissing the banner on one thread does not
   // resurface it on another thread dismissed earlier.
@@ -4912,6 +4947,42 @@ function ChatViewContent(props: ChatViewProps) {
     resumeCompactionPermanentlyDismissed,
     selectedProvider,
   ]);
+  const setupScriptBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    const setupScript = setupScriptStateFromActivities(threadActivities);
+    if (!setupScript || setupScript.status === "succeeded" || !activeThreadId) {
+      return null;
+    }
+    const scriptLabel = setupScript.scriptName?.trim() || "Setup script";
+    if (setupScript.status === "running") {
+      return {
+        id: `setup-script-running:${activeThreadId}`,
+        variant: "info",
+        icon: <WrenchIcon />,
+        title: `${scriptLabel} is running`,
+        description: "The first agent turn waits until this finishes.",
+      };
+    }
+    return {
+      id: `setup-script-failed:${activeThreadId}:${setupScript.finishedAt ?? "failed"}`,
+      variant: "error",
+      icon: <WrenchIcon />,
+      title: `${scriptLabel} failed`,
+      description:
+        setupScript.exitCode === null
+          ? "The setup script did not finish successfully."
+          : `Exited with code ${setupScript.exitCode}.`,
+      actions: (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={isRerunningSetup}
+          onClick={() => void handleRerunSetupScript()}
+        >
+          {isRerunningSetup ? "Rerunning..." : "Rerun setup"}
+        </Button>
+      ),
+    };
+  }, [activeThreadId, handleRerunSetupScript, isRerunningSetup, threadActivities]);
   const handleRestoreThreadBranch = useCallback(() => {
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
       setBranchRestoreConfirmOpen(true);
@@ -4930,9 +5001,11 @@ function ChatViewContent(props: ChatViewProps) {
       resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
+    const setupScriptItems = setupScriptBannerItem === null ? [] : [setupScriptBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...urgentSystemItems,
+        ...setupScriptItems,
         ...backgroundLivenessItems,
         ...calmSystemItems,
         ...resumeCompactionItems,
@@ -4942,6 +5015,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return [
       ...urgentSystemItems,
+      ...setupScriptItems,
       ...backgroundLivenessItems,
       ...calmSystemItems,
       ...resumeCompactionItems,
@@ -4995,6 +5069,7 @@ function ChatViewContent(props: ChatViewProps) {
     localCheckoutBranchMismatch,
     parkedThreadBannerItem,
     resumeCompactionBannerItem,
+    setupScriptBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
     wokeThreadBannerItem,

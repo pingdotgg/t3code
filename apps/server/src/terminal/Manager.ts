@@ -152,6 +152,18 @@ export class TerminalManager extends Context.Service<
     readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
 
     /**
+     * Append output to a terminal buffer without writing to the PTY.
+     *
+     * Used by setup-script execution so the terminal is a viewer, not the
+     * process that runs the command. Missing sessions are ignored.
+     */
+    readonly appendOutput: (input: {
+      readonly threadId: string;
+      readonly terminalId: string;
+      readonly data: string;
+    }) => Effect.Effect<void>;
+
+    /**
      * Resize the PTY backing a terminal session.
      */
     readonly resize: (input: TerminalResizeInput) => Effect.Effect<void, TerminalError>;
@@ -2487,6 +2499,50 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   };
 
+  const appendOutputLocked: TerminalManager["Service"]["appendOutput"] = Effect.fn(
+    "terminal.appendOutput",
+  )(function* (input) {
+    if (input.data.length === 0) {
+      return;
+    }
+    const session = yield* getSession(input.threadId, input.terminalId);
+    if (Option.isNone(session)) {
+      return;
+    }
+    const liveSession = session.value;
+    const sanitized = sanitizeTerminalHistoryChunk(
+      liveSession.pendingHistoryControlSequence,
+      input.data,
+    );
+    let history: string | null = null;
+    let eventStamp = { updatedAt: liveSession.updatedAt, sequence: liveSession.eventSequence };
+    yield* modifyManagerState((state) => {
+      liveSession.pendingHistoryControlSequence = sanitized.pendingControlSequence;
+      if (sanitized.visibleText.length > 0) {
+        liveSession.history = capHistory(
+          `${liveSession.history}${sanitized.visibleText}`,
+          historyLineLimit,
+        );
+        history = liveSession.history;
+      }
+      eventStamp = advanceEventSequence(liveSession);
+      return [undefined, state] as const;
+    });
+    if (history !== null) {
+      yield* queuePersist(input.threadId, input.terminalId, history);
+    }
+    yield* publishEvent({
+      type: "output",
+      threadId: input.threadId,
+      terminalId: input.terminalId,
+      sequence: eventStamp.sequence,
+      data: input.data,
+    });
+  });
+
+  const appendOutput: TerminalManager["Service"]["appendOutput"] = (input) =>
+    withThreadLock(input.threadId, appendOutputLocked(input));
+
   const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(function* (input) {
     const terminalId = input.terminalId;
     const session = yield* requireSession(input.threadId, terminalId);
@@ -2657,6 +2713,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     open,
     attachStream,
     write,
+    appendOutput,
     resize,
     clear,
     restart,

@@ -14,6 +14,7 @@ import {
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
+import type { SetupScriptState } from "@t3tools/shared/projectScripts";
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -123,6 +124,8 @@ export interface ThreadComposerProps {
   readonly onExpandedChange?: (expanded: boolean) => void;
   /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
   readonly onEditorFocusChange?: (focused: boolean) => void;
+  readonly setupScriptState?: SetupScriptState | null;
+  readonly onRerunSetupScript?: () => void;
 }
 
 /**
@@ -265,6 +268,50 @@ const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(
         >
           {props.status.label}
         </Text>
+      </Pressable>
+    </Animated.View>
+  );
+});
+
+const ComposerSetupScriptPill = memo(function ComposerSetupScriptPill(props: {
+  readonly state: SetupScriptState;
+  readonly onRerun?: () => void;
+}) {
+  const scriptLabel = props.state.scriptName?.trim() || "Setup script";
+  const isRunning = props.state.status === "running";
+  const label = isRunning
+    ? `${scriptLabel} is running`
+    : props.state.exitCode === null
+      ? `${scriptLabel} failed`
+      : `${scriptLabel} failed (exit ${props.state.exitCode})`;
+
+  return (
+    <Animated.View
+      className="absolute inset-x-0 bottom-full items-center pb-2"
+      entering={FadeInDown.duration(180)}
+      exiting={FadeOutDown.duration(140)}
+      pointerEvents="box-none"
+    >
+      <Pressable
+        accessibilityRole={isRunning || props.onRerun === undefined ? "text" : "button"}
+        disabled={isRunning || props.onRerun === undefined}
+        onPress={props.onRerun}
+        className="max-w-full flex-row items-center gap-2 rounded-full bg-white/90 px-3 py-2 shadow-sm active:opacity-70 dark:bg-neutral-900/90"
+      >
+        {isRunning ? (
+          <ActivityIndicator size="small" color="#8e8e93" />
+        ) : (
+          <View className="h-2 w-2 rounded-full bg-red-500" />
+        )}
+        <Text
+          className="max-w-[260px] text-sm font-t3-bold leading-snug text-foreground"
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+        {isRunning || props.onRerun === undefined ? null : (
+          <Text className="text-sm font-t3-bold text-foreground">Rerun setup</Text>
+        )}
       </Pressable>
     </Animated.View>
   );
@@ -751,6 +798,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           <ComposerConnectionStatusPill
             status={connectionStatus}
             onPress={props.onReconnectEnvironment}
+          />
+        ) : props.setupScriptState && props.setupScriptState.status !== "succeeded" ? (
+          <ComposerSetupScriptPill
+            state={props.setupScriptState}
+            onRerun={
+              props.setupScriptState.status === "failed" ? props.onRerunSetupScript : undefined
+            }
           />
         ) : null}
 
