@@ -21,11 +21,16 @@ export function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
   presentation: BaseEnvironmentPresentation,
 ): EnvironmentPresentation {
+  const displayUrl = connectionCatalogDisplayUrl(presentation.entry);
   return {
     ...presentation,
     environmentId,
-    label: presentation.entry.target.label,
-    displayUrl: connectionCatalogDisplayUrl(presentation.entry),
+    label:
+      presentation.serverConfig?.environment.label ??
+      (presentation.entry.target._tag === "RelayConnectionTarget"
+        ? presentation.entry.target.label
+        : (displayUrl ?? "Environment")),
+    displayUrl,
     relayManaged: presentation.entry.target._tag === "RelayConnectionTarget",
   };
 }

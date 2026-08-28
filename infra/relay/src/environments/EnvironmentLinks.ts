@@ -101,6 +101,18 @@ export class EnvironmentLinkRevokePersistenceError extends Schema.TaggedErrorCla
   }
 }
 
+export class EnvironmentLabelUpdatePersistenceError extends Schema.TaggedErrorClass<EnvironmentLabelUpdatePersistenceError>()(
+  "EnvironmentLabelUpdatePersistenceError",
+  {
+    environmentId: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to update the label for environment '${this.environmentId}'`;
+  }
+}
+
 export class EnvironmentLinks extends Context.Service<
   EnvironmentLinks,
   {
@@ -137,6 +149,11 @@ export class EnvironmentLinks extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
     }) => Effect.Effect<boolean, EnvironmentLinkRevokePersistenceError>;
+    readonly updateLabel: (input: {
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly label: string;
+    }) => Effect.Effect<void, EnvironmentLabelUpdatePersistenceError>;
   }
 >()("t3code-relay/environments/EnvironmentLinks") {}
 
@@ -165,6 +182,28 @@ const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
 
   return EnvironmentLinks.of({
+    updateLabel: Effect.fn("relay.environment_links.update_label")(function* (input) {
+      const updatedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* db
+        .update(relayEnvironmentLinks)
+        .set({ environmentLabel: input.label, updatedAt })
+        .where(
+          and(
+            eq(relayEnvironmentLinks.environmentId, input.environmentId),
+            eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+            isNull(relayEnvironmentLinks.revokedAt),
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentLabelUpdatePersistenceError({
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
+    }),
     upsert: Effect.fn("relay.environment_links.upsert")(function* (input) {
       yield* Effect.annotateCurrentSpan({
         "relay.environment_id": input.proof.environmentId,

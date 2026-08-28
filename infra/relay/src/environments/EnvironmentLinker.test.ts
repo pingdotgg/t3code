@@ -122,6 +122,7 @@ function testLayer(input?: {
           pruneExpired: Effect.void,
         }),
         Layer.succeed(EnvironmentLinks.EnvironmentLinks, {
+          updateLabel: () => Effect.void,
           upsert: input?.upsert ?? (() => Effect.void),
           listUsersForEnvironment: () => Effect.succeed([]),
           listDeliveryUsersForEnvironment: () => Effect.succeed([]),

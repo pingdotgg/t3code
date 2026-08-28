@@ -509,6 +509,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         const layer = Layer.mergeAll(
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
+            setEnvironmentLabel: () => Effect.void,
             getEnvironmentId: Effect.succeed(environmentId),
             getDescriptor: Effect.succeed(descriptor),
           }),
@@ -659,6 +660,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         const layer = Layer.mergeAll(
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
           Layer.succeed(ServerEnvironment.ServerEnvironment, {
+            setEnvironmentLabel: () => Effect.void,
             getEnvironmentId: Effect.succeed(environmentId),
             getDescriptor: Effect.succeed(descriptor),
           }),

@@ -96,11 +96,11 @@ export function useConnectionController() {
   const updateEnvironment = useCallback(
     (
       environmentId: EnvironmentId,
-      updates: { readonly label: string; readonly displayUrl: string },
+      updates: { readonly label?: string; readonly displayUrl: string },
     ) =>
       updateBearer({
         environmentId,
-        label: updates.label,
+        ...(updates.label === undefined ? {} : { label: updates.label }),
         httpBaseUrl: updates.displayUrl,
       }),
     [updateBearer],

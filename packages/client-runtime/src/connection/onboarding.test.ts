@@ -206,6 +206,80 @@ describe("connection onboarding", () => {
     }),
   );
 
+  it.effect("preserves the saved label when updating only the bearer URL", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-paired");
+      const registration = yield* prepareBearerConnectionUpdate({
+        input: {
+          environmentId,
+          httpBaseUrl: "http://new.example.test/path",
+        },
+        entry: Option.some({
+          target: new BearerConnectionTarget({
+            environmentId,
+            label: "Saved label",
+            connectionId: "bearer:environment-paired",
+          }),
+          profile: Option.some(
+            new BearerConnectionProfile({
+              connectionId: "bearer:environment-paired",
+              environmentId,
+              label: "Saved label",
+              httpBaseUrl: "http://old.example.test/",
+              wsBaseUrl: "ws://old.example.test/",
+            }),
+          ),
+        }),
+        credential: Option.some(new BearerConnectionCredential({ token: "bearer-token" })),
+      });
+
+      expect(registration).toMatchObject({
+        target: { label: "Saved label" },
+        profile: {
+          label: "Saved label",
+          httpBaseUrl: "http://new.example.test/",
+          wsBaseUrl: "ws://new.example.test/",
+        },
+      });
+    }),
+  );
+
+  it.effect("rejects an explicitly empty bearer label", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-paired");
+      const error = yield* prepareBearerConnectionUpdate({
+        input: {
+          environmentId,
+          label: "  ",
+          httpBaseUrl: "http://new.example.test/",
+        },
+        entry: Option.some({
+          target: new BearerConnectionTarget({
+            environmentId,
+            label: "Saved label",
+            connectionId: "bearer:environment-paired",
+          }),
+          profile: Option.some(
+            new BearerConnectionProfile({
+              connectionId: "bearer:environment-paired",
+              environmentId,
+              label: "Saved label",
+              httpBaseUrl: "http://old.example.test/",
+              wsBaseUrl: "ws://old.example.test/",
+            }),
+          ),
+        }),
+        credential: Option.some(new BearerConnectionCredential({ token: "bearer-token" })),
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ConnectionBlockedError",
+        reason: "configuration",
+        message: "Environment label cannot be empty.",
+      });
+    }),
+  );
+
   it.effect("prepares an SSH registration from the provisioned platform environment", () =>
     Effect.gen(function* () {
       const target = {

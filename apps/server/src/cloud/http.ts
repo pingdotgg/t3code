@@ -76,6 +76,7 @@ import {
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "./config.ts";
+import { synchronizeCurrentEnvironmentLabelWithRelay } from "./EnvironmentLabelRelaySync.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
 import {
   readCliDesiredCloudLink,
@@ -492,6 +493,13 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
   } else {
     yield* dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
   }
+  yield* synchronizeCurrentEnvironmentLabelWithRelay().pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("failed to synchronize environment label after relay configuration", {
+        cause,
+      }),
+    ),
+  );
   return { ok, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
 });
 
