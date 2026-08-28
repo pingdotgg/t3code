@@ -3219,6 +3219,50 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }).pipe(Effect.orDie),
         );
 
+        yield* client.handleServerNotification("thread/tokenUsage/updated", (payload) =>
+          Effect.gen(function* () {
+            const context = yield* awaitActiveTurn(payload.turnId);
+            if (context === undefined) {
+              return;
+            }
+            const now = yield* DateTime.now;
+            // Live context usage rides on the provider turn (#8144): the turn
+            // is the natural owner and re-emitting it never disturbs items.
+            yield* emitProviderEvent({
+              type: "provider_turn.updated",
+              driver: CODEX_PROVIDER,
+              threadId: context.projectionThreadId,
+              providerTurn: {
+                id: context.providerTurnId,
+                providerThreadId: context.providerThread.id,
+                nodeId: context.providerNodeId,
+                runAttemptId: context.subagent === null ? context.input.attemptId : null,
+                nativeTurnRef: {
+                  driver: CODEX_PROVIDER,
+                  nativeId: payload.turnId,
+                  strength: "strong",
+                },
+                ordinal: context.providerTurnOrdinal,
+                status: "running",
+                startedAt: context.startedAt,
+                completedAt: null,
+                tokenUsage: {
+                  usedTokens: Math.max(0, payload.tokenUsage.total.totalTokens),
+                  maxTokens: payload.tokenUsage.modelContextWindow ?? null,
+                  inputTokens: Math.max(0, payload.tokenUsage.total.inputTokens),
+                  cachedInputTokens: Math.max(0, payload.tokenUsage.total.cachedInputTokens),
+                  outputTokens: Math.max(0, payload.tokenUsage.total.outputTokens),
+                  reasoningOutputTokens: Math.max(
+                    0,
+                    payload.tokenUsage.total.reasoningOutputTokens,
+                  ),
+                  updatedAt: DateTime.formatIso(now),
+                },
+              },
+            });
+          }).pipe(Effect.orDie),
+        );
+
         yield* client.handleServerNotification("turn/started", (payload) =>
           Effect.gen(function* () {
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);

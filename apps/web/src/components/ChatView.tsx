@@ -1300,6 +1300,17 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  // Latest provider-reported context usage (#8144): the newest turn that has
+  // a report wins; stale turns keep the meter alive between turns.
+  const activeThreadLiveTokenUsage = useMemo(() => {
+    const turns = serverProjection?.providerTurns;
+    if (!turns || turns.length === 0) return null;
+    for (let index = turns.length - 1; index >= 0; index -= 1) {
+      const usage = turns[index]?.tokenUsage;
+      if (usage !== undefined) return usage;
+    }
+    return null;
+  }, [serverProjection?.providerTurns]);
   // Agents surface (#5219): on orchestration-v2 the panel model comes from the
   // projected subagent entities — the v2 leg of the spec's mapper swap. The
   // native-activity fold never runs on this branch.
@@ -6727,6 +6738,7 @@ function ChatViewContent(props: ChatViewProps) {
                             }
                             activeThreadModelSelection={activeThread?.modelSelection}
                             activeThreadVisibleTurnItems={serverVisibleTurnItems}
+                            activeThreadLiveTokenUsage={activeThreadLiveTokenUsage}
                             resolvedTheme={resolvedTheme}
                             settings={settings}
                             keybindings={keybindings}
