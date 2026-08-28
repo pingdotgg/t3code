@@ -34,7 +34,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-adaptive-sky-700-300">
         Approval needed
       </Text>
-      <Text className="font-t3-bold text-lg text-neutral-950 dark:text-neutral-50">
+      <Text className="font-t3-bold text-lg text-adaptive-neutral-950-50">
         {props.approval.appName ?? props.approval.requestKind}
       </Text>
       {props.approval.detail ? (
@@ -56,8 +56,8 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
               option.decision === "accept"
                 ? "bg-blue-500"
                 : option.decision === "decline"
-                  ? "bg-rose-100 dark:bg-rose-500/18"
-                  : "bg-neutral-200 dark:bg-neutral-800"
+                  ? "bg-adaptive-rose-100-500-a18"
+                  : "bg-adaptive-neutral-200-800"
             }`}
             disabled={props.respondingApprovalId === props.approval.requestId}
             onPress={() => void props.onRespond(props.approval.requestId, option.decision)}
@@ -67,8 +67,8 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
                 option.decision === "accept"
                   ? "font-t3-extrabold text-white"
                   : option.decision === "decline"
-                    ? "font-t3-bold text-rose-700 dark:text-rose-300"
-                    : "font-t3-bold text-neutral-950 dark:text-neutral-50"
+                    ? "font-t3-bold text-adaptive-rose-700-300"
+                    : "font-t3-bold text-adaptive-neutral-950-50"
               }`}
             >
               {option.label}

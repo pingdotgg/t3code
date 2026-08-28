@@ -19,6 +19,7 @@ import { resolveWorkEntryToolPresentation } from "@t3tools/client-runtime/work-l
 
 import {
   deriveTimelineEntriesFromVisibleTurnItems,
+  deriveRevertTurnCountByUserMessageId,
   findLatestProposedPlan,
   isLatestRunSettled,
   providerErrorPresentation,
