@@ -71,17 +71,19 @@ function truncateReleaseNoteItem(item: string): string {
   return `${item.slice(0, MAX_RELEASE_NOTE_ITEM_LENGTH - 3).trimEnd()}...`;
 }
 
-function isIgnoredReleaseNoteLine(line: string): boolean {
-  const normalized = line
+function normalizeReleaseNoteLine(line: string): string {
+  return line
     .toLowerCase()
     .replace(/[*_`#]/g, "")
     .trim();
+}
+
+function isIgnoredReleaseNoteLine(line: string): boolean {
+  const normalized = normalizeReleaseNoteLine(line);
   return (
     normalized === "" ||
     normalized === "what's changed" ||
     normalized === "whats changed" ||
-    normalized === "full changelog" ||
-    normalized === "new contributors" ||
     normalized.startsWith("compare: ") ||
     normalized.includes("/compare/")
   );
@@ -97,17 +99,23 @@ function extractReleaseNoteItems(note: string | null | undefined): ReadonlyArray
       .replace(/^[-*]\s+/, "")
       .replace(/^\d+[.)]\s+/, "")
       .replace(/\s+/g, " ");
+    const normalized = normalizeReleaseNoteLine(item);
+    if (normalized === "new contributors" || normalized === "full changelog") break;
     if (isIgnoredReleaseNoteLine(item)) continue;
     items.push(truncateReleaseNoteItem(item));
-    if (items.length >= MAX_RELEASE_NOTE_ITEMS_PER_GROUP) break;
   }
   return items;
+}
+
+interface NormalizedDesktopUpdateReleaseNotes {
+  readonly releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote>;
+  readonly omittedReleaseCount: number;
 }
 
 export function normalizeDesktopUpdateReleaseNotes(
   releaseNotes: unknown,
   fallbackVersion: string,
-): ReadonlyArray<DesktopUpdateReleaseNote> {
+): NormalizedDesktopUpdateReleaseNotes {
   const rawNotes =
     typeof releaseNotes === "string"
       ? [{ version: fallbackVersion, note: releaseNotes }]
@@ -115,11 +123,20 @@ export function normalizeDesktopUpdateReleaseNotes(
         ? releaseNotes.filter(isElectronReleaseNoteInfo)
         : [];
 
-  return rawNotes
-    .map((entry) => ({
-      version: entry.version,
-      items: extractReleaseNoteItems(entry.note),
-    }))
-    .filter((entry) => entry.items.length > 0)
-    .slice(0, MAX_RELEASE_NOTE_GROUPS);
+  const normalizedNotes = rawNotes.flatMap((entry) => {
+    const items = extractReleaseNoteItems(entry.note);
+    if (items.length === 0) return [];
+    return [
+      {
+        version: entry.version,
+        items: items.toReversed().slice(0, MAX_RELEASE_NOTE_ITEMS_PER_GROUP),
+        totalItems: items.length,
+      },
+    ];
+  });
+
+  return {
+    releaseNotes: normalizedNotes.slice(0, MAX_RELEASE_NOTE_GROUPS),
+    omittedReleaseCount: Math.max(0, normalizedNotes.length - MAX_RELEASE_NOTE_GROUPS),
+  };
 }
