@@ -24,11 +24,6 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import {
-  WorkspaceBreadcrumb,
-  WorkspaceBreadcrumbItem,
-  WorkspaceBreadcrumbSeparator,
-} from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsContent } from "./UsageLimitsContent";
@@ -124,20 +119,13 @@ export function UsagePage() {
       : `${formatDayShort(window.sinceDay)} to ${formatDayShort(window.untilDay)}`;
   const topbarContent = (
     <div className="flex w-full min-w-0 items-center gap-3">
-      <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
-        <WorkspaceBreadcrumbItem current>
-          <h1>Usage</h1>
-        </WorkspaceBreadcrumbItem>
-        {view === "usage" ? (
-          <>
-            <WorkspaceBreadcrumbSeparator className="hidden md:flex" />
-            <WorkspaceBreadcrumbItem className="hidden min-w-0 shrink md:flex">
-              <span className="truncate">{windowLabel}</span>
-            </WorkspaceBreadcrumbItem>
-          </>
-        ) : null}
-      </WorkspaceBreadcrumb>
+      <h1 className="sr-only">Usage</h1>
       <UsageViewToggle view={view} onViewChange={setView} />
+      {view === "usage" ? (
+        <span className="hidden min-w-0 shrink truncate text-sm font-medium text-muted-foreground md:block">
+          {windowLabel}
+        </span>
+      ) : null}
       {view === "usage" ? (
         <>
           <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 lg:flex">
