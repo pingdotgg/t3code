@@ -269,12 +269,23 @@ function tidyMarkdown(markdown: string): string {
     .trim();
 }
 
+/**
+ * `range.cloneContents()` is detached, so `closest()` on the clone cannot
+ * reach `.chat-markdown-mermaid`. Resolve mermaid source from the live
+ * selection ancestor instead.
+ */
+export function mermaidMarkdownCopyFromLiveNode(node: Node): string | null {
+  const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+  const host = element?.closest(".chat-markdown-mermaid");
+  return host?.getAttribute("data-markdown-copy") ?? null;
+}
+
 export function serializeRenderedMarkdownFragment(container: Node): string {
   if (container.nodeType === Node.ELEMENT_NODE) {
     const element = container as Element;
     const copy =
       element.getAttribute("data-markdown-copy") ??
-      (element.closest("svg") !== null
+      (isSkippedElement(element)
         ? (element.closest("[data-markdown-copy]")?.getAttribute("data-markdown-copy") ?? null)
         : null);
     if (copy !== null) return tidyMarkdown(copy);
@@ -331,6 +342,12 @@ export function chatMarkdownClipboardPayload(
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
     const ancestor = range.commonAncestorContainer;
+    const mermaidCopy = mermaidMarkdownCopyFromLiveNode(ancestor);
+    if (mermaidCopy !== null) {
+      texts.push(tidyMarkdown(mermaidCopy));
+      htmls.push(sanitizedHtmlFrom(container));
+      continue;
+    }
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
     if (ancestorElement?.closest("pre")) {

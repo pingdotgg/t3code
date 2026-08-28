@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
+import {
+  chatMarkdownClipboardPayload,
+  mermaidMarkdownCopyFromLiveNode,
+  serializeRenderedMarkdownFragment,
+} from "./markdown-clipboard";
 
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
@@ -48,6 +52,12 @@ class FakeElement {
     let current: FakeElement | null = this;
     while (current) {
       if (selector === "svg" && current.tagName.toLowerCase() === "svg") return current;
+      if (
+        selector === ".chat-markdown-mermaid" &&
+        current.classList.contains("chat-markdown-mermaid")
+      ) {
+        return current;
+      }
       if (selector === "[data-markdown-copy]" && current.hasAttribute("data-markdown-copy")) {
         return current;
       }
@@ -138,5 +148,51 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
       "```mermaid\nflowchart TD\n  A --> B\n```",
     );
+  });
+
+  it("serializes detached svg clones as label text because they have no mermaid wrapper", () => {
+    const detachedSvg = new FakeElement("svg").append(new FakeText("Join form"));
+
+    expect(mermaidMarkdownCopyFromLiveNode(asNode(detachedSvg))).toBeNull();
+    expect(serializeRenderedMarkdownFragment(asNode(detachedSvg))).toBe("Join form");
+  });
+
+  it("reads mermaid copy from the live ancestor tree", () => {
+    const svg = new FakeElement("svg").append(new FakeText("Join form"));
+    new FakeElement("DIV", ["chat-markdown-mermaid"], {
+      "data-markdown-copy": "```mermaid\nflowchart TD\n  A --> B\n```\n\n",
+    }).append(svg);
+
+    expect(mermaidMarkdownCopyFromLiveNode(asNode(svg))).toBe(
+      "```mermaid\nflowchart TD\n  A --> B\n```\n\n",
+    );
+  });
+
+  it("copies mermaid source from the live ancestor even when cloneContents is detached", () => {
+    const fence = "```mermaid\nflowchart TD\n  A --> B\n```";
+    const liveSvg = new FakeElement("svg").append(new FakeText("Join form"));
+    new FakeElement("DIV", ["chat-markdown-mermaid"], {
+      "data-markdown-copy": `${fence}\n\n`,
+    }).append(liveSvg);
+    const detachedClone = new FakeElement("svg").append(new FakeText("Join form"));
+    const htmlHost = {
+      innerHTML: "",
+      appendChild() {},
+      querySelectorAll: () => [],
+    };
+    vi.stubGlobal("document", {
+      createElement: () => htmlHost,
+    });
+
+    const payload = chatMarkdownClipboardPayload({
+      rangeCount: 1,
+      getRangeAt: () => ({
+        collapsed: false,
+        commonAncestorContainer: asNode(liveSvg),
+        cloneContents: () => asNode(detachedClone),
+      }),
+    } as unknown as Selection);
+
+    expect(payload?.text).toBe(fence);
   });
 });
