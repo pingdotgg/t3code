@@ -8,12 +8,6 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
-import {
-  detectComposerTrigger,
-  replaceTextRange,
-  serializeComposerFileLink,
-  type ComposerTrigger,
-} from "@t3tools/shared/composerTrigger";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -33,11 +27,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { GlassSurface } from "../../components/GlassSurface";
-import {
-  ComposerEditor,
-  type ComposerEditorHandle,
-  type ComposerEditorSelection,
-} from "../../components/ComposerEditor";
+import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import {
   ComposerInlineControl,
   ComposerToolbarButton,
@@ -53,15 +43,9 @@ import type {
 import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
-import {
-  insertRankedSearchResult,
-  normalizeSearchQuery,
-  scoreQueryMatch,
-} from "@t3tools/shared/searchRanking";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
-import { useComposerPathSearch } from "../../state/use-composer-path-search";
-import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
-import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
+import { ComposerCommandPopover } from "./ComposerCommandPopover";
+import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
@@ -346,164 +330,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     onChangeDraftMessage: props.onChangeDraftMessage,
     onUpdateInteractionMode: props.onUpdateInteractionMode,
   });
-
-  const composerMenuItems: ComposerCommandItem[] = useMemo(() => {
-    if (!composerTrigger) return [];
-
-    if (composerTrigger.kind === "slash-command") {
-      const q = composerTrigger.query.toLowerCase();
-      const allBuiltIn = [
-        {
-          id: "cmd:model",
-          type: "slash-command" as const,
-          command: "model",
-          label: "/model",
-          description: "Switch model",
-        },
-        {
-          id: "cmd:plan",
-          type: "slash-command" as const,
-          command: "plan",
-          label: "/plan",
-          description: "Switch to plan mode",
-        },
-        {
-          id: "cmd:default",
-          type: "slash-command" as const,
-          command: "default",
-          label: "/default",
-          description: "Switch to default mode",
-        },
-      ];
-      const builtIn = allBuiltIn.filter((item) => item.command.includes(q));
-
-      const providerCommands: ComposerCommandItem[] = [];
-      for (const cmd of selectedProviderStatus?.slashCommands ?? []) {
-        if (!cmd.name.toLowerCase().includes(q)) continue;
-        providerCommands.push({
-          id: `pcmd:${cmd.name}`,
-          type: "provider-slash-command" as const,
-          command: cmd,
-          label: `/${cmd.name}`,
-          description: cmd.description ?? "",
-        });
-      }
-
-      const skillItems = (selectedProviderStatus?.skills ?? [])
-        .filter((skill) => matchesSlashSkillQuery(skill, q))
-        .map((skill) => ({
-          id: `skill:${skill.name}`,
-          type: "skill" as const,
-          skill,
-          label: `skill:${skill.name}`,
-          description: skill.shortDescription ?? skill.description ?? "",
-        }));
-
-      return [...builtIn, ...providerCommands, ...skillItems];
-    }
-
-    if (composerTrigger.kind === "skill") {
-      const enabledSkills = (selectedProviderStatus?.skills ?? []).filter((s) => s.enabled);
-      const normalizedQuery = normalizeSearchQuery(composerTrigger.query, {
-        trimLeadingPattern: /^\$+/,
-      });
-
-      if (!normalizedQuery) {
-        return enabledSkills.slice(0, 20).map((skill) => ({
-          id: `skill:${skill.name}`,
-          type: "skill" as const,
-          skill,
-          label: skill.displayName ?? skill.name,
-          description: skill.shortDescription ?? skill.description ?? "",
-        }));
-      }
-
-      const ranked: Array<{
-        item: (typeof enabledSkills)[number];
-        score: number;
-        tieBreaker: string;
-      }> = [];
-      for (const skill of enabledSkills) {
-        const displayLabel = (skill.displayName ?? skill.name).toLowerCase();
-        const scores = [
-          scoreQueryMatch({
-            value: skill.name.toLowerCase(),
-            query: normalizedQuery,
-            exactBase: 0,
-            prefixBase: 2,
-            boundaryBase: 4,
-            includesBase: 6,
-            fuzzyBase: 100,
-            boundaryMarkers: ["-", "_", "/"],
-          }),
-          scoreQueryMatch({
-            value: displayLabel,
-            query: normalizedQuery,
-            exactBase: 1,
-            prefixBase: 3,
-            boundaryBase: 5,
-            includesBase: 7,
-            fuzzyBase: 110,
-          }),
-          scoreQueryMatch({
-            value: skill.shortDescription?.toLowerCase() ?? "",
-            query: normalizedQuery,
-            exactBase: 20,
-            prefixBase: 22,
-            boundaryBase: 24,
-            includesBase: 26,
-          }),
-          scoreQueryMatch({
-            value: skill.description?.toLowerCase() ?? "",
-            query: normalizedQuery,
-            exactBase: 30,
-            prefixBase: 32,
-            boundaryBase: 34,
-            includesBase: 36,
-          }),
-        ].filter((s): s is number => s !== null);
-
-        if (scores.length > 0) {
-          insertRankedSearchResult(
-            ranked,
-            {
-              item: skill,
-              score: Math.min(...scores),
-              tieBreaker: `${displayLabel}\u0000${skill.name}`,
-            },
-            20,
-          );
-        }
-      }
-
-      return ranked.map(({ item: skill }) => ({
-        id: `skill:${skill.name}`,
-        type: "skill" as const,
-        skill,
-        label: skill.displayName ?? skill.name,
-        description: skill.shortDescription ?? skill.description ?? "",
-      }));
-    }
-
-    if (composerTrigger.kind === "path") {
-      return pathSearch.entries.map((entry) => {
-        const parts = entry.path.split("/");
-        return {
-          id: `path:${entry.path}`,
-          type: "path" as const,
-          path: entry.path,
-          kind: entry.kind,
-          label: parts[parts.length - 1] ?? entry.path,
-          description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
-        };
-      });
-    }
-
-    return [];
-  }, [composerTrigger, pathSearch.entries, selectedProviderStatus]);
-
-  // ── Handle command selection ──────────────────────────────
-  const { onChangeDraftMessage, onUpdateInteractionMode, draftMessage, onSendMessage } = props;
+  const { onSendMessage } = props;
 
   const handleSend = useCallback(async () => {
     if (voiceInput.blocksSubmission) return;
