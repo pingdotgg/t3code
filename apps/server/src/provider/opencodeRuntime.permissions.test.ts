@@ -2,7 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";
 
-import { buildOpenCodePermissionRules } from "./opencodeRuntime.ts";
+import { buildOpenCodePermissionRules, toOpenCodePermissionReply } from "./opencodeRuntime.ts";
 
 function actionFor(
   runtimeMode: Parameters<typeof buildOpenCodePermissionRules>[0],
@@ -40,5 +40,20 @@ describe("buildOpenCodePermissionRules", () => {
     NodeAssert.deepEqual(buildOpenCodePermissionRules("full-access"), [
       { permission: "*", pattern: "*", action: "allow" },
     ]);
+  });
+});
+
+describe("toOpenCodePermissionReply", () => {
+  it("maps one-time approvals without saving them", () => {
+    NodeAssert.equal(toOpenCodePermissionReply("accept"), "once");
+  });
+
+  it("maps legacy session approvals to the upstream always option", () => {
+    NodeAssert.equal(toOpenCodePermissionReply("acceptForSession"), "always");
+  });
+
+  it("rejects declined and cancelled requests", () => {
+    NodeAssert.equal(toOpenCodePermissionReply("decline"), "reject");
+    NodeAssert.equal(toOpenCodePermissionReply("cancel"), "reject");
   });
 });

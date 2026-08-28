@@ -43,6 +43,7 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
   makePackageManagedProviderMaintenanceResolver,
   normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -64,7 +65,7 @@ function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   );
 }
 
-const UPDATE = makePackageManagedProviderMaintenanceResolver({
+const LEGACY_UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "opencode-ai",
   homebrewFormula: "anomalyco/tap/opencode",
@@ -75,6 +76,25 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
     isCommandPath: isOpenCodeNativeCommandPath,
   },
 });
+
+const UPDATE = {
+  resolve(options?: Parameters<typeof LEGACY_UPDATE.resolve>[0]) {
+    const paths = [options?.binaryPath, options?.resolvedCommandPath, options?.realCommandPath];
+    const isOpenCodeV2 = paths.some(
+      (commandPath) =>
+        typeof commandPath === "string" &&
+        /(?:^|\/)opencode2(?:\.(?:cmd|bat|exe))?$/.test(normalizeCommandPath(commandPath)),
+    );
+    const isUnresolvedDefault =
+      options?.binaryPath === "opencode" &&
+      !options.resolvedCommandPath &&
+      !options.realCommandPath;
+
+    return isOpenCodeV2 || isUnresolvedDefault
+      ? makeManualOnlyProviderMaintenanceCapabilities({ provider: DRIVER_KIND, packageName: null })
+      : LEGACY_UPDATE.resolve(options);
+  },
+};
 
 export type OpenCodeDriverEnv =
   | BackgroundPolicy.BackgroundPolicy

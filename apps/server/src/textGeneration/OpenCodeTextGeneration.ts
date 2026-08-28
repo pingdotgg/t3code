@@ -33,6 +33,9 @@ import {
 import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL = "30 seconds";
+const OpenCodeConfigContent = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const decodeOpenCodeConfigContent = Schema.decodeUnknownExit(OpenCodeConfigContent);
+const encodeOpenCodeConfigContent = Schema.encodeSync(OpenCodeConfigContent);
 
 const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateCommitMessage",
@@ -295,13 +298,38 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         // closes the fresh scope.
         return yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
+            const decodedConfig = decodeOpenCodeConfigContent(
+              OpenCodeRuntime.resolveOpenCodeConfigContent(resolvedEnvironment),
+            );
+            if (Exit.isFailure(decodedConfig)) {
+              return yield* new TextGenerationError({
+                operation: input.operation,
+                detail: "OpenCode configuration content must be a JSON object.",
+              });
+            }
+            const config = decodedConfig.value;
+            const serverEnvironment = {
+              ...resolvedEnvironment,
+              OPENCODE_CONFIG_CONTENT: encodeOpenCodeConfigContent({
+                ...config,
+                permission: "deny",
+                ...(Array.isArray(config.permissions)
+                  ? {
+                      permissions: [
+                        ...config.permissions,
+                        { action: "*", resource: "*", effect: "deny" },
+                      ],
+                    }
+                  : {}),
+              }),
+            };
             const serverScope = yield* Scope.make();
             const startedExit = yield* Effect.exit(
               restore(
                 openCodeRuntime
                   .startOpenCodeServerProcess({
                     binaryPath: input.binaryPath,
-                    environment: resolvedEnvironment,
+                    environment: serverEnvironment,
                   })
                   .pipe(
                     Effect.provideService(Scope.Scope, serverScope),
@@ -381,13 +409,17 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     });
 
     const runAgainstServer = Effect.fn("runOpenCodeJson.runAgainstServer")(
-      function* (server: Pick<OpenCodeRuntime.OpenCodeServerConnection, "url">) {
+      function* (
+        server: Pick<
+          OpenCodeRuntime.OpenCodeServerConnection,
+          "url" | "apiVersion" | "serverPassword"
+        >,
+      ) {
         const client = openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
           directory: input.cwd,
-          ...(openCodeSettings.serverUrl.length > 0 && openCodeSettings.serverPassword
-            ? { serverPassword: openCodeSettings.serverPassword }
-            : {}),
+          ...(server.apiVersion ? { apiVersion: server.apiVersion } : {}),
+          ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
         });
         const session = yield* Effect.tryPromise({
           try: () =>
@@ -498,7 +530,33 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
 
     const rawOutput =
       openCodeSettings.serverUrl.length > 0
-        ? yield* runAgainstServer({ url: openCodeSettings.serverUrl })
+        ? yield* openCodeRuntime
+            .connectToOpenCodeServer({
+              binaryPath: openCodeSettings.binaryPath,
+              serverUrl: openCodeSettings.serverUrl,
+              ...(openCodeSettings.serverPassword
+                ? { serverPassword: openCodeSettings.serverPassword }
+                : {}),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new TextGenerationError({
+                    operation: input.operation,
+                    detail: OpenCodeRuntime.openCodeRuntimeErrorDetail(cause),
+                    cause,
+                  }),
+              ),
+              Effect.flatMap((server) =>
+                runAgainstServer({
+                  ...server,
+                  ...(openCodeSettings.serverPassword
+                    ? { serverPassword: openCodeSettings.serverPassword }
+                    : {}),
+                }),
+              ),
+              Effect.scoped,
+            )
         : yield* Effect.acquireUseRelease(
             acquireSharedServer({
               binaryPath: openCodeSettings.binaryPath,

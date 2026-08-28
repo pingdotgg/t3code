@@ -35,6 +35,16 @@ const runtimeMock = {
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
     inventoryCwd: null as string | null,
+    inventoryApiVersion: null as "v1" | "v2" | null,
+    connectionApiVersion: null as "v1" | "v2" | null,
+    connectionServerPassword: null as string | null,
+    connectServerPassword: null as string | null,
+    sdkClientOptions: null as {
+      readonly baseUrl: string;
+      readonly directory: string;
+      readonly apiVersion?: "v1" | "v2";
+      readonly serverPassword?: string;
+    } | null,
     closeCalls: 0,
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
@@ -47,6 +57,11 @@ const runtimeMock = {
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
     this.state.inventoryCwd = null;
+    this.state.inventoryApiVersion = null;
+    this.state.connectionApiVersion = null;
+    this.state.connectionServerPassword = null;
+    this.state.connectServerPassword = null;
+    this.state.sdkClientOptions = null;
     this.state.closeCalls = 0;
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
@@ -62,8 +77,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       url: "http://127.0.0.1:4301",
       exitCode: Effect.never,
     }),
-  connectToOpenCodeServer: ({ serverUrl }) =>
+  connectToOpenCodeServer: ({ serverUrl, serverPassword }) =>
     Effect.gen(function* () {
+      runtimeMock.state.connectServerPassword = serverPassword ?? null;
       if (!serverUrl) {
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
@@ -75,6 +91,12 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         url: serverUrl ?? "http://127.0.0.1:4301",
         exitCode: null,
         external: Boolean(serverUrl),
+        ...(runtimeMock.state.connectionApiVersion
+          ? { apiVersion: runtimeMock.state.connectionApiVersion }
+          : {}),
+        ...(runtimeMock.state.connectionServerPassword
+          ? { serverPassword: runtimeMock.state.connectionServerPassword }
+          : {}),
       };
     }),
   runOpenCodeCommand: () =>
@@ -87,8 +109,10 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           }),
         )
       : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
-  createOpenCodeSdkClient: () =>
-    ({}) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+  createOpenCodeSdkClient: (input) => {
+    runtimeMock.state.sdkClientOptions = input;
+    return {} as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>;
+  },
   loadOpenCodeInventory: () =>
     runtimeMock.state.inventoryError
       ? Effect.fail(
@@ -99,8 +123,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           }),
         )
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
-  loadInventoryFromCli: ({ cwd }) => {
+  loadInventoryFromCli: ({ cwd, apiVersion }) => {
     runtimeMock.state.inventoryCwd = cwd;
+    runtimeMock.state.inventoryApiVersion = apiVersion ?? null;
     return runtimeMock.state.inventoryError
       ? Effect.fail(
           new OpenCodeRuntimeError({
@@ -133,7 +158,7 @@ const makeOpenCodeSettings = (overrides?: Partial<OpenCodeSettings>): OpenCodeSe
   });
 
 it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
-  it.effect("shows a codex-style missing binary message", () =>
+  it.effect("mentions both executable names when OpenCode cannot be discovered", () =>
     Effect.gen(function* () {
       runtimeMock.state.runVersionError = new Error("spawn opencode ENOENT");
       const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
@@ -142,8 +167,95 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.equal(snapshot.installed, false);
       NodeAssert.equal(
         snapshot.message,
-        "OpenCode CLI (`opencode`) is not installed or not on PATH.",
+        "OpenCode CLI (`opencode` or `opencode2`) is not installed or not on PATH.",
       );
+    }),
+  );
+
+  it.effect("accepts OpenCode 2 preview releases and routes their inventory through v2", () =>
+    Effect.gen(function* () {
+      for (const [stdout, expectedVersion] of [
+        ["opencode2 v0.0.0-dev-18191\n", "0.0.0-dev-18191"],
+        ["opencode2 v0.0.0-beta-18155\n", "0.0.0-beta-18155"],
+      ] as const) {
+        runtimeMock.state.versionStdout = stdout;
+        const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+        NodeAssert.equal(snapshot.status, "warning", snapshot.message);
+        NodeAssert.equal(snapshot.installed, true);
+        NodeAssert.equal(snapshot.version, expectedVersion);
+        NodeAssert.equal(runtimeMock.state.inventoryApiVersion, "v2");
+      }
+    }),
+  );
+
+  it.effect("accepts actual OpenCode 2 releases and routes their inventory through v2", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode2 2.1.0\n";
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings({ binaryPath: "opencode2" }),
+        process.cwd(),
+      );
+
+      NodeAssert.equal(snapshot.status, "warning");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.version, "2.1.0");
+      NodeAssert.equal(runtimeMock.state.inventoryApiVersion, "v2");
+    }),
+  );
+
+  it.effect("keeps enforcing the minimum supported OpenCode 1 version", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode 1.14.18\n";
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.version, "1.14.18");
+      NodeAssert.equal(
+        snapshot.message,
+        "OpenCode v1.14.18 is too old. Upgrade to v1.14.19 or newer.",
+      );
+      NodeAssert.equal(runtimeMock.state.inventoryApiVersion, null);
+    }),
+  );
+
+  it.effect("does not exempt unconfirmed zero versions from the OpenCode 1 minimum", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode 0.0.0\n";
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.version, "0.0.0");
+      NodeAssert.equal(runtimeMock.state.inventoryApiVersion, null);
+    }),
+  );
+
+  it.effect(
+    "rejects malformed version output even for an explicitly configured OpenCode 2 CLI",
+    () =>
+      Effect.gen(function* () {
+        runtimeMock.state.versionStdout = "opencode2 development build\n";
+        const snapshot = yield* checkOpenCodeProviderStatus(
+          makeOpenCodeSettings({ binaryPath: "opencode2" }),
+          process.cwd(),
+        );
+
+        NodeAssert.equal(snapshot.status, "error");
+        NodeAssert.equal(snapshot.installed, true);
+        NodeAssert.equal(snapshot.version, null);
+        NodeAssert.match(snapshot.message ?? "", /`opencode2 --version`/);
+        NodeAssert.equal(runtimeMock.state.inventoryApiVersion, null);
+      }),
+  );
+
+  it.effect("routes supported OpenCode 1 releases through their existing CLI inventory", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.equal(snapshot.status, "warning");
+      NodeAssert.equal(snapshot.version, "1.14.19");
+      NodeAssert.equal(runtimeMock.state.inventoryApiVersion, "v1");
     }),
   );
 
@@ -306,6 +418,47 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
 });
 
 it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (it) => {
+  it.effect("routes detected OpenCode 2 servers with their connection credentials", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.connectionApiVersion = "v2";
+      runtimeMock.state.connectionServerPassword = "connection-password";
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings({
+          serverUrl: "http://127.0.0.1:9999",
+          serverPassword: "configured-password",
+        }),
+        process.cwd(),
+      );
+
+      NodeAssert.equal(snapshot.status, "warning");
+      NodeAssert.equal(runtimeMock.state.connectServerPassword, "configured-password");
+      NodeAssert.deepEqual(runtimeMock.state.sdkClientOptions, {
+        baseUrl: "http://127.0.0.1:9999",
+        directory: process.cwd(),
+        apiVersion: "v2",
+        serverPassword: "connection-password",
+      });
+    }),
+  );
+
+  it.effect("preserves configured passwords for OpenCode 1 external servers", () =>
+    Effect.gen(function* () {
+      yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings({
+          serverUrl: "http://127.0.0.1:9999",
+          serverPassword: "configured-password",
+        }),
+        process.cwd(),
+      );
+
+      NodeAssert.deepEqual(runtimeMock.state.sdkClientOptions, {
+        baseUrl: "http://127.0.0.1:9999",
+        directory: process.cwd(),
+        serverPassword: "configured-password",
+      });
+    }),
+  );
+
   it.effect("surfaces a friendly auth error for configured servers", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventoryError = new Error("401 Unauthorized");

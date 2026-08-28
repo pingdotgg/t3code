@@ -8,6 +8,7 @@ import {
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
   defaultEnabledForDriver,
+  OpenCodeSettings,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -19,6 +20,7 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeOpenCodeSettings = Schema.decodeUnknownSync(OpenCodeSettings);
 
 describe("ClaudeSettings auto-compaction", () => {
   it("uses Claude's default threshold when no override is configured", () => {
@@ -46,6 +48,21 @@ describe("ClaudeSettings auto-compaction", () => {
     expect(
       decodeServerSettingsPatch({ providers: { claudeAgent: { autoCompactWindow: "300000" } } }),
     ).toBeDefined();
+  });
+});
+
+describe("OpenCodeSettings binary discovery", () => {
+  it("keeps opencode as the default binary", () => {
+    expect(decodeOpenCodeSettings({}).binaryPath).toBe("opencode");
+    expect(decodeOpenCodeSettings({ binaryPath: "" }).binaryPath).toBe("opencode");
+  });
+
+  it("accepts an explicit OpenCode 2 executable", () => {
+    expect(decodeOpenCodeSettings({ binaryPath: "  opencode2  " }).binaryPath).toBe("opencode2");
+    expect(
+      decodeServerSettingsPatch({ providers: { opencode: { binaryPath: "  opencode2  " } } })
+        .providers?.opencode?.binaryPath,
+    ).toBe("opencode2");
   });
 });
 
