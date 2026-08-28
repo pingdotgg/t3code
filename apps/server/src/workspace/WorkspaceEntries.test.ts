@@ -658,6 +658,34 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("includes directory symlinks and excludes file and dangling ones", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-symlink-" });
+        const target = yield* makeTempDir({ prefix: "t3code-workspace-browse-symlink-target-" });
+        yield* writeTextFile(cwd, "src/index.ts", "export {};\n");
+        yield* writeTextFile(cwd, "notes.txt", "ignore me");
+        yield* fileSystem.symlink(target, path.join(cwd, "Projects"));
+        yield* fileSystem.symlink(path.join(cwd, "notes.txt"), path.join(cwd, "notes-link"));
+        yield* fileSystem.symlink(path.join(cwd, "missing"), path.join(cwd, "broken"));
+
+        const listed = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+        });
+        const prefixed = yield* workspaceEntries.browse({
+          partialPath: path.join(cwd, "Pro"),
+        });
+
+        expect(listed.entries.map((entry) => entry.name)).toEqual(["Projects", "src"]);
+        expect(prefixed).toEqual({
+          parentPath: cwd,
+          entries: [{ name: "Projects", fullPath: path.join(cwd, "Projects") }],
+        });
+      }),
+    );
+
     it.effect("shows dot directories in directory mode and hidden-prefix mode", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
