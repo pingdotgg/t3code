@@ -11,6 +11,7 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
+  type ModelSelection,
   ProviderDriverKind,
   type ProviderEvent,
   ProviderInstanceId,
@@ -54,6 +55,7 @@ import {
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { isProviderNamespacedModelSlug } from "../providerSnapshot.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
@@ -1662,6 +1664,24 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const customModelSlugs = new Set(codexConfig.customModels.map((model) => model.trim()));
+  const validateModelSelection = (
+    operation: "startSession" | "sendTurn",
+    selection: ModelSelection | undefined,
+  ): ProviderAdapterValidationError | undefined => {
+    if (
+      selection?.instanceId !== boundInstanceId ||
+      !isProviderNamespacedModelSlug(selection.model) ||
+      customModelSlugs.has(selection.model)
+    ) {
+      return undefined;
+    }
+    return new ProviderAdapterValidationError({
+      provider: PROVIDER,
+      operation,
+      issue: `Provider-namespaced model '${selection.model}' is not configured on instance '${boundInstanceId}'.`,
+    });
+  };
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -1672,6 +1692,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             operation: "startSession",
             issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
           });
+        }
+
+        const modelSelectionError = validateModelSelection("startSession", input.modelSelection);
+        if (modelSelectionError) {
+          return yield* modelSelectionError;
         }
 
         const existing = sessions.get(input.threadId);
@@ -1822,6 +1847,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   });
 
   const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+    const modelSelectionError = validateModelSelection("sendTurn", input.modelSelection);
+    if (modelSelectionError) {
+      return yield* modelSelectionError;
+    }
+
     // Codex ingests images only. Anything else would be base64-encoded as an
     // image and rejected or misread; generic files reach the agent through the
     // path line ProviderService puts in the prompt.

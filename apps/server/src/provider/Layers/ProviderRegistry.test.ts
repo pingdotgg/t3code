@@ -603,6 +603,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
       });
 
+      it("drops a removed provider-namespaced Codex custom model", () => {
+        const firstPartyModel = {
+          slug: "gpt-5.6-sol",
+          name: "GPT-5.6-Sol",
+          isCustom: false,
+          capabilities: codexModelCapabilities,
+        } as const;
+        const removedCustomModel = {
+          slug: "z-ai/glm-5.3-flash",
+          name: "GLM-5.3-Flash",
+          isCustom: true,
+          capabilities: codexModelCapabilities,
+        } as const;
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-08-28T00:00:00.000Z",
+          version: "1.0.0",
+          models: [firstPartyModel, removedCustomModel],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-08-28T00:01:00.000Z",
+          models: [],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          firstPartyModel,
+        ]);
+      });
+
       it("drops stale OpenCode models missing from a successful refresh", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("opencode"),
