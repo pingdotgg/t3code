@@ -221,7 +221,10 @@ export function NewTaskDraftScreen(props: {
   const composerMenu = useComposerCommandMenu({
     draftMessage: flow.prompt,
     environmentId: selectedProject?.environmentId ?? null,
-    projectCwd: (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot) || null,
+    projectCwd:
+      (flow.workspaceMode === "worktree"
+        ? selectedProject?.workspaceRoot
+        : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null,
     selectedProviderStatus: flow.selectedProviderStatus,
     hasThread: false,
     enabled: isComposerFocused && !isIncomingShareTransferPending,
