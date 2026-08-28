@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - packaged-archive fixtures compute the sidecar digest with the same Node primitive as the builder.
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -138,6 +141,7 @@ function iconResizeSpawnerLayer(
 const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(function* (input: {
   readonly copyUnpackedNatives: boolean;
   readonly serverEntrySource?: string;
+  readonly wslRuntime?: "valid" | "forbidden" | "bad-digest";
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -173,6 +177,61 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   const appExecutableName = "t3code.exe";
   yield* fs.writeFileString(path.join(packagedAppDir, appExecutableName), "electron");
   yield* fs.writeFileString(path.join(packagedAppDir, "chrome_crashpad_handler.exe"), "crashpad");
+
+  if (input.wslRuntime !== undefined) {
+    const wslSourceDir = path.join(tempDir, "wsl-source");
+    const linuxPrebuildDir = path.join(wslSourceDir, "node_modules/node-pty/prebuilds/linux-x64");
+    yield* fs.makeDirectory(path.join(wslSourceDir, "apps/server/dist"), { recursive: true });
+    yield* fs.makeDirectory(linuxPrebuildDir, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(wslSourceDir, "apps/server/dist/bin.mjs"),
+      "console.log('wsl server');\n",
+    );
+    yield* fs.writeFileString(
+      path.join(wslSourceDir, "node_modules/node-pty/package.json"),
+      '{"name":"node-pty"}',
+    );
+    yield* fs.writeFileString(path.join(linuxPrebuildDir, "pty.node"), "linux-pty");
+    yield* fs.writeFileString(
+      path.join(linuxPrebuildDir, "t3code-wsl-node-pty.json"),
+      '{"arch":"x64"}',
+    );
+    if (input.wslRuntime === "forbidden") {
+      const windowsPrebuildDir = path.join(
+        wslSourceDir,
+        "node_modules/node-pty/prebuilds/win32-x64",
+      );
+      yield* fs.makeDirectory(windowsPrebuildDir, { recursive: true });
+      yield* fs.writeFileString(path.join(windowsPrebuildDir, "pty.node"), "windows-pty");
+    }
+
+    const archivePath = path.join(resourcesDir, WSL_RUNTIME_ARCHIVE_NAME);
+    const hashPath = path.join(resourcesDir, WSL_RUNTIME_ARCHIVE_HASH_NAME);
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const tar = yield* spawner.spawn(
+      ChildProcess.make(
+        "tar",
+        [
+          "-czf",
+          wslRuntimeArchiveTarTarget(path.relative(wslSourceDir, archivePath)),
+          "apps/server/dist",
+          "node_modules",
+        ],
+        { cwd: wslSourceDir, stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+      ),
+    );
+    assert.equal(Number(yield* tar.exitCode), 0);
+    const archiveDigest = NodeCrypto.createHash("sha256");
+    yield* fs
+      .stream(archivePath)
+      .pipe(Stream.runForEach((chunk) => Effect.sync(() => archiveDigest.update(chunk))));
+    yield* fs.writeFileString(
+      hashPath,
+      input.wslRuntime === "bad-digest"
+        ? `${"0".repeat(64)}\n`
+        : `${archiveDigest.digest("hex")}\n`,
+    );
+  }
 
   return {
     stageDistDir,
@@ -779,6 +838,82 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.deepStrictEqual(result.unpackedFiles, ["node_modules/native/addon.node"]);
         assert.isBelow(result.fileCount, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT);
         assert.deepStrictEqual(secondAsar, firstAsar);
+      }),
+    ),
+  );
+
+  it.effect("validates the emitted WSL archive and its SHA-256 sidecar", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeWindowsPayloadFixture({
+          copyUnpackedNatives: true,
+          wslRuntime: "valid",
+        });
+        const result = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          expectWslRuntime: true,
+        });
+
+        assert.equal(result.packagedAppDir, fixture.packagedAppDir);
+      }),
+    ),
+  );
+
+  it.effect("rejects a Windows package missing its expected WSL runtime", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
+        const error = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          expectWslRuntime: true,
+        }).pipe(Effect.flip);
+
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "wsl-runtime-missing");
+      }),
+    ),
+  );
+
+  it.effect("rejects forbidden native members in the emitted WSL archive", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeWindowsPayloadFixture({
+          copyUnpackedNatives: true,
+          wslRuntime: "forbidden",
+        });
+        const error = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          expectWslRuntime: true,
+        }).pipe(Effect.flip);
+
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "wsl-runtime-invalid");
+      }),
+    ),
+  );
+
+  it.effect("rejects an emitted WSL archive whose sidecar digest does not match", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeWindowsPayloadFixture({
+          copyUnpackedNatives: true,
+          wslRuntime: "bad-digest",
+        });
+        const error = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          expectWslRuntime: true,
+        }).pipe(Effect.flip);
+
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "wsl-runtime-invalid");
       }),
     ),
   );

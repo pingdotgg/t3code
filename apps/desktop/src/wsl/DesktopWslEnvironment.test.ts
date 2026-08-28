@@ -44,9 +44,10 @@ const posixShellRunner = (() => {
     { file: "bash", args: [] as ReadonlyArray<string> },
     { file: "wsl.exe", args: ["-e", "bash"] as ReadonlyArray<string> },
   ];
-  const probe = REQUIRED_SHELL_TOOLS.map((tool) => `command -v ${tool} >/dev/null || exit 1`).join(
-    "\n",
-  );
+  const probe = [
+    "[ -d /proc/1 ] || exit 1",
+    ...REQUIRED_SHELL_TOOLS.map((tool) => `command -v ${tool} >/dev/null || exit 1`),
+  ].join("\n");
   return (
     candidates.find((candidate) => {
       const result = NodeChildProcess.spawnSync(candidate.file, [...candidate.args, "-c", probe], {
@@ -410,8 +411,6 @@ describe("WSL runtime cache", () => {
     expect(script).toContain(
       'for scratch in "$runtime_parent"/.*.tmp.* "$runtime_parent"/.*.stale.*; do',
     );
-    expect(script).toContain("original_runtime=$(tr -d '[:space:]' < \"$original_marker\"");
-    expect(script).toContain('runtime_in_use "$original_runtime"');
     // Age guard: a scratch directory younger than this belongs to a live install.
     expect(script).toContain('find "$scratch" -maxdepth 0 -mmin +120');
   });
@@ -648,31 +647,51 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     expect(selected.status, `${selected.stdout}\n${selected.stderr}`).toBe(0);
   });
 
-  it("keeps an aged stale tree while a backend still references its original path", () => {
+  it("prunes a selected cache after its prepare-to-spawn grace period expires", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
     const result = runShell(
       [
         "set -eu",
-        "work=$(mktemp -d)",
-        'home="$work/home"',
-        'runtime_parent="$home/.t3/wsl-runtime"',
-        'stale="$runtime_parent/.sha256-old.stale.test"',
-        'original="$runtime_parent/sha256-old"',
-        'mkdir -p "$runtime_parent/sha256-current" "$stale"',
+        `runtime_parent=${sh(fixture.runtimeParent)}`,
+        'mkdir -p "$runtime_parent/sha256-current" "$runtime_parent/sha256-previous"',
         'printf ready > "$runtime_parent/sha256-current/.t3code-wsl-runtime-ready"',
-        'printf "%s\\n" "$original" > "$stale/.t3code-wsl-runtime-original-path"',
-        'touch -d "180 minutes ago" "$stale"',
-        'sh -c "sleep 30" "$original/apps/server/dist/bin.mjs" >/dev/null 2>&1 &',
-        "active_pid=$!",
-        "sleep 0.1",
-        `HOME="$home"`,
+        'printf ready > "$runtime_parent/sha256-previous/.t3code-wsl-runtime-ready"',
+        `touch -d "10 minutes ago" ${sh(fixture.runtimeRoot)}`,
+        `touch -d "10 minutes ago" ${sh(`${fixture.runtimeRoot}/.t3code-wsl-runtime-selected`)}`,
+        'touch -d "1 minute ago" "$runtime_parent/sha256-previous"',
+        `HOME=${sh(`${fixture.work}/home`)}`,
         "export HOME",
         buildWslRuntimePruneScript("sha256-current"),
-        'test -d "$stale"',
+        `test ! -e ${sh(fixture.runtimeRoot)}`,
+      ].join("\n"),
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+  });
+
+  it("removes an aged stale tree after replacing an active unready cache", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    const result = runShell(
+      [
+        "set -eu",
+        `runtime_root=${sh(fixture.runtimeRoot)}`,
+        `runtime_parent=${sh(fixture.runtimeParent)}`,
+        'rm "$runtime_root/.t3code-wsl-runtime-ready"',
+        'sh -c "sleep 30" "$runtime_root/apps/server/dist/bin.mjs" >/dev/null 2>&1 &',
+        "active_pid=$!",
+        "sleep 0.1",
+        fixture.installScript(),
+        'stale=$(find "$runtime_parent" -maxdepth 1 -type d -name ".sha256-*.stale.*" -print -quit)',
+        'test -n "$stale"',
+        'touch -d "180 minutes ago" "$stale"',
+        `HOME=${sh(`${fixture.work}/home`)}`,
+        "export HOME",
+        buildWslRuntimePruneScript(fixture.runtimeId),
+        'test ! -e "$stale"',
         "kill $active_pid",
         "wait $active_pid 2>/dev/null || true",
-        buildWslRuntimePruneScript("sha256-current"),
-        'test ! -e "$stale"',
-        'rm -rf "$work"',
       ].join("\n"),
     );
 

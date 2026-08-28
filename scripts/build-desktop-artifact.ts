@@ -561,6 +561,8 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "sidecar-invalid",
   "unpacked-native-missing",
   "resource-monitor-missing",
+  "wsl-runtime-missing",
+  "wsl-runtime-invalid",
   "file-limit-exceeded",
 ]);
 
@@ -584,6 +586,12 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedErrorCla
     }
     if (this.reason === "resource-monitor-missing") {
       return "Windows packaged payload is missing the resource monitor executable.";
+    }
+    if (this.reason === "wsl-runtime-missing") {
+      return "Windows packaged payload is missing the WSL runtime archive or SHA-256 sidecar.";
+    }
+    if (this.reason === "wsl-runtime-invalid") {
+      return "Windows packaged payload contains an invalid WSL runtime archive.";
     }
     if (this.reason === "sidecar-invalid") {
       return "Windows packaged payload contains an invalid server.asar sidecar.";
@@ -2656,6 +2664,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
   readonly stageDistDir: string;
   readonly appExecutableName: string;
   readonly targetArch: typeof BuildArch.Type;
+  readonly expectWslRuntime?: boolean;
   readonly fileLimit?: number;
   readonly verbose?: boolean;
 }) {
@@ -2753,6 +2762,102 @@ export const validateWindowsPackagedPayload = Effect.fn(
       packagedAppDir,
       missingFiles: ["resource-monitor/t3-resource-monitor.exe"],
     });
+  }
+
+  const wslArchivePath = path.join(resourcesDir, WSL_RUNTIME_ARCHIVE_NAME);
+  const wslArchiveHashPath = path.join(resourcesDir, WSL_RUNTIME_ARCHIVE_HASH_NAME);
+  const [hasWslArchive, hasWslArchiveHash] = yield* Effect.all([
+    isFile(wslArchivePath),
+    isFile(wslArchiveHashPath),
+  ]);
+  if (input.expectWslRuntime === true && (!hasWslArchive || !hasWslArchiveHash)) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "wsl-runtime-missing",
+      packagedAppDir,
+      missingFiles: [
+        ...(hasWslArchive ? [] : [WSL_RUNTIME_ARCHIVE_NAME]),
+        ...(hasWslArchiveHash ? [] : [WSL_RUNTIME_ARCHIVE_HASH_NAME]),
+      ],
+    });
+  }
+  if (hasWslArchive !== hasWslArchiveHash) {
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "wsl-runtime-missing",
+      packagedAppDir,
+      missingFiles: [hasWslArchive ? WSL_RUNTIME_ARCHIVE_HASH_NAME : WSL_RUNTIME_ARCHIVE_NAME],
+    });
+  }
+  if (hasWslArchive && hasWslArchiveHash) {
+    const invalidWslRuntime = (cause: unknown) =>
+      new WindowsPackagedPayloadValidationError({
+        reason: "wsl-runtime-invalid",
+        packagedAppDir,
+        cause,
+      });
+    const recordedHash = yield* fs
+      .readFileString(wslArchiveHashPath)
+      .pipe(Effect.mapError(invalidWslRuntime));
+    const expectedHash = recordedHash.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(expectedHash)) {
+      return yield* invalidWslRuntime(new Error("invalid WSL runtime SHA-256 sidecar"));
+    }
+    const archiveHash = NodeCrypto.createHash("sha256");
+    yield* fs.stream(wslArchivePath).pipe(
+      Stream.runForEach((chunk) => Effect.sync(() => archiveHash.update(chunk))),
+      Effect.mapError(invalidWslRuntime),
+    );
+    const actualHash = archiveHash.digest("hex");
+    if (actualHash !== expectedHash) {
+      return yield* invalidWslRuntime(
+        new Error(`WSL runtime SHA-256 mismatch: expected ${expectedHash}, got ${actualHash}`),
+      );
+    }
+
+    const listing = yield* spawnAndCollectOutput(
+      ChildProcess.make("tar", ["-tzf", WSL_RUNTIME_ARCHIVE_NAME], {
+        cwd: resourcesDir,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    ).pipe(Effect.mapError(invalidWslRuntime));
+    if (listing.exitCode !== 0) {
+      return yield* invalidWslRuntime(
+        new Error(`tar could not list WSL runtime archive: ${listing.stderr.trim()}`),
+      );
+    }
+    const members = listing.stdout
+      .split("\n")
+      .map((member) => member.replace(/^\.\//, "").replace(/\/$/, ""))
+      .filter((member) => member.length > 0);
+    const forbiddenMember = members.find((member) =>
+      WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES.some((prefix) => member.startsWith(prefix)),
+    );
+    if (forbiddenMember !== undefined) {
+      return yield* invalidWslRuntime(
+        new Error(`WSL runtime archive contains forbidden member ${forbiddenMember}`),
+      );
+    }
+    const wslArch = resolveWslPrebuildArch(input.targetArch);
+    const requiredMembers = [
+      "apps/server/dist/bin.mjs",
+      "node_modules/node-pty/package.json",
+      ...(wslArch === undefined
+        ? []
+        : [
+            `node_modules/node-pty/prebuilds/linux-${wslArch}/pty.node`,
+            `node_modules/node-pty/prebuilds/linux-${wslArch}/t3code-wsl-node-pty.json`,
+          ]),
+    ];
+    const missingMembers = requiredMembers.filter((member) => !members.includes(member));
+    if (missingMembers.length > 0) {
+      return yield* new WindowsPackagedPayloadValidationError({
+        reason: "wsl-runtime-invalid",
+        packagedAppDir,
+        missingFiles: missingMembers,
+        cause: new Error("WSL runtime archive is incomplete"),
+      });
+    }
   }
 
   const fileCount = yield* countPayloadFiles(packagedAppDir);
@@ -3248,6 +3353,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       stageDistDir,
       appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
       targetArch: options.arch,
+      expectWslRuntime: bundlesWslRuntime({
+        arch: options.arch,
+        prebuildPath: options.wslPrebuild,
+      }),
       verbose: options.verbose,
     });
   }

@@ -260,7 +260,6 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")
 // here; the digest is what lets a later launch prove the entry still is what
 // that install wrote.
 const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
-const WSL_RUNTIME_ORIGINAL_PATH_MARKER = ".t3code-wsl-runtime-original-path";
 const WSL_RUNTIME_SELECTED_MARKER = ".t3code-wsl-runtime-selected";
 const WSL_RUNTIME_SELECTION_GRACE_MINUTES = 5;
 
@@ -362,9 +361,6 @@ export const buildWslRuntimeInstallScript = (
     '  rmdir "$runtime_stale"',
     '  if mv -T "$runtime_root" "$runtime_stale" 2>/dev/null; then',
     '    if [ "$runtime_root_in_use" = 1 ]; then',
-    // The process keeps the pre-rename path in argv. Preserve that identity so
-    // pruning can protect this stale tree for the process's full lifetime.
-    `      printf '%s\\n' "$runtime_root" > "$runtime_stale/${WSL_RUNTIME_ORIGINAL_PATH_MARKER}"`,
     // Renaming keeps the directory's old mtime, so restart the cleanup clock.
     '      touch "$runtime_stale"',
     "    else",
@@ -462,17 +458,8 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     "  flock -u 9",
     "done",
     // Interrupted installs use dot-prefixed names under this dedicated parent.
-    // A stale tree can still back a live process whose argv contains its
-    // pre-rename path, recorded by the installer above.
     'for scratch in "$runtime_parent"/.*.tmp.* "$runtime_parent"/.*.stale.*; do',
     '  [ -d "$scratch" ] || continue',
-    `  original_marker="$scratch/${WSL_RUNTIME_ORIGINAL_PATH_MARKER}"`,
-    '  if [ -f "$original_marker" ]; then',
-    `    original_runtime=$(tr -d '[:space:]' < "$original_marker" 2>/dev/null)`,
-    '    if [ -n "$original_runtime" ] && runtime_in_use "$original_runtime"; then',
-    "      continue",
-    "    fi",
-    "  fi",
     `  find "$scratch" -maxdepth 0 -mmin +${String(ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES)} -print -quit | grep -q . || continue`,
     '  rm -rf -- "$scratch"',
     "done",

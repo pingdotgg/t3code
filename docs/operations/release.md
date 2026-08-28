@@ -239,9 +239,10 @@ break:
   native library from inside `server.asar` through its `.unpacked` sibling.
 - The isolated, extracted sidecar cannot load the server entry with plain Node.
 - A Windows build with a WSL node-pty prebuild omits the WSL archive or SHA-256
-  sidecar.
-- The WSL archive contains Windows/Darwin node-pty payloads, ConPTY, pnpm install
-  metadata, or Windows-only FFF, ffi-rs, or msgpackr bindings.
+  sidecar, the sidecar digest does not match the emitted archive, or required
+  Linux runtime members are absent.
+- The emitted WSL archive contains Windows/Darwin node-pty payloads, ConPTY,
+  pnpm install metadata, or Windows-only FFF, ffi-rs, or msgpackr bindings.
 - The external Windows resource monitor is absent.
 - The unpacked Windows application contains more than 80 files.
 
