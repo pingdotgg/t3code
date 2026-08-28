@@ -38,6 +38,7 @@ import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedPullRequest } from "./orchestration.ts";
 import {
   ProviderApprovalDecision,
+  ProviderApprovalOption,
   ProviderInteractionMode,
   ProviderRequestKind,
   ProviderUserInputAnswers,
@@ -953,6 +954,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
     requestId: RuntimeRequestId,
     requestKind: ProviderRequestKind,
     prompt: Schema.optional(Schema.String),
+    /** App requesting access, for mcp-elicitation approvals (#8058). */
+    appName: Schema.optional(Schema.String),
+    /** Approval choices advertised by the provider (#8058). */
+    options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1625,6 +1630,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     requestId: RuntimeRequestId,
     requestKind: ProviderRequestKind,
     prompt: Schema.optional(Schema.String),
+    /** App requesting access, for mcp-elicitation approvals (#8058). */
+    appName: Schema.optional(Schema.String),
+    /** Approval choices advertised by the provider (#8058). */
+    options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
