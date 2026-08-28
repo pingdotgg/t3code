@@ -698,7 +698,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       toastManager.add({
         type: "error",
         title: `Could not clear ${name}'s data`,
-        description: "No environment is connected yet.",
+        description: "You're not connected to a server yet.",
       });
       return;
     }
@@ -835,7 +835,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   return (
     <SettingsRow
       {...searchableSetting("browser-profiles")}
-      description="Each profile keeps its own cookies and logins, so a tab opened under one can't see another's. Incognito isn't listed here — it keeps nothing, and you pick it when opening a tab."
+      description="Each profile has its own cookies and logins, so you can stay signed in to different accounts at once."
       control={
         <Menu onOpenChange={(open) => open && loadSources()}>
           <MenuTrigger render={<Button size="sm" variant="outline" disabled={disabled} />}>
@@ -970,8 +970,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Remove “{profilePendingRemoval?.name}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              Its cookies, logins, and cache are deleted with it. Tabs open in this profile move to
-              the default one.
+              Its cookies and logins are deleted. Any open tabs switch to your default profile.
             </AlertDialogDescription>
             {profileRemovalError ? (
               <p aria-live="polite" className="text-sm text-destructive">

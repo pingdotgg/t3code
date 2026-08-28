@@ -214,7 +214,7 @@ function ConfigureStep({
     <>
       <DialogHeader>
         <DialogTitle>Import from {source.name}</DialogTitle>
-        <DialogDescription>Cookies flow from the browser into a profile here.</DialogDescription>
+        <DialogDescription>Choose which cookies to import and where to put them.</DialogDescription>
       </DialogHeader>
       <DialogPanel>
         {/* Side by side when the dialog has room, stacked when it doesn't. */}
@@ -357,8 +357,8 @@ function DoneStep({
         </DialogTitle>
         <DialogDescription>
           {imported > 0
-            ? `Into ${targetName}.${skipped > 0 ? ` ${skipped} couldn't be brought over.` : ""}`
-            : "There were no cookies to bring over."}
+            ? `Added to ${targetName}.${skipped > 0 ? ` ${skipped} couldn't be imported.` : ""}`
+            : "There were no cookies to import."}
         </DialogDescription>
       </DialogHeader>
       {skippedDomains.length > 0 ? (
