@@ -687,57 +687,57 @@ export function makeOpenCodeAdapter(
 
     const emit = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
-    const settlePendingRequests = Effect.fn("settlePendingRequests")(function* (
+    const settlePendingRequestsUnlocked = Effect.fn("settlePendingRequestsUnlocked")(function* (
       context: OpenCodeSessionContext,
     ) {
-      yield* context.pendingGate.withPermits(1)(
-        Effect.gen(function* () {
-          yield* Effect.forEach(
-            [...context.pendingPermissions.entries()],
-            ([requestId, permission]) =>
-              buildEventBase({
-                threadId: context.session.threadId,
-                turnId: context.activeTurnId,
-                requestId,
-              }).pipe(
-                Effect.flatMap((base) =>
-                  emit({
-                    ...base,
-                    type: "request.resolved",
-                    payload: {
-                      requestType: mapPermissionToRequestType(permission.permission),
-                      decision: "cancel",
-                    },
-                  }),
-                ),
-                Effect.ignore,
-              ),
-            { concurrency: 1, discard: true },
-          );
-          context.pendingPermissions.clear();
-          yield* Effect.forEach(
-            [...context.pendingQuestions.keys()],
-            (requestId) =>
-              buildEventBase({
-                threadId: context.session.threadId,
-                turnId: context.activeTurnId,
-                requestId,
-              }).pipe(
-                Effect.flatMap((base) =>
-                  emit({
-                    ...base,
-                    type: "user-input.resolved",
-                    payload: { answers: {} },
-                  }),
-                ),
-                Effect.ignore,
-              ),
-            { concurrency: 1, discard: true },
-          );
-          context.pendingQuestions.clear();
-        }),
+      yield* Effect.forEach(
+        [...context.pendingPermissions.entries()],
+        ([requestId, permission]) =>
+          buildEventBase({
+            threadId: context.session.threadId,
+            turnId: context.activeTurnId,
+            requestId,
+          }).pipe(
+            Effect.flatMap((base) =>
+              emit({
+                ...base,
+                type: "request.resolved",
+                payload: {
+                  requestType: mapPermissionToRequestType(permission.permission),
+                  decision: "cancel",
+                },
+              }),
+            ),
+            Effect.ignore,
+          ),
+        { concurrency: 1, discard: true },
       );
+      context.pendingPermissions.clear();
+      yield* Effect.forEach(
+        [...context.pendingQuestions.keys()],
+        (requestId) =>
+          buildEventBase({
+            threadId: context.session.threadId,
+            turnId: context.activeTurnId,
+            requestId,
+          }).pipe(
+            Effect.flatMap((base) =>
+              emit({
+                ...base,
+                type: "user-input.resolved",
+                payload: { answers: {} },
+              }),
+            ),
+            Effect.ignore,
+          ),
+        { concurrency: 1, discard: true },
+      );
+      context.pendingQuestions.clear();
     });
+    const settlePendingRequests = Effect.fn("settlePendingRequests")(
+      (context: OpenCodeSessionContext) =>
+        context.pendingGate.withPermits(1)(settlePendingRequestsUnlocked(context)),
+    );
     const writeNativeEvent = (
       threadId: ThreadId,
       event: {
@@ -1656,10 +1656,14 @@ export function makeOpenCodeAdapter(
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
         const context = yield* ensureSessionContext(sessions, threadId);
-        yield* settlePendingRequests(context);
-        yield* runOpenCodeSdk("session.abort", () =>
-          context.client.session.abort({ sessionID: context.openCodeSessionId }),
-        ).pipe(Effect.mapError(toRequestError));
+        yield* context.pendingGate.withPermits(1)(
+          Effect.gen(function* () {
+            yield* runOpenCodeSdk("session.abort", () =>
+              context.client.session.abort({ sessionID: context.openCodeSessionId }),
+            ).pipe(Effect.mapError(toRequestError));
+            yield* settlePendingRequestsUnlocked(context);
+          }),
+        );
         if (turnId ?? context.activeTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
@@ -1679,41 +1683,49 @@ export function makeOpenCodeAdapter(
       "respondToRequest",
     )(function* (threadId, requestId, decision) {
       const context = yield* ensureSessionContext(sessions, threadId);
-      if (!context.pendingPermissions.has(requestId)) {
-        return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
-          method: "permission.reply",
-          detail: `Unknown pending permission request: ${requestId}`,
-        });
-      }
+      yield* context.pendingGate.withPermits(1)(
+        Effect.gen(function* () {
+          if (!context.pendingPermissions.has(requestId)) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "permission.reply",
+              detail: `Unknown pending permission request: ${requestId}`,
+            });
+          }
 
-      yield* runOpenCodeSdk("permission.reply", () =>
-        context.client.permission.reply({
-          requestID: requestId,
-          reply: toOpenCodePermissionReply(decision),
+          yield* runOpenCodeSdk("permission.reply", () =>
+            context.client.permission.reply({
+              requestID: requestId,
+              reply: toOpenCodePermissionReply(decision),
+            }),
+          ).pipe(Effect.mapError(toRequestError));
         }),
-      ).pipe(Effect.mapError(toRequestError));
+      );
     });
 
     const respondToUserInput: OpenCodeAdapterShape["respondToUserInput"] = Effect.fn(
       "respondToUserInput",
     )(function* (threadId, requestId, answers) {
       const context = yield* ensureSessionContext(sessions, threadId);
-      const request = context.pendingQuestions.get(requestId);
-      if (!request) {
-        return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
-          method: "question.reply",
-          detail: `Unknown pending user-input request: ${requestId}`,
-        });
-      }
+      yield* context.pendingGate.withPermits(1)(
+        Effect.gen(function* () {
+          const request = context.pendingQuestions.get(requestId);
+          if (!request) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "question.reply",
+              detail: `Unknown pending user-input request: ${requestId}`,
+            });
+          }
 
-      yield* runOpenCodeSdk("question.reply", () =>
-        context.client.question.reply({
-          requestID: requestId,
-          answers: toOpenCodeQuestionAnswers(request, answers),
+          yield* runOpenCodeSdk("question.reply", () =>
+            context.client.question.reply({
+              requestID: requestId,
+              answers: toOpenCodeQuestionAnswers(request, answers),
+            }),
+          ).pipe(Effect.mapError(toRequestError));
         }),
-      ).pipe(Effect.mapError(toRequestError));
+      );
     });
 
     const stopSession: OpenCodeAdapterShape["stopSession"] = Effect.fn("stopSession")(
