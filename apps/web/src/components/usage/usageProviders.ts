@@ -32,7 +32,7 @@ export const PROVIDER_PRESENTATION = {
   },
   opencode: {
     label: "OpenCode",
-    color: "var(--foreground)",
+    color: "var(--contrast-foreground)",
     mark: OpenCodeIcon,
   },
 } satisfies Record<UsageLimitsProviderKind, UsageProviderPresentation>;

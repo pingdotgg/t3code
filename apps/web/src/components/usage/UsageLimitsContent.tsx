@@ -10,6 +10,7 @@ import {
   type EnvironmentUsageLimitsStatus,
   type ProviderLimitsStatus,
 } from "../../state/usage";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -55,14 +56,9 @@ export function UsageLimitsContent() {
         <p className="text-sm text-muted-foreground">
           How much of each plan's rate windows is used right now.
         </p>
-        <button
-          type="button"
-          onClick={refresh}
-          aria-label="Refresh limits"
-          className="cursor-pointer rounded-md border border-border p-2 text-muted-foreground hover:text-foreground"
-        >
+        <Button onClick={refresh} aria-label="Refresh limits" size="icon-sm" variant="ghost">
           <RefreshCwIcon className="size-3.5" />
-        </button>
+        </Button>
       </div>
 
       {settling ? (
