@@ -420,6 +420,7 @@ function approvalDecisionToLegacyReviewDecision(
     case "accept":
       return "approved";
     case "acceptForSession":
+    case "acceptAlways":
       return "approved_for_session";
     case "decline":
       return "denied";
@@ -3702,7 +3703,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               ),
             );
             return {
-              decision: resolved,
+              decision: resolved === "acceptAlways" ? "acceptForSession" : resolved,
             } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
           }).pipe(Effect.orDie),
         );
@@ -3762,7 +3763,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               ),
             );
             return {
-              decision: resolved,
+              decision: resolved === "acceptAlways" ? "acceptForSession" : resolved,
             } satisfies CodexSchema.FileChangeRequestApprovalResponse;
           }).pipe(Effect.orDie),
         );
