@@ -716,14 +716,14 @@ const cloudRelayConfigHandler = Effect.fn("environment.cloud.relayConfig")(
     ServerSecretStore.isSecretStoreError,
     failEnvironmentCloudInternalError("Could not persist environment relay configuration."),
   ),
-  Effect.catchTag(
-    "SchemaError",
-    failEnvironmentCloudInternalError("Could not persist environment relay configuration."),
-  ),
-  Effect.catchTag(
-    "PlatformError",
-    failEnvironmentCloudInternalError("Could not register the managed endpoint origin."),
-  ),
+  Effect.catchTags({
+    SchemaError: failEnvironmentCloudInternalError(
+      "Could not persist environment relay configuration.",
+    ),
+    PlatformError: failEnvironmentCloudInternalError(
+      "Could not register the managed endpoint origin.",
+    ),
+  }),
 );
 
 const relayClientRequest = <A>(
