@@ -1,4 +1,5 @@
 import {
+  type DesktopPreviewAutomationPressResult,
   EnvironmentId,
   type PreviewAutomationRequest,
   type PreviewAutomationResponse,
@@ -13,6 +14,7 @@ import {
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationViewportTimeoutError,
+  unwrapPreviewAutomationPressResult,
 } from "./previewAutomationErrors";
 import {
   createPreviewAutomationRequestConsumerAtom,
@@ -24,6 +26,17 @@ const threadId = ThreadId.make("thread-1");
 const tabId = PreviewTabId.make("tab-1");
 const clientId = "client-1";
 const connectionId = "connection-1";
+
+const unwrapPressFailure = (
+  error: Extract<DesktopPreviewAutomationPressResult, { readonly _tag: "Failure" }>["error"],
+): unknown => {
+  try {
+    unwrapPreviewAutomationPressResult({ _tag: "Failure", error });
+  } catch (cause) {
+    return cause;
+  }
+  throw new Error("Expected the preview press result to fail.");
+};
 
 const request = (
   requestId: string,
@@ -322,6 +335,82 @@ describe("previewAutomationRequestConsumer", () => {
         selectorLength: 6,
       },
     });
+  });
+
+  it.each([
+    {
+      tag: "PreviewAutomationKeyboardWindowNotFocusedError",
+      message:
+        "Preview automation press request request-press cannot send keyboard input because the desktop window is not focused.",
+    },
+    {
+      tag: "PreviewAutomationKeyboardFocusedFrameUnsupportedError",
+      message:
+        "Preview automation press request request-press cannot send keyboard input to a focused frame.",
+    },
+    {
+      tag: "PreviewAutomationKeyboardDeliveryNotConfirmedError",
+      message:
+        "Preview automation press request request-press did not receive keyboard delivery confirmation from tab tab-1.",
+    },
+  ] as const)("preserves the $tag message", ({ tag, message }) => {
+    expect(
+      serializePreviewAutomationError(
+        unwrapPressFailure({
+          _tag: tag,
+          tabId: "tab-1",
+          webContentsId: 42,
+        }),
+        {
+          requestId: "request-press",
+          operation: "press",
+          environmentId,
+          threadId,
+          tabId,
+        },
+      ),
+    ).toEqual({
+      _tag: "PreviewAutomationExecutionError",
+      message,
+      detail: {
+        requestId: "request-press",
+        operation: "press",
+        environmentId: "environment-1",
+        threadId: "thread-1",
+        tabId: "tab-1",
+      },
+    });
+  });
+
+  it("maps a replaced desktop keyboard target to an unavailable response", () => {
+    expect(
+      serializePreviewAutomationError(
+        unwrapPressFailure({
+          _tag: "PreviewAutomationTargetChangedError",
+          operation: "press",
+          tabId: "tab-1",
+          webContentsId: 42,
+        }),
+        {
+          requestId: "request-press",
+          operation: "press",
+          environmentId,
+          threadId,
+          tabId,
+        },
+      ),
+    ).toMatchObject({
+      _tag: "PreviewAutomationTabNotFoundError",
+      detail: { tabId: "tab-1", bridgeAvailable: true },
+    });
+  });
+
+  it("accepts a fulfilled desktop keyboard success", () => {
+    expect(
+      unwrapPreviewAutomationPressResult({
+        _tag: "Success",
+      }),
+    ).toBeUndefined();
   });
 
   it("correlates unexpected failures without exposing cause details", () => {

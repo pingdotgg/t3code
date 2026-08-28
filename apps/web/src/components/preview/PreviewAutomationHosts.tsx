@@ -54,6 +54,7 @@ import {
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationViewportTimeoutError,
+  unwrapPreviewAutomationPressResult,
 } from "./previewAutomationErrors";
 import {
   previewAutomationDefaultViewport,
@@ -602,10 +603,11 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "press": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.press(
+            const result = await ready.bridge.automation.press(
               ready.runtimeTabId,
               request.input as Parameters<typeof ready.bridge.automation.press>[1],
             );
+            return unwrapPreviewAutomationPressResult(result);
           }
           case "scroll": {
             const ready = await requireReadyTab();

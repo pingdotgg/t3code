@@ -94,4 +94,81 @@ describe("preview IPC methods", () => {
       }),
     ).toThrow();
   });
+
+  effectIt.effect("returns fulfilled automation press results for known keyboard failures", () =>
+    Effect.gen(function* () {
+      const errors = [
+        new PreviewManager.PreviewAutomationKeyboardWindowNotFocusedError({
+          tabId: "tab-1",
+          webContentsId: 41,
+        }),
+        new PreviewManager.PreviewAutomationKeyboardFocusedFrameUnsupportedError({
+          tabId: "tab-1",
+          webContentsId: 41,
+        }),
+        new PreviewManager.PreviewAutomationKeyboardDeliveryNotConfirmedError({
+          tabId: "tab-1",
+          webContentsId: 41,
+        }),
+        new PreviewManager.PreviewAutomationTargetChangedError({
+          operation: "press",
+          tabId: "tab-1",
+          webContentsId: 41,
+        }),
+      ];
+
+      for (const error of errors) {
+        const manager = PreviewManager.PreviewManager.of({
+          automationPress: () => Effect.fail(error),
+        } as unknown as PreviewManager.PreviewManager["Service"]);
+
+        expect(
+          yield* PreviewIpc.automationPress
+            .handler({ tabId: "tab-1", input: { key: "x" } })
+            .pipe(Effect.provideService(PreviewManager.PreviewManager, manager)),
+        ).toEqual({
+          _tag: "Failure",
+          error: {
+            _tag: error._tag,
+            ...(error._tag === "PreviewAutomationTargetChangedError"
+              ? { operation: error.operation }
+              : {}),
+            tabId: error.tabId,
+            webContentsId: error.webContentsId,
+          },
+        });
+      }
+    }),
+  );
+
+  effectIt.effect("returns a fulfilled automation press success", () =>
+    Effect.gen(function* () {
+      const manager = PreviewManager.PreviewManager.of({
+        automationPress: () => Effect.void,
+      } as unknown as PreviewManager.PreviewManager["Service"]);
+
+      expect(
+        yield* PreviewIpc.automationPress
+          .handler({ tabId: "tab-1", input: { key: "x" } })
+          .pipe(Effect.provideService(PreviewManager.PreviewManager, manager)),
+      ).toEqual({ _tag: "Success" });
+    }),
+  );
+
+  effectIt.effect("rejects unrelated automation press failures", () =>
+    Effect.gen(function* () {
+      const error = new PreviewManager.PreviewTabNotFoundError({ tabId: "tab-1" });
+      const manager = PreviewManager.PreviewManager.of({
+        automationPress: () => Effect.fail(error),
+      } as unknown as PreviewManager.PreviewManager["Service"]);
+
+      const exit = yield* PreviewIpc.automationPress
+        .handler({ tabId: "tab-1", input: { key: "x" } })
+        .pipe(Effect.provideService(PreviewManager.PreviewManager, manager), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isSuccess(exit)) return;
+      expect(Cause.findErrorOption(exit.cause)).toEqual(Option.some(error));
+    }),
+  );
 });

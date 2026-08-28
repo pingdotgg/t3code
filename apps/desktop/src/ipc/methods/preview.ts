@@ -4,6 +4,7 @@ import {
   DesktopPreviewAutomationClickInputSchema,
   DesktopPreviewAutomationEvaluateInputSchema,
   DesktopPreviewAutomationPressInputSchema,
+  DesktopPreviewAutomationPressResultSchema,
   DesktopPreviewAutomationScrollInputSchema,
   DesktopPreviewAutomationStatusSchema,
   DesktopPreviewAutomationTypeInputSchema,
@@ -322,10 +323,22 @@ export const automationType = DesktopIpc.makeIpcMethod({
 export const automationPress = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_PRESS_CHANNEL,
   payload: DesktopPreviewAutomationPressInputSchema,
-  result: Schema.Void,
+  result: DesktopPreviewAutomationPressResultSchema,
   handler: Effect.fn("desktop.ipc.preview.automationPress")(function* ({ tabId, input }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.automationPress(tabId, input);
+    return yield* manager.automationPress(tabId, input).pipe(
+      Effect.as({ _tag: "Success" } as const),
+      Effect.catchTags({
+        PreviewAutomationKeyboardWindowNotFocusedError: (error) =>
+          Effect.succeed({ _tag: "Failure", error } as const),
+        PreviewAutomationKeyboardFocusedFrameUnsupportedError: (error) =>
+          Effect.succeed({ _tag: "Failure", error } as const),
+        PreviewAutomationKeyboardDeliveryNotConfirmedError: (error) =>
+          Effect.succeed({ _tag: "Failure", error } as const),
+        PreviewAutomationTargetChangedError: (error) =>
+          Effect.succeed({ _tag: "Failure", error } as const),
+      }),
+    );
   }),
 });
 

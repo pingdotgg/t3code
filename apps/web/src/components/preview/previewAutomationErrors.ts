@@ -1,4 +1,6 @@
 import {
+  DesktopPreviewAutomationPressErrorSchema,
+  type DesktopPreviewAutomationPressResult,
   EnvironmentId,
   type PreviewAutomationHost,
   PreviewAutomationOperation,
@@ -134,6 +136,75 @@ export class PreviewAutomationTargetNotEditableHostError extends Schema.TaggedEr
   }
 }
 
+const previewAutomationKeyboardHostErrorFields = {
+  requestId: TrimmedNonEmptyString,
+  operation: PreviewAutomationOperation,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  tabId: Schema.NullOr(PreviewTabId),
+};
+
+export class PreviewAutomationKeyboardWindowNotFocusedHostError extends Schema.TaggedErrorClass<PreviewAutomationKeyboardWindowNotFocusedHostError>()(
+  "PreviewAutomationKeyboardWindowNotFocusedHostError",
+  {
+    ...previewAutomationKeyboardHostErrorFields,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationExecutionError" as const;
+  }
+
+  override get message(): string {
+    return `Preview automation ${this.operation} request ${this.requestId} cannot send keyboard input because the desktop window is not focused.`;
+  }
+}
+
+export class PreviewAutomationKeyboardFocusedFrameUnsupportedHostError extends Schema.TaggedErrorClass<PreviewAutomationKeyboardFocusedFrameUnsupportedHostError>()(
+  "PreviewAutomationKeyboardFocusedFrameUnsupportedHostError",
+  {
+    ...previewAutomationKeyboardHostErrorFields,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationExecutionError" as const;
+  }
+
+  override get message(): string {
+    return `Preview automation ${this.operation} request ${this.requestId} cannot send keyboard input to a focused frame.`;
+  }
+}
+
+export class PreviewAutomationKeyboardDeliveryNotConfirmedHostError extends Schema.TaggedErrorClass<PreviewAutomationKeyboardDeliveryNotConfirmedHostError>()(
+  "PreviewAutomationKeyboardDeliveryNotConfirmedHostError",
+  {
+    ...previewAutomationKeyboardHostErrorFields,
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationExecutionError" as const;
+  }
+
+  override get message(): string {
+    return `Preview automation ${this.operation} request ${this.requestId} did not receive keyboard delivery confirmation from tab ${this.tabId ?? "unassigned"}.`;
+  }
+}
+
+export const PreviewAutomationKeyboardHostError = Schema.Union([
+  PreviewAutomationKeyboardWindowNotFocusedHostError,
+  PreviewAutomationKeyboardFocusedFrameUnsupportedHostError,
+  PreviewAutomationKeyboardDeliveryNotConfirmedHostError,
+]);
+export type PreviewAutomationKeyboardHostError = typeof PreviewAutomationKeyboardHostError.Type;
+export const isPreviewAutomationKeyboardHostError = Schema.is(PreviewAutomationKeyboardHostError);
+
+const isPreviewAutomationPressError = Schema.is(DesktopPreviewAutomationPressErrorSchema);
+
+export function unwrapPreviewAutomationPressResult(
+  result: DesktopPreviewAutomationPressResult,
+): void {
+  if (result._tag === "Failure") throw result.error;
+}
+
 const targetNotEditableDiagnostics = (
   cause: unknown,
 ): {
@@ -183,6 +254,28 @@ export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<Pre
     input: PreviewAutomationOperationContext & { readonly cause: unknown },
   ): PreviewAutomationHostError {
     if (isPreviewAutomationHostError(input.cause)) return input.cause;
+    if (isPreviewAutomationPressError(input.cause)) {
+      const context = {
+        requestId: input.requestId,
+        operation: input.operation,
+        environmentId: input.environmentId,
+        threadId: input.threadId,
+        tabId: input.tabId,
+      };
+      switch (input.cause._tag) {
+        case "PreviewAutomationKeyboardWindowNotFocusedError":
+          return new PreviewAutomationKeyboardWindowNotFocusedHostError(context);
+        case "PreviewAutomationKeyboardFocusedFrameUnsupportedError":
+          return new PreviewAutomationKeyboardFocusedFrameUnsupportedHostError(context);
+        case "PreviewAutomationKeyboardDeliveryNotConfirmedError":
+          return new PreviewAutomationKeyboardDeliveryNotConfirmedHostError(context);
+        case "PreviewAutomationTargetChangedError":
+          return new PreviewAutomationTargetUnavailableError({
+            ...context,
+            bridgeAvailable: true,
+          });
+      }
+    }
     const diagnostics = targetNotEditableDiagnostics(input.cause);
     return diagnostics
       ? new PreviewAutomationTargetNotEditableHostError({
@@ -212,6 +305,7 @@ export const PreviewAutomationHostError = Schema.Union([
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationTargetNotEditableHostError,
+  PreviewAutomationKeyboardHostError,
   PreviewAutomationOperationError,
 ]);
 export type PreviewAutomationHostError = typeof PreviewAutomationHostError.Type;

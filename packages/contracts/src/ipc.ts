@@ -1052,6 +1052,41 @@ export const DesktopPreviewAutomationPressInputSchema = Schema.Struct({
   input: PreviewAutomationPressInput,
 });
 
+const DesktopPreviewAutomationKeyboardErrorFields = {
+  tabId: DesktopPreviewTabIdSchema,
+  webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
+};
+
+export const DesktopPreviewAutomationPressErrorSchema = Schema.Union([
+  Schema.TaggedStruct(
+    "PreviewAutomationKeyboardWindowNotFocusedError",
+    DesktopPreviewAutomationKeyboardErrorFields,
+  ),
+  Schema.TaggedStruct(
+    "PreviewAutomationKeyboardFocusedFrameUnsupportedError",
+    DesktopPreviewAutomationKeyboardErrorFields,
+  ),
+  Schema.TaggedStruct(
+    "PreviewAutomationKeyboardDeliveryNotConfirmedError",
+    DesktopPreviewAutomationKeyboardErrorFields,
+  ),
+  Schema.TaggedStruct("PreviewAutomationTargetChangedError", {
+    operation: Schema.String,
+    ...DesktopPreviewAutomationKeyboardErrorFields,
+  }),
+]);
+export type DesktopPreviewAutomationPressError =
+  typeof DesktopPreviewAutomationPressErrorSchema.Type;
+
+export const DesktopPreviewAutomationPressResultSchema = Schema.Union([
+  Schema.TaggedStruct("Success", {}),
+  Schema.TaggedStruct("Failure", {
+    error: DesktopPreviewAutomationPressErrorSchema,
+  }),
+]);
+export type DesktopPreviewAutomationPressResult =
+  typeof DesktopPreviewAutomationPressResultSchema.Type;
+
 export const DesktopPreviewAutomationScrollInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   input: PreviewAutomationScrollInput,
@@ -1229,7 +1264,10 @@ export interface DesktopPreviewBridge {
     snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
-    press: (tabId: string, input: PreviewAutomationPressInput) => Promise<void>;
+    press: (
+      tabId: string,
+      input: PreviewAutomationPressInput,
+    ) => Promise<DesktopPreviewAutomationPressResult>;
     scroll: (tabId: string, input: PreviewAutomationScrollInput) => Promise<void>;
     evaluate: (tabId: string, input: PreviewAutomationEvaluateInput) => Promise<unknown>;
     waitFor: (tabId: string, input: PreviewAutomationWaitForInput) => Promise<void>;

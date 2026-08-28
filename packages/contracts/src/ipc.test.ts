@@ -1,7 +1,17 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import {
+  DesktopEnvironmentBootstrapSchema,
+  DesktopPreviewAutomationPressResultSchema,
+} from "./ipc.ts";
+
+const encodeAutomationPressResult = Schema.encodeUnknownSync(
+  DesktopPreviewAutomationPressResultSchema,
+);
+const decodeAutomationPressResult = Schema.decodeUnknownSync(
+  DesktopPreviewAutomationPressResultSchema,
+);
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
@@ -34,5 +44,64 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
         wsBaseUrl: null,
       }).runningDistro,
     ).toBeNull();
+  });
+});
+
+describe("DesktopPreviewAutomationPressResultSchema", () => {
+  const roundTrip = (input: unknown) => {
+    const encoded = encodeAutomationPressResult(input);
+    return decodeAutomationPressResult(encoded);
+  };
+
+  it.each([
+    { _tag: "Success" },
+    {
+      _tag: "Failure",
+      error: {
+        _tag: "PreviewAutomationKeyboardWindowNotFocusedError",
+        tabId: "tab-1",
+        webContentsId: 41,
+      },
+    },
+    {
+      _tag: "Failure",
+      error: {
+        _tag: "PreviewAutomationKeyboardFocusedFrameUnsupportedError",
+        tabId: "tab-1",
+        webContentsId: 41,
+      },
+    },
+    {
+      _tag: "Failure",
+      error: {
+        _tag: "PreviewAutomationKeyboardDeliveryNotConfirmedError",
+        tabId: "tab-1",
+        webContentsId: 41,
+      },
+    },
+    {
+      _tag: "Failure",
+      error: {
+        _tag: "PreviewAutomationTargetChangedError",
+        operation: "press",
+        tabId: "tab-1",
+        webContentsId: 41,
+      },
+    },
+  ])("round-trips $error._tag", (result) => {
+    expect(roundTrip(result)).toEqual(result);
+  });
+
+  it("rejects unknown fulfilled failures", () => {
+    expect(() =>
+      decodeAutomationPressResult({
+        _tag: "Failure",
+        error: {
+          _tag: "PreviewOperationError",
+          tabId: "tab-1",
+          webContentsId: 41,
+        },
+      }),
+    ).toThrow();
   });
 });

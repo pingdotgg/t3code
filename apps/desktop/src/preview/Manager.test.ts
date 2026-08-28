@@ -62,7 +62,6 @@ const {
   browserWindowConstructor,
   createFromPath,
   fromId,
-  getFocusedWebContents,
   mkdir,
   showItemInFolder,
   webviewSend,
@@ -71,8 +70,7 @@ const {
 } = vi.hoisted(() => ({
   browserWindowConstructor: vi.fn(),
   createFromPath: vi.fn((): { readonly isEmpty: () => boolean } => ({ isEmpty: () => false })),
-  fromId: vi.fn((_id?: number) => null),
-  getFocusedWebContents: vi.fn(() => null),
+  fromId: vi.fn((_id?: number): Electron.WebContents | null => null),
   mkdir: vi.fn((_path: string) => undefined),
   showItemInFolder: vi.fn(),
   webviewSend: vi.fn(),
@@ -96,7 +94,6 @@ vi.mock("electron", () => ({
   },
   webContents: {
     fromId,
-    getFocusedWebContents,
   },
 }));
 
@@ -187,6 +184,336 @@ const makeTestPreviewWebContents = (
     },
     capturePage,
   }) as never;
+
+const keyboardInputFromPacket = (packet: Electron.KeyboardInputEvent): Electron.Input => {
+  const modifiers = new Set(packet.modifiers ?? []);
+  const shift = modifiers.has("shift");
+  const keyCode = String(packet.keyCode);
+  const namedKeys: Readonly<Record<string, { readonly key: string; readonly code: string }>> = {
+    Enter: { key: "Enter", code: "Enter" },
+    Escape: { key: "Escape", code: "Escape" },
+    Backspace: { key: "Backspace", code: "Backspace" },
+    Tab: { key: "Tab", code: "Tab" },
+    Shift: { key: "Shift", code: "ShiftLeft" },
+    Control: { key: "Control", code: "ControlLeft" },
+    Alt: { key: "Alt", code: "AltLeft" },
+    Meta: { key: "Meta", code: "MetaLeft" },
+    Space: { key: " ", code: "Space" },
+    Left: { key: "ArrowLeft", code: "ArrowLeft" },
+    Right: { key: "ArrowRight", code: "ArrowRight" },
+    Up: { key: "ArrowUp", code: "ArrowUp" },
+    Down: { key: "ArrowDown", code: "ArrowDown" },
+  };
+  const printableKeys: Readonly<
+    Record<string, { readonly key: string; readonly shiftedKey: string; readonly code: string }>
+  > = {
+    "`": { key: "`", shiftedKey: "~", code: "Backquote" },
+    "1": { key: "1", shiftedKey: "!", code: "Digit1" },
+    "2": { key: "2", shiftedKey: "@", code: "Digit2" },
+    "3": { key: "3", shiftedKey: "#", code: "Digit3" },
+    "4": { key: "4", shiftedKey: "$", code: "Digit4" },
+    "5": { key: "5", shiftedKey: "%", code: "Digit5" },
+    "6": { key: "6", shiftedKey: "^", code: "Digit6" },
+    "7": { key: "7", shiftedKey: "&", code: "Digit7" },
+    "8": { key: "8", shiftedKey: "*", code: "Digit8" },
+    "9": { key: "9", shiftedKey: "(", code: "Digit9" },
+    "0": { key: "0", shiftedKey: ")", code: "Digit0" },
+    "-": { key: "-", shiftedKey: "_", code: "Minus" },
+    "=": { key: "=", shiftedKey: "+", code: "Equal" },
+    "\\": { key: "\\", shiftedKey: "|", code: "Backslash" },
+    "[": { key: "[", shiftedKey: "{", code: "BracketLeft" },
+    "]": { key: "]", shiftedKey: "}", code: "BracketRight" },
+    ";": { key: ";", shiftedKey: ":", code: "Semicolon" },
+    "'": { key: "'", shiftedKey: '"', code: "Quote" },
+    ",": { key: ",", shiftedKey: "<", code: "Comma" },
+    ".": { key: ".", shiftedKey: ">", code: "Period" },
+    "/": { key: "/", shiftedKey: "?", code: "Slash" },
+  };
+  const named = namedKeys[keyCode];
+  const printable = printableKeys[keyCode];
+  const letter = /^[A-Z]$/.test(keyCode);
+  const key =
+    named?.key ??
+    (printable ? (shift ? printable.shiftedKey : printable.key) : undefined) ??
+    (letter && !shift ? keyCode.toLowerCase() : keyCode);
+  const code = named?.code ?? printable?.code ?? (letter ? `Key${keyCode}` : keyCode);
+  return {
+    type: packet.type === "keyUp" ? "keyUp" : "keyDown",
+    key,
+    code,
+    meta: modifiers.has("meta"),
+    shift,
+    control: modifiers.has("control") || modifiers.has("ctrl"),
+    alt: modifiers.has("alt"),
+    modifiers: packet.modifiers ?? [],
+    isAutoRepeat: false,
+    isComposing: false,
+    location: 0,
+  };
+};
+
+const makeKeyboardWebContents = (options: {
+  readonly hostWebContents: Electron.WebContents;
+  readonly id?: number;
+  readonly initialFocusedFrame?: "main" | "child" | null;
+  readonly initialDevToolsOpened?: boolean;
+  readonly onIsDevToolsOpened?: () => void;
+  readonly onSendInputEvent?: (packet: Electron.KeyboardInputEvent) => void;
+  readonly onSetIgnoreMenuShortcuts?: (ignore: boolean) => void;
+  readonly sendCommand?: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+}) => {
+  let beforeInput: ((event: Electron.Event, input: Electron.Input) => void) | undefined;
+  let humanInput: ((event: Electron.IpcMainEvent, signal: unknown) => void) | undefined;
+  let confirmDelivery = true;
+  let devToolsOpened = options.initialDevToolsOpened ?? false;
+  const activity: string[] = [];
+  let mainFrameProcessId = 100;
+  let mainFrameRoutingId = 200;
+  let mainFrameDetached = false;
+  const mainFrame = {
+    get detached() {
+      return mainFrameDetached;
+    },
+    get processId() {
+      return mainFrameProcessId;
+    },
+    get routingId() {
+      return mainFrameRoutingId;
+    },
+  } as Electron.WebFrameMain;
+  const childFrame = {
+    detached: false,
+    processId: 101,
+    routingId: 201,
+  } as Electron.WebFrameMain;
+  let focusedFrame =
+    options.initialFocusedFrame === null
+      ? null
+      : options.initialFocusedFrame === "child"
+        ? childFrame
+        : mainFrame;
+  const focus = vi.fn();
+  const off = vi.fn();
+  const openDevTools = vi.fn();
+  const reload = vi.fn();
+  const setIgnoreMenuShortcuts = vi.fn((ignore: boolean) => {
+    activity.push(`menu:${ignore}`);
+    options.onSetIgnoreMenuShortcuts?.(ignore);
+  });
+  const sendCommand = vi.fn(
+    options.sendCommand ??
+      (async (method: string, params?: Record<string, unknown>) => {
+        if (method !== "Runtime.evaluate") return undefined;
+        return {
+          result: {
+            value:
+              typeof params?.["expression"] === "string" &&
+              params["expression"].includes("document.activeElement?.tagName")
+                ? false
+                : { ok: true },
+          },
+        };
+      }),
+  );
+  const sendInputEvent = vi.fn((packet: Electron.KeyboardInputEvent) => {
+    activity.push(`send:${packet.type}`);
+    options.onSendInputEvent?.(packet);
+    if (packet.type === "char") return;
+    const input = keyboardInputFromPacket(packet);
+    let prevented = false;
+    const event = {
+      preventDefault: vi.fn(() => {
+        prevented = true;
+      }),
+    } as unknown as Electron.Event;
+    activity.push(`before:${input.type}`);
+    beforeInput?.(event, input);
+    if (confirmDelivery && !prevented) {
+      queueMicrotask(() => {
+        const phase = packet.type === "keyUp" ? "up" : "down";
+        activity.push(`receipt:${phase}`);
+        humanInput?.(
+          {
+            sender: webContents,
+            senderFrame: mainFrame,
+            processId: mainFrameProcessId,
+            frameId: mainFrameRoutingId,
+          } as Electron.IpcMainEvent,
+          {
+            kind: "key",
+            phase,
+            key: input.key,
+            code: input.code,
+            meta: input.meta,
+            shift: input.shift,
+            control: input.control,
+            alt: input.alt,
+          },
+        );
+      });
+    }
+  });
+  const capturedImage = {
+    getSize: () => ({ width: 1, height: 1 }),
+    resize: () => capturedImage,
+    toPNG: () => Buffer.from("png"),
+  };
+  const listeners = new Map<string, (...args: never[]) => void>();
+  const webContents = {
+    id: options.id ?? 42,
+    hostWebContents: options.hostWebContents,
+    mainFrame,
+    get focusedFrame() {
+      return focusedFrame;
+    },
+    isDestroyed: () => false,
+    getType: () => "webview",
+    getURL: () => "https://example.com",
+    getTitle: () => "Example",
+    isLoading: () => false,
+    isDevToolsOpened: () => {
+      options.onIsDevToolsOpened?.();
+      return devToolsOpened;
+    },
+    focus,
+    reload,
+    getZoomFactor: () => 1,
+    setZoomFactor: vi.fn(),
+    setAudioMuted: vi.fn(),
+    isCurrentlyAudible: () => false,
+    on: vi.fn((event: string, listener: (...args: never[]) => void) => {
+      if (event === "before-input-event") beforeInput = listener as typeof beforeInput;
+      listeners.set(event, listener);
+    }),
+    once: vi.fn(),
+    off,
+    ipc: {
+      on: vi.fn((channel: string, listener: typeof humanInput) => {
+        if (channel === "preview:human-input") humanInput = listener;
+      }),
+      off: vi.fn(),
+    },
+    send: webviewSend,
+    sendInputEvent,
+    setIgnoreMenuShortcuts,
+    openDevTools,
+    capturePage: vi.fn(async () => capturedImage),
+    navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+    setWindowOpenHandler: vi.fn(),
+    debugger: {
+      isAttached: () => false,
+      attach: vi.fn(),
+      sendCommand,
+      on: vi.fn(),
+      off: vi.fn(),
+    },
+  } as unknown as Electron.WebContents;
+  return {
+    activity,
+    focus,
+    off,
+    openDevTools,
+    reload,
+    sendCommand,
+    sendInputEvent,
+    setIgnoreMenuShortcuts,
+    webContents,
+    emitPhysicalInput(input: Electron.Input) {
+      const preventDefault = vi.fn();
+      beforeInput?.({ preventDefault } as unknown as Electron.Event, input);
+      return preventDefault;
+    },
+    emitHumanInput(
+      signal: unknown,
+      eventOptions?: {
+        readonly frame?: "main" | "child" | null;
+        readonly frameId?: number;
+        readonly processId?: number;
+      },
+    ) {
+      const senderFrame =
+        eventOptions?.frame === null
+          ? null
+          : eventOptions?.frame === "child"
+            ? childFrame
+            : mainFrame;
+      humanInput?.(
+        {
+          sender: webContents,
+          senderFrame,
+          processId: eventOptions?.processId ?? senderFrame?.processId ?? -1,
+          frameId: eventOptions?.frameId ?? senderFrame?.routingId ?? -1,
+        } as Electron.IpcMainEvent,
+        signal,
+      );
+    },
+    emitNavigation(options?: { readonly processId?: number; readonly frameId?: number }) {
+      mainFrameProcessId = options?.processId ?? mainFrameProcessId + 1;
+      mainFrameRoutingId = options?.frameId ?? mainFrameRoutingId + 1;
+      listeners.get("did-navigate")?.();
+    },
+    emitNavigationStarted(options?: {
+      readonly isMainFrame?: boolean;
+      readonly isSameDocument?: boolean;
+    }) {
+      listeners.get("did-start-navigation")?.({
+        isMainFrame: options?.isMainFrame ?? true,
+        isSameDocument: options?.isSameDocument ?? false,
+      } as never);
+    },
+    emitInPageNavigation() {
+      listeners.get("did-navigate-in-page")?.();
+    },
+    setMainFrameDetached(value: boolean) {
+      mainFrameDetached = value;
+    },
+    setConfirmDelivery(value: boolean) {
+      confirmDelivery = value;
+    },
+    setDevToolsOpened(value: boolean) {
+      devToolsOpened = value;
+    },
+    setFocusedFrame(value: "main" | "child" | null) {
+      focusedFrame = value === null ? null : value === "child" ? childFrame : mainFrame;
+    },
+  };
+};
+
+const makeKeyboardInput = (
+  type: "keyDown" | "keyUp",
+  key: string,
+  options?: { readonly meta?: boolean; readonly control?: boolean },
+): Electron.Input => ({
+  type,
+  key,
+  code: `Key${key.toUpperCase()}`,
+  meta: options?.meta ?? false,
+  shift: false,
+  control: options?.control ?? false,
+  alt: false,
+  modifiers: [
+    ...(options?.meta ? (["meta"] as const) : []),
+    ...(options?.control ? (["control"] as const) : []),
+  ],
+  isAutoRepeat: false,
+  isComposing: false,
+  location: 0,
+});
+
+const makeKeyboardSignal = (
+  phase: "down" | "up",
+  key: string,
+  options?: { readonly meta?: boolean; readonly control?: boolean },
+) => ({
+  kind: "key" as const,
+  phase,
+  key,
+  code: `Key${key.toUpperCase()}`,
+  meta: options?.meta ?? false,
+  shift: false,
+  control: options?.control ?? false,
+  alt: false,
+});
 
 const TEST_FAVICON = "data:image/png;base64,cG5n";
 
@@ -320,8 +647,6 @@ describe("PreviewManager", () => {
   beforeEach(() => {
     browserWindowConstructor.mockReset();
     fromId.mockClear();
-    getFocusedWebContents.mockReset();
-    getFocusedWebContents.mockReturnValue(null);
     mkdir.mockClear();
     writeFile.mockClear();
     showItemInFolder.mockClear();
@@ -2977,176 +3302,1676 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("types in background webviews and enables native key input", () =>
+  effectIt.effect("types through the page runtime without native text input", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        let failKeyDown = false;
-        let humanInput: ((_event: unknown, signal: unknown) => void) | undefined;
-        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-          if (
-            failKeyDown &&
-            method === "Input.dispatchKeyEvent" &&
-            (params?.["type"] === "keyDown" || params?.["type"] === "rawKeyDown")
-          ) {
-            throw new Error("key dispatch failed");
-          }
-          if (
-            method === "Input.dispatchKeyEvent" &&
-            (params?.["type"] === "keyDown" || params?.["type"] === "rawKeyDown")
-          ) {
-            humanInput?.(
-              {},
-              {
-                kind: "key",
-                key: params["key"],
-                code: params["code"] ?? "Digit1",
-              },
-            );
-          }
-          return method === "Runtime.evaluate" ? { result: { value: { ok: true } } } : undefined;
-        });
-        const restoreFocus = vi.fn();
-        const focus = vi.fn();
-        getFocusedWebContents.mockReturnValue({
-          id: 7,
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
           isDestroyed: () => false,
-          focus: restoreFocus,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
         } as never);
-        fromId.mockReturnValue({
-          id: 42,
-          isDestroyed: () => false,
-          getType: () => "webview",
-          getURL: () => "https://example.com",
-          getTitle: () => "Example",
-          isLoading: () => false,
-          isDevToolsOpened: () => false,
-          focus,
-          getZoomFactor: () => 1,
-          setZoomFactor: vi.fn(),
-          setAudioMuted: vi.fn(),
-          isCurrentlyAudible: () => false,
-          on: vi.fn(),
-          off: vi.fn(),
-          ipc: {
-            on: vi.fn((channel: string, listener: typeof humanInput) => {
-              if (channel === "preview:human-input") humanInput = listener;
-            }),
-            off: vi.fn(),
-          },
-          send: webviewSend,
-          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
-          setWindowOpenHandler: vi.fn(),
-          debugger: {
-            isAttached: () => false,
-            attach: vi.fn(),
-            sendCommand,
-            on: vi.fn(),
-            off: vi.fn(),
-          },
-        } as never);
-
         yield* manager.createTab("tab_input");
         yield* manager.registerWebview("tab_input", 42);
-        yield* manager.automationType("tab_input", { text: "hello", clear: true });
+
+        yield* manager.automationType("tab_input", { text: "hé🙂", clear: true });
         yield* manager.automationType("tab_input", { text: "", clear: true });
+
+        const calls = guest.sendCommand.mock.calls;
+        const methods = calls.map(([method]) => method);
+        expect(
+          calls.find(
+            ([method, params]) =>
+              method === "Runtime.evaluate" &&
+              typeof params?.["expression"] === "string" &&
+              params["expression"].includes('const text = "hé🙂"') &&
+              params["expression"].includes('document.execCommand("insertText"'),
+          ),
+        ).toBeDefined();
+        expect(
+          calls.find(
+            ([method, params]) =>
+              method === "Runtime.evaluate" &&
+              typeof params?.["expression"] === "string" &&
+              params["expression"].includes('const text = ""') &&
+              params["expression"].includes("Object.getOwnPropertyDescriptor"),
+          ),
+        ).toBeDefined();
+        expect(methods).not.toContain("Input.insertText");
+        expect(guest.sendInputEvent).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("sends native key packets to a never-focused guest and confirms delivery", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostSendInputEvent = vi.fn();
+        const hostWebContents = {
+          sendInputEvent: hostSendInputEvent,
+        } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        yield* manager.automationPress("tab_input", { key: "x" });
+        yield* manager.automationPress("tab_input", { key: "Enter" });
+        yield* manager.automationPress("tab_input", { key: "z", modifiers: ["Meta"] });
+        yield* manager.automationPress("tab_input", { key: "Escape" });
+        yield* manager.automationPress("tab_input", { key: "Escape" });
+        yield* manager.automationPress("tab_input", { key: "Escape" });
+
+        expect(guest.sendInputEvent.mock.calls.map(([packet]) => packet)).toEqual([
+          { type: "rawKeyDown", keyCode: "X", modifiers: [] },
+          { type: "char", keyCode: "x", modifiers: [] },
+          { type: "keyUp", keyCode: "X", modifiers: [] },
+          { type: "rawKeyDown", keyCode: "Enter", modifiers: [] },
+          { type: "char", keyCode: "\r", modifiers: [] },
+          { type: "keyUp", keyCode: "Enter", modifiers: [] },
+          { type: "rawKeyDown", keyCode: "Z", modifiers: ["meta"] },
+          { type: "keyUp", keyCode: "Z", modifiers: ["meta"] },
+          { type: "rawKeyDown", keyCode: "Escape", modifiers: [] },
+          { type: "keyUp", keyCode: "Escape", modifiers: [] },
+          { type: "rawKeyDown", keyCode: "Escape", modifiers: [] },
+          { type: "keyUp", keyCode: "Escape", modifiers: [] },
+          { type: "rawKeyDown", keyCode: "Escape", modifiers: [] },
+          { type: "keyUp", keyCode: "Escape", modifiers: [] },
+        ]);
+        expect(guest.activity.slice(0, 9)).toEqual([
+          "menu:true",
+          "send:rawKeyDown",
+          "before:keyDown",
+          "send:char",
+          "send:keyUp",
+          "before:keyUp",
+          "receipt:down",
+          "receipt:up",
+          "menu:false",
+        ]);
+        expect(guest.focus).not.toHaveBeenCalled();
+        expect(hostSendInputEvent).not.toHaveBeenCalled();
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual(
+          Array.from({ length: 6 }, () => [[true], [false]]).flat(),
+        );
+        const methods = guest.sendCommand.mock.calls.map(([method]) => method);
+        expect(methods).not.toContain("Input.dispatchKeyEvent");
+        expect(methods).not.toContain("Page.bringToFront");
+        expect(methods).not.toContain("Emulation.setFocusEmulationEnabled");
+      }),
+    ),
+  );
+
+  effectIt.effect("confirms both phases of named modifier presses", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostSendInputEvent = vi.fn();
+        const hostWebContents = {
+          sendInputEvent: hostSendInputEvent,
+        } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_modifiers");
+        yield* manager.registerWebview("tab_modifiers", 42);
+
+        for (const key of ["Shift", "Control", "Alt", "Meta"] as const) {
+          yield* manager.automationPress("tab_modifiers", { key });
+        }
+        yield* manager.automationPress("tab_modifiers", { key: "x" });
+
+        expect(guest.sendInputEvent.mock.calls.map(([packet]) => packet)).toEqual([
+          { type: "rawKeyDown", keyCode: "Shift", modifiers: ["shift"] },
+          { type: "keyUp", keyCode: "Shift", modifiers: [] },
+          { type: "rawKeyDown", keyCode: "Control", modifiers: ["control"] },
+          { type: "keyUp", keyCode: "Control", modifiers: [] },
+          { type: "rawKeyDown", keyCode: "Alt", modifiers: ["alt"] },
+          { type: "keyUp", keyCode: "Alt", modifiers: [] },
+          { type: "rawKeyDown", keyCode: "Meta", modifiers: ["meta"] },
+          { type: "keyUp", keyCode: "Meta", modifiers: [] },
+          { type: "rawKeyDown", keyCode: "X", modifiers: [] },
+          { type: "char", keyCode: "x", modifiers: [] },
+          { type: "keyUp", keyCode: "X", modifiers: [] },
+        ]);
+        expect(guest.activity.filter((event) => event.startsWith("receipt:"))).toEqual(
+          Array.from({ length: 5 }, () => ["receipt:down", "receipt:up"]).flat(),
+        );
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual(
+          Array.from({ length: 5 }, () => [[true], [false]]).flat(),
+        );
+        expect(hostSendInputEvent).not.toHaveBeenCalled();
+        expect(guest.reload).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("quarantines a modifier press after a wrong DOM modifier receipt", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostSendInputEvent = vi.fn();
+        const hostWebContents = {
+          sendInputEvent: hostSendInputEvent,
+        } as unknown as Electron.WebContents;
+        let sentWrongReceipt = false;
+        let guest: ReturnType<typeof makeKeyboardWebContents>;
+        guest = makeKeyboardWebContents({
+          hostWebContents,
+          onSendInputEvent: (packet) => {
+            if (packet.type !== "rawKeyDown" || sentWrongReceipt) return;
+            sentWrongReceipt = true;
+            queueMicrotask(() => {
+              guest.emitHumanInput({
+                kind: "key",
+                phase: "down",
+                key: "Meta",
+                code: "MetaLeft",
+                meta: false,
+                shift: false,
+                control: false,
+                alt: false,
+              });
+            });
+          },
+        });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_modifier_receipt");
+        yield* manager.registerWebview("tab_modifier_receipt", 42);
+
+        const press = yield* manager
+          .automationPress("tab_modifier_receipt", { key: "Meta" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => guest.sendInputEvent.mock.calls.length === 2);
+        yield* TestClock.adjust(0);
+        yield* TestClock.adjust(1_000);
+        expect(Exit.isFailure(yield* Fiber.join(press))).toBe(true);
+
+        const retry = yield* Effect.exit(
+          manager.automationPress("tab_modifier_receipt", { key: "x" }),
+        );
+        expect(Exit.isFailure(retry)).toBe(true);
+        if (Exit.isFailure(retry)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(retry.cause))).toMatchObject({
+            _tag: "PreviewAutomationKeyboardDeliveryNotConfirmedError",
+          });
+        }
+        expect(guest.sendInputEvent).toHaveBeenCalledTimes(2);
+        expect(hostSendInputEvent).not.toHaveBeenCalled();
+
+        guest.emitNavigation();
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("rejects keyboard input when a child frame owns focus", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({
+          hostWebContents,
+          sendCommand: async (method, params) => {
+            if (method !== "Runtime.evaluate") return undefined;
+            return {
+              result: {
+                value:
+                  typeof params?.["expression"] === "string" &&
+                  params["expression"].includes("document.activeElement?.tagName")
+                    ? true
+                    : { ok: true },
+              },
+            };
+          },
+        });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_frame");
+        yield* manager.registerWebview("tab_frame", 42);
+
+        const exit = yield* Effect.exit(manager.automationPress("tab_frame", { key: "x" }));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationKeyboardFocusedFrameUnsupportedError",
+          });
+        }
+        expect(guest.sendInputEvent).not.toHaveBeenCalled();
+        expect(guest.setIgnoreMenuShortcuts).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("rechecks child-frame focus at the native send boundary", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        let guest: ReturnType<typeof makeKeyboardWebContents>;
+        guest = makeKeyboardWebContents({
+          hostWebContents,
+          onSetIgnoreMenuShortcuts: (ignore) => {
+            if (ignore) guest.setFocusedFrame("child");
+          },
+        });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_frame");
+        yield* manager.registerWebview("tab_frame", 42);
+
+        const exit = yield* Effect.exit(manager.automationPress("tab_frame", { key: "x" }));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationKeyboardFocusedFrameUnsupportedError",
+          });
+        }
+        expect(guest.sendInputEvent).not.toHaveBeenCalled();
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("does not reuse physical key receipts from a child frame", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({
+          hostWebContents,
+          initialFocusedFrame: "child",
+        });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_frame");
+        yield* manager.registerWebview("tab_frame", 42);
+
+        const physicalInput = (type: "keyDown" | "keyUp"): Electron.Input => ({
+          type,
+          key: "x",
+          code: "KeyX",
+          meta: false,
+          shift: false,
+          control: false,
+          alt: false,
+          modifiers: [],
+          isAutoRepeat: false,
+          isComposing: false,
+          location: 0,
+        });
+        guest.emitPhysicalInput(physicalInput("keyDown"));
+        guest.emitPhysicalInput(physicalInput("keyUp"));
+        guest.setFocusedFrame("main");
+
+        yield* manager.automationPress("tab_frame", { key: "x" });
+
+        expect(guest.sendInputEvent.mock.calls.map(([packet]) => packet.type)).toEqual([
+          "rawKeyDown",
+          "char",
+          "keyUp",
+        ]);
+      }),
+    ),
+  );
+
+  effectIt.effect("lets child-frame physical input interrupt an agent press", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        let injectedPhysicalKey = false;
+        let guest: ReturnType<typeof makeKeyboardWebContents>;
+        guest = makeKeyboardWebContents({
+          hostWebContents,
+          onSetIgnoreMenuShortcuts: (ignore) => {
+            if (!ignore || injectedPhysicalKey) return;
+            injectedPhysicalKey = true;
+            guest.setFocusedFrame("child");
+            guest.emitPhysicalInput({
+              type: "keyDown",
+              key: "q",
+              code: "KeyQ",
+              meta: false,
+              shift: false,
+              control: false,
+              alt: false,
+              modifiers: [],
+              isAutoRepeat: false,
+              isComposing: false,
+              location: 0,
+            });
+            guest.setFocusedFrame("main");
+          },
+        });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_frame");
+        yield* manager.registerWebview("tab_frame", 42);
+
+        const exit = yield* Effect.exit(manager.automationPress("tab_frame", { key: "x" }));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationControlInterruptedError",
+            operation: "press",
+          });
+        }
+        expect(guest.sendInputEvent).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("isolates agent shortcuts and still handles later physical shortcuts", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostSendInputEvent = vi.fn();
+        const hostWebContents = {
+          sendInputEvent: hostSendInputEvent,
+        } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_shortcuts");
+        yield* manager.registerWebview("tab_shortcuts", 42);
+
+        yield* manager.automationPress("tab_shortcuts", { key: "k", modifiers: ["Meta"] });
+        yield* manager.automationPress("tab_shortcuts", { key: "r", modifiers: ["Meta"] });
+        expect(hostSendInputEvent).not.toHaveBeenCalled();
+        expect(guest.reload).not.toHaveBeenCalled();
+
+        const physicalPalette = guest.emitPhysicalInput({
+          type: "keyDown",
+          key: "k",
+          code: "KeyK",
+          meta: true,
+          shift: false,
+          control: false,
+          alt: false,
+          modifiers: ["meta"],
+          isAutoRepeat: false,
+          isComposing: false,
+          location: 0,
+        });
+        const physicalRefresh = guest.emitPhysicalInput({
+          type: "keyDown",
+          key: "r",
+          code: "KeyR",
+          meta: true,
+          shift: false,
+          control: false,
+          alt: false,
+          modifiers: ["meta"],
+          isAutoRepeat: false,
+          isComposing: false,
+          location: 0,
+        });
+        yield* Effect.yieldNow;
+
+        expect(physicalPalette).toHaveBeenCalledOnce();
+        expect(physicalRefresh).toHaveBeenCalledOnce();
+        expect(hostSendInputEvent).toHaveBeenCalledWith({
+          type: "keyDown",
+          keyCode: "k",
+          modifiers: ["meta"],
+        });
+        expect(guest.reload).toHaveBeenCalledOnce();
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false], [true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("does not accept an unmarked same-key press as an agent receipt", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        let injectedPhysicalKey = false;
+        let guest: ReturnType<typeof makeKeyboardWebContents>;
+        const physicalInput = (type: "keyDown" | "keyUp"): Electron.Input => ({
+          type,
+          key: "x",
+          code: "KeyX",
+          meta: false,
+          shift: false,
+          control: false,
+          alt: false,
+          modifiers: [],
+          isAutoRepeat: false,
+          isComposing: false,
+          location: 0,
+        });
+        const physicalSignal = (phase: "down" | "up") => ({
+          kind: "key" as const,
+          phase,
+          key: "x",
+          code: "KeyX",
+          meta: false,
+          shift: false,
+          control: false,
+          alt: false,
+        });
+        guest = makeKeyboardWebContents({
+          hostWebContents,
+          onSetIgnoreMenuShortcuts: (ignore) => {
+            if (!ignore || injectedPhysicalKey) return;
+            injectedPhysicalKey = true;
+            guest.emitPhysicalInput(physicalInput("keyDown"));
+            guest.emitPhysicalInput(physicalInput("keyUp"));
+            guest.emitHumanInput(physicalSignal("down"));
+            guest.emitHumanInput(physicalSignal("up"));
+          },
+        });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        const exit = yield* Effect.exit(manager.automationPress("tab_input", { key: "x" }));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationControlInterruptedError",
+            operation: "press",
+          });
+        }
+        expect(guest.sendInputEvent).not.toHaveBeenCalled();
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("fails clearly when native keyboard delivery is unavailable", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let focused = false;
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => focused,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        const unfocused = yield* Effect.exit(manager.automationPress("tab_input", { key: "x" }));
+        expect(Exit.isFailure(unfocused)).toBe(true);
+        if (Exit.isFailure(unfocused)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(unfocused.cause))).toMatchObject({
+            _tag: "PreviewAutomationKeyboardWindowNotFocusedError",
+          });
+        }
+        expect(guest.sendInputEvent).not.toHaveBeenCalled();
+
+        focused = true;
+        guest.setConfirmDelivery(false);
+        const unconfirmed = yield* manager
+          .automationPress("tab_input", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => guest.sendInputEvent.mock.calls.length === 3);
+        yield* TestClock.adjust(1_000);
+        const unconfirmedExit = yield* Fiber.join(unconfirmed);
+        expect(Exit.isFailure(unconfirmedExit)).toBe(true);
+        if (Exit.isFailure(unconfirmedExit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(unconfirmedExit.cause))).toMatchObject({
+            _tag: "PreviewAutomationKeyboardDeliveryNotConfirmedError",
+          });
+        }
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true]]);
+
+        const sentPackets = guest.sendInputEvent.mock.calls.length;
+        const quarantined = yield* Effect.exit(manager.automationPress("tab_input", { key: "y" }));
+        expect(Exit.isFailure(quarantined)).toBe(true);
+        if (Exit.isFailure(quarantined)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(quarantined.cause))).toMatchObject({
+            _tag: "PreviewAutomationKeyboardDeliveryNotConfirmedError",
+          });
+        }
+        expect(guest.sendInputEvent).toHaveBeenCalledTimes(sentPackets);
+
+        const physicalKey = guest.emitPhysicalInput({
+          type: "keyDown",
+          key: "a",
+          code: "KeyA",
+          meta: false,
+          shift: false,
+          control: false,
+          alt: false,
+          modifiers: [],
+          isAutoRepeat: false,
+          isComposing: false,
+          location: 0,
+        });
+        expect(physicalKey).not.toHaveBeenCalled();
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("restores menu shortcuts when raw key-down dispatch throws", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let failDispatch = true;
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({
+          hostWebContents,
+          onSendInputEvent: (packet) => {
+            if (failDispatch && packet.type === "rawKeyDown") {
+              failDispatch = false;
+              throw new Error("dispatch failed");
+            }
+          },
+        });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        const failed = yield* Effect.exit(manager.automationPress("tab_input", { key: "x" }));
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(guest.sendInputEvent.mock.calls.map(([packet]) => packet.type)).toEqual([
+          "rawKeyDown",
+        ]);
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+
+        yield* manager.automationPress("tab_input", { key: "x" });
+        expect(guest.sendInputEvent.mock.calls.map(([packet]) => packet.type)).toEqual([
+          "rawKeyDown",
+          "rawKeyDown",
+          "char",
+          "keyUp",
+        ]);
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false], [true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("recovers uncertain keyboard delivery only after committed navigation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        guest.setConfirmDelivery(false);
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        const failed = yield* manager
+          .automationPress("tab_input", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => guest.sendInputEvent.mock.calls.length === 3);
+        yield* TestClock.adjust(1_000);
+        expect(Exit.isFailure(yield* Fiber.join(failed))).toBe(true);
+
+        guest.emitNavigationStarted();
+        guest.emitInPageNavigation();
+        for (const key of ["y", "z"] as const) {
+          const blocked = yield* Effect.exit(manager.automationPress("tab_input", { key }));
+          expect(Exit.isFailure(blocked)).toBe(true);
+        }
+        expect(guest.sendInputEvent).toHaveBeenCalledTimes(3);
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true]]);
+
+        guest.emitNavigation();
+        guest.setConfirmDelivery(true);
+        yield* manager.automationPress("tab_input", { key: "y" });
+
+        expect(guest.sendInputEvent).toHaveBeenCalledTimes(6);
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false], [true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("rejects stale and non-main-frame receipts after navigation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        guest.setConfirmDelivery(false);
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        const oldPress = yield* manager
+          .automationPress("tab_input", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => guest.sendInputEvent.mock.calls.length === 3);
+        yield* TestClock.adjust(1_000);
+        yield* Fiber.join(oldPress);
+        guest.emitNavigation();
+
+        const currentPress = yield* manager
+          .automationPress("tab_input", { key: "y" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => guest.sendInputEvent.mock.calls.length === 6);
+        const down = makeKeyboardSignal("down", "y");
+        const up = makeKeyboardSignal("up", "y");
+        guest.emitHumanInput(down, { processId: 100, frameId: 200 });
+        guest.emitHumanInput(down, { frame: null });
+        guest.emitHumanInput(down, { frame: "child" });
+        guest.emitHumanInput(down, { processId: 999 });
+        guest.setMainFrameDetached(true);
+        guest.emitHumanInput(down);
+        guest.setMainFrameDetached(false);
+        for (let attempt = 0; attempt < 3; attempt++) yield* Effect.yieldNow;
+        expect(currentPress.pollUnsafe()).toBeUndefined();
+
+        guest.emitHumanInput(down);
+        guest.emitHumanInput(up);
+        expect(Exit.isSuccess(yield* Fiber.join(currentPress))).toBe(true);
+      }),
+    ),
+  );
+
+  effectIt.effect("does not quarantine a new document for an old key receipt", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        let reportKeyUp: (() => void) | undefined;
+        const keyUpSent = new Promise<void>((resolve) => {
+          reportKeyUp = resolve;
+        });
+        const guest = makeKeyboardWebContents({
+          hostWebContents,
+          onSendInputEvent: (packet) => {
+            if (packet.type === "keyUp") reportKeyUp?.();
+          },
+        });
+        guest.setConfirmDelivery(false);
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_navigation_receipt");
+        yield* manager.registerWebview("tab_navigation_receipt", 42);
+
+        const oldPress = yield* manager
+          .automationPress("tab_navigation_receipt", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => keyUpSent);
+
+        guest.emitNavigation();
+        guest.emitHumanInput(makeKeyboardSignal("up", "x"));
+        yield* TestClock.adjust(1_000);
+        expect(Exit.isFailure(yield* Fiber.join(oldPress))).toBe(true);
+
+        guest.setConfirmDelivery(true);
+        yield* manager.automationPress("tab_navigation_receipt", { key: "y" });
+        expect(guest.sendInputEvent).toHaveBeenCalledTimes(6);
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false], [true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("quarantines a document after a partial out-of-order receipt", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        guest.setConfirmDelivery(false);
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+        yield* manager.automationEvaluate("tab_input", { expression: "1" });
+
+        const press = yield* manager
+          .automationPress("tab_input", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => guest.sendInputEvent.mock.calls.length === 3);
+        guest.emitHumanInput(makeKeyboardSignal("down", "x"));
+        guest.emitHumanInput(makeKeyboardSignal("down", "x"));
+        for (let attempt = 0; attempt < 3; attempt++) yield* Effect.yieldNow;
+        yield* TestClock.adjust(1_000);
+        expect(Exit.isFailure(yield* Fiber.join(press))).toBe(true);
+
+        const sentPackets = guest.sendInputEvent.mock.calls.length;
+        const retry = yield* Effect.exit(manager.automationPress("tab_input", { key: "y" }));
+        expect(Exit.isFailure(retry)).toBe(true);
+        expect(guest.sendInputEvent).toHaveBeenCalledTimes(sentPackets);
+      }),
+    ),
+  );
+
+  effectIt.effect("hands menu ownership to physical input while a press waits", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        guest.setConfirmDelivery(false);
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+        yield* manager.automationEvaluate("tab_input", { expression: "1" });
+
+        const press = yield* manager
+          .automationPress("tab_input", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => guest.sendInputEvent.mock.calls.length === 3);
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true]]);
+
+        guest.emitPhysicalInput(makeKeyboardInput("keyDown", "q"));
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+        yield* TestClock.adjust(1_000);
+        expect(Exit.isFailure(yield* Fiber.join(press))).toBe(true);
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps a delayed physical receipt ahead of a same-key agent receipt", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        guest.setConfirmDelivery(false);
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+        yield* manager.automationEvaluate("tab_input", { expression: "1" });
+
+        guest.emitPhysicalInput(makeKeyboardInput("keyDown", "x"));
+        for (let attempt = 0; attempt < 3; attempt++) yield* Effect.yieldNow;
+        const press = yield* manager
+          .automationPress("tab_input", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => guest.sendInputEvent.mock.calls.length === 3);
+
+        guest.emitHumanInput(makeKeyboardSignal("down", "x"));
+        for (let attempt = 0; attempt < 3; attempt++) yield* Effect.yieldNow;
+        expect(press.pollUnsafe()).toBeUndefined();
+        guest.emitHumanInput(makeKeyboardSignal("down", "x"));
+        guest.emitHumanInput(makeKeyboardSignal("up", "x"));
+
+        expect(Exit.isSuccess(yield* Fiber.join(press))).toBe(true);
+      }),
+    ),
+  );
+
+  effectIt.effect("does not queue prevented shortcuts or completed physical keys", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostSendInputEvent = vi.fn();
+        const hostWebContents = {
+          sendInputEvent: hostSendInputEvent,
+        } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        guest.emitPhysicalInput(makeKeyboardInput("keyDown", "k", { meta: true }));
+        guest.emitPhysicalInput(makeKeyboardInput("keyDown", "r", { meta: true }));
+        guest.emitPhysicalInput(makeKeyboardInput("keyDown", "x"));
+        guest.emitPhysicalInput(makeKeyboardInput("keyUp", "x"));
+        guest.emitHumanInput(makeKeyboardSignal("down", "x"));
+        guest.emitHumanInput(makeKeyboardSignal("up", "x"));
+        for (let attempt = 0; attempt < 3; attempt++) yield* Effect.yieldNow;
+
+        yield* manager.automationPress("tab_input", { key: "k", modifiers: ["Meta"] });
+        yield* manager.automationPress("tab_input", { key: "r", modifiers: ["Meta"] });
         yield* manager.automationPress("tab_input", { key: "x" });
 
-        const calls = sendCommand.mock.calls;
-        const methods = calls.map(([method]) => method);
-        const enableIndex = methods.indexOf("Input.setIgnoreInputEvents");
-        const focusOnIndex = calls.findIndex(
-          ([method, params]) =>
-            method === "Emulation.setFocusEmulationEnabled" && params?.["enabled"] === true,
-        );
-        const keyDownIndex = calls.findIndex(
-          ([method, params]) =>
-            method === "Input.dispatchKeyEvent" && params?.["type"] === "keyDown",
-        );
-        const keyUpIndex = calls.findIndex(
-          ([method, params]) => method === "Input.dispatchKeyEvent" && params?.["type"] === "keyUp",
-        );
-        const focusOffIndex = calls.findIndex(
-          ([method, params]) =>
-            method === "Emulation.setFocusEmulationEnabled" && params?.["enabled"] === false,
-        );
-        const typeEvaluation = sendCommand.mock.calls.find(
-          ([method, params]) =>
-            method === "Runtime.evaluate" &&
-            typeof params === "object" &&
-            params !== null &&
-            "expression" in params &&
-            typeof params.expression === "string" &&
-            params.expression.includes('document.execCommand("insertText"'),
-        );
-        expect(typeEvaluation).toBeDefined();
-        const clearOnlyEvaluation = sendCommand.mock.calls.find(
-          ([method, params]) =>
-            method === "Runtime.evaluate" &&
-            typeof params === "object" &&
-            params !== null &&
-            "expression" in params &&
-            typeof params.expression === "string" &&
-            params.expression.includes('const text = ""') &&
-            params.expression.includes("Object.getOwnPropertyDescriptor"),
-        );
-        expect(clearOnlyEvaluation).toBeDefined();
-        expect(methods).not.toContain("Input.insertText");
-        expect(enableIndex).toBeGreaterThanOrEqual(0);
-        expect(focus).toHaveBeenCalledOnce();
-        expect(restoreFocus).toHaveBeenCalledOnce();
-        expect(methods).toContain("Page.bringToFront");
-        expect(enableIndex).toBeLessThan(focusOnIndex);
-        expect(focusOnIndex).toBeLessThan(keyDownIndex);
-        expect(keyDownIndex).toBeLessThan(keyUpIndex);
-        expect(keyUpIndex).toBeLessThan(focusOffIndex);
-        expect(
-          calls.filter(
-            ([method, params]) =>
-              method === "Input.dispatchKeyEvent" && params?.["type"] === "keyUp",
-          ),
-        ).toHaveLength(1);
-        expect(sendCommand).toHaveBeenCalledWith("Input.setIgnoreInputEvents", { ignore: false });
+        expect(hostSendInputEvent).toHaveBeenCalledOnce();
+        expect(guest.reload).toHaveBeenCalledOnce();
+        expect(guest.sendInputEvent).toHaveBeenCalledTimes(7);
+      }),
+    ),
+  );
 
-        sendCommand.mockClear();
-        failKeyDown = true;
-        const failedPress = yield* Effect.exit(manager.automationPress("tab_input", { key: "y" }));
+  effectIt.effect("keeps an agent FIFO after an orphaned physical key-down", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        guest.setConfirmDelivery(false);
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
 
-        expect(Exit.isFailure(failedPress)).toBe(true);
-        expect(sendCommand).toHaveBeenCalledWith("Input.dispatchKeyEvent", {
-          type: "keyUp",
-          key: "y",
-          code: "KeyY",
-          modifiers: 0,
-          windowsVirtualKeyCode: 89,
-          location: 0,
-          isKeypad: false,
-        });
-        expect(sendCommand).toHaveBeenCalledWith("Emulation.setFocusEmulationEnabled", {
-          enabled: false,
-        });
-        expect(restoreFocus).toHaveBeenCalledTimes(2);
-        expect(
-          sendCommand.mock.calls.filter(
-            ([method, params]) =>
-              method === "Input.dispatchKeyEvent" && params?.["type"] === "keyUp",
-          ),
-        ).toHaveLength(1);
+        guest.emitPhysicalInput(makeKeyboardInput("keyDown", "x"));
+        guest.emitPhysicalInput(makeKeyboardInput("keyUp", "x"));
+        for (let attempt = 0; attempt < 3; attempt++) yield* Effect.yieldNow;
+        const press = yield* manager
+          .automationPress("tab_input", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => guest.sendInputEvent.mock.calls.length === 3);
 
-        sendCommand.mockClear();
-        failKeyDown = false;
-        yield* manager.automationPress("tab_input", { key: "!" });
-        expect(sendCommand).toHaveBeenCalledWith("Input.dispatchKeyEvent", {
-          type: "keyDown",
-          key: "!",
-          code: "Digit1",
-          modifiers: 0,
-          windowsVirtualKeyCode: 49,
-          location: 0,
-          isKeypad: false,
-          text: "!",
-          unmodifiedText: "!",
+        guest.emitHumanInput(makeKeyboardSignal("up", "x"));
+        guest.emitHumanInput(makeKeyboardSignal("down", "x"));
+        guest.emitHumanInput(makeKeyboardSignal("up", "x"));
+
+        expect(Exit.isSuccess(yield* Fiber.join(press))).toBe(true);
+      }),
+    ),
+  );
+
+  effectIt.effect("quarantines keyboard delivery after the physical FIFO overflows", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        for (let index = 0; index < 21; index++) {
+          guest.emitPhysicalInput(makeKeyboardInput("keyDown", "x"));
+        }
+
+        const exit = yield* Effect.exit(manager.automationPress("tab_input", { key: "x" }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationKeyboardDeliveryNotConfirmedError",
+          });
+        }
+        expect(guest.sendInputEvent).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps an unconfirmed post-dispatch replacement as a delivery failure", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const replacement = makeKeyboardWebContents({ hostWebContents });
+        let currentWebContents: Electron.WebContents;
+        const first = makeKeyboardWebContents({
+          hostWebContents,
+          onSendInputEvent: (packet) => {
+            if (packet.type === "keyUp") currentWebContents = replacement.webContents;
+          },
         });
-        expect(restoreFocus).toHaveBeenCalledTimes(3);
+        first.setConfirmDelivery(false);
+        currentWebContents = first.webContents;
+        fromId.mockImplementation(() => currentWebContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        const press = yield* manager
+          .automationPress("tab_input", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => first.sendInputEvent.mock.calls.length === 3);
+        yield* TestClock.adjust(1_000);
+        const exit = yield* Fiber.join(press);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationKeyboardDeliveryNotConfirmedError",
+          });
+        }
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps a stale press finalizer away from a same-id replacement", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const first = makeKeyboardWebContents({ hostWebContents });
+        const replacement = makeKeyboardWebContents({ hostWebContents });
+        first.setConfirmDelivery(false);
+        let currentWebContents = first.webContents;
+        fromId.mockImplementation(() => currentWebContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+        yield* manager.automationEvaluate("tab_input", { expression: "1" });
+
+        const stalePress = yield* manager
+          .automationPress("tab_input", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => first.sendInputEvent.mock.calls.length === 3);
+        expect(first.setIgnoreMenuShortcuts.mock.calls).toEqual([[true]]);
+
+        currentWebContents = replacement.webContents;
+        yield* manager.registerWebview("tab_input", 42);
+        expect(first.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+        expect(replacement.setIgnoreMenuShortcuts).not.toHaveBeenCalled();
+
+        yield* TestClock.adjust(1_000);
+        expect(Exit.isFailure(yield* Fiber.join(stalePress))).toBe(true);
+        expect(first.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+        expect(replacement.setIgnoreMenuShortcuts).not.toHaveBeenCalled();
+
+        yield* manager.automationPress("tab_input", { key: "y" });
+        expect(replacement.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps keyboard input isolated to the selected guest", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const first = makeKeyboardWebContents({ hostWebContents, id: 41 });
+        const second = makeKeyboardWebContents({ hostWebContents, id: 42 });
+        const webContentsById = new Map([
+          [41, first.webContents],
+          [42, second.webContents],
+        ]);
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (webContentsById.get(id) ?? null),
+        );
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_first");
+        yield* manager.createTab("tab_second");
+        yield* manager.registerWebview("tab_first", 41);
+        yield* manager.registerWebview("tab_second", 42);
+
+        yield* Effect.all(
+          [
+            manager.automationPress("tab_first", { key: "x" }),
+            manager.automationPress("tab_second", { key: "y" }),
+          ],
+          { concurrency: 2, discard: true },
+        );
+
+        expect(first.sendInputEvent).toHaveBeenCalledTimes(3);
+        expect(second.sendInputEvent).toHaveBeenCalledTimes(3);
+        expect(first.focus).not.toHaveBeenCalled();
+        expect(second.focus).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("transfers a reused WebContents ID to one tab owner", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_first");
+        yield* manager.createTab("tab_second");
+        yield* manager.registerWebview("tab_first", 42);
+        yield* manager.registerWebview("tab_second", 42);
+
+        const oldOwner = yield* Effect.exit(manager.automationPress("tab_first", { key: "x" }));
+        expect(Exit.isFailure(oldOwner)).toBe(true);
+        expect(guest.sendInputEvent).not.toHaveBeenCalled();
+
+        const detachCount = guest.off.mock.calls.length;
+        yield* manager.closeTab("tab_first");
+        expect(guest.off).toHaveBeenCalledTimes(detachCount);
+
+        yield* manager.automationPress("tab_second", { key: "y" });
+        expect(guest.sendInputEvent).toHaveBeenCalledTimes(3);
+      }),
+    ),
+  );
+
+  effectIt.effect("preserves keyboard quarantine when the same WebContents changes owners", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        guest.setConfirmDelivery(false);
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_first");
+        yield* manager.createTab("tab_second");
+        yield* manager.registerWebview("tab_first", 42);
+        yield* manager.automationEvaluate("tab_first", { expression: "1" });
+
+        const stalePress = yield* manager
+          .automationPress("tab_first", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => guest.sendInputEvent.mock.calls.length === 3);
+        yield* manager.registerWebview("tab_second", 42);
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+
+        const assertQuarantined = Effect.fn(function* () {
+          const exit = yield* Effect.exit(manager.automationPress("tab_second", { key: "x" }));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+              _tag: "PreviewAutomationKeyboardDeliveryNotConfirmedError",
+            });
+          }
+          expect(guest.sendInputEvent).toHaveBeenCalledTimes(3);
+        });
+
+        yield* assertQuarantined();
+        guest.emitHumanInput(makeKeyboardSignal("down", "x"));
+        guest.emitHumanInput(makeKeyboardSignal("up", "x"));
+        yield* assertQuarantined();
+
+        yield* TestClock.adjust(1_000);
+        expect(Exit.isFailure(yield* Fiber.join(stalePress))).toBe(true);
+        yield* assertQuarantined();
+
+        guest.emitNavigation();
+        guest.setConfirmDelivery(true);
+        yield* manager.automationPress("tab_second", { key: "y" });
+        expect(guest.sendInputEvent).toHaveBeenCalledTimes(6);
+      }),
+    ),
+  );
+
+  effectIt.effect("preserves a physical receipt hazard across detached WebContents reuse", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({ hostWebContents });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_first");
+        yield* manager.registerWebview("tab_first", 42);
+
+        guest.emitPhysicalInput(makeKeyboardInput("keyDown", "x"));
+        yield* manager.closeTab("tab_first");
+        yield* manager.createTab("tab_second");
+        yield* manager.registerWebview("tab_second", 42);
+
+        const blocked = yield* Effect.exit(manager.automationPress("tab_second", { key: "x" }));
+        expect(Exit.isFailure(blocked)).toBe(true);
+        if (Exit.isFailure(blocked)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(blocked.cause))).toMatchObject({
+            _tag: "PreviewAutomationKeyboardDeliveryNotConfirmedError",
+          });
+        }
+        expect(guest.sendInputEvent).not.toHaveBeenCalled();
+
+        guest.emitNavigation();
+        yield* manager.automationPress("tab_second", { key: "y" });
+        expect(guest.sendInputEvent).toHaveBeenCalledTimes(3);
+      }),
+    ),
+  );
+
+  effectIt.effect("rejects a same-id guest replacement while keyboard input is queued", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        let startBlockedEvaluate = false;
+        let releaseEvaluate: (() => void) | undefined;
+        let reportEvaluateStarted: (() => void) | undefined;
+        const evaluateStarted = new Promise<void>((resolve) => {
+          reportEvaluateStarted = resolve;
+        });
+        const evaluateRelease = new Promise<void>((resolve) => {
+          releaseEvaluate = resolve;
+        });
+        const first = makeKeyboardWebContents({
+          hostWebContents,
+          sendCommand: async (method) => {
+            if (method === "Runtime.evaluate" && startBlockedEvaluate) {
+              reportEvaluateStarted?.();
+              await evaluateRelease;
+              return { result: { value: { ok: true } } };
+            }
+            return method === "Runtime.evaluate" ? { result: { value: { ok: true } } } : undefined;
+          },
+        });
+        const replacement = makeKeyboardWebContents({ hostWebContents });
+        let currentWebContents = first.webContents;
+        fromId.mockImplementation(() => currentWebContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        startBlockedEvaluate = true;
+        const active = yield* manager
+          .automationEvaluate("tab_input", { expression: "blocked" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => evaluateStarted);
+        const queued = yield* manager
+          .automationPress("tab_input", { key: "y" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        for (let attempt = 0; attempt < 3; attempt++) yield* Effect.yieldNow;
+
+        currentWebContents = replacement.webContents;
+        yield* manager.registerWebview("tab_input", 42);
+        releaseEvaluate?.();
+        yield* Fiber.join(active);
+        const queuedExit = yield* Fiber.join(queued);
+
+        expect(Exit.isFailure(queuedExit)).toBe(true);
+        if (Exit.isFailure(queuedExit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(queuedExit.cause))).toMatchObject({
+            _tag: "PreviewAutomationTargetChangedError",
+            operation: "press",
+            tabId: "tab_input",
+            webContentsId: 42,
+          });
+        }
+        expect(first.sendInputEvent).not.toHaveBeenCalled();
+        expect(replacement.sendInputEvent).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("rechecks a same-id replacement at the native send boundary", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const replacement = makeKeyboardWebContents({ hostWebContents });
+        let currentWebContents: Electron.WebContents;
+        const first = makeKeyboardWebContents({
+          hostWebContents,
+          onSetIgnoreMenuShortcuts: (ignore) => {
+            if (ignore) currentWebContents = replacement.webContents;
+          },
+        });
+        currentWebContents = first.webContents;
+        fromId.mockImplementation(() => currentWebContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        const exit = yield* Effect.exit(manager.automationPress("tab_input", { key: "x" }));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationTargetChangedError",
+            operation: "press",
+            tabId: "tab_input",
+            webContentsId: 42,
+          });
+        }
+        expect(first.sendInputEvent).not.toHaveBeenCalled();
+        expect(replacement.sendInputEvent).not.toHaveBeenCalled();
+        expect(first.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("does not publish a stale control session after a same-id replacement", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        let releaseInitialization: (() => void) | undefined;
+        let reportInitializationStarted: (() => void) | undefined;
+        const initializationStarted = new Promise<void>((resolve) => {
+          reportInitializationStarted = resolve;
+        });
+        const initializationRelease = new Promise<void>((resolve) => {
+          releaseInitialization = resolve;
+        });
+        let blockInitialization = true;
+        const first = makeKeyboardWebContents({
+          hostWebContents,
+          sendCommand: async (method, params) => {
+            if (method === "Runtime.enable" && blockInitialization) {
+              reportInitializationStarted?.();
+              await initializationRelease;
+              blockInitialization = false;
+              return undefined;
+            }
+            if (method !== "Runtime.evaluate") return undefined;
+            return {
+              result: {
+                value:
+                  typeof params?.["expression"] === "string" &&
+                  params["expression"].includes("document.activeElement?.tagName")
+                    ? false
+                    : { ok: true },
+              },
+            };
+          },
+        });
+        const replacement = makeKeyboardWebContents({ hostWebContents });
+        let currentWebContents = first.webContents;
+        fromId.mockImplementation(() => currentWebContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+        yield* Effect.promise(() => initializationStarted);
+
+        currentWebContents = replacement.webContents;
+        const registration = yield* manager
+          .registerWebview("tab_input", 42)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => first.off.mock.calls.length > 0);
+        expect(first.off).toHaveBeenCalled();
+        releaseInitialization?.();
+        yield* Fiber.join(registration);
+
+        yield* manager.automationPress("tab_input", { key: "x" });
+
+        expect(first.sendInputEvent).not.toHaveBeenCalled();
+        expect(replacement.sendInputEvent).toHaveBeenCalledTimes(3);
+      }),
+    ),
+  );
+
+  effectIt.effect("does not open DevTools on a stale same-id guest", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const replacement = makeKeyboardWebContents({ hostWebContents });
+        let currentWebContents: Electron.WebContents;
+        let replaceOnDevToolsCheck = false;
+        const first = makeKeyboardWebContents({
+          hostWebContents,
+          onIsDevToolsOpened: () => {
+            if (replaceOnDevToolsCheck) currentWebContents = replacement.webContents;
+          },
+        });
+        currentWebContents = first.webContents;
+        fromId.mockImplementation(() => currentWebContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+        yield* manager.automationEvaluate("tab_input", { expression: "1" });
+
+        replaceOnDevToolsCheck = true;
+        const exit = yield* Effect.exit(manager.openDevTools("tab_input"));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationTargetChangedError",
+            operation: "openDevTools",
+          });
+        }
+        expect(first.openDevTools).not.toHaveBeenCalled();
+        expect(replacement.openDevTools).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("finalizes the action timeline when control setup fails", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        const guest = makeKeyboardWebContents({
+          hostWebContents,
+          initialDevToolsOpened: true,
+        });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        const failed = yield* Effect.exit(manager.automationPress("tab_input", { key: "x" }));
+        expect(Exit.isFailure(failed)).toBe(true);
+
+        guest.setDevToolsOpened(false);
+        const snapshot = yield* manager.automationSnapshot("tab_input");
+        expect(snapshot.actionTimeline.find((event) => event.action === "press")).toMatchObject({
+          action: "press",
+          status: "failed",
+          error: "Close preview DevTools before using agent browser control for WebContents 42",
+        });
+      }),
+    ),
+  );
+
+  effectIt.effect("does not dispatch a key after a human pointer claims control", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        let pointerInjected = false;
+        let guest: ReturnType<typeof makeKeyboardWebContents>;
+        guest = makeKeyboardWebContents({
+          hostWebContents,
+          onSetIgnoreMenuShortcuts: (ignore) => {
+            if (!ignore || pointerInjected) return;
+            pointerInjected = true;
+            guest.emitHumanInput({ kind: "pointer", x: 12, y: 24, button: 0 });
+          },
+        });
+        fromId.mockReturnValue(guest.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_pointer_before_key");
+        yield* manager.registerWebview("tab_pointer_before_key", 42);
+
+        const exit = yield* Effect.exit(
+          manager.automationPress("tab_pointer_before_key", { key: "x" }),
+        );
+        yield* TestClock.adjust(750);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewAutomationControlInterruptedError",
+            operation: "press",
+          });
+        }
+        expect(guest.sendInputEvent).not.toHaveBeenCalled();
+        expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+      }),
+    ),
+  );
+
+  effectIt.effect(
+    "does not complete a key press after a pointer claims control between receipts",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+          let reportKeyUp: (() => void) | undefined;
+          const keyUpSent = new Promise<void>((resolve) => {
+            reportKeyUp = resolve;
+          });
+          const guest = makeKeyboardWebContents({
+            hostWebContents,
+            onSendInputEvent: (packet) => {
+              if (packet.type === "keyUp") reportKeyUp?.();
+            },
+          });
+          guest.setConfirmDelivery(false);
+          fromId.mockReturnValue(guest.webContents);
+          let humanHasControl = false;
+          yield* manager.subscribeStateChanges((_tabId, state) =>
+            Effect.sync(() => {
+              if (state.controller === "human") humanHasControl = true;
+            }),
+          );
+          yield* manager.setMainWindow({
+            isDestroyed: () => false,
+            isFocused: () => true,
+            once: vi.fn(),
+            webContents: hostWebContents,
+          } as never);
+          yield* manager.createTab("tab_pointer_receipts");
+          yield* manager.registerWebview("tab_pointer_receipts", 42);
+
+          const press = yield* manager
+            .automationPress("tab_pointer_receipts", { key: "x" })
+            .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+          yield* Effect.promise(() => keyUpSent);
+          guest.emitHumanInput(makeKeyboardSignal("down", "x"));
+          yield* TestClock.adjust(0);
+
+          guest.emitHumanInput({ kind: "pointer", x: 12, y: 24, button: 0 });
+          yield* settle(() => humanHasControl);
+          guest.emitHumanInput(makeKeyboardSignal("up", "x"));
+          yield* TestClock.adjust(0);
+          yield* TestClock.adjust(1_000);
+
+          const exit = yield* Fiber.join(press);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+              _tag: "PreviewAutomationControlInterruptedError",
+              operation: "press",
+            });
+          }
+          expect(guest.sendInputEvent.mock.calls.map(([packet]) => packet.type)).toEqual([
+            "rawKeyDown",
+            "char",
+            "keyUp",
+          ]);
+
+          guest.emitNavigation();
+          expect(guest.setIgnoreMenuShortcuts.mock.calls).toEqual([[true], [false]]);
+        }),
+      ),
+  );
+
+  effectIt.effect("rejects queued keyboard input after physical input takes control", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        let releaseEvaluate: (() => void) | undefined;
+        let reportEvaluateStarted: (() => void) | undefined;
+        const evaluateStarted = new Promise<void>((resolve) => {
+          reportEvaluateStarted = resolve;
+        });
+        const evaluateRelease = new Promise<void>((resolve) => {
+          releaseEvaluate = resolve;
+        });
+        const guest = makeKeyboardWebContents({
+          hostWebContents,
+          sendCommand: async (method, params) => {
+            if (method === "Runtime.evaluate" && params?.["expression"] === "blocked") {
+              reportEvaluateStarted?.();
+              await evaluateRelease;
+              return { result: { value: { ok: true } } };
+            }
+            return method === "Runtime.evaluate" ? { result: { value: { ok: true } } } : undefined;
+          },
+        });
+        fromId.mockReturnValue(guest.webContents);
+        let humanHasControl = false;
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            if (state.controller === "human") humanHasControl = true;
+          }),
+        );
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        const active = yield* manager
+          .automationEvaluate("tab_input", { expression: "blocked" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => evaluateStarted);
+        const queued = yield* manager
+          .automationPress("tab_input", { key: "x" })
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        for (let attempt = 0; attempt < 3; attempt++) yield* Effect.yieldNow;
+        guest.emitHumanInput({ kind: "pointer", x: 12, y: 24, button: 0 });
+        yield* settle(() => humanHasControl);
+        releaseEvaluate?.();
+        yield* Fiber.join(active);
+        const queuedExit = yield* Fiber.join(queued);
+
+        expect(Exit.isFailure(queuedExit)).toBe(true);
+        if (Exit.isFailure(queuedExit)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(queuedExit.cause))).toMatchObject({
+            _tag: "PreviewAutomationControlInterruptedError",
+            operation: "press",
+            tabId: "tab_input",
+            webContentsId: 42,
+          });
+        }
+        expect(guest.sendInputEvent).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("does not release a failed key into a replacement document", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const hostWebContents = { sendInputEvent: vi.fn() } as unknown as Electron.WebContents;
+        let currentWebContents: Electron.WebContents;
+        const replacement = makeKeyboardWebContents({ hostWebContents });
+        let failKeyDown = true;
+        const first = makeKeyboardWebContents({
+          hostWebContents,
+          onSendInputEvent: (packet) => {
+            if (packet.type !== "rawKeyDown" || !failKeyDown) return;
+            failKeyDown = false;
+            currentWebContents = replacement.webContents;
+            throw new Error("native key dispatch failed");
+          },
+        });
+        currentWebContents = first.webContents;
+        fromId.mockImplementation(() => currentWebContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+        yield* manager.createTab("tab_input");
+        yield* manager.registerWebview("tab_input", 42);
+
+        const failed = yield* Effect.exit(manager.automationPress("tab_input", { key: "x" }));
+
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(first.sendInputEvent.mock.calls.map(([packet]) => packet.type)).toEqual([
+          "rawKeyDown",
+        ]);
+        expect(replacement.sendInputEvent).not.toHaveBeenCalled();
       }),
     ),
   );
@@ -3154,7 +4979,13 @@ describe("PreviewManager", () => {
   effectIt.effect("still interrupts agent control for a different human pointer event", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        let humanInput: ((_event: unknown, signal: unknown) => void) | undefined;
+        const mainFrame = {
+          detached: false,
+          processId: 100,
+          routingId: 200,
+        } as Electron.WebFrameMain;
+        let guestWebContents: Electron.WebContents;
+        let humanInput: ((event: Electron.IpcMainEvent, signal: unknown) => void) | undefined;
         const sendCommand = vi.fn(async (method: string) => {
           if (method === "Runtime.evaluate") {
             return {
@@ -3164,12 +4995,21 @@ describe("PreviewManager", () => {
             };
           }
           if (method === "Input.dispatchMouseEvent") {
-            humanInput?.({}, { kind: "pointer", x: 400, y: 300, button: 0 });
+            humanInput?.(
+              {
+                sender: guestWebContents,
+                senderFrame: mainFrame,
+                processId: mainFrame.processId,
+                frameId: mainFrame.routingId,
+              } as Electron.IpcMainEvent,
+              { kind: "pointer", x: 400, y: 300, button: 0 },
+            );
           }
           return undefined;
         });
-        fromId.mockReturnValue({
+        guestWebContents = {
           id: 42,
+          mainFrame,
           isDestroyed: () => false,
           getType: () => "webview",
           getURL: () => "https://example.com",
@@ -3198,7 +5038,8 @@ describe("PreviewManager", () => {
             on: vi.fn(),
             off: vi.fn(),
           },
-        } as never);
+        } as never;
+        fromId.mockReturnValue(guestWebContents);
 
         yield* manager.createTab("tab_1");
         yield* manager.registerWebview("tab_1", 42);

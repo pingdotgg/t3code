@@ -91,17 +91,23 @@ const reportHumanPointerInput = (event: PointerEvent): void => {
   });
 };
 
-const reportHumanKeyInput = (event: KeyboardEvent): void => {
+const reportHumanKeyInput = (event: KeyboardEvent, phase: "down" | "up"): void => {
   if (!event.isTrusted) return;
   ipcRenderer.send(HUMAN_INPUT_CHANNEL, {
     kind: "key",
+    phase,
     key: event.key,
     code: event.code,
+    meta: event.metaKey,
+    shift: event.shiftKey,
+    control: event.ctrlKey,
+    alt: event.altKey,
   });
 };
 
 window.addEventListener("pointerdown", reportHumanPointerInput, true);
-window.addEventListener("keydown", reportHumanKeyInput, true);
+window.addEventListener("keydown", (event) => reportHumanKeyInput(event, "down"), true);
+window.addEventListener("keyup", (event) => reportHumanKeyInput(event, "up"), true);
 
 // Mouse thumb buttons: `button === 3` is Back, `button === 4` is Forward.
 const MOUSE_BUTTON_BACK = 3;
