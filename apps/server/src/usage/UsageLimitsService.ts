@@ -3,11 +3,12 @@
  *
  * Where {@link UsageService} answers "what did my sessions cost", this service
  * answers "how close am I to being rate limited". The figures only exist for
- * subscription sign-ins, so the service reuses the provider CLI's own OAuth
- * grant (credential file under the Claude home, or the macOS login keychain)
- * and asks Anthropic's OAuth usage endpoint. API-key auth has no rate
- * windows; those environments answer `unsupported` in-band instead of
- * failing the RPC.
+ * subscription sign-ins, so each provider read reuses the provider CLI's own
+ * credentials: Claude's OAuth grant (credential file under the Claude home,
+ * or the macOS login keychain) against Anthropic's OAuth usage endpoint, and
+ * Codex's ChatGPT sign-in via a short-lived `codex app-server` asked for
+ * `account/rateLimits/read`. API-key auth has no rate windows; those
+ * providers answer `unsupported` in-band instead of failing the RPC.
  *
  * @module UsageLimitsService
  */
@@ -15,6 +16,7 @@ import {
   USAGE_LIMITS_CONTRACT_VERSION,
   type ProviderUsageLimits,
   type UsageLimitsSummary,
+  type UsageProviderKind,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -25,17 +27,22 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as CodexClient from "effect-codex-app-server/client";
 
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
+import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { codexAppServerArgs } from "../provider/Layers/codexLaunchArgs.ts";
 import {
   claudePlanLabel,
   parseClaudeOauthCredentials,
   parseClaudeUsageWindows,
 } from "./usageLimitsClaude.ts";
+import { codexPlanLabel, mapCodexRateLimits, parseCodexAuthKind } from "./usageLimitsCodex.ts";
 
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
@@ -46,6 +53,13 @@ const CLAUDE_OAUTH_BETA_HEADER = "oauth-2025-04-20";
 const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
 
 const REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * Covers spawning `codex app-server`, the initialize handshake and one read.
+ * The probe in CodexProvider budgets similarly for the same round trip.
+ */
+const CODEX_APP_SERVER_TIMEOUT_MS = 15_000;
+const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
 
 const SUBSCRIPTION_ONLY_MESSAGE =
   "Limit info is only available for subscription sign-ins. API usage is billed per token and has no rate windows.";
@@ -70,14 +84,16 @@ export const layerTest = Layer.succeed(
   }),
 );
 
-function claudeLimits(
-  availability: ProviderUsageLimits["availability"],
-  plan: string | null,
-  message: string | null,
-  windows: ProviderUsageLimits["windows"] = [],
-): ProviderUsageLimits {
-  return { provider: "claude", availability, plan, windows, message };
+function makeProviderLimits(provider: UsageProviderKind) {
+  return (
+    availability: ProviderUsageLimits["availability"],
+    plan: string | null,
+    message: string | null,
+    windows: ProviderUsageLimits["windows"] = [],
+  ): ProviderUsageLimits => ({ provider, availability, plan, windows, message });
 }
+const claudeLimits = makeProviderLimits("claude");
+const codexLimits = makeProviderLimits("codex");
 
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -204,13 +220,106 @@ export const make = Effect.gen(function* () {
     return claudeLimits("available", plan, null, windows);
   });
 
+  /**
+   * Spawns a short-lived `codex app-server` and asks it for the account's
+   * rate windows. No thread is needed: the read answers right after the
+   * initialize handshake. Lifetime is scope-bound; the timeout and
+   * force-kill bound a hung binary.
+   */
+  const requestCodexRateLimits = Effect.fn("UsageLimitsService.requestCodexRateLimits")(
+    function* (input: {
+      readonly binaryPath: string;
+      readonly homePath: string | undefined;
+      readonly launchArgs: string;
+    }) {
+      const environment = input.homePath === undefined ? {} : { CODEX_HOME: input.homePath };
+      const spawnCommand = yield* resolveSpawnCommand(
+        input.binaryPath,
+        codexAppServerArgs(input.launchArgs),
+        { env: environment, extendEnv: true },
+      );
+      const child = yield* spawner.spawn(
+        ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+          env: environment,
+          extendEnv: true,
+          forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
+          shell: spawnCommand.shell,
+        }),
+      );
+      const clientContext = yield* Layer.build(CodexClient.layerChildProcess(child));
+      const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+        Effect.provide(clientContext),
+      );
+      yield* client.request("initialize", {
+        clientInfo: { name: "t3code_server", title: "T3 Code", version: "0.1.0" },
+        capabilities: { experimentalApi: true },
+      });
+      yield* client.notify("initialized", undefined);
+      return yield* client.request("account/rateLimits/read", undefined);
+    },
+    Effect.scoped,
+    Effect.timeoutOption(CODEX_APP_SERVER_TIMEOUT_MS),
+    (effect) =>
+      effect.pipe(
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+      ),
+  );
+
+  const readCodexLimits = Effect.fn("UsageLimitsService.readCodexLimits")(function* () {
+    const settings = yield* settingsService.getSettings.pipe(
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+    if (settings === null) {
+      return codexLimits("unavailable", null, "Server settings could not be read.");
+    }
+    const codexSettings = settings.providers.codex;
+    const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
+      Effect.provideService(Path.Path, path),
+    );
+    // Credentials live in the auth home: the shadow home in authOverlay mode,
+    // unlike transcripts, which UsageService reads from the shared home.
+    const authHome = layout.effectiveHomePath ?? layout.sharedHomePath;
+    const raw = yield* fileSystem
+      .readFileString(path.join(authHome, "auth.json"))
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    const authKind = raw === null ? "none" : parseCodexAuthKind(raw);
+    if (authKind === "apiKey") {
+      return codexLimits("unsupported", null, SUBSCRIPTION_ONLY_MESSAGE);
+    }
+    if (authKind === "none") {
+      return codexLimits("unauthenticated", null, "Codex is not signed in on this environment.");
+    }
+
+    const response = yield* requestCodexRateLimits({
+      binaryPath: codexSettings.binaryPath,
+      homePath: layout.effectiveHomePath,
+      launchArgs: codexSettings.launchArgs,
+    });
+    if (response === null) {
+      return codexLimits("unavailable", null, "Codex's app server could not be reached.");
+    }
+    const { windows, planType } = mapCodexRateLimits(response);
+    const plan = codexPlanLabel(planType);
+    if (windows.length === 0) {
+      return codexLimits(
+        "unavailable",
+        plan,
+        "Codex answered in a shape this version does not understand.",
+      );
+    }
+    return codexLimits("available", plan, null, windows);
+  });
+
   const readLimits = Effect.fn("UsageLimitsService.readLimits")(function* () {
-    const claude = yield* readClaudeLimits();
+    const [claude, codex] = yield* Effect.all([readClaudeLimits(), readCodexLimits()], {
+      concurrency: "unbounded",
+    });
     const readAt = yield* DateTime.now;
     return {
       contractVersion: USAGE_LIMITS_CONTRACT_VERSION,
       readAt: DateTime.formatIso(readAt),
-      providers: [claude],
+      providers: [claude, codex],
     } satisfies UsageLimitsSummary;
   });
 
