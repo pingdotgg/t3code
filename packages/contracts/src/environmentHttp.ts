@@ -90,6 +90,10 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
   "orchestration_dispatch_failed",
+  // A bootstrap turn start failed after creating its thread and rolled the
+  // thread back: the HTTP equivalent of the WebSocket error's
+  // bootstrapThreadDisposition "deleted", so callers know to retry fresh.
+  "orchestration_bootstrap_rolled_back",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;

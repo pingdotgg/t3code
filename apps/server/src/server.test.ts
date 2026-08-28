@@ -8522,6 +8522,144 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  const httpBootstrapTurnStartCommand = (suffix: string) => {
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    return {
+      type: "thread.turn.start",
+      commandId: `cmd-http-bootstrap-${suffix}`,
+      threadId: `thread-http-bootstrap-${suffix}`,
+      message: {
+        messageId: `msg-http-bootstrap-${suffix}`,
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      modelSelection: defaultModelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      bootstrap: {
+        createThread: {
+          projectId: defaultProjectId,
+          title: "Bootstrap Thread",
+          modelSelection: defaultModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          createdAt,
+        },
+        prepareWorktree: {
+          projectCwd: "/tmp/project",
+          baseBranch: "main",
+          branch: "t3code/bootstrap-refName",
+        },
+        runSetupScript: false,
+      },
+      createdAt,
+    };
+  };
+
+  const postHttpDispatch = (command: unknown) =>
+    Effect.gen(function* () {
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+      const url = yield* getHttpServerUrl("/api/orchestration/dispatch");
+      return yield* fetchEffect(url, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: jsonRequestBody(command),
+      });
+    });
+
+  it.effect("http dispatch bootstraps a turn start like the websocket path", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const createWorktree = vi.fn(
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+          Effect.succeed({
+            worktree: {
+              refName: "t3code/bootstrap-refName",
+              path: "/tmp/bootstrap-worktree",
+            },
+          }),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: {
+            createWorktree,
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+
+      const response = yield* postHttpDispatch(httpBootstrapTurnStartCommand("ok"));
+      assert.strictEqual(response.status, 200);
+      const body = yield* responseJsonEffect<{ readonly sequence: number }>(response);
+      assert.strictEqual(body.sequence, 3);
+
+      assert.strictEqual(createWorktree.mock.calls.length, 1);
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.create", "thread.meta.update", "thread.turn.start"],
+      );
+      const turnStart = dispatchedCommands[2];
+      assertTrue(turnStart?.type === "thread.turn.start");
+      assert.strictEqual(turnStart.threadId, "thread-http-bootstrap-ok");
+      assert.isUndefined(turnStart.bootstrap);
+      const metaUpdate = dispatchedCommands[1];
+      assertTrue(metaUpdate?.type === "thread.meta.update");
+      assert.strictEqual(metaUpdate.worktreePath, "/tmp/bootstrap-worktree");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("http dispatch rolls back the created thread when bootstrap fails", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const createWorktree = vi.fn(
+        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+          Effect.die(new Error("worktree exploded")),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: {
+            createWorktree,
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+
+      const response = yield* postHttpDispatch(httpBootstrapTurnStartCommand("defect"));
+      assert.strictEqual(response.status, 500);
+      const body = yield* responseJsonEffect<{ readonly code: string; readonly reason: string }>(
+        response,
+      );
+      assert.strictEqual(body.code, "internal_error");
+      // The rollback is visible to the HTTP caller, matching the WebSocket
+      // error's bootstrapThreadDisposition: the thread id must not be reused.
+      assert.strictEqual(body.reason, "orchestration_bootstrap_rolled_back");
+
+      assert.deepEqual(
+        dispatchedCommands.map((command) => command.type),
+        ["thread.create", "thread.delete"],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc terminal methods", () =>
     Effect.gen(function* () {
       const snapshot = {

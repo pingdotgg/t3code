@@ -31,6 +31,7 @@ import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSna
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
+import * as TurnStartBootstrap from "./orchestration/TurnStartBootstrap.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import {
@@ -118,6 +119,8 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
     const config = yield* makeCliTestServerConfig(baseDir);
     const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
       Layer.provide(orchestrationHttpApiLayer),
+      // No CLI test here dispatches a bootstrap turn start.
+      Layer.provide(Layer.mock(TurnStartBootstrap.TurnStartBootstrap)({})),
       Layer.provide(environmentAuthenticatedAuthLayer),
     );
     const appLayer = HttpRouter.serve(routesLayer, {
