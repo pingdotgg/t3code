@@ -2,12 +2,10 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
-  CloudIcon,
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
   HistoryIcon,
-  MonitorIcon,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -28,6 +26,7 @@ import {
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import { getEnvironmentIcon } from "./Icons";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -104,7 +103,10 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
       ? resolveEnvModeLabel("worktree")
       : resolveCurrentWorkspaceLabel(activeWorktreePath);
   const isLocked = envLocked || envModeLocked;
-  const EnvironmentIcon = activeEnvironment?.isPrimary ? MonitorIcon : CloudIcon;
+  const EnvironmentIcon = getEnvironmentIcon({
+    isPrimary: activeEnvironment?.isPrimary ?? false,
+    isWsl: activeEnvironment?.isWsl ?? false,
+  });
   const icon = showEnvironmentIndicator ? (
     // Button's base styles apply `-mx-0.5` to descendant SVGs, which eats 4px
     // out of whatever gap we set. mx-0! cancels that so gap-0.5 reads as 2px.
@@ -151,7 +153,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                 onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
               >
                 {availableEnvironments.map((env) => {
-                  const Icon = env.isPrimary ? MonitorIcon : CloudIcon;
+                  const Icon = getEnvironmentIcon(env);
                   return (
                     <MenuRadioItem
                       key={env.environmentId}

@@ -15,10 +15,11 @@ export interface SidebarProjectSnapshot extends Project {
   groupedProjectCount: number;
   environmentPresence: EnvironmentPresence;
   // True iff every non-primary member of this group lives in a
-  // WSL environment. The sidebar uses this
+  // desktop-local environment. The sidebar uses this
   // to differentiate "lives on this machine but in a sandbox" from
   // "lives on a real remote" so the project header can pick a
-  // Linux icon instead of the generic cloud icon.
+  // local-device treatment instead of the generic remote treatment.
+  allRemoteMembersAreDesktopLocal: boolean;
   allRemoteMembersAreWsl: boolean;
   memberProjects: readonly SidebarProjectGroupMember[];
   memberProjectRefs: readonly ScopedProjectRef[];
@@ -55,10 +56,11 @@ export function buildSidebarProjectSnapshots(input: {
   settings: ProjectGroupingSettings;
   primaryEnvironmentId: EnvironmentId | null;
   resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
-  // Returns true when an env id maps to a WSL saved-env
+  // Returns true when an env id maps to a desktop-local saved-env
   // record. Defaults to "false for every
   // env" so callers that don't care about the distinction get the
   // legacy behavior.
+  isDesktopLocalEnvironment?: (environmentId: EnvironmentId) => boolean;
   isWslEnvironment?: (environmentId: EnvironmentId) => boolean;
 }): SidebarProjectSnapshot[] {
   return buildProjectGroups({
@@ -94,7 +96,11 @@ export function buildSidebarProjectSnapshots(input: {
     const remoteEnvironmentLabels = remoteMembers
       .flatMap((member) => (member.environmentLabel ? [member.environmentLabel] : []))
       .filter((label, index, labels) => labels.indexOf(label) === index);
+    const isDesktopLocal = input.isDesktopLocalEnvironment ?? (() => false);
     const isWsl = input.isWslEnvironment ?? (() => false);
+    const allRemoteMembersAreDesktopLocal =
+      remoteMembers.length > 0 &&
+      remoteMembers.every((member) => isDesktopLocal(member.environmentId));
     const allRemoteMembersAreWsl =
       remoteMembers.length > 0 && remoteMembers.every((member) => isWsl(member.environmentId));
 
@@ -105,6 +111,7 @@ export function buildSidebarProjectSnapshots(input: {
       groupedProjectCount: members.length,
       environmentPresence:
         hasLocal && hasRemote ? "mixed" : hasRemote ? "remote-only" : "local-only",
+      allRemoteMembersAreDesktopLocal,
       allRemoteMembersAreWsl,
       memberProjects: members,
       memberProjectRefs: group.memberProjectRefs,
