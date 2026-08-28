@@ -40,6 +40,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -845,6 +846,20 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         const pendingRequestsByNativeId = new Map<string, PendingOpenCodeRequest>();
         const subagentsByNativeItemId = new Map<string, OpenCodeSubagentContext>();
         const subagentsByChildSessionId = new Map<string, OpenCodeSubagentContext>();
+        // Permission and question requests can originate from child sessions
+        // (task subagents and their descendants). Related sessions map back
+        // to the root thread state whose active turn owns the request; asks
+        // arriving before the relation is known resolve it via session.get.
+        const relatedSessionOwners = new Map<string, OpenCodeThreadState>();
+        // Requests settled before their session relation resolved: a late
+        // routing attempt must never resurrect them. Bounded because entries
+        // only matter for the seconds a routing retry can still be running.
+        const settledNativeRequestIds = new Set<string>();
+        const pendingChildRequestRoutes = new Set<string>();
+        const rememberSettledRequest = (nativeRequestId: string) => {
+          if (settledNativeRequestIds.size >= 2_048) settledNativeRequestIds.clear();
+          settledNativeRequestIds.add(nativeRequestId);
+        };
         const abortController = new AbortController();
 
         const emitProviderEvent = (event: ProviderAdapterV2Event) =>
@@ -1108,6 +1123,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               nativeThreadId: childSessionId,
             });
             subagentsByChildSessionId.set(childSessionId, context);
+            relatedSessionOwners.set(childSessionId, state);
             const childModelSelection: ModelSelection = {
               instanceId: options.instanceId,
               model: context.model ?? turn.modelSelection.model,
@@ -1744,6 +1760,78 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           if (!hasOtherPending) yield* updateProviderSession("running", null);
         });
 
+        const requestOwnerState = (sessionId: string): OpenCodeThreadState | undefined => {
+          const direct = threads.get(sessionId);
+          if (direct?.activeTurn != null) return direct;
+          const related = relatedSessionOwners.get(sessionId);
+          if (related?.activeTurn != null) return related;
+          return direct ?? related;
+        };
+
+        /** Resolve which thread state owns a session's requests by walking the
+         *  native parent chain. Registers every hop so later requests from the
+         *  same child resolve without another lookup. */
+        const resolveSessionOwner = Effect.fnUntraced(function* (sessionId: string) {
+          const known = requestOwnerState(sessionId);
+          if (known !== undefined) return known;
+          let cursor = sessionId;
+          const hops: string[] = [];
+          for (let depth = 0; depth < 5; depth += 1) {
+            const response = yield* sdkCall("session.get", { sessionID: cursor }, () =>
+              client.session.get({ sessionID: cursor }),
+            ).pipe(Effect.option);
+            const info = Option.getOrUndefined(response)?.data;
+            const parentId = info?.parentID;
+            if (parentId === undefined) return undefined;
+            hops.push(cursor);
+            const owner = threads.get(parentId) ?? relatedSessionOwners.get(parentId);
+            if (owner !== undefined) {
+              for (const hop of hops) relatedSessionOwners.set(hop, owner);
+              return owner;
+            }
+            cursor = parentId;
+          }
+          return undefined;
+        });
+
+        /** A child's permission can arrive before the task part or
+         *  session.created event that reveals its relation to a thread. The
+         *  first resolution attempt runs inline (the replayable path); if the
+         *  relation or the owning turn is not established yet, a short forked
+         *  backoff keeps trying instead of dropping the request. */
+        const routeChildRequest = Effect.fnUntraced(function* (
+          nativeRequestId: string,
+          sessionId: string,
+          request:
+            | { readonly type: "permission"; readonly value: PermissionRequest }
+            | { readonly type: "question"; readonly value: QuestionRequest },
+        ) {
+          if (pendingChildRequestRoutes.has(nativeRequestId)) return;
+          const attempt = Effect.gen(function* () {
+            if (
+              settledNativeRequestIds.has(nativeRequestId) ||
+              pendingRequestsByNativeId.has(nativeRequestId)
+            ) {
+              return true;
+            }
+            const owner = yield* resolveSessionOwner(sessionId);
+            if (owner?.activeTurn == null) return false;
+            yield* emitRuntimeRequest(owner, owner.activeTurn, nativeRequestId, request);
+            return true;
+          });
+          if (yield* attempt) return;
+          pendingChildRequestRoutes.add(nativeRequestId);
+          yield* Effect.gen(function* () {
+            for (let retry = 0; retry < 5; retry += 1) {
+              yield* Effect.sleep(Duration.millis(Math.min(200 * 2 ** retry, 2_000)));
+              if (yield* attempt) return;
+            }
+          }).pipe(
+            Effect.ensuring(Effect.sync(() => pendingChildRequestRoutes.delete(nativeRequestId))),
+            Effect.forkIn(scope),
+          );
+        });
+
         const finalizeTurn = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
@@ -2088,9 +2176,14 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               return;
             }
             case "permission.asked": {
-              const state = threads.get(event.properties.sessionID);
+              const state = requestOwnerState(event.properties.sessionID);
               if (state?.activeTurn !== null && state?.activeTurn !== undefined) {
                 yield* emitRuntimeRequest(state, state.activeTurn, event.properties.id, {
+                  type: "permission",
+                  value: event.properties,
+                });
+              } else {
+                yield* routeChildRequest(event.properties.id, event.properties.sessionID, {
                   type: "permission",
                   value: event.properties,
                 });
@@ -2098,9 +2191,14 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               return;
             }
             case "question.asked": {
-              const state = threads.get(event.properties.sessionID);
+              const state = requestOwnerState(event.properties.sessionID);
               if (state?.activeTurn !== null && state?.activeTurn !== undefined) {
                 yield* emitRuntimeRequest(state, state.activeTurn, event.properties.id, {
+                  type: "question",
+                  value: event.properties,
+                });
+              } else {
+                yield* routeChildRequest(event.properties.id, event.properties.sessionID, {
                   type: "question",
                   value: event.properties,
                 });
@@ -2108,13 +2206,27 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               return;
             }
             case "permission.replied":
-              yield* resolveRuntimeRequest(event.properties.requestID, "resolved");
-              return;
             case "question.replied":
+              rememberSettledRequest(event.properties.requestID);
               yield* resolveRuntimeRequest(event.properties.requestID, "resolved");
               return;
             case "question.rejected":
+              rememberSettledRequest(event.properties.requestID);
               yield* resolveRuntimeRequest(event.properties.requestID, "cancelled");
+              return;
+            case "session.created":
+            case "session.updated": {
+              const info = event.properties.info;
+              if (info.parentID !== undefined && !threads.has(info.id)) {
+                const owner = threads.get(info.parentID) ?? relatedSessionOwners.get(info.parentID);
+                if (owner !== undefined) {
+                  relatedSessionOwners.set(info.id, owner);
+                }
+              }
+              return;
+            }
+            case "session.deleted":
+              relatedSessionOwners.delete(event.properties.info.id);
               return;
             case "session.status": {
               const state = threads.get(event.properties.sessionID);
@@ -2614,7 +2726,20 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               turn.interrupted = true;
               yield* sdkCall("session.abort", { sessionID: sessionId }, () =>
                 client.session.abort({ sessionID: sessionId }),
-              ).pipe(Effect.tapError(() => Effect.sync(() => (turn.interrupted = false))));
+              ).pipe(
+                // The turn can settle while the abort is in flight, and
+                // aborting an already-idle session fails. That stop still
+                // succeeded; only surface failures for a turn that is
+                // genuinely still running.
+                Effect.catch((cause) =>
+                  turn.finalized
+                    ? Effect.void
+                    : Effect.suspend(() => {
+                        turn.interrupted = false;
+                        return Effect.fail(cause);
+                      }),
+                ),
+              );
             }).pipe(
               Effect.mapError(
                 (cause) =>
