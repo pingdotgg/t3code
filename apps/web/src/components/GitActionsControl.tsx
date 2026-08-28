@@ -4,6 +4,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { resolveGitActionResultToastType } from "@t3tools/client-runtime/state/vcs";
 import type {
   GitActionProgressEvent,
   GitRunStackedActionResult,
@@ -1466,7 +1467,8 @@ export default function GitActionsControl({
         };
       }
 
-      const successToastData = {
+      const resultToastType = resolveGitActionResultToastType(actionResult);
+      const resultToastData = {
         ...scopedToastData,
         dismissAfterVisibleMs: 10_000,
       };
@@ -1475,21 +1477,21 @@ export default function GitActionsControl({
         toastManager.update(
           resolvedProgressToastId,
           stackedThreadToast({
-            type: "success",
+            type: resultToastType,
             title: actionResult.toast.title,
             description: actionResult.toast.description,
             timeout: 0,
             actionProps: toastActionProps,
-            data: successToastData,
+            data: resultToastData,
           }),
         );
       } else {
         toastManager.update(resolvedProgressToastId, {
-          type: "success",
+          type: resultToastType,
           title: actionResult.toast.title,
           description: actionResult.toast.description,
           timeout: 0,
-          data: successToastData,
+          data: resultToastData,
         });
       }
     },

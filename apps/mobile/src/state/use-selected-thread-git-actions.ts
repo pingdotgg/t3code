@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
+  resolveGitActionResultToastType,
   type GitActionRequestInput,
   type VcsActionOperation,
   type VcsRef,
@@ -336,7 +337,7 @@ export function useSelectedThreadGitActions() {
           }
 
           showGitActionResult({
-            type: "success",
+            type: resolveGitActionResultToastType(result.value),
             title: result.value.toast.title,
             description: result.value.toast.description,
             prUrl:

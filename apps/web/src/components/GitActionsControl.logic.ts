@@ -12,6 +12,8 @@ import {
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
+export { resolveGitActionResultToastType as resolveGitActionToastType } from "@t3tools/client-runtime/state/vcs";
+
 export type GitDialogAction = "commit" | "push" | "create_pr";
 
 export interface GitActionMenuItem {
