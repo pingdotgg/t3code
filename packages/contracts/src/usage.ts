@@ -273,15 +273,18 @@ export const UsageThreadRow = Schema.Struct({
   costUsd: Schema.Number,
   /** Distinct transcript sessions folded into this row. */
   sessions: NonNegativeInt,
+  /** Lower-cost thread rows represented by this grouped remainder row. */
+  groupedRows: Schema.optional(NonNegativeInt),
   agents: Schema.Array(UsageAgentRow),
   daily: Schema.Array(UsageThreadDayCost),
 });
 export type UsageThreadRow = typeof UsageThreadRow.Type;
 
 /**
- * On-demand drill-down behind the usage summary. Rows are capped server-side
- * (cost-descending) because a window can hold thousands of sessions and this
- * payload rides the same WebSocket as everything else.
+ * On-demand drill-down behind the usage summary. Named rows are capped
+ * server-side because a window can hold thousands of sessions. Lower-cost
+ * rows fold into provider/project-specific remainder rows so totals reconcile
+ * without sending every transcript session over the WebSocket.
  */
 export const UsageThreadBreakdown = Schema.Struct({
   contractVersion: Schema.Number,
@@ -289,7 +292,7 @@ export const UsageThreadBreakdown = Schema.Struct({
   sinceDay: UsageDay,
   untilDay: UsageDay,
   rows: Schema.Array(UsageThreadRow),
-  /** Rows dropped by the cap, so the UI can say coverage is partial. */
+  /** Underlying rows folded into the returned remainder rows. */
   truncatedRows: NonNegativeInt,
   scanDurationMs: NonNegativeInt,
 });

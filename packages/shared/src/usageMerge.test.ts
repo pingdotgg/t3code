@@ -96,6 +96,10 @@ describe("mergeUsage", () => {
     expect(merged.costUsd).toBe(20);
     expect(merged.records).toBe(10);
     expect(merged.duplicateSources).toHaveLength(0);
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", providers: ["claude"] },
+      { environmentId: "env-b", providers: ["claude"] },
+    ]);
   });
 
   it("counts a shared transcript directory once", () => {
@@ -114,6 +118,9 @@ describe("mergeUsage", () => {
     expect(merged.sessions).toBe(1);
     expect(merged.duplicateSources).toHaveLength(1);
     expect(merged.contributingEnvironments).toEqual(["env-a"]);
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", providers: ["claude"] },
+    ]);
   });
 
   it("drops only the duplicated provider, keeping the environment's other one", () => {
@@ -148,6 +155,10 @@ describe("mergeUsage", () => {
         merged.providers.map((provider) => [provider.provider, provider.sessions]),
       ),
     ).toEqual({ claude: 1, codex: 1 });
+    expect(merged.providerContributions).toEqual([
+      { environmentId: "env-a", providers: ["claude"] },
+      { environmentId: "env-b", providers: ["codex"] },
+    ]);
   });
 
   it("excludes an environment reporting an older contract version", () => {

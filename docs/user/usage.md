@@ -19,6 +19,9 @@ The breakdown's **Thread** view drills into where the spend went: sessions group
 thread they belong to, with sessions that never ran through T3 Code listed under the first thing
 you asked in them. Expanding a row shows its daily estimated cost, along with any Claude subagents
 the thread spawned and their share.
+The view names the 40 highest-cost rows and groups lower-cost rows under **Other threads** by
+provider and project. Those grouped rows stay in the totals, so the thread view still adds up to
+the selected project or full summary.
 
 Usage is attributed to the project whose folder a session ran in, including sessions driven
 outside T3 Code. The breakdown's **Project** view ranks projects by spend, and the project picker

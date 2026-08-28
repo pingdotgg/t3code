@@ -468,7 +468,7 @@ export function UsagePage() {
                         timeZone: window.timeZone,
                         ...(projectFilter === undefined ? {} : { project: projectFilter }),
                       }}
-                      environmentIds={merged.contributingEnvironments}
+                      providerContributions={merged.providerContributions}
                     />
                   ) : breakdown === "project" ? (
                     <table className="w-full table-fixed text-sm">

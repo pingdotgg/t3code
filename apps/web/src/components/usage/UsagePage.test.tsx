@@ -5,8 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
+  usageThreadTable: vi.fn((_props: unknown) => null),
   metric: "cost" as "cost" | "tokens",
-  breakdown: "time" as "model" | "project" | "time",
+  breakdown: "time" as "model" | "project" | "thread" | "time",
   projectFilter: undefined as string | null | undefined,
 }));
 
@@ -61,6 +62,7 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
+vi.mock("./UsageThreadTable", () => ({ UsageThreadTable: testState.usageThreadTable }));
 vi.mock("./usageProviders", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./usageProviders")>();
   return {
@@ -132,6 +134,7 @@ beforeEach(() => {
   testState.metric = "cost";
   testState.breakdown = "time";
   testState.projectFilter = undefined;
+  testState.usageThreadTable.mockClear();
   testState.useUsage.mockReturnValue({
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
@@ -251,6 +254,26 @@ describe("UsagePage project breakdown", () => {
 
     expect(markup).toContain("No activity in this window.");
     expect(markup).not.toContain("No project attribution in this window.");
+  });
+});
+
+describe("UsagePage thread breakdown", () => {
+  it("requests thread rows in the selected project scope", () => {
+    testState.breakdown = "thread";
+    testState.projectFilter = "id:project-expensive";
+
+    renderToStaticMarkup(<UsagePage />);
+
+    expect(testState.usageThreadTable).toHaveBeenCalledOnce();
+    expect(testState.usageThreadTable.mock.calls[0]?.[0]).toMatchObject({
+      input: {
+        sinceDay: "2026-08-10",
+        untilDay: "2026-08-11",
+        timeZone: "UTC",
+        project: "id:project-expensive",
+      },
+      providerContributions: [],
+    });
   });
 });
 

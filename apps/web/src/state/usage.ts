@@ -12,6 +12,7 @@ import {
   type EnvironmentId,
   type UsageSummary,
   type UsageSummaryInput,
+  type UsageThreadBreakdown,
   type UsageThreadBreakdownInput,
   type UsageThreadRow,
 } from "@t3tools/contracts";
@@ -19,7 +20,12 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
-import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
+import {
+  mergeUsage,
+  type EnvironmentProviderContribution,
+  type EnvironmentUsage,
+  type MergedUsage,
+} from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -145,45 +151,68 @@ export function useUsage(
   };
 }
 
+export interface UsageThreadRowWithEnvironment extends UsageThreadRow {
+  readonly environmentId: EnvironmentId;
+}
+
 export interface UsageThreadsView {
-  readonly rows: readonly UsageThreadRow[];
+  readonly rows: readonly UsageThreadRowWithEnvironment[];
   readonly truncatedRows: number;
   /** True until every listed environment answered or failed. */
   readonly isPending: boolean;
   readonly failedEnvironments: number;
 }
 
+export interface EnvironmentUsageThreadBreakdown {
+  readonly environmentId: EnvironmentId;
+  readonly breakdown: UsageThreadBreakdown;
+}
+
+/** Applies the summary's physical-source ownership to thread rows. */
+export function mergeUsageThreadBreakdowns(
+  environments: readonly EnvironmentUsageThreadBreakdown[],
+  providerContributions: readonly EnvironmentProviderContribution[],
+): Pick<UsageThreadsView, "rows" | "truncatedRows"> {
+  const providersByEnvironment = new Map(
+    providerContributions.map((entry) => [entry.environmentId, new Set(entry.providers)]),
+  );
+  const rows: UsageThreadRowWithEnvironment[] = [];
+  let truncatedRows = 0;
+
+  for (const environment of environments) {
+    const ownedProviders = providersByEnvironment.get(environment.environmentId);
+    if (ownedProviders === undefined) continue;
+    for (const row of environment.breakdown.rows) {
+      if (!ownedProviders.has(row.provider)) continue;
+      rows.push({ ...row, environmentId: environment.environmentId });
+      truncatedRows += row.groupedRows ?? 0;
+    }
+  }
+  rows.sort((a, b) => b.costUsd - a.costUsd);
+  return { rows, truncatedRows };
+}
+
 const usageThreadsAtom = Atom.family((requestKey: string) =>
   Atom.make((get): UsageThreadsView => {
-    const { input, environmentIds } = JSON.parse(requestKey) as {
+    const { input, providerContributions } = JSON.parse(requestKey) as {
       input: UsageThreadBreakdownInput;
-      environmentIds: readonly EnvironmentId[];
+      providerContributions: readonly EnvironmentProviderContribution[];
     };
 
-    const rows: UsageThreadRow[] = [];
-    // Environments sharing a transcript directory report the same sessions;
-    // row keys are derived from provider session ids, so first-in wins.
-    const seen = new Set<string>();
-    let truncatedRows = 0;
+    const breakdowns: EnvironmentUsageThreadBreakdown[] = [];
     let pending = 0;
     let failed = 0;
-    for (const environmentId of environmentIds) {
+    for (const { environmentId } of providerContributions) {
       const result = get(serverEnvironment.usageThreadBreakdown({ environmentId, input }));
       if (result.waiting) pending += 1;
       if (result._tag === "Failure") failed += 1;
       const breakdown = Option.getOrNull(AsyncResult.value(result));
       if (breakdown === null) continue;
-      truncatedRows += breakdown.truncatedRows;
-      for (const row of breakdown.rows) {
-        const dedupeKey = `${row.provider}\u0000${row.key}`;
-        if (seen.has(dedupeKey)) continue;
-        seen.add(dedupeKey);
-        rows.push(row);
-      }
+      breakdowns.push({ environmentId, breakdown });
     }
-    rows.sort((a, b) => b.costUsd - a.costUsd);
+    const merged = mergeUsageThreadBreakdowns(breakdowns, providerContributions);
 
-    return { rows, truncatedRows, isPending: pending > 0, failedEnvironments: failed };
+    return { ...merged, isPending: pending > 0, failedEnvironments: failed };
   }).pipe(Atom.withLabel(`web-usage:threads:${requestKey}`)),
 );
 
@@ -194,11 +223,11 @@ const usageThreadsAtom = Atom.family((requestKey: string) =>
  */
 export function useUsageThreads(
   input: UsageThreadBreakdownInput,
-  environmentIds: readonly EnvironmentId[],
+  providerContributions: readonly EnvironmentProviderContribution[],
 ): UsageThreadsView {
   const requestKey = useMemo(
-    () => JSON.stringify({ input, environmentIds }),
-    [input, environmentIds],
+    () => JSON.stringify({ input, providerContributions }),
+    [input, providerContributions],
   );
   return useAtomValue(usageThreadsAtom(requestKey));
 }

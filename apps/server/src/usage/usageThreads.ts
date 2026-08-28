@@ -181,6 +181,7 @@ interface MutableThreadRow {
   totals: UsageTokenTotals;
   costUsd: number;
   sessions: number;
+  groupedRows: number;
   daily: Map<string, number>;
   agents: Map<string, MutableAgentSlice>;
   /** Session whose transcript can supply a title when no thread claims the row. */
@@ -195,11 +196,18 @@ export interface FoldedThreadRows {
   readonly truncatedRows: number;
 }
 
+function addDailyCosts(target: Map<string, number>, source: ReadonlyMap<string, number>): void {
+  for (const [day, costUsd] of source) {
+    target.set(day, (target.get(day) ?? 0) + costUsd);
+  }
+}
+
 /**
  * Groups sessions into thread rows: resume-cursor matches first, then unique
- * worktrees, else one row per session. Rows sort by cost and cap; a `null`
- * title marks rows whose name must come from the transcript (the caller only
- * reads titles for rows that survived the cap).
+ * worktrees, else one row per session. Rows sort by cost. Rows beyond the cap
+ * fold into provider/project-specific remainders so the returned hierarchy
+ * still reconciles. A `null` title marks retained rows whose name must come
+ * from the transcript.
  */
 export function foldThreadRows(
   groups: readonly SessionUsageGroup[],
@@ -217,7 +225,10 @@ export function foldThreadRows(
     const ref =
       attribution.sessionToThread.get(group.sessionKey) ??
       (group.cwd.length > 0 ? attribution.worktreeToThread.get(group.cwd) : undefined);
-    const rowKey = ref === undefined ? `session:${group.sessionKey}` : `thread:${ref.threadId}`;
+    const rowKey =
+      ref === undefined
+        ? `session:${group.sessionKey}`
+        : JSON.stringify(["thread", group.provider, group.project, ref.threadId]);
 
     let row = byKey.get(rowKey);
     if (row === undefined) {
@@ -230,6 +241,7 @@ export function foldThreadRows(
         totals: EMPTY_TOTALS,
         costUsd: 0,
         sessions: 0,
+        groupedRows: 0,
         daily: new Map(),
         agents: new Map(),
         titleSessionKey: group.sessionKey,
@@ -240,9 +252,7 @@ export function foldThreadRows(
     row.totals = addTotals(row.totals, group.totals);
     row.costUsd += group.costUsd;
     row.sessions += 1;
-    for (const [day, costUsd] of group.daily) {
-      row.daily.set(day, (row.daily.get(day) ?? 0) + costUsd);
-    }
+    addDailyCosts(row.daily, group.daily);
     for (const [agentId, slice] of group.agents) {
       let agent = row.agents.get(agentId);
       if (agent === undefined) {
@@ -261,9 +271,51 @@ export function foldThreadRows(
       a[0].localeCompare(b[0]),
   );
   const kept = sorted.slice(0, options.cap);
+  const omitted = sorted.slice(options.cap);
+  const remainders = new Map<string, MutableThreadRow>();
+  for (const [, omittedRow] of omitted) {
+    const scopeKey = JSON.stringify([omittedRow.provider, omittedRow.project]);
+    let remainder = remainders.get(scopeKey);
+    if (remainder === undefined) {
+      const key = `remainder:${scopeKey}`;
+      remainder = {
+        threadId: null,
+        title: null,
+        provider: omittedRow.provider,
+        project: omittedRow.project,
+        cwd: "",
+        totals: EMPTY_TOTALS,
+        costUsd: 0,
+        sessions: 0,
+        groupedRows: 0,
+        daily: new Map(),
+        agents: new Map(),
+        titleSessionKey: key,
+      };
+      remainders.set(scopeKey, remainder);
+    }
+    remainder.groupedRows += 1;
+    remainder.totals = addTotals(remainder.totals, omittedRow.totals);
+    remainder.costUsd += omittedRow.costUsd;
+    remainder.sessions += omittedRow.sessions;
+    addDailyCosts(remainder.daily, omittedRow.daily);
+  }
+
+  const displayed = [
+    ...kept,
+    ...[...remainders.entries()].map(([scopeKey, remainder]) => {
+      remainder.title = `Other threads (${remainder.groupedRows})`;
+      return [`remainder:${scopeKey}`, remainder] as const;
+    }),
+  ].sort(
+    (a, b) =>
+      b[1].costUsd - a[1].costUsd ||
+      totalOf(b[1].totals) - totalOf(a[1].totals) ||
+      a[0].localeCompare(b[0]),
+  );
 
   return {
-    rows: kept.map(([key, row]) => ({
+    rows: displayed.map(([key, row]) => ({
       key,
       threadId: row.threadId,
       title: row.title,
@@ -273,6 +325,7 @@ export function foldThreadRows(
       totals: row.totals,
       costUsd: row.costUsd,
       sessions: row.sessions,
+      ...(row.groupedRows === 0 ? {} : { groupedRows: row.groupedRows }),
       agents: [...row.agents.entries()]
         .map(([agentId, slice]) => ({
           agentId,
@@ -287,7 +340,7 @@ export function foldThreadRows(
         }))
         .sort((a, b) => a.day.localeCompare(b.day)) satisfies UsageThreadDayCost[],
     })),
-    truncatedRows: sorted.length - kept.length,
+    truncatedRows: omitted.length,
   };
 }
 

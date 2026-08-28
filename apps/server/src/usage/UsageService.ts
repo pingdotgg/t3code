@@ -82,8 +82,8 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const CACHE_RETENTION_DAYS = 90;
 
 /**
- * Thread rows sent per breakdown request. A window can hold thousands of
- * sessions; everything past the cap is counted, not shipped.
+ * Named thread rows sent per breakdown request. A window can hold thousands
+ * of sessions; lower-cost rows fold into provider/project remainders.
  */
 const THREAD_ROW_CAP = 40;
 
@@ -760,7 +760,8 @@ export const make = Effect.gen(function* () {
       ...(input.project === undefined ? {} : { projectFilter: input.project }),
     });
 
-    // Transcript titles only for unattributed rows that survived the cap.
+    // Transcript titles only for retained unattributed rows. Grouped remainder
+    // rows already carry a generated title.
     const rows = yield* Effect.forEach(
       folded.rows,
       Effect.fnUntraced(function* ({ titleSessionKey, ...row }) {

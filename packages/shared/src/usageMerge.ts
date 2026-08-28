@@ -75,6 +75,11 @@ export interface CostQuality {
   readonly cacheSavingsUsd: number;
 }
 
+export interface EnvironmentProviderContribution {
+  readonly environmentId: EnvironmentId;
+  readonly providers: readonly UsageProviderKind[];
+}
+
 export interface MergedUsage {
   readonly costUsd: number;
   readonly uncachedInputTokens: number;
@@ -98,6 +103,8 @@ export interface MergedUsage {
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
+  /** Provider rows this environment owns after physical-source de-duplication. */
+  readonly providerContributions: readonly EnvironmentProviderContribution[];
   readonly staleEnvironments: readonly EnvironmentId[];
 }
 
@@ -218,6 +225,7 @@ const EMPTY_MERGED: MergedUsage = {
   },
   duplicateSources: [],
   contributingEnvironments: [],
+  providerContributions: [],
   staleEnvironments: [],
 };
 
@@ -347,10 +355,17 @@ export function mergeUsage(
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
+  const providerContributions: EnvironmentProviderContribution[] = [];
 
   for (const environment of current) {
     const { buckets, sessionsByProvider } = ownedContribution(environment, ownerByFingerprint);
-    if (buckets.length > 0) contributingEnvironments.push(environment.environmentId);
+    if (buckets.length > 0) {
+      contributingEnvironments.push(environment.environmentId);
+      providerContributions.push({
+        environmentId: environment.environmentId,
+        providers: [...new Set(buckets.map((bucket) => bucket.provider))].sort(),
+      });
+    }
 
     // Session counts are per source directory; a project filter cannot split
     // them, so a filtered merge leaves every session figure at 0.
@@ -543,6 +558,9 @@ export function mergeUsage(
     },
     duplicateSources: duplicates,
     contributingEnvironments,
+    providerContributions: providerContributions.sort((a, b) =>
+      a.environmentId.localeCompare(b.environmentId),
+    ),
     staleEnvironments,
   };
 }

@@ -1,9 +1,7 @@
 import type {
-  EnvironmentId,
   UsageProviderKind,
   UsageThreadBreakdownInput,
   UsageThreadDayCost,
-  UsageThreadRow,
 } from "@t3tools/contracts";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -14,8 +12,9 @@ import {
   formatTokens,
   formatUsd,
 } from "@t3tools/shared/usageFormat";
+import type { EnvironmentProviderContribution } from "@t3tools/shared/usageMerge";
 
-import { useUsageThreads } from "../../state/usage";
+import { useUsageThreads, type UsageThreadRowWithEnvironment } from "../../state/usage";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 /**
@@ -24,14 +23,14 @@ import { PROVIDER_PRESENTATION } from "./usageProviders";
  */
 export function UsageThreadTable({
   input,
-  environmentIds,
+  providerContributions,
 }: {
   readonly input: UsageThreadBreakdownInput;
-  readonly environmentIds: readonly EnvironmentId[];
+  readonly providerContributions: readonly EnvironmentProviderContribution[];
 }) {
   const { rows, truncatedRows, isPending, failedEnvironments } = useUsageThreads(
     input,
-    environmentIds,
+    providerContributions,
   );
   const [openRows, setOpenRows] = useState<ReadonlySet<string>>(new Set());
   const totalCostUsd = useMemo(() => rows.reduce((sum, row) => sum + row.costUsd, 0), [rows]);
@@ -80,7 +79,8 @@ export function UsageThreadTable({
           </tr>
         ) : (
           rows.map((row) => {
-            const open = openRows.has(row.key);
+            const viewKey = `${row.environmentId}\u0000${row.key}`;
+            const open = openRows.has(viewKey);
             const tokens =
               row.totals.uncachedInputTokens +
               row.totals.cachedInputTokens +
@@ -88,14 +88,14 @@ export function UsageThreadTable({
               row.totals.outputTokens;
             return (
               <ThreadRowGroup
-                key={row.key}
+                key={viewKey}
                 row={row}
                 open={open}
                 tokens={tokens}
                 share={totalCostUsd === 0 ? 0 : row.costUsd / totalCostUsd}
                 sinceDay={input.sinceDay}
                 untilDay={input.untilDay}
-                onToggle={() => toggleRow(row.key)}
+                onToggle={() => toggleRow(viewKey)}
               />
             );
           })
@@ -104,8 +104,8 @@ export function UsageThreadTable({
           <tr>
             <td colSpan={4} className="py-2 text-xs text-muted-foreground">
               {truncatedRows === 1
-                ? "1 more thread not shown."
-                : `${truncatedRows} more threads not shown.`}
+                ? "1 lower-cost thread row is grouped above."
+                : `${truncatedRows} lower-cost thread rows are grouped above.`}
             </td>
           </tr>
         ) : null}
@@ -132,7 +132,7 @@ function ThreadRowGroup({
   untilDay,
   onToggle,
 }: {
-  readonly row: UsageThreadRow;
+  readonly row: UsageThreadRowWithEnvironment;
   readonly open: boolean;
   readonly tokens: number;
   readonly share: number;

@@ -1,6 +1,7 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
+import { UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
 import { foldThreadRows, ThreadUsageAccumulator, type ThreadAttribution } from "./usageThreads.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
@@ -131,7 +132,61 @@ describe("foldThreadRows", () => {
     expect(standalone?.key).toBe("session:claude:session-c");
   });
 
-  it("caps rows by cost and counts the rest", () => {
+  it("scopes one T3 thread by provider and project", () => {
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      resolveProject: (cwd) => (cwd.endsWith("one") ? "Project one" : "Project two"),
+    });
+    const entries = [
+      [record({ sessionId: "claude-one", cwd: "/work/one" }), "claude:claude-one"],
+      [record({ sessionId: "claude-two", cwd: "/work/two" }), "claude:claude-two"],
+      [
+        record({
+          provider: "codex",
+          model: "gpt-5.6-sol",
+          sessionId: "codex-one",
+          cwd: "/work/one",
+        }),
+        "codex:codex-one",
+      ],
+    ] as const;
+    for (const [item, sessionKey] of entries) {
+      accumulator.add(item, { sessionKey, agentId: null });
+    }
+    const attribution: ThreadAttribution = {
+      sessionToThread: new Map(
+        entries.map(([, sessionKey]) => [sessionKey, { threadId, title: "Shared thread" }]),
+      ),
+      worktreeToThread: new Map(),
+    };
+
+    const { rows } = foldThreadRows(accumulator.finish(), attribution, { cap: 40 });
+
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => [row.provider, row.project]).toSorted()).toEqual([
+      ["claude", "Project one"],
+      ["claude", "Project two"],
+      ["codex", "Project one"],
+    ]);
+    expect(new Set(rows.map((row) => row.key)).size).toBe(3);
+    expect(rows.every((row) => row.threadId === threadId && row.title === "Shared thread")).toBe(
+      true,
+    );
+
+    const projectOne = foldThreadRows(accumulator.finish(), attribution, {
+      cap: 40,
+      projectFilter: "Project one",
+    });
+    expect(projectOne.rows.map((row) => [row.provider, row.project]).toSorted()).toEqual([
+      ["claude", "Project one"],
+      ["codex", "Project one"],
+    ]);
+  });
+
+  it("groups rows past the cap without losing their usage", () => {
     const groups = accumulate(
       Array.from({ length: 5 }, (_, index) => [
         record({ sessionId: `session-${index}` }),
@@ -141,8 +196,61 @@ describe("foldThreadRows", () => {
 
     const { rows, truncatedRows } = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 3 });
 
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4);
     expect(truncatedRows).toBe(2);
+    expect(rows.find((row) => row.key.startsWith("remainder:"))?.title).toBe("Other threads (2)");
+    expect(rows.find((row) => row.key.startsWith("remainder:"))?.groupedRows).toBe(2);
+    expect(rows.reduce((sum, row) => sum + row.totals.outputTokens, 0)).toBe(250);
+  });
+
+  it("reconciles every provider and project after lower-cost rows are grouped", () => {
+    const resolveProject = (cwd: string) => (cwd.endsWith("one") ? "Project one" : "Project two");
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      resolveProject,
+    });
+    const summary = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      resolution: "day",
+      rates,
+      resolveProject,
+    });
+    for (const [index, provider, project] of [
+      [0, "claude", "one"],
+      [1, "claude", "one"],
+      [2, "claude", "two"],
+      [3, "codex", "one"],
+      [4, "codex", "two"],
+    ] as const) {
+      const item = record({
+        provider,
+        model: provider === "claude" ? "claude-fable-5" : "gpt-5.6-sol",
+        sessionId: `session-${index}`,
+        cwd: `/work/${project}`,
+      });
+      accumulator.add(item, { sessionKey: `${provider}:session-${index}`, agentId: null });
+      summary.add(item);
+    }
+    const groups = accumulator.finish();
+
+    const { rows } = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 1 });
+    const expected = new Map<string, number>();
+    for (const bucket of summary.finish().buckets) {
+      const key = `${bucket.provider}:${bucket.project ?? ""}`;
+      expected.set(key, (expected.get(key) ?? 0) + bucket.totals.outputTokens);
+    }
+    const actual = new Map<string, number>();
+    for (const row of rows) {
+      const key = `${row.provider}:${row.project ?? ""}`;
+      actual.set(key, (actual.get(key) ?? 0) + row.totals.outputTokens);
+    }
+
+    expect(actual).toEqual(expected);
   });
 
   it("filters by project before capping", () => {
