@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { resolveMobileAutoSettlePreferences } from "../../persistence/mobile-preferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -49,7 +49,7 @@ export function mobileAutoSettleModeLabel(mode: SidebarAutoSettleMode): string {
 export function SettingsAutoSettleRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const checkmarkColor = useThemeColor("--color-icon");
+  const checkmarkColor = useUniwindTheme()["--color-icon"];
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferencesReady = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
