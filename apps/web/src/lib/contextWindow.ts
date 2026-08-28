@@ -1,4 +1,8 @@
-import type { OrchestrationV2TurnItem, ThreadTokenUsageSnapshot } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ProviderTurnTokenUsage,
+  OrchestrationV2TurnItem,
+  ThreadTokenUsageSnapshot,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 function asFiniteNumber(value: unknown): number | null {
@@ -18,11 +22,66 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly updatedAt: string;
 };
 
+/** Map a provider driver kind to a user-facing display name. */
+export function formatProviderDisplayName(provider: string | null | undefined): string {
+  if (!provider) return "This agent";
+  switch (provider) {
+    case "claudeAgent":
+    case "claude":
+      return "Claude";
+    case "codex":
+      return "Codex";
+    case "cursor":
+      return "Cursor";
+    case "opencode":
+      return "OpenCode";
+    default: {
+      // Title-case unknown driver kinds so they read reasonably.
+      const trimmed = provider.replace(/Agent$/i, "").trim();
+      if (trimmed.length === 0) return provider;
+      return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+    }
+  }
+}
+
+/** Prefers the provider's live usage report (#8144); falls back to the last compaction item. */
 export function deriveLatestContextWindowSnapshot(
   entries: ReadonlyArray<{
     readonly item: OrchestrationV2TurnItem;
   }>,
+  liveUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
 ): ContextWindowSnapshot | null {
+  if (liveUsage != null) {
+    const usedTokens = Math.max(0, liveUsage.usedTokens);
+    const maxTokens = liveUsage.maxTokens ?? null;
+    const usedPercentage =
+      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
+    const remainingTokens =
+      maxTokens !== null ? Math.max(0, Math.round(maxTokens - usedTokens)) : null;
+    const remainingPercentage = usedPercentage !== null ? Math.max(0, 100 - usedPercentage) : null;
+    return {
+      usedTokens,
+      totalProcessedTokens: null,
+      maxTokens,
+      remainingTokens,
+      usedPercentage,
+      remainingPercentage,
+      inputTokens: liveUsage.inputTokens ?? null,
+      cachedInputTokens: liveUsage.cachedInputTokens ?? null,
+      outputTokens: liveUsage.outputTokens ?? null,
+      reasoningOutputTokens: liveUsage.reasoningOutputTokens ?? null,
+      lastUsedTokens: null,
+      lastInputTokens: null,
+      lastCachedInputTokens: null,
+      lastOutputTokens: null,
+      lastReasoningOutputTokens: null,
+      toolUses: null,
+      durationMs: null,
+      compactsAutomatically: true,
+      autoCompactThreshold: null,
+      updatedAt: liveUsage.updatedAt,
+    };
+  }
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (!entry || entry.item.type !== "compaction") {
