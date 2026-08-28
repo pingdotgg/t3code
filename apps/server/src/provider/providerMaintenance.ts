@@ -29,6 +29,7 @@ import { compareMaintenanceVersions } from "./maintenance/version.ts";
 const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const MAINTENANCE_PROBE_TIMEOUT_MS = 10_000;
+const MAINTENANCE_RESOLUTION_TIMEOUT_MS = 10_000;
 const MAINTENANCE_ADVISORY_CACHE_TTL_MS = 5 * 60 * 1_000;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
@@ -397,6 +398,10 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     return resolver.resolve(resolutionOptions);
   }
   const legacy = resolver.resolve(resolutionOptions);
+  const timeoutFallback = makeManualOnlyProviderMaintenanceCapabilities({
+    provider: legacy.provider,
+    packageName: legacy.packageName,
+  });
   const context: InstallationContext = {
     provider: legacy.provider,
     packageName: legacy.packageName ?? "",
@@ -434,9 +439,16 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
         Effect.provideService(Path.Path, pathService),
       ),
   };
-  return capabilitiesFromInstallation(
-    legacy.provider,
-    yield* resolver.resolveInstallation(context),
+  return yield* resolver.resolveInstallation(context).pipe(
+    Effect.map((installation) => capabilitiesFromInstallation(legacy.provider, installation)),
+    // Package-manager probes are sequential and each has its own timeout. Keep
+    // their combined latency bounded so maintenance detection cannot delay
+    // provider startup indefinitely. The fallback never authorizes an update,
+    // even if a custom resolver's legacy result does.
+    Effect.timeoutOrElse({
+      duration: Duration.millis(MAINTENANCE_RESOLUTION_TIMEOUT_MS),
+      orElse: () => Effect.succeed(timeoutFallback),
+    }),
   );
 });
 

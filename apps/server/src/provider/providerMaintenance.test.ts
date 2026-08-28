@@ -12,6 +12,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/unstable/http";
 import { GrokMaintenanceResolver } from "./Drivers/GrokDriver.ts";
 import type { InstallationContext } from "./maintenance/definition.ts";
@@ -177,6 +178,39 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       expect(Exit.isSuccess(next) ? next.value : null).toEqual(capabilities);
       expect(probeCount).toBe(2);
     }),
+  );
+
+  it.effect("bounds total installation resolution time and falls back to manual updates", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-maintenance-resolution-timeout");
+      NodeFS.mkdirSync(tempDir, { recursive: true });
+      const executable = NodePath.join(tempDir, "package-tool");
+      NodeFS.writeFileSync(executable, "#!/bin/sh\n");
+      NodeFS.chmodSync(executable, 0o755);
+      const resolutionStarted = yield* Deferred.make<void>();
+      const slowResolver = {
+        ...packageToolUpdate,
+        resolve: () =>
+          makeProviderMaintenanceCapabilities({
+            provider: driver("packageTool"),
+            packageName: "@example/package-tool",
+            updateExecutable: executable,
+            updateArgs: ["update"],
+            updateLockKey: "unsafe-legacy-update",
+          }),
+        resolveInstallation: () =>
+          Deferred.succeed(resolutionStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      };
+
+      const fiber = yield* resolveProviderMaintenanceCapabilitiesEffect(slowResolver, {
+        binaryPath: executable,
+        env: { PATH: tempDir },
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(resolutionStarted);
+      yield* TestClock.adjust("10 seconds");
+
+      expect(yield* Fiber.join(fiber)).toEqual(packageToolUpdate.resolve());
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("keeps Codex standalone identity stable across release directories", () =>
