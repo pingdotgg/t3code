@@ -622,6 +622,32 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     expect(leftovers.stdout.trim()).toBe("");
   });
 
+  it("leases a warm cache across the prepare-to-spawn handoff", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    const selected = runShell(
+      [
+        "set -eu",
+        `runtime_parent=${sh(fixture.runtimeParent)}`,
+        'mkdir -p "$runtime_parent/sha256-current" "$runtime_parent/sha256-previous"',
+        'printf ready > "$runtime_parent/sha256-current/.t3code-wsl-runtime-ready"',
+        'printf ready > "$runtime_parent/sha256-previous/.t3code-wsl-runtime-ready"',
+        `touch -d "10 minutes ago" ${sh(fixture.runtimeRoot)}`,
+        'touch -d "1 minute ago" "$runtime_parent/sha256-previous"',
+        `cat > ${sh(`${fixture.work}/select.sh`)} <<'T3CODE_SELECT_SCRIPT'`,
+        fixture.installScript(),
+        "T3CODE_SELECT_SCRIPT",
+        `sh ${sh(`${fixture.work}/select.sh`)}`,
+        `HOME=${sh(`${fixture.work}/home`)}`,
+        "export HOME",
+        buildWslRuntimePruneScript("sha256-current"),
+        `test -d ${sh(fixture.runtimeRoot)}`,
+      ].join("\n"),
+    );
+
+    expect(selected.status, `${selected.stdout}\n${selected.stderr}`).toBe(0);
+  });
+
   it("keeps an aged stale tree while a backend still references its original path", () => {
     const result = runShell(
       [

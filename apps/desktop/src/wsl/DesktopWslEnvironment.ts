@@ -261,6 +261,8 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")
 // that install wrote.
 const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
 const WSL_RUNTIME_ORIGINAL_PATH_MARKER = ".t3code-wsl-runtime-original-path";
+const WSL_RUNTIME_SELECTED_MARKER = ".t3code-wsl-runtime-selected";
+const WSL_RUNTIME_SELECTION_GRACE_MINUTES = 5;
 
 export const sanitizeWslRuntimeId = (value: string): string =>
   value.replace(/[^A-Za-z0-9._-]/g, "_");
@@ -315,16 +317,13 @@ export const buildWslRuntimeInstallScript = (
     '    [ -n "$recorded_entry_digest" ] &&',
     '    [ "$recorded_entry_digest" = "$(runtime_server_entry_digest "$runtime_root")" ]',
     "}",
-    "if runtime_is_ready; then",
-    `  printf 'runtimeRoot:%s\\n' "$runtime_root"`,
-    "  exit 0",
-    "fi",
     'mkdir -p "$runtime_parent"',
     `runtime_lock="$runtime_parent/.${safeRuntimeId}.install.lock"`,
     "trap 'exit 1' HUP INT TERM",
     'exec 9> "$runtime_lock"',
     "flock -x 9",
     "if runtime_is_ready; then",
+    `  touch "$runtime_root/${WSL_RUNTIME_SELECTED_MARKER}"`,
     `  printf 'runtimeRoot:%s\\n' "$runtime_root"`,
     "  exit 0",
     "fi",
@@ -404,6 +403,7 @@ export const buildWslRuntimeInstallScript = (
     `  printf 'Could not promote WSL runtime cache at %s\\n' "$runtime_root" >&2`,
     "  exit 1",
     "fi",
+    `touch "$runtime_root/${WSL_RUNTIME_SELECTED_MARKER}"`,
     `printf 'runtimeRoot:%s\\n' "$runtime_root"`,
   ].join("\n");
 };
@@ -453,6 +453,11 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     // A held lock means another launch is installing or repairing this cache.
     // Skip instead of waiting or deleting underneath it.
     "  flock -n 9 || continue",
+    `  selected_marker="$candidate/${WSL_RUNTIME_SELECTED_MARKER}"`,
+    `  if [ -f "$selected_marker" ] && find "$selected_marker" -maxdepth 0 -mmin -${String(WSL_RUNTIME_SELECTION_GRACE_MINUTES)} -print -quit | grep -q .; then`,
+    "    flock -u 9",
+    "    continue",
+    "  fi",
     '  rm -rf -- "$candidate"',
     "  flock -u 9",
     "done",
