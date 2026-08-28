@@ -1,6 +1,4 @@
-const FULL_SEMVER =
-  /^(?:v)?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
-const COMPARABLE_SEMVER =
+const SEMVER =
   /^(?:v)?(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:\.(0|[1-9]\d*))?(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 interface ParsedSemver {
@@ -10,32 +8,29 @@ interface ParsedSemver {
   readonly prerelease: ReadonlyArray<string>;
 }
 
-function hasValidPrerelease(value: string): boolean {
-  const prerelease = value.match(/^[^-+]+(?:-(?<prerelease>[^+]+))?(?:\+|$)/)?.groups?.prerelease;
-  return (
-    prerelease === undefined ||
-    prerelease
-      .split(".")
-      .every((identifier) => !/^\d+$/.test(identifier) || /^(?:0|[1-9]\d*)$/.test(identifier))
-  );
-}
-
 export function normalizeMaintenanceVersion(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
-  if (!trimmed || !FULL_SEMVER.test(trimmed) || !hasValidPrerelease(trimmed)) return null;
+  if (!trimmed || !parse(trimmed, true)) return null;
   return trimmed.startsWith("v") ? trimmed.slice(1) : trimmed;
 }
 
-function parse(value: string): ParsedSemver | null {
-  const match = hasValidPrerelease(value) ? COMPARABLE_SEMVER.exec(value) : null;
-  return match
-    ? {
-        major: BigInt(match[1]!),
-        minor: BigInt(match[2] ?? 0),
-        patch: BigInt(match[3] ?? 0),
-        prerelease: match[4]?.split(".") ?? [],
-      }
-    : null;
+function parse(value: string, requireFull = false): ParsedSemver | null {
+  const match = SEMVER.exec(value);
+  if (!match || (requireFull && (match[2] === undefined || match[3] === undefined))) return null;
+  const prerelease = match[4]?.split(".") ?? [];
+  if (
+    prerelease.some(
+      (identifier) => /^\d+$/.test(identifier) && !/^(?:0|[1-9]\d*)$/.test(identifier),
+    )
+  ) {
+    return null;
+  }
+  return {
+    major: BigInt(match[1]!),
+    minor: BigInt(match[2] ?? 0),
+    patch: BigInt(match[3] ?? 0),
+    prerelease,
+  };
 }
 
 function comparePrerelease(left: ReadonlyArray<string>, right: ReadonlyArray<string>): number {

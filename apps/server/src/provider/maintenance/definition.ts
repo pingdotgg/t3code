@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 export type InstallationDetection<Evidence> =
   | { readonly _tag: "Matched"; readonly evidence: Evidence }
   | { readonly _tag: "NotMatched" }
-  | { readonly _tag: "Undetermined"; readonly reason: string };
+  | { readonly _tag: "Undetermined" };
 
 export interface MaintenanceProbeResult {
   readonly stdout: string;
@@ -63,13 +63,12 @@ export interface InstallationDefinition<Evidence> {
 }
 
 export interface AnyInstallationDefinition {
-  readonly id: string;
   readonly detectAndResolve: (
     context: InstallationContext,
   ) => Effect.Effect<
     | { readonly _tag: "Matched"; readonly installation: ResolvedInstallation }
     | { readonly _tag: "NotMatched" }
-    | { readonly _tag: "Undetermined"; readonly reason: string }
+    | { readonly _tag: "Undetermined" }
   >;
 }
 
@@ -77,7 +76,6 @@ export function defineInstallation<Evidence>(
   definition: InstallationDefinition<Evidence>,
 ): AnyInstallationDefinition {
   return {
-    id: definition.id,
     detectAndResolve: Effect.fn(`detectAndResolve:${definition.id}`)(function* (context) {
       const detection = yield* definition.detect(context);
       switch (detection._tag) {
@@ -122,6 +120,4 @@ export function matched<Evidence>(evidence: Evidence): InstallationDetection<Evi
 
 export const notMatched: InstallationDetection<never> = { _tag: "NotMatched" };
 
-export function undetermined(reason: string): InstallationDetection<never> {
-  return { _tag: "Undetermined", reason };
-}
+export const undetermined: InstallationDetection<never> = { _tag: "Undetermined" };

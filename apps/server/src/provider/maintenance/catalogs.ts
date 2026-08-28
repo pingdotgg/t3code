@@ -219,12 +219,12 @@ function detectNodePackage(input: ProviderMaintenanceDefinitionInput, manager: N
       packageRoot(observed, input.packageName) ??
       packageRootFromWrapper(context, wrapper, context.resolvedCommandPath, input.packageName);
     if (!root && wrapperHasAmbiguousPackagePrefix(wrapper, input.packageName)) {
-      return undetermined("The command wrapper's package ownership is ambiguous.");
+      return undetermined;
     }
     if (!root && manager.id !== "bun") return notMatched;
     const executable = yield* context.resolveCommand(manager.command);
     if (!executable) {
-      return root ? undetermined("The owning package manager is unavailable.") : notMatched;
+      return root ? undetermined : notMatched;
     }
     const rootProbe = yield* context.run(executable, manager.rootArgs, context.environment);
     const managerRoot = output(rootProbe?.stdout);
@@ -252,7 +252,7 @@ function detectNodePackage(input: ProviderMaintenanceDefinitionInput, manager: N
     if (manager.id === "npm") {
       const prefix = npmGlobalPrefix(context, root, input.packageName);
       if (!prefix) {
-        return undetermined("The npm global prefix owning this package could not be verified.");
+        return undetermined;
       }
       if (
         context.platform === "win32" &&
@@ -261,7 +261,7 @@ function detectNodePackage(input: ProviderMaintenanceDefinitionInput, manager: N
           normalize(context, pathApi(context).dirname(context.resolvedCommandPath)) !==
             normalize(context, prefix))
       ) {
-        return undetermined("The npm wrapper does not belong to the detected global prefix.");
+        return undetermined;
       }
       updateRoot = prefix;
     } else if (!within(context, root, ownershipRoot)) {
@@ -426,12 +426,10 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
       const observed = normalize(context, context.realCommandPath ?? context.binaryPath);
       const observedLower = observed.toLowerCase();
       if (!observedLower.includes("/cellar/") && !observedLower.includes("/caskroom/")) {
-        return isHomebrewShimPath(observedLower)
-          ? undetermined("Homebrew shim ownership could not be verified.")
-          : notMatched;
+        return isHomebrewShimPath(observedLower) ? undetermined : notMatched;
       }
       const executable = yield* context.resolveCommand("brew");
-      if (!executable) return undetermined("Homebrew executable is unavailable.");
+      if (!executable) return undetermined;
       const pathPackage = homebrewPackageFromPath(observed);
       const candidates = [
         ...new Set(
@@ -479,7 +477,7 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
           readonly prefix: string;
         } => candidate !== null,
       );
-      if (!ownership) return undetermined("Homebrew formula ownership could not be verified.");
+      if (!ownership) return undetermined;
       const { formula, packageType, prefix } = ownership;
       const infoProbe = yield* context.run(
         executable,
@@ -488,7 +486,7 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
       );
       const info = json(infoProbe?.stdout ?? null);
       if (!infoProbe || infoProbe.exitCode !== 0 || !info) {
-        return undetermined("Homebrew formula metadata is unavailable.");
+        return undetermined;
       }
       const formulaInfo = records(info.formulae)[0];
       const caskInfo = records(info.casks)[0];
@@ -504,7 +502,7 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
       const currentVersion = normalizeMaintenanceVersion(
         packageType === "formula" ? text(installedFormula?.version) : installedCask,
       );
-      if (!currentVersion) return undetermined("Homebrew installed version is unavailable.");
+      if (!currentVersion) return undetermined;
       return matched({
         executable,
         formula,
@@ -566,7 +564,7 @@ function scoopDefinition(input: ProviderMaintenanceDefinitionInput) {
         !app ||
         !within(context, target, pathApi(context).join(root, "apps", app, "current"))
       ) {
-        return undetermined("Scoop shim ownership metadata is unreadable.");
+        return undetermined;
       }
       const install = json(
         yield* context.readTextFile(
@@ -578,16 +576,16 @@ function scoopDefinition(input: ProviderMaintenanceDefinitionInput) {
           pathApi(context).join(root, "apps", app, "current", "manifest.json"),
         ),
       );
-      if (!install || !manifest) return undetermined("Scoop metadata is unreadable.");
+      if (!install || !manifest) return undetermined;
       const bucket = text(install.bucket);
-      if (!bucket) return undetermined("Scoop bucket provenance is unavailable.");
+      if (!bucket) return undetermined;
       const executable = yield* context.resolveCommand("scoop");
-      if (!executable) return undetermined("Scoop is unavailable.");
+      if (!executable) return undetermined;
       const slashExecutable = executable.replaceAll("\\", "/");
       const executablePath = slashExecutable.toLowerCase();
       const managerMarker = "/shims/";
       const managerIndex = executablePath.lastIndexOf(managerMarker);
-      if (managerIndex < 0) return undetermined("The owning Scoop root is unavailable.");
+      if (managerIndex < 0) return undetermined;
       const managerRoot = slashExecutable.slice(0, managerIndex);
       const global = !within(context, executable, root);
       if (global) {
@@ -606,7 +604,7 @@ function scoopDefinition(input: ProviderMaintenanceDefinitionInput) {
         );
         const effectiveGlobalRoot = environmentRoot ?? configuredRoot ?? defaultRoot;
         if (normalize(context, effectiveGlobalRoot) !== normalize(context, root)) {
-          return undetermined("The global Scoop root owning this shim could not be verified.");
+          return undetermined;
         }
       }
       const available = json(
@@ -731,7 +729,7 @@ function wingetDefinition(input: ProviderMaintenanceDefinitionInput) {
           (result) => result === null || (result.exitCode !== 0 && result.exitCode !== 1),
         )
       ) {
-        return undetermined("WinGet ARP metadata is unreadable.");
+        return undetermined;
       }
       const keys = searches.flatMap((search, searchIndex) =>
         (searchResults[searchIndex]?.stdout.match(/^HKEY_[^\r\n]+/gim) ?? []).map((key) => ({
@@ -740,12 +738,12 @@ function wingetDefinition(input: ProviderMaintenanceDefinitionInput) {
           view: search.view,
         })),
       );
-      if (keys.length === 0) return undetermined("WinGet package metadata is unavailable.");
+      if (keys.length === 0) return undetermined;
       const entryResults = yield* Effect.forEach(keys, ({ key, view }) =>
         context.run(reg, ["query", key, view], context.environment),
       );
       if (entryResults.some((result) => result === null || result.exitCode !== 0)) {
-        return undetermined("WinGet package metadata could not be read.");
+        return undetermined;
       }
       const matches = entryResults
         .flatMap((result, resultIndex) =>
@@ -760,12 +758,10 @@ function wingetDefinition(input: ProviderMaintenanceDefinitionInput) {
             ((entry.symlinkPath && normalize(context, entry.symlinkPath) === observed) ||
               (entry.targetPath && normalize(context, entry.targetPath) === real)),
         );
-      if (matches.length === 0)
-        return undetermined("WinGet executable ownership could not be verified.");
-      if (matches.length !== 1 || !matches[0]!.entry.sourceId)
-        return undetermined("WinGet ownership is ambiguous.");
+      if (matches.length === 0) return undetermined;
+      if (matches.length !== 1 || !matches[0]!.entry.sourceId) return undetermined;
       const executable = yield* context.resolveCommand("winget");
-      if (!executable) return undetermined("WinGet is unavailable.");
+      if (!executable) return undetermined;
       const sourceProbe = yield* context.run(
         executable,
         ["source", "export", "--disable-interactivity"],
@@ -778,7 +774,7 @@ function wingetDefinition(input: ProviderMaintenanceDefinitionInput) {
           candidate.name === matches[0]!.entry.sourceId,
       )?.name;
       if (!sourceProbe || sourceProbe.exitCode !== 0 || !source) {
-        return undetermined("The WinGet source owning this package is unavailable.");
+        return undetermined;
       }
       return matched({
         executable,

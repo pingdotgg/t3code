@@ -12,15 +12,13 @@ function resolveFirst(
   definitions: ReadonlyArray<AnyInstallationDefinition>,
 ) {
   return Effect.gen(function* () {
-    const reasons: Array<string> = [];
+    let undetermined = false;
     for (const definition of definitions) {
       const result = yield* definition.detectAndResolve(context);
       if (result._tag === "Matched") return result;
-      if (result._tag === "Undetermined") reasons.push(`${definition.id}: ${result.reason}`);
+      if (result._tag === "Undetermined") undetermined = true;
     }
-    return reasons.length > 0
-      ? ({ _tag: "Undetermined", reasons } as const)
-      : ({ _tag: "NotMatched" } as const);
+    return undetermined ? ({ _tag: "Undetermined" } as const) : ({ _tag: "NotMatched" } as const);
   });
 }
 

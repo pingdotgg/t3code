@@ -517,10 +517,7 @@ export const ProviderRegistryLive = Layer.effect(
       if (!instance || instance.driverKind !== provider) {
         return makeManualProviderMaintenanceCapabilities(provider);
       }
-      return instance.snapshot.resolveMaintenance
-        ? yield* instance.snapshot.resolveMaintenance
-        : (instance.snapshot.maintenanceCapabilities ??
-            makeManualProviderMaintenanceCapabilities(provider));
+      return yield* instance.snapshot.resolveMaintenance;
     });
 
     /**
