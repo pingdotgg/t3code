@@ -72,6 +72,13 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedFilePicker.command, "filePicker.toggle");
 
+    const parsedPickerNext = yield* decode(KeybindingRule, {
+      key: "ctrl+n",
+      command: "picker.next",
+      when: "pickerFocus",
+    });
+    assert.strictEqual(parsedPickerNext.command, "picker.next");
+
     const parsedProjectSearch = yield* decode(KeybindingRule, {
       key: "mod+shift+f",
       command: "projectSearch.toggle",
