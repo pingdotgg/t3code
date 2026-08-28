@@ -196,6 +196,18 @@ function parseServerUrlFromOutput(output: string): string | null {
   return null;
 }
 
+// The OpenCode CLI writes an OSC title sequence to stdout before its first line
+// of output, even when piped, which corrupts every parser below.
+// eslint-disable-next-line no-control-regex
+const OSC_SEQUENCE = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
+// Payload class excludes both terminators, so an unterminated prefix stays literal.
+// eslint-disable-next-line no-control-regex
+const CSI_SEQUENCE = /\u001b\[[0-9:;?<=>]*[ -/]*[@-~]/g;
+
+function stripTerminalEscapes(text: string): string {
+  return text.replace(OSC_SEQUENCE, "").replace(CSI_SEQUENCE, "");
+}
+
 const SLUG_LINE_RE = /^(\S+\/\S+)\s*$/;
 const AGENT_HEADER_RE = /^(.+)\s+\((\S+)\)\s*$/;
 
@@ -216,7 +228,7 @@ export function parseModelsCliOutput(stdout: string): {
     string,
     { id: string; name: string; models: { [key: string]: Model } }
   >();
-  const lines = stdout.split("\n");
+  const lines = stripTerminalEscapes(stdout).split("\n");
   let currentSlug: string | null = null;
   const jsonLines: Array<string> = [];
 
@@ -269,7 +281,7 @@ export function parseModelsCliOutput(stdout: string): {
 /** @internal */
 export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
   const agents: Array<Agent> = [];
-  const lines = stdout.split("\n");
+  const lines = stripTerminalEscapes(stdout).split("\n");
   let currentHeader: { name: string; mode: string } | null = null;
   const blockLines: Array<string> = [];
 
@@ -311,7 +323,7 @@ export function parseAgentListCliOutput(stdout: string): ReadonlyArray<Agent> {
 
 /** @internal */
 export function parseSkillsCliOutput(stdout: string): ReadonlyArray<OpenCodeSkill> {
-  const result = decodeOpenCodeSkillsCliOutputExit(stdout);
+  const result = decodeOpenCodeSkillsCliOutputExit(stripTerminalEscapes(stdout));
   return Exit.isSuccess(result) ? result.value : [];
 }
 

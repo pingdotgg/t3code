@@ -8,6 +8,9 @@ import {
   parseSkillsCliOutput,
 } from "./opencodeRuntime.ts";
 
+// The terminal title the OpenCode CLI writes before its first line of stdout.
+const OSC_TITLE = "\u001b]0;OpenCode | t3code\u0007";
+
 describe("parseModelsCliOutput", () => {
   it("parses a single model from a single provider", () => {
     const stdout = [
@@ -154,6 +157,21 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.equal(model.id, "qwen/qwen3-coder");
     NodeAssert.equal(model.providerID, "openrouter");
   });
+
+  it("keeps the first model when the CLI prefixes output with a terminal title sequence", () => {
+    // The prefixed slug line stops matching SLUG_LINE_RE, so the model is dropped.
+    const stdout = [
+      `${OSC_TITLE}opencode/big-pickle`,
+      JSON.stringify({ id: "big-pickle", providerID: "opencode", name: "Big Pickle" }),
+      "opencode/claude-fable-5",
+      JSON.stringify({ id: "claude-fable-5", providerID: "opencode", name: "Fable 5" }),
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    const provider = result.providers.get("opencode")!;
+    NodeAssert.ok(provider);
+    NodeAssert.deepEqual(Object.keys(provider.models).sort(), ["big-pickle", "claude-fable-5"]);
+  });
 });
 
 describe("parseAgentListCliOutput", () => {
@@ -255,6 +273,34 @@ describe("parseAgentListCliOutput", () => {
     NodeAssert.equal(result[0]!.hidden, true);
     NodeAssert.equal(result[1]!.hidden, false);
   });
+
+  it("strips an ST-terminated OSC sequence and ANSI color from agent headers", () => {
+    const stdout = [
+      "\u001b]0;OpenCode | t3code\u001b\\\u001b[36mbuild\u001b[0m (primary)",
+      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+    ].join("\n");
+
+    const result = parseAgentListCliOutput(stdout);
+    NodeAssert.equal(result.length, 1);
+    NodeAssert.equal(result[0]!.name, "build");
+    NodeAssert.equal(result[0]!.mode, "primary");
+  });
+
+  it("keeps the first agent name clean when the CLI prefixes a terminal title sequence", () => {
+    // The escape sequence lands in the agent name, which OpenCode then rejects.
+    const stdout = [
+      `${OSC_TITLE}build (primary)`,
+      "  " + JSON.stringify([{ permission: "*", action: "allow", pattern: "*" }]),
+      "plan (primary)",
+      "  " + JSON.stringify([{ permission: "edit", action: "ask", pattern: "*.md" }]),
+    ].join("\n");
+
+    const result = parseAgentListCliOutput(stdout);
+    NodeAssert.deepEqual(
+      result.map((agent) => agent.name),
+      ["build", "plan"],
+    );
+  });
 });
 
 describe("parseSkillsCliOutput", () => {
@@ -281,5 +327,17 @@ describe("parseSkillsCliOutput", () => {
 
   it("degrades malformed output to an empty skill list", () => {
     NodeAssert.deepEqual(parseSkillsCliOutput("not json"), []);
+  });
+
+  it("decodes skills when the CLI prefixes output with a terminal title sequence", () => {
+    const stdout =
+      OSC_TITLE +
+      JSON.stringify([
+        { name: "review-pr", description: "Review a pull request.", location: null },
+      ]);
+
+    NodeAssert.deepEqual(parseSkillsCliOutput(stdout), [
+      { name: "review-pr", description: "Review a pull request.", location: null },
+    ]);
   });
 });
