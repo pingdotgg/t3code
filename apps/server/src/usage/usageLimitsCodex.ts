@@ -104,7 +104,7 @@ function readWindow(value: unknown): RawWindow | null {
         ? windowDurationMins
         : null,
     resetsAt:
-      typeof resetsAt === "number" && Number.isFinite(resetsAt)
+      typeof resetsAt === "number" && Number.isFinite(resetsAt * 1000)
         ? DateTime.formatIso(DateTime.makeUnsafe(resetsAt * 1000))
         : null,
   };

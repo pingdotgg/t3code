@@ -123,4 +123,12 @@ describe("mapCodexRateLimits", () => {
       mapCodexRateLimits({ rateLimits: { primary: { usedPercent: "high" } } }).windows,
     ).toEqual([]);
   });
+
+  it("omits a reset instant whose milliseconds overflow", () => {
+    const windows = mapCodexRateLimits({
+      rateLimits: { primary: { usedPercent: 50, resetsAt: Number.MAX_VALUE } },
+    }).windows;
+    expect(windows).toHaveLength(1);
+    expect(windows[0]?.resetsAt).toBeNull();
+  });
 });

@@ -156,7 +156,8 @@ function parseExtraUsage(value: unknown): UsageLimitWindow | null {
     const scale = 10 ** decimal_places;
     const format = new Intl.NumberFormat("en-US", {
       style: "currency",
-      currency: typeof currency === "string" && currency.length === 3 ? currency : "USD",
+      // Anything but a well-formed ISO 4217 code makes the formatter throw.
+      currency: typeof currency === "string" && /^[A-Za-z]{3}$/.test(currency) ? currency : "USD",
     });
     detail = `${format.format(used_credits / scale)} of ${format.format(monthly_limit / scale)} monthly usage credits`;
   }

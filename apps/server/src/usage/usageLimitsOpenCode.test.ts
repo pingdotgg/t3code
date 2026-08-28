@@ -115,5 +115,7 @@ describe("parseOpenCodeUsageWindows", () => {
     expect(parseOpenCodeUsageWindows(null)).toEqual([]);
     expect(parseOpenCodeUsageWindows({ usage: null })).toEqual([]);
     expect(parseOpenCodeUsageWindows({ usage: { weekly: { percent: "lots" } } })).toEqual([]);
+    // Arrays enumerate like records; indices must not become window ids.
+    expect(parseOpenCodeUsageWindows({ usage: [{ percent: 10 }] })).toEqual([]);
   });
 });

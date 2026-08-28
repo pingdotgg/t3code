@@ -43,6 +43,21 @@ describe("resolveGrokProxyBaseUrl", () => {
       GROK_DEFAULT_PROXY_BASE_URL,
     );
   });
+
+  it("fails closed on a present but unparseable cached origin", () => {
+    expect(
+      resolveGrokProxyBaseUrl({
+        envBaseUrl: undefined,
+        modelsCacheRaw: JSON.stringify({ origin: "https://team-proxy.example/v1" }),
+      }),
+    ).toBeNull();
+    expect(
+      resolveGrokProxyBaseUrl({
+        envBaseUrl: undefined,
+        modelsCacheRaw: JSON.stringify({ origin: "not a url/models" }),
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("parseGrokAuthCredentials", () => {
@@ -195,6 +210,8 @@ describe("parseGrokBillingWindows", () => {
   it("returns empty for malformed documents", () => {
     expect(parseGrokBillingWindows(null)).toEqual([]);
     expect(parseGrokBillingWindows({ config: { creditUsagePercent: "lots" } })).toEqual([]);
+    // An empty period object must not read as a 0%-used credits document.
+    expect(parseGrokBillingWindows({ config: { currentPeriod: {} } })).toEqual([]);
     // Absence only means zero inside a recognizable credits document.
     expect(parseGrokBillingWindows({ config: { unrelated: true } })).toEqual([]);
   });

@@ -138,6 +138,21 @@ describe("parseClaudeUsageWindows", () => {
     });
   });
 
+  it("falls back to USD when the currency code would crash the formatter", () => {
+    const windows = parseClaudeUsageWindows({
+      limits: [{ kind: "session", percent: 1, resets_at: null, scope: null }],
+      extra_usage: {
+        is_enabled: true,
+        monthly_limit: 5000,
+        used_credits: 1944,
+        utilization: 38.88,
+        currency: "!!!",
+        decimal_places: 2,
+      },
+    });
+    expect(windows.at(-1)?.detail).toBe("$19.44 of $50.00 monthly usage credits");
+  });
+
   it("omits an untouched, disabled extra-usage budget", () => {
     const windows = parseClaudeUsageWindows({
       limits: [{ kind: "session", percent: 1, resets_at: null, scope: null }],

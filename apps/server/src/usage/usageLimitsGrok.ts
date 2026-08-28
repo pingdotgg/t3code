@@ -78,7 +78,11 @@ function normalizeBaseUrl(value: string | undefined | null): string | null {
  * cli_chat_proxy_base_url` in its config; the resolved origin it actually
  * used last shows up in `models_cache.json`'s `origin`. A bearer meant for a
  * team proxy must never travel to the public default, so an override that
- * cannot be parsed fails closed (null) instead of falling back.
+ * cannot be parsed fails closed (null) instead of falling back — including a
+ * cached origin that is present but malformed. A proxy configured only in
+ * the CLI's config file with no models cache yet is invisible here; we
+ * deliberately do not re-parse the CLI's config, so that case falls back to
+ * the default endpoint until the CLI has cached its resolved origin.
  */
 export function resolveGrokProxyBaseUrl(input: {
   readonly envBaseUrl: string | undefined;
@@ -97,9 +101,11 @@ export function resolveGrokProxyBaseUrl(input: {
     }
     if (typeof document === "object" && document !== null) {
       const { origin } = document as Record<string, unknown>;
-      if (typeof origin === "string" && origin.trim().endsWith("/models")) {
-        const base = normalizeBaseUrl(origin.trim().slice(0, -"/models".length));
-        if (base !== null) return base;
+      if (typeof origin === "string" && origin.trim().length > 0) {
+        const trimmed = origin.trim();
+        return trimmed.endsWith("/models")
+          ? normalizeBaseUrl(trimmed.slice(0, -"/models".length))
+          : null;
       }
     }
   }
@@ -184,7 +190,9 @@ export function parseGrokBillingWindows(document: unknown): UsageLimitWindow[] {
   // 0% usage `creditUsagePercent` is absent entirely. Treat absence as zero
   // when the period fields confirm this is really the credits document.
   const isCreditsDocument =
-    (typeof currentPeriod === "object" && currentPeriod !== null) ||
+    (typeof currentPeriod === "object" &&
+      currentPeriod !== null &&
+      Object.keys(currentPeriod).length > 0) ||
     typeof billingPeriodEnd === "string";
   const usagePercentValue =
     creditUsagePercent === undefined && isCreditsDocument ? 0 : creditUsagePercent;

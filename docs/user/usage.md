@@ -13,7 +13,7 @@ Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. 
 headline and chart, and refreshing rescans every connected environment.
 
 The **Limits** view shows how much of each subscription plan's rate windows is currently used,
-with reset countdowns per window. Limit info is only available for subscription sign-ins: API-key
+with a reset countdown when the provider supplies a reset time. Limit info is only available for subscription sign-ins: API-key
 authentication is billed per token and has no rate windows, so those providers show a notice
 instead. Claude Code, Codex, Grok and OpenCode (Zen subscriptions) report limits today;
 other providers will follow.

@@ -116,7 +116,7 @@ function readWindow(
 export function parseOpenCodeUsageWindows(document: unknown): UsageLimitWindow[] {
   if (typeof document !== "object" || document === null) return [];
   const usage = (document as Record<string, unknown>).usage;
-  if (typeof usage !== "object" || usage === null) return [];
+  if (typeof usage !== "object" || usage === null || Array.isArray(usage)) return [];
   const record = usage as Record<string, unknown>;
 
   const windows: UsageLimitWindow[] = [];

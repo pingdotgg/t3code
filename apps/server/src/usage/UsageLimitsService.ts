@@ -19,6 +19,7 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_LIMITS_CONTRACT_VERSION,
+  type ClaudeSettings,
   type ProviderUsageLimits,
   type UsageLimitsProviderKind,
   type UsageLimitsSummary,
@@ -34,10 +35,11 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexClient from "effect-codex-app-server/client";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import * as ServerSettings from "../serverSettings.ts";
+import { expandHomePath } from "../pathExpansion.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
@@ -140,6 +142,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const platform = yield* HostProcessPlatform;
+  const hostEnvironment = yield* HostProcessEnvironment;
 
   /**
    * Reads the CLI's keychain entry. The CLI only writes it on macOS; elsewhere
@@ -178,13 +181,10 @@ export const make = Effect.gen(function* () {
    * storage order: credential file under the Claude home first, then the
    * macOS login keychain.
    */
-  const readClaudeCredentials = Effect.fn("UsageLimitsService.readClaudeCredentials")(function* () {
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchCause(() => Effect.succeed(null)),
-    );
-    if (settings === null) return null;
-
-    const home = yield* resolveClaudeHomePath(settings.providers.claudeAgent).pipe(
+  const readClaudeCredentials = Effect.fn("UsageLimitsService.readClaudeCredentials")(function* (
+    claudeSettings: ClaudeSettings,
+  ) {
+    const home = yield* resolveClaudeHomePath(claudeSettings).pipe(
       Effect.provideService(Path.Path, path),
     );
     // The configured home is either the user home (default install nests
@@ -241,7 +241,13 @@ export const make = Effect.gen(function* () {
   );
 
   const readClaudeLimits = Effect.fn("UsageLimitsService.readClaudeLimits")(function* () {
-    const credentials = yield* readClaudeCredentials();
+    const settings = yield* settingsService.getSettings.pipe(
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+    if (settings === null) {
+      return claudeLimits("unavailable", { message: "Server settings could not be read." });
+    }
+    const credentials = yield* readClaudeCredentials(settings.providers.claudeAgent);
     if (credentials === null) {
       return claudeLimits("unsupported", { message: SUBSCRIPTION_ONLY_MESSAGE });
     }
@@ -368,7 +374,14 @@ export const make = Effect.gen(function* () {
     // API-key auth; a missing file is NOT proof of being signed out, because
     // Codex can keep credentials in the OS keyring or take a key from the
     // environment. The app server is the canonical auth state.
-    const authHome = layout.effectiveHomePath ?? layout.sharedHomePath;
+    // When no home is configured, the spawned app server inherits ambient
+    // `CODEX_HOME`, so the pre-check must read the same account's auth file.
+    const ambientCodexHome = hostEnvironment.CODEX_HOME?.trim();
+    const authHome =
+      layout.effectiveHomePath ??
+      (ambientCodexHome !== undefined && ambientCodexHome.length > 0
+        ? path.resolve(expandHomePath(ambientCodexHome))
+        : layout.sharedHomePath);
     const raw = yield* fileSystem
       .readFileString(path.join(authHome, "auth.json"))
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
@@ -448,20 +461,25 @@ export const make = Effect.gen(function* () {
   const readGrokLimits = Effect.fn("UsageLimitsService.readGrokLimits")(function* () {
     // Mirrors the CLI's own auth precedence: an ambient xAI API key wins
     // over the stored sign-in, and API keys have no subscription windows.
-    const environment = process.env;
-    const apiKey = environment.XAI_API_KEY ?? environment.GROK_CODE_XAI_API_KEY;
+    const apiKey = hostEnvironment.XAI_API_KEY ?? hostEnvironment.GROK_CODE_XAI_API_KEY;
     if (apiKey !== undefined && apiKey.trim().length > 0) {
       return grokLimits("unsupported", { message: SUBSCRIPTION_ONLY_MESSAGE });
     }
 
     // Grok settings do not model a home dir; the CLI's own env overrides are
     // the only relocation mechanism, so honor them the way the CLI would.
-    const homeOverride = environment.GROK_HOME?.trim();
+    // Expand and resolve like the transcript scanner in UsageService: a
+    // literal `~/...` or relative override must not be read against cwd.
+    const homeOverride = hostEnvironment.GROK_HOME?.trim();
     const grokHome =
       homeOverride !== undefined && homeOverride.length > 0
-        ? homeOverride
+        ? path.resolve(expandHomePath(homeOverride))
         : path.join(NodeOS.homedir(), ".grok");
-    const authPath = environment.GROK_AUTH_PATH?.trim() || path.join(grokHome, "auth.json");
+    const authOverride = hostEnvironment.GROK_AUTH_PATH?.trim();
+    const authPath =
+      authOverride !== undefined && authOverride.length > 0
+        ? path.resolve(expandHomePath(authOverride))
+        : path.join(grokHome, "auth.json");
     const raw = yield* fileSystem
       .readFileString(authPath)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
@@ -482,7 +500,7 @@ export const make = Effect.gen(function* () {
       .readFileString(path.join(grokHome, "models_cache.json"))
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
     const baseUrl = resolveGrokProxyBaseUrl({
-      envBaseUrl: environment.GROK_CLI_CHAT_PROXY_BASE_URL,
+      envBaseUrl: hostEnvironment.GROK_CLI_CHAT_PROXY_BASE_URL,
       modelsCacheRaw,
     });
     if (baseUrl === null) {
@@ -547,12 +565,11 @@ export const make = Effect.gen(function* () {
    * auth document, then `auth.json` under the XDG data dir.
    */
   const readOpenCodeAuthState = Effect.fn("UsageLimitsService.readOpenCodeAuthState")(function* () {
-    const environment = process.env;
-    const envKey = environment.OPENCODE_API_KEY?.trim();
+    const envKey = hostEnvironment.OPENCODE_API_KEY?.trim();
     if (envKey !== undefined && envKey.length > 0) {
       return { kind: "zen", key: envKey } as const;
     }
-    const injected = environment.OPENCODE_AUTH_CONTENT;
+    const injected = hostEnvironment.OPENCODE_AUTH_CONTENT;
     if (injected !== undefined && injected.trim().length > 0) {
       const state = parseOpenCodeAuthState(injected);
       if (state !== null) return state;
@@ -560,7 +577,7 @@ export const make = Effect.gen(function* () {
 
     // OpenCode settings do not model a home dir; the CLI resolves its data
     // dir through xdg-basedir on every platform, so honor the same override.
-    const xdgData = environment.XDG_DATA_HOME?.trim();
+    const xdgData = hostEnvironment.XDG_DATA_HOME?.trim();
     const dataDir =
       xdgData !== undefined && xdgData.length > 0
         ? xdgData
