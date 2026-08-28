@@ -65,18 +65,30 @@ export function escapeDesktopEntryExecArgument(value: string): string {
   return escapeDesktopEntryString(`"${quoted}"`);
 }
 
+// xdg-utils' generic resolver reads the first Exec token without applying the
+// desktop-entry quoting rules. Restrict explicit launcher overrides to a small
+// portable character set so they can be emitted as one unquoted token.
+export function isSafeUnquotedDesktopEntryExecTarget(value: string): boolean {
+  return /^\/[A-Za-z0-9._+/-]+$/.test(value);
+}
+
 // The AppImage integration entry owns the window identity and icon. This
 // hidden URL-only entry must not compete with it for StartupWMClass matching.
 export function renderUrlHandlerDesktopEntry(input: {
   readonly displayName: string;
   readonly execTarget: string;
+  readonly unquotedExecTarget?: boolean;
   readonly scheme: string;
 }): string {
+  const renderedExecTarget =
+    input.unquotedExecTarget && isSafeUnquotedDesktopEntryExecTarget(input.execTarget)
+      ? input.execTarget
+      : escapeDesktopEntryExecArgument(input.execTarget);
   return [
     "[Desktop Entry]",
     "Type=Application",
     `Name=${escapeDesktopEntryString(input.displayName)}`,
-    `Exec=${escapeDesktopEntryExecArgument(input.execTarget)} %U`,
+    `Exec=${renderedExecTarget} %U`,
     "Terminal=false",
     "NoDisplay=true",
     "StartupNotify=false",
@@ -103,16 +115,88 @@ export const make = Effect.gen(function* () {
     URL_HANDLER_DESKTOP_ENTRY_NAME,
   );
 
+  const defaultExecTarget = {
+    path: Option.getOrElse(environment.appImagePath, () => process.execPath),
+    unquoted: false,
+  } as const;
+
+  const resolveExecTarget = Effect.gen(function* () {
+    const override = Option.getOrUndefined(environment.linuxUrlHandlerExecutableOverride);
+    if (override === undefined) {
+      return defaultExecTarget;
+    }
+
+    if (!environment.path.isAbsolute(override)) {
+      yield* logWarning("ignoring invalid URL handler executable override", {
+        scheme,
+        reason: "path-not-absolute",
+      });
+      return defaultExecTarget;
+    }
+    if (override.includes("\0")) {
+      yield* logWarning("ignoring invalid URL handler executable override", {
+        scheme,
+        reason: "path-contains-null",
+      });
+      return defaultExecTarget;
+    }
+
+    const normalizedOverride = environment.path.normalize(override);
+    if (!isSafeUnquotedDesktopEntryExecTarget(normalizedOverride)) {
+      yield* logWarning("ignoring invalid URL handler executable override", {
+        scheme,
+        reason: "path-not-safe-unquoted",
+      });
+      return defaultExecTarget;
+    }
+
+    const executableInfo = yield* fileSystem.stat(normalizedOverride).pipe(
+      Effect.map(Option.some),
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    if (Option.isNone(executableInfo) || executableInfo.value.type !== "File") {
+      yield* logWarning("ignoring invalid URL handler executable override", {
+        scheme,
+        reason: "path-not-file",
+      });
+      return defaultExecTarget;
+    }
+
+    const executableProbe = ChildProcess.make("test", ["-x", normalizedOverride], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const executableProbeExitCode = yield* spawner.exitCode(executableProbe).pipe(
+      Effect.map(Number),
+      Effect.orElseSucceed(() => 1),
+    );
+    if (executableProbeExitCode !== 0) {
+      yield* logWarning("ignoring invalid URL handler executable override", {
+        scheme,
+        reason: "path-not-executable",
+      });
+      return defaultExecTarget;
+    }
+
+    return { path: normalizedOverride, unquoted: true } as const;
+  });
+
   const writeDesktopEntry = Effect.gen(function* () {
     // Inside the mounted AppImage, process.execPath points at a transient
     // /tmp/.mount_* path — the handler must launch the AppImage itself.
-    const execTarget = Option.getOrElse(environment.appImagePath, () => process.execPath);
+    // A fleet launcher may opt into a stable executable without changing
+    // APPIMAGE, which electron-updater still needs to identify the artifact.
+    // Every launch route must carry the override or the next registration will
+    // intentionally rewrite this entry back to the APPIMAGE/process fallback.
+    const execTarget = yield* resolveExecTarget;
     yield* fileSystem.makeDirectory(environment.linuxApplicationsDir, { recursive: true });
     yield* fileSystem.writeFileString(
       desktopEntryPath,
       renderUrlHandlerDesktopEntry({
         displayName: environment.displayName,
-        execTarget,
+        execTarget: execTarget.path,
+        unquotedExecTarget: execTarget.unquoted,
         scheme,
       }),
     );

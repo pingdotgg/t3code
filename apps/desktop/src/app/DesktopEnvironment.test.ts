@@ -47,6 +47,8 @@ describe("DesktopEnvironment", () => {
           T3CODE_DEV_REMOTE_T3_SERVER_ENTRY_PATH: " /remote/server.mjs ",
           T3CODE_OTLP_TRACES_URL: " http://127.0.0.1:4318/v1/traces ",
           T3CODE_OTLP_EXPORT_INTERVAL_MS: "2500",
+          APPIMAGE: "/opt/t3/T3-Code.AppImage",
+          T3CODE_LINUX_URL_HANDLER_EXECUTABLE: " /opt/t3/bin/t3code-nightly ",
         },
       );
 
@@ -79,6 +81,11 @@ describe("DesktopEnvironment", () => {
       assert.deepEqual(environment.commitHashOverride, Option.some("0123456789abcdef"));
       assert.deepEqual(environment.otlpTracesUrl, Option.some("http://127.0.0.1:4318/v1/traces"));
       assert.equal(environment.otlpExportIntervalMs, 2500);
+      assert.deepEqual(environment.appImagePath, Option.some("/opt/t3/T3-Code.AppImage"));
+      assert.deepEqual(
+        environment.linuxUrlHandlerExecutableOverride,
+        Option.some("/opt/t3/bin/t3code-nightly"),
+      );
     }),
   );
 

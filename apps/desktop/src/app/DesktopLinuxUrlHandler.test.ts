@@ -15,7 +15,21 @@ interface RecordedRegistration {
   readonly directories: string[];
   readonly files: Array<{ readonly path: string; readonly content: string }>;
   readonly commands: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }>;
+  readonly executableChecks: string[];
 }
+
+const normalizeAbsolutePath = (value: string): string => {
+  const segments: string[] = [];
+  for (const segment of value.split("/")) {
+    if (segment.length === 0 || segment === ".") continue;
+    if (segment === "..") {
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return `/${segments.join("/")}`;
+};
 
 const makeEnvironment = (overrides: Record<string, unknown> = {}) =>
   DesktopEnvironment.DesktopEnvironment.of({
@@ -26,7 +40,12 @@ const makeEnvironment = (overrides: Record<string, unknown> = {}) =>
     linuxWmClass: "t3code",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
-    path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
+    linuxUrlHandlerExecutableOverride: Option.none(),
+    path: {
+      join: (...parts: ReadonlyArray<string>) => parts.join("/"),
+      isAbsolute: (value: string) => value.startsWith("/"),
+      normalize: normalizeAbsolutePath,
+    },
     ...overrides,
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
@@ -51,6 +70,10 @@ const makeHandlerLayer = (
     readonly environment?: Record<string, unknown>;
     readonly xdgMimeExitCode?: number;
     readonly writeError?: PlatformError.PlatformError;
+    readonly executableOverrideMode?: number;
+    readonly executableOverrideType?: FileSystem.File.Type;
+    readonly executableOverrideStatError?: PlatformError.PlatformError;
+    readonly executableOverrideExitCode?: number;
   } = {},
 ) =>
   DesktopLinuxUrlHandler.layer.pipe(
@@ -68,6 +91,29 @@ const makeHandlerLayer = (
               : Effect.sync(() => {
                   recorded.files.push({ path, content });
                 }),
+          stat: (path) =>
+            Effect.sync(() => recorded.executableChecks.push(path)).pipe(
+              Effect.flatMap(() =>
+                input.executableOverrideStatError
+                  ? Effect.fail(input.executableOverrideStatError)
+                  : Effect.succeed({
+                      type: input.executableOverrideType ?? "File",
+                      mtime: Option.none(),
+                      atime: Option.none(),
+                      birthtime: Option.none(),
+                      dev: 0,
+                      ino: Option.none(),
+                      mode: input.executableOverrideMode ?? 0o755,
+                      nlink: Option.none(),
+                      uid: Option.none(),
+                      gid: Option.none(),
+                      rdev: Option.none(),
+                      size: FileSystem.Size(0),
+                      blksize: Option.none(),
+                      blocks: Option.none(),
+                    } satisfies FileSystem.File.Info),
+              ),
+            ),
         }),
         Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
@@ -80,7 +126,13 @@ const makeHandlerLayer = (
               command: childProcess.command,
               args: childProcess.args,
             });
-            return Effect.succeed(mockProcess(input.xdgMimeExitCode ?? 0));
+            return Effect.succeed(
+              mockProcess(
+                childProcess.command === "test"
+                  ? (input.executableOverrideExitCode ?? 0)
+                  : (input.xdgMimeExitCode ?? 0),
+              ),
+            );
           }),
         ),
       ),
@@ -100,6 +152,7 @@ const emptyRecording = (): RecordedRegistration => ({
   directories: [],
   files: [],
   commands: [],
+  executableChecks: [],
 });
 
 describe("DesktopLinuxUrlHandler", () => {
@@ -122,6 +175,29 @@ describe("DesktopLinuxUrlHandler", () => {
     assert.include(entry, "NoDisplay=true");
     assert.notInclude(entry, "StartupWMClass=");
     assert.include(entry, "MimeType=x-scheme-handler/t3code;");
+  });
+
+  it("renders a validated explicit launcher as an unquoted Exec token", () => {
+    const execTarget = "/home/alice/bin/t3code-nightly";
+    assert.isTrue(DesktopLinuxUrlHandler.isSafeUnquotedDesktopEntryExecTarget(execTarget));
+
+    const entry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+      displayName: "T3 Code (Nightly)",
+      execTarget,
+      unquotedExecTarget: true,
+      scheme: "t3code",
+    });
+
+    assert.include(entry, `Exec=${execTarget} %U`);
+    assert.notInclude(entry, `Exec="${execTarget}" %U`);
+
+    const unsafeEntry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+      displayName: "T3 Code (Nightly)",
+      execTarget: "/home/alice/bin/t3 code",
+      unquotedExecTarget: true,
+      scheme: "t3code",
+    });
+    assert.include(unsafeEntry, 'Exec="/home/alice/bin/t3 code" %U');
   });
 
   it("carries structured context on registration errors", () => {
@@ -187,6 +263,88 @@ describe("DesktopLinuxUrlHandler", () => {
         recorded.files[0]?.content,
         `Exec=${DesktopLinuxUrlHandler.escapeDesktopEntryExecArgument(process.execPath)} %U`,
       );
+    });
+  });
+
+  it.effect("keeps an explicit executable stable across registrations", () => {
+    const first = emptyRecording();
+    const restarted = emptyRecording();
+    const executableOverride = Option.some("/home/alice/bin/../bin/t3code-nightly");
+
+    return Effect.gen(function* () {
+      yield* runRegister(first, {
+        environment: { linuxUrlHandlerExecutableOverride: executableOverride },
+      });
+      yield* runRegister(restarted, {
+        environment: {
+          appImagePath: Option.some("/home/alice/Applications/T3-Code-New.AppImage"),
+          linuxUrlHandlerExecutableOverride: executableOverride,
+        },
+      });
+
+      for (const recorded of [first, restarted]) {
+        assert.deepEqual(recorded.executableChecks, ["/home/alice/bin/t3code-nightly"]);
+        assert.include(recorded.files[0]?.content, "Exec=/home/alice/bin/t3code-nightly %U");
+        assert.deepEqual(recorded.commands, [
+          { command: "test", args: ["-x", "/home/alice/bin/t3code-nightly"] },
+          {
+            command: "xdg-mime",
+            args: ["default", "t3code-url-handler.desktop", "x-scheme-handler/t3code"],
+          },
+        ]);
+      }
+    });
+  });
+
+  it.effect("falls back when the executable override is invalid", () => {
+    const relative = emptyRecording();
+    const unsafe = emptyRecording();
+    const notExecutable = emptyRecording();
+    const missing = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(relative, {
+        environment: {
+          linuxUrlHandlerExecutableOverride: Option.some("bin/t3code-nightly"),
+        },
+      });
+      yield* runRegister(notExecutable, {
+        environment: {
+          linuxUrlHandlerExecutableOverride: Option.some("/home/alice/bin/t3code-nightly"),
+        },
+        // A raw mode-bit check would accept this group-only executable, even
+        // when the current user cannot execute it. The effective-user probe
+        // is authoritative.
+        executableOverrideMode: 0o010,
+        executableOverrideExitCode: 1,
+      });
+      yield* runRegister(unsafe, {
+        environment: {
+          linuxUrlHandlerExecutableOverride: Option.some("/home/alice/bin/t3 code"),
+        },
+      });
+      yield* runRegister(missing, {
+        environment: {
+          linuxUrlHandlerExecutableOverride: Option.some("/home/alice/bin/missing"),
+        },
+        executableOverrideStatError: PlatformError.systemError({
+          _tag: "NotFound",
+          module: "FileSystem",
+          method: "stat",
+          pathOrDescriptor: "/home/alice/bin/missing",
+        }),
+      });
+
+      assert.deepEqual(relative.executableChecks, []);
+      assert.deepEqual(unsafe.executableChecks, []);
+      assert.deepEqual(notExecutable.executableChecks, ["/home/alice/bin/t3code-nightly"]);
+      assert.deepEqual(missing.executableChecks, ["/home/alice/bin/missing"]);
+      for (const recorded of [relative, unsafe, notExecutable, missing]) {
+        assert.include(
+          recorded.files[0]?.content,
+          'Exec="/home/alice/Applications/T3-Code.AppImage" %U',
+        );
+      }
     });
   });
 
