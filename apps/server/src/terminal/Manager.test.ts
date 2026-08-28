@@ -27,6 +27,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
@@ -1509,6 +1510,41 @@ it.layer(
     }),
   );
 
+  it.effect("identifies spawned terminals as T3 Code", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, { env: {} });
+
+      yield* manager.open(openInput());
+
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      expect(spawnInput.env.TERM_PROGRAM).toBe("t3code");
+      expect(spawnInput.env.TERM_PROGRAM_VERSION).toBe(packageJson.version);
+    }),
+  );
+
+  it.effect("overrides inherited parent terminal identity", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          TERM_PROGRAM: "Apple_Terminal",
+          TERM_PROGRAM_VERSION: "2.14",
+        },
+      });
+
+      yield* manager.open(openInput());
+
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      expect(spawnInput.env.TERM_PROGRAM).toBe("t3code");
+      expect(spawnInput.env.TERM_PROGRAM_VERSION).toBe(packageJson.version);
+    }),
+  );
+
   it.effect("strips AppImage runtime env from terminal sessions", () =>
     Effect.gen(function* () {
       const appDir = "/tmp/.mount_T3Codeabc123";
@@ -1582,6 +1618,8 @@ it.layer(
             T3CODE_PROJECT_ROOT: "/repo",
             T3CODE_WORKTREE_PATH: "/repo/worktree-a",
             CUSTOM_FLAG: "1",
+            TERM_PROGRAM: "custom-terminal",
+            TERM_PROGRAM_VERSION: "custom-version",
           },
         }),
       );
@@ -1592,6 +1630,8 @@ it.layer(
       assert.equal(spawnInput.env.T3CODE_PROJECT_ROOT, "/repo");
       assert.equal(spawnInput.env.T3CODE_WORKTREE_PATH, "/repo/worktree-a");
       assert.equal(spawnInput.env.CUSTOM_FLAG, "1");
+      assert.equal(spawnInput.env.TERM_PROGRAM, "custom-terminal");
+      assert.equal(spawnInput.env.TERM_PROGRAM_VERSION, "custom-version");
     }),
   );
 
