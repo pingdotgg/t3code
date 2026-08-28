@@ -74,7 +74,12 @@ it.effect("keeps native installation identity stable across versioned executable
     native: {
       label: "Managed by native installer",
       updateArgs: ["update"],
-      ownsPath: (path) => path.includes("/.local/share/codex/versions/"),
+      ownsPath: (path) => path.includes("/.codex/packages/standalone/releases/"),
+      identityRoot: (path) => {
+        const marker = "/.codex/packages/standalone/releases/";
+        const markerIndex = path.indexOf(marker);
+        return markerIndex < 0 ? null : path.slice(0, markerIndex + marker.length - 1);
+      },
     },
     instructionsUrl: "https://developers.openai.com/codex/cli/",
   });
@@ -84,7 +89,8 @@ it.effect("keeps native installation identity stable across versioned executable
       context({
         binaryPath: "codex",
         resolvedCommandPath,
-        realCommandPath: "/home/test/.local/share/codex/versions/1.0.0",
+        realCommandPath:
+          "/home/test/.codex/packages/standalone/releases/1.0.0-x86_64-unknown-linux-musl/bin/codex",
       }),
       nativeCatalog,
     );
@@ -92,14 +98,16 @@ it.effect("keeps native installation identity stable across versioned executable
       context({
         binaryPath: "codex",
         resolvedCommandPath,
-        realCommandPath: "/home/test/.local/share/codex/versions/1.1.0",
+        realCommandPath:
+          "/home/test/.codex/packages/standalone/releases/1.1.0-x86_64-unknown-linux-musl/bin/codex",
       }),
       nativeCatalog,
     );
 
     expect(before.identityKey).toBe(after.identityKey);
-    expect(before.update?.executable).toBe("/home/test/.local/share/codex/versions/1.0.0");
-    expect(after.update?.executable).toBe("/home/test/.local/share/codex/versions/1.1.0");
+    expect(before.lockKey).toBe(after.lockKey);
+    expect(before.update?.executable).toContain("/releases/1.0.0-");
+    expect(after.update?.executable).toContain("/releases/1.1.0-");
   });
 });
 

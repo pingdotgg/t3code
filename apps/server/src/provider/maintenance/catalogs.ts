@@ -26,6 +26,7 @@ export interface ProviderMaintenanceDefinitionInput {
     readonly label: string;
     readonly updateArgs: ReadonlyArray<string>;
     readonly ownsPath: (normalizedPath: string) => boolean;
+    readonly identityRoot?: (normalizedPath: string) => string | null;
     readonly environment?: (
       executable: string,
       environment: NodeJS.ProcessEnv,
@@ -364,7 +365,9 @@ function nativeDefinition(input: ProviderMaintenanceDefinitionInput) {
         resolved(input, context, {
           kind: "native",
           label: native.label,
-          root: pathApi(context).dirname(executable),
+          root:
+            native.identityRoot?.(normalize(context, executable)) ??
+            pathApi(context).dirname(executable),
           executable,
           identityExecutable: context.resolvedCommandPath ?? executable,
           currentVersion: null,

@@ -8,9 +8,13 @@ import * as NodeProcess from "node:process";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import { HttpClient } from "effect/unstable/http";
 import { GrokMaintenanceResolver } from "./Drivers/GrokDriver.ts";
+import type { InstallationContext } from "./maintenance/definition.ts";
 import {
   createProviderVersionAdvisory,
   enrichProviderSnapshotWithVersionAdvisory,
@@ -46,6 +50,14 @@ const packageToolUpdate = makeProviderMaintenanceResolver({
   executableName: "package-tool",
   homebrewFormula: "package-tool",
   nativeUpdate: null,
+});
+const codexStandaloneUpdate = makeProviderMaintenanceResolver({
+  provider: driver("codex"),
+  packageName: "@openai/codex",
+  executableName: "codex",
+  homebrewFormula: "codex",
+  nativeUpdate: null,
+  instructionsUrl: "https://developers.openai.com/codex/cli/",
 });
 const nativePackageToolUpdate = makeProviderMaintenanceResolver({
   provider: driver("nativePackageTool"),
@@ -129,6 +141,75 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       });
       expect(yield* disabled.advisory).toEqual(fallback);
       expect(probeCount).toBe(3);
+    }),
+  );
+
+  it.effect("does not cache an interrupted advisory probe", () =>
+    Effect.gen(function* () {
+      let probeCount = 0;
+      const firstProbeStarted = yield* Deferred.make<void>();
+      const fallback = packageToolUpdate.resolve();
+      const capabilities = makeProviderMaintenanceCapabilities({
+        provider: driver("packageTool"),
+        packageName: "@example/package-tool",
+        updateExecutable: null,
+        updateArgs: [],
+        updateLockKey: null,
+        currentVersion: "1.0.0",
+      });
+      const resolveFresh = Effect.gen(function* () {
+        probeCount += 1;
+        if (probeCount === 1) {
+          yield* Deferred.succeed(firstProbeStarted, undefined);
+          return yield* Effect.never;
+        }
+        return capabilities;
+      });
+      const sources = yield* makeProviderMaintenanceCapabilitySources(resolveFresh, fallback, {
+        enabled: true,
+      });
+      const interruptedProbe = yield* Effect.forkChild(sources.advisory);
+      yield* Deferred.await(firstProbeStarted);
+      yield* Fiber.interrupt(interruptedProbe);
+
+      const next = yield* sources.advisory.pipe(Effect.exit);
+      expect(Exit.isSuccess(next)).toBe(true);
+      expect(Exit.isSuccess(next) ? next.value : null).toEqual(capabilities);
+      expect(probeCount).toBe(2);
+    }),
+  );
+
+  it.effect("keeps Codex standalone identity stable across release directories", () =>
+    Effect.gen(function* () {
+      const resolveInstallation = codexStandaloneUpdate.resolveInstallation;
+      if (!resolveInstallation) {
+        return yield* Effect.die("missing installation resolver");
+      }
+      const resolve = (version: string) => {
+        const resolvedCommandPath = "/home/test/.local/bin/codex";
+        const context: InstallationContext = {
+          provider: driver("codex"),
+          packageName: "@openai/codex",
+          binaryPath: "codex",
+          isBareCommand: true,
+          resolvedCommandPath,
+          realCommandPath: `/home/test/.codex/packages/standalone/releases/${version}-x86_64-unknown-linux-musl/bin/codex`,
+          environment: { PATH: "/home/test/.local/bin" },
+          platform: "linux",
+          readTextFile: () => Effect.succeed(null),
+          realPath: (path) => Effect.succeed(path),
+          resolveCommand: () => Effect.succeed(null),
+          run: () => Effect.succeed(null),
+        };
+        return resolveInstallation(context);
+      };
+      const before = yield* resolve("1.0.0");
+      const after = yield* resolve("1.1.0");
+
+      expect(before.identityKey).toBe(after.identityKey);
+      expect(before.lockKey).toBe(after.lockKey);
+      expect(before.ownershipVerified).toBe(true);
+      expect(after.ownershipVerified).toBe(true);
     }),
   );
 

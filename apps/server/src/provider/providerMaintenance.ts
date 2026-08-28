@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -13,7 +14,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -26,6 +29,7 @@ import { compareMaintenanceVersions } from "./maintenance/version.ts";
 const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const MAINTENANCE_PROBE_TIMEOUT_MS = 10_000;
+const MAINTENANCE_ADVISORY_CACHE_TTL_MS = 5 * 60 * 1_000;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
 const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
@@ -223,6 +227,13 @@ export function normalizeCommandPath(commandPath: string): string {
   return commandPath.replaceAll("\\", "/").toLowerCase();
 }
 
+function codexStandaloneRoot(commandPath: string): string | null {
+  const normalized = normalizeCommandPath(commandPath);
+  const marker = "/.codex/packages/standalone/releases/";
+  const markerIndex = normalized.indexOf(marker);
+  return markerIndex < 0 ? null : normalized.slice(0, markerIndex + marker.length - 1);
+}
+
 export function makeProviderMaintenanceResolver(
   definition: ProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilitiesResolver {
@@ -244,7 +255,8 @@ export function makeProviderMaintenanceResolver(
         ? {
             label: "Managed by Codex standalone installer",
             updateArgs: ["update"],
-            ownsPath: (path) => path.includes("/.codex/packages/standalone/releases/"),
+            ownsPath: (path) => codexStandaloneRoot(path) !== null,
+            identityRoot: codexStandaloneRoot,
           }
         : null,
     instructionsUrl: definition.instructionsUrl ?? "https://t3.codes/docs/providers",
@@ -319,15 +331,32 @@ export const makeProviderMaintenanceCapabilitySources = Effect.fn(
     } as const;
   }
 
-  const [advisory, invalidateAdvisory] = yield* Effect.cachedInvalidateWithTTL(
-    resolveFresh,
-    "5 minutes",
+  const advisoryCache = yield* Ref.make<{
+    readonly expiresAt: number;
+    readonly value: ProviderMaintenanceCapabilities;
+  } | null>(null);
+  const advisorySemaphore = yield* Semaphore.make(1);
+  const invalidateAdvisory = Ref.set(advisoryCache, null);
+  const advisory = advisorySemaphore.withPermits(1)(
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const cached = yield* Ref.get(advisoryCache);
+      if (cached && now < cached.expiresAt) {
+        return cached.value;
+      }
+      const value = yield* resolveFresh;
+      yield* Ref.set(advisoryCache, {
+        expiresAt: (yield* Clock.currentTimeMillis) + MAINTENANCE_ADVISORY_CACHE_TTL_MS,
+        value,
+      });
+      return value;
+    }),
   );
   return {
     advisory,
     // Update execution must never trust cached ownership. Invalidating here
     // also makes the next advisory observe the post-update installation.
-    fresh: invalidateAdvisory.pipe(Effect.andThen(resolveFresh)),
+    fresh: advisorySemaphore.withPermits(1)(invalidateAdvisory.pipe(Effect.andThen(resolveFresh))),
   } as const;
 });
 
