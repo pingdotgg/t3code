@@ -180,7 +180,15 @@ export function parseGrokBillingWindows(document: unknown): UsageLimitWindow[] {
     string,
     unknown
   >;
-  if (typeof creditUsagePercent !== "number" || !Number.isFinite(creditUsagePercent)) return [];
+  // The backend serializes proto3 JSON, which drops zero-valued scalars: at
+  // 0% usage `creditUsagePercent` is absent entirely. Treat absence as zero
+  // when the period fields confirm this is really the credits document.
+  const isCreditsDocument =
+    (typeof currentPeriod === "object" && currentPeriod !== null) ||
+    typeof billingPeriodEnd === "string";
+  const usagePercentValue =
+    creditUsagePercent === undefined && isCreditsDocument ? 0 : creditUsagePercent;
+  if (typeof usagePercentValue !== "number" || !Number.isFinite(usagePercentValue)) return [];
 
   let periodType: string | null = null;
   let periodEnd: string | null = null;
@@ -200,7 +208,7 @@ export function parseGrokBillingWindows(document: unknown): UsageLimitWindow[] {
       id: "credits",
       label: title.label,
       detail: `All products · ${title.detail}`,
-      utilization: clampUtilization(creditUsagePercent),
+      utilization: clampUtilization(usagePercentValue),
       resetsAt: periodEnd,
     },
   ];

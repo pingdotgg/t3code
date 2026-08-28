@@ -162,8 +162,40 @@ describe("parseGrokBillingWindows", () => {
     ]);
   });
 
+  it("reads zero usage when proto3 JSON omits the zero-valued percent", () => {
+    // Shape observed live at 0% weekly usage (grok CLI 1.0.5): the backend's
+    // proto3 JSON drops `creditUsagePercent` and `productUsage` entirely.
+    const zeroUsageResponse = {
+      config: {
+        currentPeriod: {
+          type: "USAGE_PERIOD_TYPE_WEEKLY",
+          start: "2026-08-17T03:52:10.269564+00:00",
+          end: "2026-08-24T03:52:10.269564+00:00",
+        },
+        onDemandCap: { val: 0 },
+        onDemandUsed: { val: 0 },
+        isUnifiedBillingUser: true,
+        prepaidBalance: { val: 0 },
+        topUpMethod: "TOP_UP_METHOD_SAVED_PAYMENT_METHOD",
+        billingPeriodStart: "2026-08-17T03:52:10.269564+00:00",
+        billingPeriodEnd: "2026-08-24T03:52:10.269564+00:00",
+      },
+    };
+    expect(parseGrokBillingWindows(zeroUsageResponse)).toEqual([
+      {
+        id: "credits",
+        label: "Weekly limit",
+        detail: "All products · weekly credit window",
+        utilization: 0,
+        resetsAt: "2026-08-24T03:52:10.269564+00:00",
+      },
+    ]);
+  });
+
   it("returns empty for malformed documents", () => {
     expect(parseGrokBillingWindows(null)).toEqual([]);
     expect(parseGrokBillingWindows({ config: { creditUsagePercent: "lots" } })).toEqual([]);
+    // Absence only means zero inside a recognizable credits document.
+    expect(parseGrokBillingWindows({ config: { unrelated: true } })).toEqual([]);
   });
 });
