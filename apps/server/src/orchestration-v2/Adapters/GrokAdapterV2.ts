@@ -21,6 +21,7 @@ import {
   resolveGrokAcpBaseModelId,
 } from "../../provider/acp/GrokAcpSupport.ts";
 import {
+  extractGrokPlanMarkdownFromToolCallData,
   extractXAiAcpBackgroundToolMutation,
   extractXAiAcpSubagentEndNotice,
   extractXAiAcpSubagentUpdate,
@@ -30,11 +31,14 @@ import {
   extractXAiKilledBackgroundTasks,
   extractXAiMonitorTaskId,
   isXAiPersistentMonitor,
+  extractXAiExitPlanMarkdown,
   makeXAiAskUserQuestionCancelledResponse,
   makeXAiAskUserQuestionResponse,
+  makeXAiExitPlanModeCapturedResponse,
   normalizeXAiAcpToolCallState,
   registerXAiBackgroundTaskTracking,
   XAiAskUserQuestionRequest,
+  XAiExitPlanModeRequest,
 } from "../../provider/acp/XAiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
@@ -114,9 +118,48 @@ export const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["register
   runtime,
   requestUserInput,
   applyBackgroundTaskMutation,
+  captureProposedPlan,
+  lastProposedPlanMarkdown,
 }) =>
   registerXAiBackgroundTaskTracking(runtime, applyBackgroundTaskMutation).pipe(
     Effect.andThen(registerGrokAskUserQuestionExtensions({ runtime, requestUserInput })),
+    Effect.andThen(
+      registerGrokExitPlanModeExtensions({
+        runtime,
+        captureProposedPlan,
+        lastProposedPlanMarkdown,
+      }),
+    ),
+  );
+
+/**
+ * Grok intercepts exit_plan_mode and reverse-requests client approval. Capture
+ * the plan into T3's proposed-plan card and abandon the native gate so the
+ * turn does not hang (#8358; mirrors the Claude ExitPlanMode pattern). Plan
+ * content preference: the request payload, then the plan.md contents sniffed
+ * from tool calls this turn, then the empty-state placeholder.
+ */
+const registerGrokExitPlanModeExtensions = ({
+  runtime,
+  captureProposedPlan,
+  lastProposedPlanMarkdown,
+}: Pick<
+  AcpAdapterV2ExtensionContext,
+  "runtime" | "captureProposedPlan" | "lastProposedPlanMarkdown"
+>) =>
+  Effect.forEach(
+    ["x.ai/exit_plan_mode", "_x.ai/exit_plan_mode"] as const,
+    (method) =>
+      runtime.handleExtRequest(method, XAiExitPlanModeRequest, (params) =>
+        Effect.gen(function* () {
+          const fallback = yield* lastProposedPlanMarkdown;
+          yield* captureProposedPlan({
+            planMarkdown: extractXAiExitPlanMarkdown(params, fallback),
+          });
+          return makeXAiExitPlanModeCapturedResponse();
+        }),
+      ),
+    { discard: true },
   );
 
 const registerGrokAskUserQuestionExtensions = ({
@@ -193,6 +236,13 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     extractSubagentUpdate: extractXAiAcpSubagentUpdate,
     extractSubagentEndNotice: extractXAiAcpSubagentEndNotice,
     normalizeToolCall: normalizeXAiAcpToolCallState,
+    // Show the plan while Grok is still writing it: plan.md writes under the
+    // Grok session dir surface as the proposed-plan card before exit (#8358).
+    extractProposedPlanMarkdown: (toolCall) =>
+      extractGrokPlanMarkdownFromToolCallData(toolCall.data, {
+        platform: process.platform,
+        environment: process.env,
+      }),
     extractBackgroundTaskId: extractXAiMonitorTaskId,
     extractBackgroundToolMutation: extractXAiAcpBackgroundToolMutation,
     extractBackgroundTaskCompletion: (toolCall) => [
