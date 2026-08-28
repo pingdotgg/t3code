@@ -14,6 +14,7 @@ import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme"
 import { cn } from "../../lib/utils";
 import {
   getThemeDefinition,
+  singleAppearanceOf,
   getThemeModes,
   removeCustomThemes,
   serializeThemeFile,
@@ -834,12 +835,9 @@ export function ThemeLibrary({
                 })
               }
               onUse={() => {
-                // A published theme is usually single-appearance, and replacing
-                // the base preference would drop the other half of a configured
-                // light/dark mix. Same rule the saved-theme cards follow.
-                const modes = getThemeModes(environmentTheme);
-                if (modes.length === 1) assignHalf(modes[0]!, environmentTheme.id);
-                else persistTheme(environmentTheme.id);
+                const half = singleAppearanceOf(environmentTheme);
+                if (half === null) persistTheme(environmentTheme.id);
+                else assignHalf(half, environmentTheme.id);
               }}
               onUseMode={handlePairPick(environmentTheme.id)}
               theme={getThemeCardDefinition(environmentTheme)}

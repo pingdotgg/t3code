@@ -1,11 +1,12 @@
 import { EnvironmentThemeFile } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -172,6 +173,7 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         "malformed.json": "{ not json",
         "no-colors.json": '{ "name": "Empty", "appearance": "dark" }',
         "Bad Name.json": encodeThemeFile(SHARED_THEME),
+        "ocean.json": encodeThemeFile(SHARED_THEME),
         "dark.json": encodeThemeFile(SHARED_THEME),
         "notes.txt": "not a theme",
       },
@@ -182,5 +184,52 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         );
       }),
     ),
+  );
+});
+
+// The feature's headline claim: rewrite a file and connected clients retint
+// without a restart. Live clock and a real filesystem event, so this proves
+// the watcher rather than a direct read. Kept outside the it.layer block above
+// because only the top-level `it` exposes `live`.
+describe("environment theme watching", () => {
+  it.live("streams a set for every change to the directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-theme-watch-" });
+      const themesDir = path.join(baseDir, "userdata", "themes");
+      yield* fs.makeDirectory(themesDir, { recursive: true });
+
+      yield* Effect.gen(function* () {
+        const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
+        const seen = yield* Queue.unbounded<ReadonlyArray<{ readonly id: string }>>();
+        yield* Stream.runForEach(environmentTheme.streamChanges, (themes) =>
+          Queue.offer(seen, themes),
+        ).pipe(Effect.forkScoped);
+
+        // Empty to start.
+        assert.deepEqual(yield* Queue.take(seen), []);
+
+        // Published atomically, the way a theme hook writes it.
+        const staging = path.join(baseDir, "staged.json");
+        yield* fs.writeFileString(staging, encodeThemeFile(NIGHTFALL_THEME));
+        yield* fs.rename(staging, path.join(themesDir, "nightfall.json"));
+        assert.deepEqual(
+          (yield* Queue.take(seen)).map((theme) => theme.id),
+          ["nightfall"],
+        );
+
+        // Removed again, and the set empties without a restart.
+        yield* fs.remove(path.join(themesDir, "nightfall.json"));
+        assert.deepEqual(yield* Queue.take(seen), []);
+      }).pipe(
+        Effect.provide(
+          EnvironmentTheme.layer.pipe(
+            Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          ),
+        ),
+        Effect.timeout("30 seconds"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

@@ -534,8 +534,11 @@ export const ServerConfig = Schema.Struct({
    */
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
   /**
-   * Palettes published by this environment's machine. Absent when the machine
-   * publishes none, or on servers that predate the feature.
+   * Palettes published by this environment's machine. Never sent in a config
+   * snapshot: the theme stream emits the current set before any change, so a
+   * snapshot carrying it too would hand every subscriber the same array twice
+   * per connect. Clients populate this by projecting `environmentThemesUpdated`,
+   * and it stays absent for subscribers that did not opt in.
    */
   environmentThemes: Schema.optional(Schema.Array(EnvironmentTheme)),
 });

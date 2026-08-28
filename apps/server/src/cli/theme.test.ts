@@ -248,6 +248,77 @@ describe("t3 theme", () => {
     }),
   );
 
+  // The watcher skips files it cannot use, so accepting their filename would
+  // set a theme no client ever receives.
+  it.effect("rejects an id whose published file the watcher would skip", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const themesDir = NodePath.join(baseDir, "userdata", "themes");
+      NodeFS.mkdirSync(themesDir, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(themesDir, "broken.json"), "{ not json\n");
+
+      const failure = yield* runCli(["theme", "set", "broken", "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+      assert.include(String(failure), "No theme named");
+    }),
+  );
+
+  // Web and desktop cannot resolve the mobile default, and mobile does not
+  // follow this setting, so naming it would be a silent no-op.
+  it.effect("rejects the mobile default theme id", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const failure = yield* runCli(["theme", "set", "t3-code", "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+      assert.include(String(failure), "No theme named");
+    }),
+  );
+
+  // Deciding on existence alone would publish ./ocean instead of selecting the
+  // built-in, purely because of what happens to be in the working directory.
+  it.effect("treats a bare id as an id even when a file shares its name", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const cwdFile = NodePath.join(baseDir, "ocean");
+      NodeFS.writeFileSync(cwdFile, NIGHTFALL_THEME_JSON);
+
+      const previous = process.cwd();
+      process.chdir(baseDir);
+      try {
+        yield* runCli(["theme", "set", "ocean", "--base-dir", baseDir]);
+      } finally {
+        process.chdir(previous);
+      }
+
+      assert.equal(readSettings(baseDir).defaultTheme, "ocean");
+      assert.equal(
+        NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes", "ocean.json")),
+        false,
+      );
+    }),
+  );
+
+  // The watcher would skip an oversized file, so publishing one must not
+  // report success for a theme no client receives.
+  it.effect("rejects a theme file larger than the watcher will read", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const themeFile = NodePath.join(baseDir, "huge.json");
+      const padding = "x".repeat(40 * 1024);
+      NodeFS.writeFileSync(
+        themeFile,
+        `{ "name": "Huge", "appearance": "dark", "canvas": "#1a1b26", "accent": "#7aa2f7", "note": "${padding}" }\n`,
+      );
+
+      const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+      assert.include(String(failure), "larger than");
+    }),
+  );
+
   it.effect("refuses a settings file that is not a JSON object", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();

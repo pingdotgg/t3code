@@ -9,6 +9,7 @@ import {
   IRIS_THEME,
   OCEAN_THEME,
   T3_CHAT_THEME,
+  RESERVED_THEME_IDS,
   THEME_COLOR_ROLES,
   type ThemeAppearance,
   type ThemeColorRole,
@@ -57,21 +58,8 @@ export type ThemeFile = Readonly<{
   managed?: boolean;
 }>;
 
-const RESERVED_THEME_IDS = new Set([
-  "system",
-  "light",
-  "dark",
-  T3_CHAT_THEME_ID,
-  GROVE_THEME_ID,
-  OCEAN_THEME_ID,
-  EMBER_THEME_ID,
-  IRIS_THEME_ID,
-  LEGACY_T3_CHAT_DARK_THEME_ID,
-  "t3-grove",
-  "t3-ocean",
-  "t3-ember",
-  "t3-iris",
-]);
+// Reserved ids come from shared so the CLI, the server watcher, and this
+// library cannot drift on what a published theme may be called.
 
 /**
  * The environment's palettes are not saved: they are republished by the
@@ -1475,6 +1463,17 @@ export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId)?.sidebarArtwork ===
     true
   );
+}
+
+/**
+ * Which half a theme can claim, or null when it renders both appearances.
+ * Selecting a single-appearance theme as the base preference would clear the
+ * light/dark mix and leave the appearance tiles disagreeing with what is on
+ * screen, so every path that selects a theme has to make the same call.
+ */
+export function singleAppearanceOf(theme: ThemeDefinition): ThemeAppearance | null {
+  const modes = getThemeModes(theme);
+  return modes.length === 1 ? modes[0]! : null;
 }
 
 export function getThemeColorsForMode(

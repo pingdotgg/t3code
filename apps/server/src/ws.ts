@@ -1168,7 +1168,6 @@ const makeWsRpcLayer = (
         const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
           externalLauncher.resolveAvailableEditors(),
         );
-        const publishedThemes = yield* environmentTheme.current;
         const fileManagerRevealKind = availableEditors.includes("file-manager")
           ? yield* resolveFileManagerRevealKindForConfig(
               externalLauncher.resolveFileManagerRevealKind(),
@@ -1209,7 +1208,6 @@ const makeWsRpcLayer = (
               }),
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
-          environmentThemes: publishedThemes.length > 0 ? publishedThemes : undefined,
         };
       });
 
@@ -2404,9 +2402,13 @@ const makeWsRpcLayer = (
                 })),
                 Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );
-              // Gated on the subscriber's capability flag: an already-shipped
-              // client decodes this stream against the old event union and its
-              // whole config subscription dies on an unknown member.
+              // The only source of published themes: the stream emits the
+              // current set before any change, so the snapshot carrying it too
+              // would just send every client the same array twice per connect.
+              // Gated on the subscriber's capability flag because an
+              // already-shipped client decodes this stream against the old
+              // event union and its whole config subscription dies on an
+              // unknown member.
               const environmentThemeUpdates =
                 input.environmentThemes === true
                   ? environmentTheme.streamChanges.pipe(

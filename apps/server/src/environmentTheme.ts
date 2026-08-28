@@ -18,6 +18,7 @@ import {
   EnvironmentThemeId,
   environmentThemeFileHasColors,
 } from "@t3tools/contracts";
+import { UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -26,6 +27,8 @@ import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -41,6 +44,22 @@ const decodeEnvironmentThemeFileJsonExit = Schema.decodeUnknownExit(
 const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
 
 const THEME_FILE_SUFFIX = ".json";
+
+/**
+ * Bounds on what a machine can publish. The directory is local, so this is not
+ * a trust boundary -- but an accidental dump of large files there would
+ * otherwise be read in full, streamed to every client, and repainted, so the
+ * cost of a mistake is capped rather than unbounded.
+ */
+const MAX_THEME_FILES = 32;
+/** Exported so the publish path cannot accept a file the watcher will skip. */
+export const MAX_THEME_FILE_BYTES = 32 * 1024;
+/**
+ * The set travels whole in a websocket event to every subscriber, so the sum
+ * matters more than any single file. An exported theme runs a few KB, leaving
+ * this far above any real directory while keeping a mistake off the wire.
+ */
+const MAX_THEME_TOTAL_BYTES = 192 * 1024;
 
 /** The published set with the sequence number it was observed at. */
 interface PublishedThemes {
@@ -67,9 +86,112 @@ export class EnvironmentThemeService extends Context.Service<
   }
 >()("t3/environmentTheme/EnvironmentThemeService") {}
 
-export const make = Effect.gen(function* () {
+/**
+ * Every theme the directory actually publishes. A file that is missing,
+ * unreadable, malformed, colorless, or misnamed is simply skipped; the rest of
+ * the set is unaffected. The one place that decides what "published" means, so
+ * a caller validating an id cannot disagree with the watcher serving it.
+ */
+export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const entries = yield* fs
+    .readDirectory(themesDir)
+    .pipe(Effect.orElseSucceed((): Array<string> => []));
+
+  // Resolved once: every entry is compared against the directory's own real
+  // path, so a symlinked themes directory stays usable while a symlinked file
+  // inside it does not.
+  const resolvedDir = yield* fs.realPath(themesDir).pipe(Effect.option);
+
+  const themes: Array<EnvironmentTheme> = [];
+  let examined = 0;
+  let totalBytes = 0;
+  for (const entry of entries.toSorted()) {
+    if (!entry.endsWith(THEME_FILE_SUFFIX)) continue;
+    const id = entry.slice(0, -THEME_FILE_SUFFIX.length);
+    // A reserved id is either shadowed by a built-in on the client or captures
+    // clients that never chose it, so it is not publishable.
+    if (!isEnvironmentThemeId(id) || UNPUBLISHABLE_THEME_IDS.has(id)) continue;
+
+    // Counts files examined, not themes accepted: capping the output would
+    // let a directory of malformed files be stat'd, read, and decoded in full
+    // on every refresh and every client connect.
+    examined += 1;
+    if (examined > MAX_THEME_FILES) {
+      yield* Effect.logWarning("ignoring environment theme files past the limit", {
+        path: themesDir,
+        limit: MAX_THEME_FILES,
+      });
+      break;
+    }
+
+    const filePath = `${themesDir}/${entry}`;
+    // fs.stat follows symlinks, so a type check alone would happily read a
+    // link pointing anywhere on the machine. Requiring the resolved target to
+    // stay in this directory is what actually confines it; the type check then
+    // stops a FIFO or device node from blocking the read forever.
+    const resolved = yield* fs.realPath(filePath).pipe(Effect.option);
+    const info = yield* fs.stat(filePath).pipe(Effect.option);
+    const usable =
+      Option.isSome(resolvedDir) &&
+      Option.isSome(resolved) &&
+      resolved.value === path.join(resolvedDir.value, entry) &&
+      Option.isSome(info) &&
+      info.value.type === "File" &&
+      Number(info.value.size) <= MAX_THEME_FILE_BYTES;
+    if (!usable) {
+      yield* Effect.logWarning("ignoring unusable environment theme file", {
+        path: filePath,
+        limit: MAX_THEME_FILE_BYTES,
+      });
+      continue;
+    }
+
+    const raw = yield* fs.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
+    if (raw.trim().length === 0) continue;
+
+    totalBytes += raw.length;
+
+    if (totalBytes > MAX_THEME_TOTAL_BYTES) {
+      yield* Effect.logWarning("ignoring environment themes past the total size limit", {
+        path: themesDir,
+
+        limit: MAX_THEME_TOTAL_BYTES,
+      });
+
+      break;
+    }
+
+    const decoded = decodeEnvironmentThemeFileJsonExit(raw);
+    if (decoded._tag === "Failure") {
+      yield* Effect.logWarning("ignoring invalid environment theme", {
+        path: filePath,
+        detail: Cause.pretty(decoded.cause),
+      });
+      continue;
+    }
+    const file = decoded.value;
+    if (!environmentThemeFileHasColors(file)) {
+      yield* Effect.logWarning("ignoring environment theme without colors", { path: filePath });
+      continue;
+    }
+    themes.push({ id, ...file });
+  }
+  return themes;
+});
+
+/**
+ * Reads the directory and folds it into the sequenced state, publishing only
+ * a genuine change. Every reader goes through here, so the snapshot a client
+ * connects on and the events it then receives come from one ordered source
+ * rather than from disk and the queue independently.
+ */
+
+const make = Effect.gen(function* () {
   const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
+  const pathService = yield* Path.Path;
   /**
    * Every observed set carries a sequence number, so a subscriber can drop
    * queued events that predate the snapshot it started from. Without it a
@@ -89,50 +211,12 @@ export const make = Effect.gen(function* () {
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
 
-  /** A file that is missing, unreadable, malformed, invalid, or misnamed is
-   * simply not published; the rest of the set is unaffected. */
-  const readThemes = Effect.gen(function* () {
-    const entries = yield* fs
-      .readDirectory(environmentThemesDir)
-      .pipe(Effect.orElseSucceed((): Array<string> => []));
-
-    const themes: Array<EnvironmentTheme> = [];
-    for (const entry of entries.toSorted()) {
-      if (!entry.endsWith(THEME_FILE_SUFFIX)) continue;
-      const id = entry.slice(0, -THEME_FILE_SUFFIX.length);
-      if (!isEnvironmentThemeId(id)) continue;
-
-      const filePath = `${environmentThemesDir}/${entry}`;
-      const raw = yield* fs.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
-      if (raw.trim().length === 0) continue;
-
-      const decoded = decodeEnvironmentThemeFileJsonExit(raw);
-      if (decoded._tag === "Failure") {
-        yield* Effect.logWarning("ignoring invalid environment theme", {
-          path: filePath,
-          detail: Cause.pretty(decoded.cause),
-        });
-        continue;
-      }
-      const file = decoded.value;
-      if (!environmentThemeFileHasColors(file)) {
-        yield* Effect.logWarning("ignoring environment theme without colors", { path: filePath });
-        continue;
-      }
-      themes.push({ id, ...file });
-    }
-    return themes;
-  });
-
-  /**
-   * Reads the directory and folds it into the sequenced state, publishing only
-   * a genuine change. Every reader goes through here, so the snapshot a client
-   * connects on and the events it then receives come from one ordered source
-   * rather than from disk and the queue independently.
-   */
   const refresh = refreshSemaphore.withPermits(1)(
     Effect.gen(function* () {
-      const themes = yield* readThemes;
+      const themes = yield* readPublishedThemes(environmentThemesDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, pathService),
+      );
       // Structural equality over the whole decoded value: a hand-rolled field
       // list here silently drops republishes for any field it forgets.
       const [changed, next] = yield* Ref.modify(

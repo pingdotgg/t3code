@@ -19,7 +19,7 @@ import {
   environmentThemeFileHasColors,
 } from "@t3tools/contracts";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
-import { BUILT_IN_THEME_IDS, MOBILE_DEFAULT_THEME_ID } from "@t3tools/shared/themePalettes";
+import { BUILT_IN_THEME_IDS, UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -32,6 +32,7 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
+import { MAX_THEME_FILE_BYTES, readPublishedThemes } from "../environmentTheme.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
 
@@ -63,6 +64,15 @@ export class ThemeSettingsMalformedError extends Schema.TaggedErrorClass<ThemeSe
   }
 }
 
+export class ThemeSettingsBusyError extends Schema.TaggedErrorClass<ThemeSettingsBusyError>()(
+  "ThemeSettingsBusyError",
+  { settingsPath: Schema.String, attempts: Schema.Number },
+) {
+  override get message(): string {
+    return `${this.settingsPath} kept changing while writing (gave up after ${this.attempts} attempts). Try again.`;
+  }
+}
+
 export class ThemeSettingsWriteError extends Schema.TaggedErrorClass<ThemeSettingsWriteError>()(
   "ThemeSettingsWriteError",
   { settingsPath: Schema.String, cause: Schema.Defect() },
@@ -89,6 +99,15 @@ export class ThemeFileInvalidError extends Schema.TaggedErrorClass<ThemeFileInva
 ) {
   override get message(): string {
     return `${this.filePath} is not a valid theme file. Use a theme exported from T3 Code, or a seeded file with name, appearance, canvas, and accent.`;
+  }
+}
+
+export class ThemeFileTooLargeError extends Schema.TaggedErrorClass<ThemeFileTooLargeError>()(
+  "ThemeFileTooLargeError",
+  { filePath: Schema.String, limit: Schema.Number },
+) {
+  override get message(): string {
+    return `${this.filePath} is larger than ${this.limit} bytes, which is more than a theme can publish.`;
   }
 }
 
@@ -196,9 +215,9 @@ const readSettingsObject = Effect.fn(function* (settingsPath: string) {
  * semaphore that cannot serialize against another process. So the document is
  * re-read immediately before the rename and the whole edit is retried when it
  * moved underneath us, which is what turns "last writer wins" into "last
- * writer merges". A concurrent write landing inside the remaining rename
- * window is still possible; the server's own watcher reconciles the file
- * afterwards either way.
+ * writer merges", and an edit that keeps losing the race fails loudly rather
+ * than overwriting. A write landing inside the remaining rename window is
+ * still possible; the server's own watcher reconciles the file either way.
  */
 const CONCURRENT_WRITE_ATTEMPTS = 5;
 
@@ -228,7 +247,19 @@ const writeDefaultTheme = Effect.fn(function* (input: {
     const current = yield* fs
       .readFileString(input.settingsPath)
       .pipe(Effect.orElseSucceed(() => ""));
-    if (current !== raw && attempt < CONCURRENT_WRITE_ATTEMPTS) continue;
+    if (current !== raw) {
+      // Falling through here would overwrite whatever landed in between, which
+      // is exactly the loss this loop exists to prevent.
+      if (attempt >= CONCURRENT_WRITE_ATTEMPTS) {
+        return yield* Effect.fail(
+          new ThemeSettingsBusyError({
+            settingsPath: input.settingsPath,
+            attempts: CONCURRENT_WRITE_ATTEMPTS,
+          }),
+        );
+      }
+      continue;
+    }
 
     yield* writeFileStringAtomically({
       filePath: input.settingsPath,
@@ -251,6 +282,22 @@ const publishThemeFile = Effect.fn(function* (input: {
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // Checked before reading, not after: a FIFO or device node would block the
+  // command forever, and a huge file would be pulled into memory first.
+  const info = yield* fs
+    .stat(input.filePath)
+    .pipe(
+      Effect.mapError((cause) => new ThemeFileUnreadableError({ filePath: input.filePath, cause })),
+    );
+  if (info.type !== "File") {
+    return yield* Effect.fail(new ThemeFileUnreadableError({ filePath: input.filePath }));
+  }
+  if (Number(info.size) > MAX_THEME_FILE_BYTES) {
+    return yield* Effect.fail(
+      new ThemeFileTooLargeError({ filePath: input.filePath, limit: MAX_THEME_FILE_BYTES }),
+    );
+  }
+
   const raw = yield* fs
     .readFileString(input.filePath)
     .pipe(
@@ -269,7 +316,9 @@ const publishThemeFile = Effect.fn(function* (input: {
 
   const fileBasename = path.basename(input.filePath, ".json");
   const themeId = Option.getOrElse(input.explicitId, () => fileBasename);
-  if (!isEnvironmentThemeId(themeId)) {
+  // The same rules the watcher applies when it reads the directory back, so a
+  // publish cannot report success for a file that will then be skipped.
+  if (!isEnvironmentThemeId(themeId) || UNPUBLISHABLE_THEME_IDS.has(themeId)) {
     return yield* Effect.fail(new ThemeFileIdInvalidError({ themeId, filePath: input.filePath }));
   }
 
@@ -281,21 +330,15 @@ const publishThemeFile = Effect.fn(function* (input: {
 });
 
 /**
- * Ids a client can actually resolve: this build's built-ins plus whatever the
- * machine publishes. A syntactically valid id that names nothing would be
- * written as the environment's theme and then silently ignored by every
- * client, with the command having reported success.
+ * Ids a client can actually resolve: this build's built-ins plus what the
+ * machine publishes, read through the same function the watcher uses so a file
+ * it would skip can never be accepted here. The mobile default is absent on
+ * purpose -- web and desktop cannot resolve it and mobile does not follow this
+ * setting, so naming it would be the silent no-op this check exists to stop.
  */
 const resolvableThemeIds = Effect.fn(function* (themesDir: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const entries = yield* fs
-    .readDirectory(themesDir)
-    .pipe(Effect.orElseSucceed((): Array<string> => []));
-  const publishedIds = entries
-    .filter((entry) => entry.endsWith(".json"))
-    .map((entry) => entry.slice(0, -".json".length))
-    .filter(isEnvironmentThemeId);
-  return [MOBILE_DEFAULT_THEME_ID, ...BUILT_IN_THEME_IDS, ...publishedIds].toSorted();
+  const published = yield* readPublishedThemes(themesDir);
+  return [...BUILT_IN_THEME_IDS, ...published.map((theme) => theme.id)].toSorted();
 });
 
 const themeSetCommand = Command.make("set", {
@@ -324,9 +367,16 @@ const themeSetCommand = Command.make("set", {
       // is a mistake to surface, not an id to store; everything else must be
       // a well-formed id, so a typo cannot be written as a theme no client
       // will ever resolve.
-      const targetIsFile = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false));
+      // Path-shaped first, existence second. Deciding on existence alone would
+      // make `t3 theme set ocean` publish ./ocean whenever the cwd happens to
+      // hold a file by that name, instead of selecting the built-in.
       const looksLikePath =
-        target.endsWith(".json") || target.includes("/") || target.includes("\\");
+        target.endsWith(".json") ||
+        target.includes("/") ||
+        target.includes("\\") ||
+        target.startsWith("~");
+      const targetIsFile =
+        looksLikePath && (yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false)));
       let themeId: string;
       if (targetIsFile) {
         themeId = yield* publishThemeFile({
@@ -371,7 +421,6 @@ const themeShowCommand = Command.make("show", { baseDir: baseDirFlag }).pipe(
   Command.withDescription("Show the environment's theme and its published themes."),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const paths = yield* resolveThemePaths(flags.baseDir);
       const { settings } = yield* readSettingsObject(paths.settingsPath);
       const defaultTheme =
@@ -379,13 +428,8 @@ const themeShowCommand = Command.make("show", { baseDir: baseDirFlag }).pipe(
           ? settings.defaultTheme
           : null;
 
-      const entries = yield* fs
-        .readDirectory(paths.themesDir)
-        .pipe(Effect.orElseSucceed((): Array<string> => []));
-      const published = entries
-        .filter((entry) => entry.endsWith(".json"))
-        .map((entry) => entry.slice(0, -".json".length))
-        .filter(isEnvironmentThemeId)
+      const published = (yield* readPublishedThemes(paths.themesDir))
+        .map((theme) => theme.id)
         .toSorted();
 
       yield* Console.log(
