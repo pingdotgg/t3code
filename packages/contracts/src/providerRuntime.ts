@@ -165,6 +165,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "turn.completed",
   "turn.aborted",
   "turn.plan.updated",
+  "turn.prompt-suggestion",
   "turn.proposed.delta",
   "turn.proposed.completed",
   "turn.diff.updated",
@@ -216,6 +217,7 @@ const TurnStartedType = Schema.Literal("turn.started");
 const TurnCompletedType = Schema.Literal("turn.completed");
 const TurnAbortedType = Schema.Literal("turn.aborted");
 const TurnPlanUpdatedType = Schema.Literal("turn.plan.updated");
+const TurnPromptSuggestionType = Schema.Literal("turn.prompt-suggestion");
 const TurnProposedDeltaType = Schema.Literal("turn.proposed.delta");
 const TurnProposedCompletedType = Schema.Literal("turn.proposed.completed");
 const TurnDiffUpdatedType = Schema.Literal("turn.diff.updated");
@@ -390,6 +392,15 @@ const TurnPlanUpdatedPayload = Schema.Struct({
   plan: Schema.Array(RuntimePlanStep),
 });
 export type TurnPlanUpdatedPayload = typeof TurnPlanUpdatedPayload.Type;
+
+/**
+ * Provider-predicted next user prompt for the turn that just completed.
+ * Emitted at most once per turn, after `turn.completed`.
+ */
+const TurnPromptSuggestionPayload = Schema.Struct({
+  suggestion: TrimmedNonEmptyStringSchema,
+});
+export type TurnPromptSuggestionPayload = typeof TurnPromptSuggestionPayload.Type;
 
 const TurnProposedDeltaPayload = Schema.Struct({
   delta: Schema.String,
@@ -910,6 +921,14 @@ const ProviderRuntimeTurnPlanUpdatedEvent = Schema.Struct({
 });
 export type ProviderRuntimeTurnPlanUpdatedEvent = typeof ProviderRuntimeTurnPlanUpdatedEvent.Type;
 
+const ProviderRuntimeTurnPromptSuggestionEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: TurnPromptSuggestionType,
+  payload: TurnPromptSuggestionPayload,
+});
+export type ProviderRuntimeTurnPromptSuggestionEvent =
+  typeof ProviderRuntimeTurnPromptSuggestionEvent.Type;
+
 const ProviderRuntimeTurnProposedDeltaEvent = Schema.Struct({
   ...ProviderRuntimeEventBase.fields,
   type: TurnProposedDeltaType,
@@ -1159,6 +1178,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeTurnCompletedEvent,
   ProviderRuntimeTurnAbortedEvent,
   ProviderRuntimeTurnPlanUpdatedEvent,
+  ProviderRuntimeTurnPromptSuggestionEvent,
   ProviderRuntimeTurnProposedDeltaEvent,
   ProviderRuntimeTurnProposedCompletedEvent,
   ProviderRuntimeTurnDiffUpdatedEvent,

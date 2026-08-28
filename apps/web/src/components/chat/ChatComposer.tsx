@@ -267,6 +267,7 @@ import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
+import { derivePromptSuggestion } from "../../lib/promptSuggestion";
 import {
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
@@ -1251,6 +1252,30 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const isComposerApprovalState = activePendingApproval !== null;
+
+  // ------------------------------------------------------------------
+  // Prompt suggestion (provider-predicted next prompt, Tab to accept)
+  // ------------------------------------------------------------------
+  const promptSuggestion = useMemo(
+    () => (activeThread ? derivePromptSuggestion(activeThread) : null),
+    [activeThread],
+  );
+  // Ghost text only while the composer is idle and empty: any other composer
+  // state (approval, question, plan follow-up, draft text) owns the input.
+  // Touch viewports have no Tab key and nothing to tap, so they keep the
+  // informative placeholder (same gate as Enter-to-send).
+  const showPromptSuggestion =
+    !isMobileViewport &&
+    promptSuggestion !== null &&
+    prompt.length === 0 &&
+    composerTerminalContexts.length === 0 &&
+    !isComposerApprovalState &&
+    activePendingProgress === null &&
+    pendingUserInputs.length === 0 &&
+    !(showPlanFollowUpPrompt && activeProposedPlan) &&
+    !isSendBusy &&
+    !isConnecting &&
+    phase !== "disconnected";
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const showComposerTopDrawer =
     isComposerApprovalState ||
@@ -2099,6 +2124,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onSelectComposerItem(selectedItem);
         return true;
       }
+    }
+    // Plain Tab only: Shift+Tab keeps its reverse-focus meaning when plan
+    // mode is off (the plan toggle above returns false in that case).
+    if (key === "Tab" && !event.shiftKey && showPromptSuggestion && promptSuggestion !== null) {
+      setPromptFromTraits(promptSuggestion);
+      return true;
     }
     const submissionIntent =
       key === "Enter"
@@ -3405,6 +3436,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onChange={onPromptChange}
                   onCommandKeyDown={onComposerCommandKey}
                   onPaste={onComposerPaste}
+                  promptSuggestion={showPromptSuggestion ? promptSuggestion : null}
                   placeholder={
                     isComposerApprovalState
                       ? (activePendingApproval?.detail ??

@@ -69,6 +69,7 @@ import {
   type TerminalContextDraft,
 } from "~/lib/terminalContext";
 import { cn, isMacPlatform } from "~/lib/utils";
+import { Kbd } from "~/components/ui/kbd";
 import { basenameOfPath } from "~/pierre-icons";
 import {
   COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME,
@@ -884,6 +885,11 @@ interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  /**
+   * Provider-predicted next prompt. Rendered as ghost text in place of the
+   * placeholder while the editor is empty; the parent accepts it on Tab.
+   */
+  promptSuggestion?: string | null;
   className?: string;
   onRemoveTerminalContext: (contextId: string) => void;
   onChange: (
@@ -1533,6 +1539,7 @@ function ComposerPromptEditorInner({
   skills,
   disabled,
   placeholder,
+  promptSuggestion,
   className,
   onRemoveTerminalContext,
   onChange,
@@ -1758,13 +1765,25 @@ function ComposerPromptEditorInner({
                 className,
               )}
               data-testid="composer-editor"
-              aria-placeholder={placeholder}
+              aria-placeholder={
+                promptSuggestion
+                  ? `Suggested: ${promptSuggestion}. Press Tab to accept.`
+                  : placeholder
+              }
               placeholder={<span />}
               onPaste={onPaste}
             />
           }
           placeholder={
-            terminalContexts.length > 0 ? null : (
+            terminalContexts.length > 0 ? null : promptSuggestion ? (
+              <div
+                className="pointer-events-none absolute inset-0 flex items-baseline gap-2 leading-relaxed text-placeholder"
+                data-testid="composer-prompt-suggestion"
+              >
+                <span className="min-w-0 truncate">{promptSuggestion}</span>
+                <Kbd className="shrink-0">Tab</Kbd>
+              </div>
+            ) : (
               <div className="pointer-events-none absolute inset-0 leading-relaxed text-placeholder">
                 {placeholder}
               </div>
@@ -1794,6 +1813,7 @@ export function ComposerPromptEditor({
   skills,
   disabled,
   placeholder,
+  promptSuggestion,
   className,
   onRemoveTerminalContext,
   onChange,
@@ -1838,6 +1858,7 @@ export function ComposerPromptEditor({
         editorRef={editorRef}
         {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
         {...(className ? { className } : {})}
+        {...(promptSuggestion ? { promptSuggestion } : {})}
       />
     </LexicalComposer>
   );
