@@ -2605,9 +2605,17 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!normalized) {
               return state;
             }
+            const nextSelection =
+              normalized.options !== undefined
+                ? normalized
+                : createModelSelection(
+                    normalized.instanceId,
+                    normalized.model,
+                    state.stickyModelSelectionByProvider[normalized.instanceId]?.options,
+                  );
             const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
               ...state.stickyModelSelectionByProvider,
-              [normalized.instanceId]: normalized,
+              [normalized.instanceId]: nextSelection,
             };
             if (Equal.equals(state.stickyModelSelectionByProvider, nextMap)) {
               return state.stickyActiveProvider === normalized.instanceId
@@ -2727,7 +2735,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const base = existing ?? createEmptyThreadDraft();
             const nextMap = { ...base.modelSelectionByProvider };
             if (normalized) {
-              const current = nextMap[normalized.instanceId];
+              const current =
+                nextMap[normalized.instanceId] ??
+                state.stickyModelSelectionByProvider[normalized.instanceId];
               if (normalized.options !== undefined || opts?.replaceOptions) {
                 // Explicit options provided (or the caller passed a complete
                 // snapshot whose absent options mean "no options") → use the

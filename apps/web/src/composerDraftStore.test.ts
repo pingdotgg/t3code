@@ -1662,6 +1662,34 @@ describe("composerDraftStore sticky composer settings", () => {
     expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("codex");
   });
 
+  it("restores each provider's sticky options when switching providers", () => {
+    const store = useComposerDraftStore.getState();
+    const threadId = ThreadId.make("thread-sticky-provider-switch");
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+    store.setStickyModelSelection(
+      modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" }),
+    );
+    store.setStickyModelSelection(
+      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "max" }),
+    );
+
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
+    store.setStickyModelSelection(modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6"));
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+    store.setStickyModelSelection(modelSelection(CODEX_DRIVER, "gpt-5.4"));
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider).toEqual({
+      codex: modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" }),
+      claudeAgent: modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "max" }),
+    });
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider).toEqual({
+      codex: modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" }),
+      claudeAgent: modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "max" }),
+    });
+    expect(useComposerDraftStore.getState().stickyActiveProvider).toBe(CODEX_INSTANCE);
+  });
+
   it("normalizes empty sticky model options by dropping selection options", () => {
     const store = useComposerDraftStore.getState();
 
