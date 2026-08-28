@@ -774,9 +774,9 @@ export const make = (
             if (Option.isSome(activePromptFiber)) {
               yield* Fiber.interrupt(activePromptFiber.value).pipe(Effect.ignore);
             }
-            yield* acp.agent
-              .cancel({ sessionId: started.sessionId })
-              .pipe(Effect.ignore, Effect.forkIn(runtimeScope));
+            // Await the notification write so a replacement session/prompt
+            // cannot race ahead of session/cancel on the wire.
+            yield* acp.agent.cancel({ sessionId: started.sessionId }).pipe(Effect.ignore);
           }),
         ),
       ),
