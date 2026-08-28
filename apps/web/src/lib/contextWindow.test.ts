@@ -36,3 +36,29 @@ describe("V2 context window presentation", () => {
     expect(formatContextWindowTokens(1_500)).toBe("1.5k");
   });
 });
+
+describe("live provider-turn usage (#8144)", () => {
+  it("prefers the provider's live report over compaction items", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([], {
+      usedTokens: 42_000,
+      maxTokens: 200_000,
+      inputTokens: 40_000,
+      outputTokens: 2_000,
+      updatedAt: "2026-08-27T00:00:00.000Z",
+    });
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.usedTokens).toBe(42_000);
+    expect(snapshot?.maxTokens).toBe(200_000);
+    expect(snapshot?.remainingTokens).toBe(158_000);
+    expect(snapshot?.usedPercentage).toBe(21);
+  });
+
+  it("handles a report without a known context window", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([], {
+      usedTokens: 42_000,
+      updatedAt: "2026-08-27T00:00:00.000Z",
+    });
+    expect(snapshot?.maxTokens).toBeNull();
+    expect(snapshot?.usedPercentage).toBeNull();
+  });
+});
