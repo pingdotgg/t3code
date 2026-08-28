@@ -196,6 +196,7 @@ export function presentThreadShell(
     interactionMode: thread.interactionMode,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    linkedPullRequest: thread.linkedPullRequest ?? null,
     lineage: thread.lineage,
     forkedFrom: thread.forkedFrom,
     activeProviderThreadId: thread.activeProviderThreadId,
