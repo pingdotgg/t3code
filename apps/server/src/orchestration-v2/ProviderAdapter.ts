@@ -518,6 +518,14 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly readThreadSnapshot: (
     input: ProviderAdapterV2ReadThreadSnapshotInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;
+  /**
+   * Providers that accept product feedback for a thread (#7949, Codex → OpenAI)
+   * expose it here; absent means the driver has no feedback channel.
+   */
+  readonly uploadFeedback?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly reason?: string;
+  }) => Effect.Effect<{ readonly feedbackId: string }, ProviderAdapterV2Error>;
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;
