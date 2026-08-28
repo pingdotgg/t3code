@@ -90,7 +90,7 @@ import {
 } from "../../lib/attachmentUploadState";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
-import { resolveShortcutCommand } from "../../keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -3201,6 +3201,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                   <ComposerStashMenu
                     entries={stashQueue}
+                    stashShortcutLabel={shortcutLabelForCommand(keybindings, "composer.stash", {
+                      context: {
+                        terminalFocus: false,
+                        terminalOpen,
+                        modelPickerOpen: false,
+                      },
+                    })}
                     onRestore={restoreStashEntry}
                     onDelete={deleteStashEntry}
                     onClose={() => setIsStashMenuOpen(false)}
