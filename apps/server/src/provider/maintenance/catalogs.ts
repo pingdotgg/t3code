@@ -198,6 +198,7 @@ const nodeManagers = [
 ] as const;
 
 type NodeManager = (typeof nodeManagers)[number];
+const NODE_WRAPPER_MAX_BYTES = 64 * 1_024;
 interface NodeEvidence {
   readonly manager: NodeManager;
   readonly executable: string;
@@ -211,7 +212,10 @@ function detectNodePackage(input: ProviderMaintenanceDefinitionInput, manager: N
       context,
       context.realCommandPath ?? context.resolvedCommandPath ?? context.binaryPath,
     );
-    const wrapper = yield* context.readTextFile(context.resolvedCommandPath ?? "");
+    const wrapper = yield* context.readTextFile(
+      context.resolvedCommandPath ?? "",
+      NODE_WRAPPER_MAX_BYTES,
+    );
     let root =
       packageRoot(observed, input.packageName) ??
       packageRootFromWrapper(context, wrapper, context.resolvedCommandPath, input.packageName);
@@ -413,6 +417,7 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
   return defineInstallation<{
     executable: string;
     formula: string;
+    packageType: "formula" | "cask";
     prefix: string;
     currentVersion: string | null;
     latestVersion: string | null;
@@ -451,7 +456,7 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
             realFormulaPrefix &&
             within(context, observed, realFormulaPrefix)
           ) {
-            return { formula, prefix: realFormulaPrefix };
+            return { formula, packageType: "formula" as const, prefix: realFormulaPrefix };
           }
           const caskPrefixProbe = yield* context.run(
             executable,
@@ -463,16 +468,21 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
           return caskPrefixProbe?.exitCode === 0 &&
             realCaskPrefix &&
             within(context, observed, realCaskPrefix)
-            ? { formula, prefix: realCaskPrefix }
+            ? { formula, packageType: "cask" as const, prefix: realCaskPrefix }
             : null;
         }),
       );
       const ownership = ownershipCandidates.find(
-        (candidate): candidate is { readonly formula: string; readonly prefix: string } =>
-          candidate !== null,
+        (
+          candidate,
+        ): candidate is {
+          readonly formula: string;
+          readonly packageType: "formula" | "cask";
+          readonly prefix: string;
+        } => candidate !== null,
       );
       if (!ownership) return undetermined("Homebrew formula ownership could not be verified.");
-      const { formula, prefix } = ownership;
+      const { formula, packageType, prefix } = ownership;
       const infoProbe = yield* context.run(
         executable,
         ["info", "--json=v2", formula],
@@ -494,19 +504,26 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
         ? text(caskInfo.installed[0])
         : text(caskInfo?.installed);
       const currentVersion = normalizeMaintenanceVersion(
-        text(installedFormula?.version) ?? installedCask,
+        packageType === "formula" ? text(installedFormula?.version) : installedCask,
       );
       if (!currentVersion) return undetermined("Homebrew installed version is unavailable.");
       return matched({
         executable,
         formula,
+        packageType,
         prefix,
         currentVersion,
-        latestVersion: normalizeMaintenanceVersion(stable ?? text(caskInfo?.version)),
+        latestVersion: normalizeMaintenanceVersion(
+          packageType === "formula" ? stable : text(caskInfo?.version),
+        ),
       });
     }),
     resolve: (evidence, context) => {
       const formula = evidence.formula;
+      const args =
+        evidence.packageType === "cask"
+          ? (["upgrade", "--cask", formula] as const)
+          : (["upgrade", formula] as const);
       return Effect.succeed(
         resolved(input, context, {
           kind: "homebrew",
@@ -515,8 +532,8 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
           executable: evidence.executable,
           currentVersion: evidence.currentVersion,
           latestVersion: evidence.latestVersion,
-          args: ["upgrade", formula],
-          displayCommand: `brew upgrade ${formula}`,
+          args,
+          displayCommand: `brew ${args.join(" ")}`,
         }),
       );
     },

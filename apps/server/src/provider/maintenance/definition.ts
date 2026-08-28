@@ -25,7 +25,7 @@ export interface InstallationContext {
   readonly realCommandPath: string | null;
   readonly environment: NodeJS.ProcessEnv;
   readonly platform: NodeJS.Platform;
-  readonly readTextFile: (path: string) => Effect.Effect<string | null>;
+  readonly readTextFile: (path: string, maxBytes?: number) => Effect.Effect<string | null>;
   readonly realPath: (path: string) => Effect.Effect<string>;
   readonly resolveCommand: (command: string) => Effect.Effect<string | null>;
   readonly run: (

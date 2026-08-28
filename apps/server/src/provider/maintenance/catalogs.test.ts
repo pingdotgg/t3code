@@ -39,6 +39,7 @@ function context(input: {
   readonly commands?: Readonly<Record<string, string>>;
   readonly probes?: Readonly<Record<string, MaintenanceProbeResult>>;
   readonly realPaths?: Readonly<Record<string, string>>;
+  readonly textFileReads?: Array<{ readonly path: string; readonly maxBytes?: number }>;
 }): InstallationContext {
   const files = new Map(
     Object.entries(input.files ?? {}).map(([path, value]) => [
@@ -55,8 +56,15 @@ function context(input: {
     realCommandPath: input.realCommandPath ?? input.resolvedCommandPath,
     environment: input.environment ?? { PATH: "test-path" },
     platform: input.platform ?? "linux",
-    readTextFile: (path) =>
-      Effect.succeed(files.get(path.replaceAll("\\", "/").toLowerCase()) ?? null),
+    readTextFile: (path, maxBytes) => {
+      input.textFileReads?.push({ path, ...(maxBytes === undefined ? {} : { maxBytes }) });
+      const value = files.get(path.replaceAll("\\", "/").toLowerCase()) ?? null;
+      return Effect.succeed(
+        value !== null && maxBytes !== undefined && Buffer.byteLength(value) > maxBytes
+          ? null
+          : value,
+      );
+    },
     realPath: (path) =>
       Effect.succeed(input.realPaths?.[path.replaceAll("\\", "/").toLowerCase()] ?? path),
     resolveCommand: (command) => Effect.succeed(input.commands?.[command] ?? null),
@@ -452,6 +460,79 @@ it.effect("proves npm ownership through a Windows global command wrapper", () =>
   );
 });
 
+it.effect("reads a POSIX package wrapper once across Node manager probes", () => {
+  const prefix = "/home/test/.local";
+  const wrapper = `${prefix}/bin/codex`;
+  const packageRoot = `${prefix}/share/pnpm/global/v5/node_modules/@openai/codex`;
+  const pnpm = `${prefix}/bin/pnpm`;
+  const textFileReads: Array<{ readonly path: string; readonly maxBytes?: number }> = [];
+  return resolveInstallation(
+    context({
+      binaryPath: "codex",
+      resolvedCommandPath: wrapper,
+      commands: { pnpm },
+      textFileReads,
+      files: {
+        [wrapper]:
+          '#!/bin/sh\nexec "$basedir/../share/pnpm/global/v5/node_modules/@openai/codex/bin/codex.js" "$@"',
+        [`${packageRoot}/package.json`]: JSON.stringify({
+          name: "@openai/codex",
+          version: "1.0.0",
+        }),
+      },
+      probes: {
+        [`${pnpm} root -g`]: {
+          stdout: `${prefix}/share/pnpm/global/v5/node_modules`,
+          stderr: "",
+          exitCode: 0,
+        },
+        [`${pnpm} view @openai/codex@latest version --json`]: {
+          stdout: '"1.1.0"',
+          stderr: "",
+          exitCode: 0,
+        },
+      },
+    }),
+    catalog,
+  ).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Managed by pnpm",
+        currentVersion: "1.0.0",
+        latestVersion: "1.1.0",
+      });
+      expect(textFileReads.filter((read) => read.path === wrapper)).toEqual([
+        { path: wrapper, maxBytes: 64 * 1_024 },
+      ]);
+    }),
+  );
+});
+
+it.effect("skips oversized command wrappers without weakening ownership", () => {
+  const wrapper = "/home/test/.local/bin/codex";
+  const textFileReads: Array<{ readonly path: string; readonly maxBytes?: number }> = [];
+  return resolveInstallation(
+    context({
+      binaryPath: "codex",
+      resolvedCommandPath: wrapper,
+      textFileReads,
+      files: {
+        [wrapper]: `${"x".repeat(64 * 1_024)}\n/node_modules/@openai/codex/bin/codex.js`,
+      },
+    }),
+    catalog,
+  ).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Unknown installation",
+        ownershipVerified: false,
+        update: null,
+      });
+      expect(textFileReads).toEqual([{ path: wrapper, maxBytes: 64 * 1_024 }]);
+    }),
+  );
+});
+
 it.effect("does not match a wrapper for a package with a shared name prefix", () => {
   const prefix = "C:/Users/test/AppData/Roaming/npm";
   const npm = `${prefix}/npm.cmd`;
@@ -712,7 +793,58 @@ it.effect("accepts Homebrew cask metadata with a scalar installed version", () =
         label: "Managed by Homebrew",
         currentVersion: "0.149.1",
         latestVersion: "0.150.0",
-        update: { executable: brew, args: ["upgrade", "codex"] },
+        update: { executable: brew, args: ["upgrade", "--cask", "codex"] },
+      });
+    }),
+  );
+});
+
+it.effect("uses cask metadata and updates when formula and cask names collide", () => {
+  const brew = "/opt/homebrew/bin/brew";
+  const formulaPrefix = "/opt/homebrew/opt/codex";
+  const realFormulaPrefix = "/opt/homebrew/Cellar/codex/9.0.0";
+  const caskPrefix = "/opt/homebrew/Caskroom/codex";
+  return resolveInstallation(
+    context({
+      binaryPath: "codex",
+      resolvedCommandPath: "/opt/homebrew/bin/codex",
+      realCommandPath: `${caskPrefix}/0.149.1/codex-aarch64-apple-darwin`,
+      commands: { brew },
+      realPaths: { [formulaPrefix]: realFormulaPrefix },
+      probes: {
+        [`${brew} --prefix --installed codex`]: {
+          stdout: formulaPrefix,
+          stderr: "",
+          exitCode: 0,
+        },
+        [`${brew} --caskroom codex`]: { stdout: caskPrefix, stderr: "", exitCode: 0 },
+        [`${brew} info --json=v2 codex`]: {
+          stdout: JSON.stringify({
+            formulae: [
+              {
+                installed: [{ version: "9.0.0" }],
+                versions: { stable: "9.1.0" },
+              },
+            ],
+            casks: [{ installed: ["0.149.1"], version: "0.150.0" }],
+          }),
+          stderr: "",
+          exitCode: 0,
+        },
+      },
+    }),
+    catalog,
+  ).pipe(
+    Effect.map((installation) => {
+      expect(installation).toMatchObject({
+        label: "Managed by Homebrew",
+        currentVersion: "0.149.1",
+        latestVersion: "0.150.0",
+        update: {
+          executable: brew,
+          args: ["upgrade", "--cask", "codex"],
+          displayCommand: "brew upgrade --cask codex",
+        },
       });
     }),
   );
@@ -747,7 +879,7 @@ it.effect("derives a Homebrew alias from the verified Caskroom path", () => {
         label: "Managed by Homebrew",
         currentVersion: "0.150.0",
         latestVersion: "0.151.0",
-        update: { executable: brew, args: ["upgrade", formula] },
+        update: { executable: brew, args: ["upgrade", "--cask", formula] },
       });
     }),
   );

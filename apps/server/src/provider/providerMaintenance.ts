@@ -405,6 +405,22 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     }),
     latestVersion: null,
   };
+  const readTextFile = Effect.fn("readProviderMaintenanceTextFile")(function* (
+    path: string,
+    maxBytes?: number,
+  ) {
+    if (!path) return null;
+    return yield* (
+      maxBytes === undefined
+        ? fileSystem.readFileString(path).pipe(Effect.map((text) => text as string | null))
+        : collectUint8StreamText({
+            stream: fileSystem.stream(path, { bytesToRead: maxBytes + 1 }),
+            maxBytes,
+          }).pipe(
+            Effect.map((result) => (result.truncated || result.invalidUtf8 ? null : result.text)),
+          )
+    ).pipe(Effect.orElseSucceed(() => null));
+  });
   const context: InstallationContext = {
     provider: legacy.provider,
     packageName: legacy.packageName ?? "",
@@ -414,14 +430,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     realCommandPath,
     environment: env,
     platform,
-    readTextFile: (path) =>
-      path
-        ? fileSystem.readFileString(path).pipe(
-            Effect.map(Option.some),
-            Effect.orElseSucceed(() => Option.none()),
-            Effect.map(Option.getOrNull),
-          )
-        : Effect.succeed(null),
+    readTextFile,
     realPath: (path) => fileSystem.realPath(path).pipe(Effect.orElseSucceed(() => path)),
     resolveCommand: (command) =>
       resolveCommandPath(command, { env }).pipe(

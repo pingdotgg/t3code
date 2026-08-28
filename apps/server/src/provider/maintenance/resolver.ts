@@ -28,7 +28,18 @@ export const resolveInstallation = Effect.fn("resolveInstallation")(function* (
   context: InstallationContext,
   catalog: InstallationCatalog,
 ) {
-  const owned = yield* resolveFirst(context, catalog.installations);
+  const textFiles = new Map<string, string | null>();
+  const cachedContext: InstallationContext = {
+    ...context,
+    readTextFile: Effect.fn("readCachedInstallationTextFile")(function* (path, maxBytes) {
+      const cacheKey = `${path}\0${maxBytes ?? "unbounded"}`;
+      if (textFiles.has(cacheKey)) return textFiles.get(cacheKey) ?? null;
+      const value = yield* context.readTextFile(path, maxBytes);
+      textFiles.set(cacheKey, value);
+      return value;
+    }),
+  };
+  const owned = yield* resolveFirst(cachedContext, catalog.installations);
   if (owned._tag === "Matched") return owned.installation;
   return manualInstallation(context, owned._tag === "Undetermined");
 });
