@@ -89,10 +89,16 @@ function isIgnoredReleaseNoteLine(line: string): boolean {
   );
 }
 
-function extractReleaseNoteItems(note: string | null | undefined): ReadonlyArray<string> {
-  if (!note) return [];
+interface ExtractedReleaseNoteItems {
+  readonly items: ReadonlyArray<string>;
+  readonly totalItems: number;
+}
+
+function extractReleaseNoteItems(note: string | null | undefined): ExtractedReleaseNoteItems {
+  if (!note) return { items: [], totalItems: 0 };
 
   const items: string[] = [];
+  let totalItems = 0;
   for (const rawLine of stripMarkup(note).split("\n")) {
     const item = rawLine
       .trim()
@@ -102,9 +108,11 @@ function extractReleaseNoteItems(note: string | null | undefined): ReadonlyArray
     const normalized = normalizeReleaseNoteLine(item);
     if (normalized === "new contributors" || normalized === "full changelog") break;
     if (isIgnoredReleaseNoteLine(item)) continue;
+    totalItems += 1;
     items.push(truncateReleaseNoteItem(item));
+    if (items.length > MAX_RELEASE_NOTE_ITEMS_PER_GROUP) items.shift();
   }
-  return items;
+  return { items: items.toReversed(), totalItems };
 }
 
 interface NormalizedDesktopUpdateReleaseNotes {
@@ -124,13 +132,13 @@ export function normalizeDesktopUpdateReleaseNotes(
         : [];
 
   const normalizedNotes = rawNotes.flatMap((entry) => {
-    const items = extractReleaseNoteItems(entry.note);
-    if (items.length === 0) return [];
+    const { items, totalItems } = extractReleaseNoteItems(entry.note);
+    if (totalItems === 0) return [];
     return [
       {
         version: entry.version,
-        items: items.toReversed().slice(0, MAX_RELEASE_NOTE_ITEMS_PER_GROUP),
-        totalItems: items.length,
+        items,
+        totalItems,
       },
     ];
   });

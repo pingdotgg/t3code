@@ -1,6 +1,5 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { ExternalLinkIcon } from "lucide-react";
-import type { KeyboardEvent, Ref } from "react";
 
 import {
   getDesktopUpdateReleaseHistoryUrl,
@@ -22,33 +21,21 @@ function keyReleaseNoteItems(items: ReadonlyArray<string>) {
 
 function ReleaseLink({
   children,
-  firstLinkRef,
-  onBackTab,
   releaseUrl,
   shell,
 }: {
   readonly children: string;
-  readonly firstLinkRef?: Ref<HTMLAnchorElement> | undefined;
-  readonly onBackTab?: (() => void) | undefined;
   readonly releaseUrl: string;
   readonly shell: DesktopUpdateShell | undefined;
 }) {
-  const handleKeyDown = (event: KeyboardEvent<HTMLAnchorElement>) => {
-    if (event.key !== "Tab" || !event.shiftKey || !onBackTab) return;
-    event.preventDefault();
-    onBackTab();
-  };
-
   return (
     <a
-      className="mt-2 inline-flex items-center gap-1 text-xs leading-5 text-update-foreground underline decoration-dotted underline-offset-4 transition-colors hover:text-foreground focus-visible:text-foreground"
+      className="mt-2 inline-flex items-center gap-1 rounded-sm text-xs leading-5 text-update-foreground underline decoration-dotted underline-offset-4 outline-none transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
       href={releaseUrl}
       onClick={(event) => {
         event.preventDefault();
         void openDesktopUpdateReleaseNotes(shell, releaseUrl);
       }}
-      onKeyDown={handleKeyDown}
-      ref={firstLinkRef}
     >
       {children}
       <ExternalLinkIcon aria-hidden className="size-3 shrink-0" strokeWidth={2.25} />
@@ -57,14 +44,10 @@ function ReleaseLink({
 }
 
 export function SidebarUpdateReleaseNotes({
-  firstLinkRef,
-  onBackTab,
   shell,
   state,
   tooltip,
 }: {
-  readonly firstLinkRef?: Ref<HTMLAnchorElement> | undefined;
-  readonly onBackTab?: (() => void) | undefined;
   readonly shell: DesktopUpdateShell | undefined;
   readonly state: DesktopUpdateState;
   readonly tooltip: string;
@@ -74,8 +57,8 @@ export function SidebarUpdateReleaseNotes({
   }
 
   return (
-    <div className="w-fit max-w-[min(24rem,calc(100vw-2rem))] text-left">
-      <div className="px-1">
+    <div className="flex max-h-[calc(var(--available-height)-0.5rem)] min-h-0 w-fit max-w-[min(24rem,calc(100vw-2rem))] flex-col text-left">
+      <div className="shrink-0 px-1">
         {state.status === "available" ? (
           <div>
             <div className="whitespace-nowrap text-sm leading-5 font-medium">
@@ -91,7 +74,7 @@ export function SidebarUpdateReleaseNotes({
           <div className="text-sm leading-5 font-medium">{tooltip}</div>
         )}
       </div>
-      <div className="max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
+      <div className="min-h-0 max-h-[min(28rem,calc(100vh-6rem))] overflow-y-auto px-1 pt-4 pb-1">
         {state.releaseNotes.map((releaseNote, index) => {
           const releaseUrl = getDesktopUpdateReleaseUrl(releaseNote.version);
           const omittedItemCount = Math.max(0, releaseNote.totalItems - releaseNote.items.length);
@@ -115,12 +98,7 @@ export function SidebarUpdateReleaseNotes({
                   ))}
                 </ul>
                 {releaseUrl ? (
-                  <ReleaseLink
-                    firstLinkRef={index === 0 ? firstLinkRef : undefined}
-                    onBackTab={index === 0 ? onBackTab : undefined}
-                    releaseUrl={releaseUrl}
-                    shell={shell}
-                  >
+                  <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
                     {linkLabel}
                   </ReleaseLink>
                 ) : null}

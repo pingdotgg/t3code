@@ -1,11 +1,5 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
-import {
-  isValidElement,
-  type KeyboardEvent,
-  type MouseEvent,
-  type ReactElement,
-  type ReactNode,
-} from "react";
+import { isValidElement, type MouseEvent, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
@@ -22,7 +16,6 @@ type AnchorElement = ReactElement<{
   readonly children?: ReactNode;
   readonly href?: string;
   readonly onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
-  readonly onKeyDown?: (event: KeyboardEvent<HTMLAnchorElement>) => void;
 }>;
 
 const baseState: DesktopUpdateState = {
@@ -68,13 +61,8 @@ function textContent(node: ReactNode): string {
   return textContent(element.props.children);
 }
 
-function renderNotes(
-  state: DesktopUpdateState,
-  openExternal = vi.fn().mockResolvedValue(true),
-  onBackTab?: () => void,
-) {
+function renderNotes(state: DesktopUpdateState, openExternal = vi.fn().mockResolvedValue(true)) {
   return SidebarUpdateReleaseNotes({
-    onBackTab,
     shell: { openExternal },
     state,
     tooltip: "Update available",
@@ -160,29 +148,5 @@ describe("SidebarUpdateReleaseNotes", () => {
         title: "Unable to open release notes",
       });
     });
-  });
-
-  it("returns keyboard focus from the first link", () => {
-    const onBackTab = vi.fn();
-    const [anchor] = collectAnchors(
-      renderNotes(
-        {
-          ...baseState,
-          releaseNotes: [{ version: "0.0.36-nightly.3", items: ["Change 3"], totalItems: 1 }],
-        },
-        undefined,
-        onBackTab,
-      ),
-    );
-    const preventDefault = vi.fn();
-
-    anchor?.props.onKeyDown?.({
-      key: "Tab",
-      shiftKey: true,
-      preventDefault,
-    } as unknown as KeyboardEvent<HTMLAnchorElement>);
-
-    expect(preventDefault).toHaveBeenCalledOnce();
-    expect(onBackTab).toHaveBeenCalledOnce();
   });
 });
