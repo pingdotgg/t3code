@@ -1178,6 +1178,11 @@ export function makeOpenCodeAdapter(
         case "session.error": {
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
+          if (context.pendingPermissions.size > 0 || context.pendingQuestions.size > 0) {
+            yield* runOpenCodeSdk("session.abort", () =>
+              context.client.session.abort({ sessionID: context.openCodeSessionId }),
+            ).pipe(Effect.ignore({ log: true }));
+          }
           yield* settlePendingRequests(context).pipe(Effect.ignore);
           context.activeTurnId = undefined;
           yield* updateProviderSession(
