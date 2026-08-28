@@ -29,6 +29,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -77,6 +78,14 @@ export const make = Effect.gen(function* () {
    */
   const changes = yield* PubSub.unbounded<PublishedThemes>();
   const published = yield* Ref.make<PublishedThemes>({ seq: 0, themes: [] });
+  /**
+   * Guards the whole read/compare/publish, not just the state update. The
+   * directory read is async, so two concurrent refreshes can finish out of
+   * order and a slower read of an older set would publish under a higher
+   * sequence -- which the subscriber filter, ordering publications rather than
+   * observations, could not then drop.
+   */
+  const refreshSemaphore = yield* Semaphore.make(1);
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
 
@@ -121,21 +130,23 @@ export const make = Effect.gen(function* () {
    * connects on and the events it then receives come from one ordered source
    * rather than from disk and the queue independently.
    */
-  const refresh = Effect.gen(function* () {
-    const themes = yield* readThemes;
-    // Structural equality over the whole decoded value: a hand-rolled field
-    // list here silently drops republishes for any field it forgets.
-    const [changed, next] = yield* Ref.modify(
-      published,
-      (previous): readonly [readonly [boolean, PublishedThemes], PublishedThemes] => {
-        if (Equal.equals(previous.themes, themes)) return [[false, previous], previous];
-        const updated: PublishedThemes = { seq: previous.seq + 1, themes };
-        return [[true, updated], updated];
-      },
-    );
-    if (changed) yield* PubSub.publish(changes, next).pipe(Effect.asVoid);
-    return next;
-  });
+  const refresh = refreshSemaphore.withPermits(1)(
+    Effect.gen(function* () {
+      const themes = yield* readThemes;
+      // Structural equality over the whole decoded value: a hand-rolled field
+      // list here silently drops republishes for any field it forgets.
+      const [changed, next] = yield* Ref.modify(
+        published,
+        (previous): readonly [readonly [boolean, PublishedThemes], PublishedThemes] => {
+          if (Equal.equals(previous.themes, themes)) return [[false, previous], previous];
+          const updated: PublishedThemes = { seq: previous.seq + 1, themes };
+          return [[true, updated], updated];
+        },
+      );
+      if (changed) yield* PubSub.publish(changes, next).pipe(Effect.asVoid);
+      return next;
+    }),
+  );
 
   // The directory is created up front so the watcher has something to attach
   // to before the first publisher writes into it.

@@ -19,6 +19,7 @@ import {
   environmentThemeFileHasColors,
 } from "@t3tools/contracts";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
+import { BUILT_IN_THEME_IDS, MOBILE_DEFAULT_THEME_ID } from "@t3tools/shared/themePalettes";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
@@ -111,6 +112,15 @@ export class ThemePublishError extends Schema.TaggedErrorClass<ThemePublishError
 
 const INVALID_THEME_ID_REASON =
   "is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword)";
+
+export class ThemeIdUnknownError extends Schema.TaggedErrorClass<ThemeIdUnknownError>()(
+  "ThemeIdUnknownError",
+  { themeId: Schema.String, known: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `No theme named "${this.themeId}". Available: ${this.known.join(", ")}. Publish one by passing a theme file instead of an id.`;
+  }
+}
 
 export class ThemeIdInvalidError extends Schema.TaggedErrorClass<ThemeIdInvalidError>()(
   "ThemeIdInvalidError",
@@ -270,6 +280,24 @@ const publishThemeFile = Effect.fn(function* (input: {
   return themeId;
 });
 
+/**
+ * Ids a client can actually resolve: this build's built-ins plus whatever the
+ * machine publishes. A syntactically valid id that names nothing would be
+ * written as the environment's theme and then silently ignored by every
+ * client, with the command having reported success.
+ */
+const resolvableThemeIds = Effect.fn(function* (themesDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const entries = yield* fs
+    .readDirectory(themesDir)
+    .pipe(Effect.orElseSucceed((): Array<string> => []));
+  const publishedIds = entries
+    .filter((entry) => entry.endsWith(".json"))
+    .map((entry) => entry.slice(0, -".json".length))
+    .filter(isEnvironmentThemeId);
+  return [MOBILE_DEFAULT_THEME_ID, ...BUILT_IN_THEME_IDS, ...publishedIds].toSorted();
+});
+
 const themeSetCommand = Command.make("set", {
   baseDir: baseDirFlag,
   id: Flag.string("id").pipe(
@@ -309,6 +337,10 @@ const themeSetCommand = Command.make("set", {
       } else if (looksLikePath) {
         return yield* Effect.fail(new ThemeFileUnreadableError({ filePath: target }));
       } else if (isEnvironmentThemeId(target)) {
+        const known = yield* resolvableThemeIds(paths.themesDir);
+        if (!known.includes(target)) {
+          return yield* Effect.fail(new ThemeIdUnknownError({ themeId: target, known }));
+        }
         themeId = target;
       } else {
         return yield* Effect.fail(new ThemeIdInvalidError({ themeId: target }));

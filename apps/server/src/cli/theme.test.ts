@@ -45,8 +45,8 @@ describe("t3 theme", () => {
   it.effect("writes a default theme when no settings file exists yet", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
-      yield* runCli(["theme", "set", "environment", "--base-dir", baseDir]);
-      assert.equal(readSettings(baseDir).defaultTheme, "environment");
+      yield* runCli(["theme", "set", "ocean", "--base-dir", baseDir]);
+      assert.equal(readSettings(baseDir).defaultTheme, "ocean");
     }),
   );
 
@@ -74,7 +74,7 @@ describe("t3 theme", () => {
       const baseDir = makeBaseDir();
       writeSettings(baseDir, { enableProviderUpdateChecks: false });
 
-      yield* runCli(["theme", "set", "environment", "--base-dir", baseDir]);
+      yield* runCli(["theme", "set", "ocean", "--base-dir", baseDir]);
       yield* runCli(["theme", "clear", "--base-dir", baseDir]);
 
       const settings = readSettings(baseDir);
@@ -179,7 +179,7 @@ describe("t3 theme", () => {
   it.effect("records a set generation and clears it with the theme", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
-      yield* runCli(["theme", "set", "nightfall", "--base-dir", baseDir]);
+      yield* runCli(["theme", "set", "ocean", "--base-dir", baseDir]);
       const setAt = readSettings(baseDir).defaultThemeSetAt;
       assert.equal(typeof setAt, "string");
 
@@ -193,12 +193,12 @@ describe("t3 theme", () => {
   it.effect("honors T3CODE_HOME like the rest of the CLI", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
-      yield* runCli(["theme", "set", "nightfall"]).pipe(
+      yield* runCli(["theme", "set", "ocean"]).pipe(
         Effect.provide(
           ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOME: baseDir } })),
         ),
       );
-      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+      assert.equal(readSettings(baseDir).defaultTheme, "ocean");
     }),
   );
 
@@ -210,7 +210,7 @@ describe("t3 theme", () => {
       writeSettings(baseDir, { enableProviderUpdateChecks: false });
       NodeFS.chmodSync(settingsPathFor(baseDir), 0o000);
 
-      const failure = yield* runCli(["theme", "set", "nightfall", "--base-dir", baseDir]).pipe(
+      const failure = yield* runCli(["theme", "set", "ocean", "--base-dir", baseDir]).pipe(
         Effect.flip,
       );
 
@@ -221,13 +221,40 @@ describe("t3 theme", () => {
     }),
   );
 
+  // A typo is syntactically a valid id, so shape validation alone would write
+  // a theme no client can resolve and report success.
+  it.effect("rejects an id that names no theme", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const failure = yield* runCli(["theme", "set", "ocian", "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+      assert.include(String(failure), "No theme named");
+      assert.equal(NodeFS.existsSync(settingsPathFor(baseDir)), false);
+    }),
+  );
+
+  it.effect("accepts an id a published file provides", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const themeFile = NodePath.join(baseDir, "nightfall.json");
+      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+      yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]);
+
+      // Now resolvable by bare id, because the file published it.
+      yield* runCli(["theme", "clear", "--base-dir", baseDir]);
+      yield* runCli(["theme", "set", "nightfall", "--base-dir", baseDir]);
+      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+    }),
+  );
+
   it.effect("refuses a settings file that is not a JSON object", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       NodeFS.mkdirSync(NodePath.dirname(settingsPathFor(baseDir)), { recursive: true });
       NodeFS.writeFileSync(settingsPathFor(baseDir), "[1, 2, 3]\n");
 
-      const failure = yield* runCli(["theme", "set", "environment", "--base-dir", baseDir]).pipe(
+      const failure = yield* runCli(["theme", "set", "ocean", "--base-dir", baseDir]).pipe(
         Effect.flip,
       );
 
