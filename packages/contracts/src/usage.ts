@@ -21,14 +21,15 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 5 as const;
+export const USAGE_CONTRACT_VERSION = 6 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v4 Claude/Codex buckets
- * remain valid, so mixed-version environments keep those totals instead of
- * treating every older server as stale.
+ * v5 only adds `grok` to {@link UsageProviderKind}; v6 only adds the optional
+ * bucket `project`. v4 Claude/Codex buckets remain valid, so mixed-version
+ * environments keep those totals instead of treating every older server as
+ * stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
@@ -80,8 +81,9 @@ export const UsageTokenTotals = Schema.Struct({
 export type UsageTokenTotals = typeof UsageTokenTotals.Type;
 
 /**
- * One `(day, hourStart?, provider, model)` cell. `hourStart` is the UTC start
- * instant of a rolling bucket and is present only for hourly requests.
+ * One `(day, hourStart?, project, provider, model)` cell. `hourStart` is the
+ * UTC start instant of a rolling bucket and is present only for hourly
+ * requests.
  *
  * `costUsd` is the raw API-equivalent cost of these tokens. It is not money
  * spent: subscription plans bill separately. `unpricedRecords` counts records
@@ -91,6 +93,14 @@ export type UsageTokenTotals = typeof UsageTokenTotals.Type;
 export const UsageBucket = Schema.Struct({
   day: UsageDay,
   hourStart: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Title of the T3 project whose workspace root contains the session's
+   * working directory, resolved per environment at scan time. Absent when the
+   * session ran outside every project on that environment, or when the
+   * transcript carries no working directory (Grok, and summaries from servers
+   * predating this field).
+   */
+  project: Schema.optional(TrimmedNonEmptyString),
   provider: UsageProviderKind,
   model: TrimmedNonEmptyString,
   totals: UsageTokenTotals,

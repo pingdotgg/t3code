@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { UsageAggregator } from "./usageAggregation.ts";
+import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
@@ -23,6 +23,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
     timestampMs: Date.parse("2026-08-07T04:05:13.944Z"),
     model: "claude-fable-5",
     sessionId: "session-a",
+    cwd: "",
     totals: {
       uncachedInputTokens: 100,
       cachedInputTokens: 1000,
@@ -92,6 +93,27 @@ describe("UsageAggregator", () => {
 
     expect(result.duplicatesDropped).toBe(0);
     expect(result.buckets[0]?.totals.outputTokens).toBe(100);
+  });
+
+  it("splits buckets by resolved project and omits the field when unresolved", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      resolveProject: (cwd) => (cwd === "/work/app" ? "App" : ""),
+    });
+    aggregator.add(record({ cwd: "/work/app" }));
+    aggregator.add(record({ cwd: "/work/app" }));
+    aggregator.add(record({ cwd: "/elsewhere" }));
+    const { buckets } = aggregator.finish();
+
+    // Same day, provider and model, so only the project splits the cell.
+    expect(buckets).toHaveLength(2);
+    expect(buckets[0]?.project).toBeUndefined();
+    expect(buckets[0]?.records).toBe(1);
+    expect(buckets[1]?.project).toBe("App");
+    expect(buckets[1]?.records).toBe(2);
   });
 
   it("buckets by the day in the requested time zone", () => {
@@ -200,5 +222,40 @@ describe("UsageAggregator", () => {
     ]);
 
     expect(result.buckets).toHaveLength(3);
+  });
+});
+
+describe("makeProjectResolver", () => {
+  const resolver = makeProjectResolver(
+    [
+      { workspaceRoot: "/work/app", title: "App", deleted: false },
+      { workspaceRoot: "/work/app/vendored", title: "Vendored", deleted: false },
+      { workspaceRoot: "/work/legacy", title: "Legacy Was Deleted", deleted: true },
+      { workspaceRoot: "/work/legacy", title: "Legacy", deleted: false },
+      { workspaceRoot: "/work/untitled", title: "   ", deleted: false },
+    ],
+    "/",
+  );
+
+  it("matches the root itself and any path under it", () => {
+    expect(resolver("/work/app")).toBe("App");
+    expect(resolver("/work/app/src/deep")).toBe("App");
+  });
+
+  it("requires a path-segment boundary, not a bare prefix", () => {
+    expect(resolver("/work/app-sibling")).toBe("");
+  });
+
+  it("prefers the deepest matching root", () => {
+    expect(resolver("/work/app/vendored/lib")).toBe("Vendored");
+  });
+
+  it("prefers a live project over a deleted one sharing the root", () => {
+    expect(resolver("/work/legacy/src")).toBe("Legacy");
+  });
+
+  it("never attributes to a blank title or an empty cwd", () => {
+    expect(resolver("/work/untitled/src")).toBe("");
+    expect(resolver("")).toBe("");
   });
 });

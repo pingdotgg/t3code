@@ -14,3 +14,8 @@ headline and chart, and refreshing rescans every connected environment.
 
 Any daily chart zooms: drag across it to make the selection the new date window, and double-click
 to return to the preset. The date fields beside the presets accept any custom range directly.
+
+Usage is attributed to the project whose folder a session ran in, including sessions driven
+outside T3 Code. The breakdown's **Project** view ranks projects by spend, and the project picker
+narrows the whole page to one project; work that ran outside every project is grouped under
+"Outside projects". Grok Build sessions record no folder and always count there.

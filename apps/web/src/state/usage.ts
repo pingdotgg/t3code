@@ -71,7 +71,11 @@ export interface UsageView {
   readonly refresh: () => void;
 }
 
-export function useUsage(input: UsageSummaryInput): UsageView {
+export function useUsage(
+  input: UsageSummaryInput,
+  /** A project title, `null` for outside-projects buckets, `undefined` for no filter. */
+  projectFilter?: string | null,
+): UsageView {
   const windowKey = useMemo(
     () =>
       JSON.stringify({
@@ -118,8 +122,12 @@ export function useUsage(input: UsageSummaryInput): UsageView {
             },
           ],
     );
-    return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [environments]);
+    return mergeUsage(
+      answered,
+      USAGE_CONTRACT_VERSION,
+      projectFilter === undefined ? undefined : { projectFilter },
+    );
+  }, [environments, projectFilter]);
 
   const answeredCount = environments.filter((environment) => environment.summary !== null).length;
   const stillReporting = environments.filter(

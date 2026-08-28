@@ -16,6 +16,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
     timestampMs: 1_786_000_000_000,
     model: "claude-fable-5",
     sessionId: "session-a",
+    cwd: "/home/theo/project",
     totals: {
       uncachedInputTokens: 2,
       cachedInputTokens: 1000,
