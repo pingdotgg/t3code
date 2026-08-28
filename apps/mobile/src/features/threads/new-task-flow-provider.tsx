@@ -8,6 +8,7 @@ import type {
   ProviderOptionSelection,
   RuntimeMode,
   ServerProviderSkill,
+  VcsWorktree,
 } from "@t3tools/contracts";
 import {
   CommandId,
@@ -165,6 +166,7 @@ type NewTaskFlowContextValue = {
   ) => void;
   readonly setWorkspaceMode: (mode: WorkspaceMode) => void;
   readonly selectBranch: (branch: VcsRef) => void;
+  readonly selectWorktree: (worktree: VcsWorktree) => void;
   readonly setStartFromOrigin: (value: boolean) => void;
   readonly beginEditingPendingTask: (messageId: string) => boolean;
   readonly finishEditingPendingTask: () => void;
@@ -367,7 +369,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({
           environmentId: selectedProject.environmentId,
-          input: { cwd: selectedProject.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
+          input: {
+            cwd: selectedProject.workspaceRoot,
+            relativePath: T3_PROJECT_FILE_NAME,
+          },
         })
       : null,
   );
@@ -652,7 +657,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         workspaceSelection: {
           mode,
           branch: mode === "local" ? localSelection.branch : selectedBranchName,
-          worktreePath: mode === "local" ? localSelection.worktreePath : selectedWorktreePath,
+          worktreePath:
+            mode === "local"
+              ? localSelection.worktreePath
+              : resolveNewTaskBranchWorktreePath({
+                  workspaceMode: mode,
+                  projectCwd: selectedProject.workspaceRoot,
+                  branchWorktreePath: selectedWorktreePath,
+                }),
           ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
         },
       });
@@ -723,6 +735,24 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [draftStartFromOrigin, selectedProject, selectedProjectDraftKey, workspaceMode],
   );
 
+  const selectWorktree = useCallback(
+    (worktree: VcsWorktree) => {
+      if (!selectedProjectDraftKey) {
+        return;
+      }
+      pendingLocalBranchSyncDraftKeysRef.current.delete(selectedProjectDraftKey);
+      updateComposerDraftSettings(selectedProjectDraftKey, {
+        workspaceSelection: {
+          mode: "local",
+          branch: worktree.branch,
+          worktreePath: worktree.path,
+          ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
+        },
+      });
+    },
+    [draftStartFromOrigin, selectedProjectDraftKey],
+  );
+
   const setStartFromOrigin = useCallback(
     (value: boolean) => {
       if (!selectedProjectDraftKey) {
@@ -779,7 +809,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const setRuntimeMode = useCallback(
     (value: RuntimeMode) => {
       if (selectedProjectDraftKey) {
-        updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
+        updateComposerDraftSettings(selectedProjectDraftKey, {
+          runtimeMode: value,
+        });
       }
     },
     [selectedProjectDraftKey],
@@ -787,7 +819,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const setInteractionMode = useCallback(
     (value: ProviderInteractionMode) => {
       if (selectedProjectDraftKey) {
-        updateComposerDraftSettings(selectedProjectDraftKey, { interactionMode: value });
+        updateComposerDraftSettings(selectedProjectDraftKey, {
+          interactionMode: value,
+        });
       }
     },
     [selectedProjectDraftKey],
@@ -1037,6 +1071,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setSelectedModelKey,
       setWorkspaceMode,
       selectBranch,
+      selectWorktree,
       setStartFromOrigin,
       beginEditingPendingTask,
       finishEditingPendingTask,
@@ -1097,6 +1132,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedWorktreePath,
       setProject,
       selectBranch,
+      selectWorktree,
       selectEnvironment,
       setInteractionMode,
       setPrompt,

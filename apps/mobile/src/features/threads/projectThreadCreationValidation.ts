@@ -44,10 +44,14 @@ export type ProjectThreadCreationValidationError = typeof ProjectThreadCreationV
 export function resolveProjectThreadCreationBranch(input: {
   readonly workspaceMode: "local" | "worktree";
   readonly selectedBranch: string | null;
+  readonly selectedWorktreePath: string | null;
   readonly currentCheckoutBranch: string | null;
 }): string | null {
   if (input.selectedBranch !== null) {
     return input.selectedBranch;
+  }
+  if (input.selectedWorktreePath !== null) {
+    return null;
   }
   return input.workspaceMode === "local" ? input.currentCheckoutBranch : null;
 }

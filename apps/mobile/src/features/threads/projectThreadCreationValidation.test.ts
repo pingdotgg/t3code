@@ -8,6 +8,7 @@ describe("resolveProjectThreadCreationBranch", () => {
       resolveProjectThreadCreationBranch({
         workspaceMode: "local",
         selectedBranch: null,
+        selectedWorktreePath: null,
         currentCheckoutBranch: "feature/x",
       }),
     ).toBe("feature/x");
@@ -18,6 +19,7 @@ describe("resolveProjectThreadCreationBranch", () => {
       resolveProjectThreadCreationBranch({
         workspaceMode: "local",
         selectedBranch: "main",
+        selectedWorktreePath: null,
         currentCheckoutBranch: "feature/x",
       }),
     ).toBe("main");
@@ -28,6 +30,7 @@ describe("resolveProjectThreadCreationBranch", () => {
       resolveProjectThreadCreationBranch({
         workspaceMode: "local",
         selectedBranch: null,
+        selectedWorktreePath: null,
         currentCheckoutBranch: null,
       }),
     ).toBeNull();
@@ -38,6 +41,7 @@ describe("resolveProjectThreadCreationBranch", () => {
       resolveProjectThreadCreationBranch({
         workspaceMode: "worktree",
         selectedBranch: null,
+        selectedWorktreePath: null,
         currentCheckoutBranch: "feature/x",
       }),
     ).toBeNull();
@@ -48,8 +52,20 @@ describe("resolveProjectThreadCreationBranch", () => {
       resolveProjectThreadCreationBranch({
         workspaceMode: "worktree",
         selectedBranch: "main",
+        selectedWorktreePath: null,
         currentCheckoutBranch: "feature/x",
       }),
     ).toBe("main");
+  });
+
+  it("keeps a selected detached worktree detached", () => {
+    expect(
+      resolveProjectThreadCreationBranch({
+        workspaceMode: "local",
+        selectedBranch: null,
+        selectedWorktreePath: "/worktrees/detached",
+        currentCheckoutBranch: "main",
+      }),
+    ).toBeNull();
   });
 });

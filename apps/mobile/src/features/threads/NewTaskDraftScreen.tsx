@@ -241,7 +241,9 @@ export function NewTaskDraftScreen(props: {
     // route, otherwise the transfer guard can swallow the fallback action.
     const frame = requestAnimationFrame(() => {
       navigation.dispatch(
-        StackActions.replace("NewTask", { incomingShareId: props.incomingShareId }),
+        StackActions.replace("NewTask", {
+          incomingShareId: props.incomingShareId,
+        }),
       );
     });
     return () => cancelAnimationFrame(frame);
@@ -596,6 +598,7 @@ export function NewTaskDraftScreen(props: {
     selectedBranch:
       flow.selectedBranchName ??
       (flow.workspaceMode === "worktree" ? availableCurrentBranchName : null),
+    selectedWorktreePath: flow.selectedWorktreePath,
     currentCheckoutBranch: flow.currentCheckoutBranchName,
   });
   const selectedBranchLabel = resolveNewTaskBranchLabel({
@@ -613,7 +616,9 @@ export function NewTaskDraftScreen(props: {
     if (isIncomingShareTransferPending) {
       return;
     }
-    const result = await pickComposerImages({ existingCount: flow.attachments.length });
+    const result = await pickComposerImages({
+      existingCount: flow.attachments.length,
+    });
     if (result.images.length > 0) {
       flow.appendAttachments(result.images);
     }
@@ -726,6 +731,7 @@ export function NewTaskDraftScreen(props: {
     const creationBranch = resolveProjectThreadCreationBranch({
       workspaceMode,
       selectedBranch: selectedBranchName,
+      selectedWorktreePath,
       currentCheckoutBranch: flow.currentCheckoutBranchName,
     });
     const result = await createProjectThread({
@@ -830,7 +836,11 @@ export function NewTaskDraftScreen(props: {
         paddingHorizontal: 4,
         paddingVertical: 4,
       }}
-      textStyle={{ ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }}
+      textStyle={{
+        ...bodyText,
+        color: foregroundColor,
+        fontFamily: regularFontFamily,
+      }}
     />
   );
 
@@ -851,7 +861,9 @@ export function NewTaskDraftScreen(props: {
     void KeyboardController.dismiss({ animated: true });
     navigation.dispatch(StackActions.push("NewTask", { incomingShareId: props.incomingShareId }));
   };
-  const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
+  const openContextPicker = (
+    routeName: "NewTaskBranch" | "NewTaskEnvironment" | "NewTaskWorkspace",
+  ) => {
     if (isIncomingShareTransferPending) {
       return;
     }
@@ -927,7 +939,7 @@ export function NewTaskDraftScreen(props: {
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
-        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
+        accessibilityHint="Opens the workspace picker"
         accessibilityLabel={workspaceLabel}
         disabled={isIncomingShareTransferPending}
         iconNode={
@@ -938,8 +950,8 @@ export function NewTaskDraftScreen(props: {
         }
         label={workspaceLabel}
         maxWidth={flow.workspaceMode === "local" ? 220 : 148}
-        onPress={() => flow.setWorkspaceMode(flow.workspaceMode === "local" ? "worktree" : "local")}
-        showChevron={false}
+        onPress={() => openContextPicker("NewTaskWorkspace")}
+        showChevron
       />
 
       <ComposerInlineControl
