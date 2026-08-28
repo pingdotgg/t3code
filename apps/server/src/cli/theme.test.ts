@@ -178,6 +178,30 @@ describe("t3 theme", () => {
     }),
   );
 
+  // An occupied destination the rollback could not put back -- here a
+  // symlink -- is refused outright rather than clobbered.
+  it.effect("refuses to publish over an entry it could not restore", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const themesDir = NodePath.join(baseDir, "userdata", "themes");
+      NodeFS.mkdirSync(themesDir, { recursive: true });
+      const outside = NodePath.join(baseDir, "outside.json");
+      NodeFS.writeFileSync(outside, NIGHTFALL_THEME_JSON);
+      const destination = NodePath.join(themesDir, "nightfall.json");
+      NodeFS.symlinkSync(outside, destination);
+      const themeFile = NodePath.join(baseDir, "nightfall.json");
+      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+
+      const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+
+      assert.include(String(failure), "Remove it, then run this again");
+      assert.equal(NodeFS.lstatSync(destination).isSymbolicLink(), true);
+      assert.equal(NodeFS.existsSync(settingsPathFor(baseDir)), false);
+    }),
+  );
+
   it.effect("restores the previous theme when a re-publish fails to set", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();

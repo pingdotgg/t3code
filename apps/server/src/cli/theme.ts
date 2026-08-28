@@ -36,6 +36,7 @@ import {
   MAX_THEME_FILE_BYTES,
   readPublishedThemes,
   readThemeFileGuarded,
+  themeEntryExists,
 } from "../environmentTheme.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { baseDirFlag } from "./config.ts";
@@ -121,6 +122,15 @@ export class ThemeFileColorlessError extends Schema.TaggedErrorClass<ThemeFileCo
 ) {
   override get message(): string {
     return `${this.filePath} has no colors to publish.`;
+  }
+}
+
+export class ThemeDestinationBlockedError extends Schema.TaggedErrorClass<ThemeDestinationBlockedError>()(
+  "ThemeDestinationBlockedError",
+  { destinationPath: Schema.String },
+) {
+  override get message(): string {
+    return `${this.destinationPath} already exists and is not a theme file this command could put back if setting the default failed. Remove it, then run this again.`;
   }
 }
 
@@ -333,6 +343,12 @@ const publishThemeFile = Effect.fn(function* (input: {
   // this write must put the directory back rather than leave a half-applied
   // publish, or a clobbered previous theme, behind.
   const previous = readThemeFileGuarded(destinationPath, MAX_THEME_FILE_BYTES);
+  // An occupied destination the rollback could not faithfully restore -- a
+  // symlink, an oversized file, anything unreadable -- is refused rather than
+  // clobbered, since a failed set would then delete it.
+  if (previous === null && themeEntryExists(destinationPath)) {
+    return yield* Effect.fail(new ThemeDestinationBlockedError({ destinationPath }));
+  }
   // Written verbatim: appending so much as a newline could push a file at
   // the size limit past it and have the watcher skip what was just accepted.
   yield* writeFileStringAtomically({
