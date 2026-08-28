@@ -163,7 +163,12 @@ export function mapCodexRateLimits(response: unknown): CodexRateLimits {
   let planType: string | null = null;
 
   if (typeof rateLimitsByLimitId === "object" && rateLimitsByLimitId !== null) {
-    for (const [limitId, snapshot] of Object.entries(rateLimitsByLimitId)) {
+    // JSON key order is not a contract; pin the default bucket first so the
+    // account-wide windows always lead the model-scoped ones.
+    const entries = Object.entries(rateLimitsByLimitId).toSorted(([a], [b]) =>
+      a === b ? 0 : a === "codex" ? -1 : b === "codex" ? 1 : a.localeCompare(b),
+    );
+    for (const [limitId, snapshot] of entries) {
       windows.push(...snapshotWindows(limitId, snapshot));
       planType ??= snapshotPlanType(snapshot);
     }

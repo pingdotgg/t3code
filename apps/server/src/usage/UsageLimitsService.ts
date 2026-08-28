@@ -221,12 +221,18 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Spawns a short-lived `codex app-server` and asks it for the account's
-   * rate windows. No thread is needed: the read answers right after the
-   * initialize handshake. Lifetime is scope-bound; the timeout and
-   * force-kill bound a hung binary.
+   * Spawns a short-lived `codex app-server` and asks it who is signed in and
+   * how much of the rate windows is used. No thread is needed: both reads
+   * answer right after the initialize handshake. Lifetime is scope-bound; the
+   * timeout and force-kill bound a hung binary.
+   *
+   * The rate-limits read deliberately uses the raw (undecoded) RPC surface:
+   * the generated response schema requires integer `usedPercent`s while the
+   * wire is known to carry fractional ones, and a decode failure here would
+   * misreport a healthy app server as unreachable. `mapCodexRateLimits`
+   * parses the raw document defensively instead.
    */
-  const requestCodexRateLimits = Effect.fn("UsageLimitsService.requestCodexRateLimits")(
+  const requestCodexAccountLimits = Effect.fn("UsageLimitsService.requestCodexAccountLimits")(
     function* (input: {
       readonly binaryPath: string;
       readonly homePath: string | undefined;
@@ -255,7 +261,13 @@ export const make = Effect.gen(function* () {
         capabilities: { experimentalApi: true },
       });
       yield* client.notify("initialized", undefined);
-      return yield* client.request("account/rateLimits/read", undefined);
+      const accountResponse = yield* client.request("account/read", {});
+      const account = accountResponse.account ?? null;
+      const rateLimits =
+        account === null && accountResponse.requiresOpenaiAuth
+          ? null
+          : yield* client.raw.request("account/rateLimits/read", undefined);
+      return { account, requiresOpenaiAuth: accountResponse.requiresOpenaiAuth, rateLimits };
     },
     Effect.scoped,
     Effect.timeoutOption(CODEX_APP_SERVER_TIMEOUT_MS),
@@ -279,6 +291,10 @@ export const make = Effect.gen(function* () {
     );
     // Credentials live in the auth home: the shadow home in authOverlay mode,
     // unlike transcripts, which UsageService reads from the shared home.
+    // The file is only a cheap pre-check to skip the spawn for unambiguous
+    // API-key auth; a missing file is NOT proof of being signed out, because
+    // Codex can keep credentials in the OS keyring or take a key from the
+    // environment. The app server is the canonical auth state.
     const authHome = layout.effectiveHomePath ?? layout.sharedHomePath;
     const raw = yield* fileSystem
       .readFileString(path.join(authHome, "auth.json"))
@@ -287,20 +303,31 @@ export const make = Effect.gen(function* () {
     if (authKind === "apiKey") {
       return codexLimits("unsupported", null, SUBSCRIPTION_ONLY_MESSAGE);
     }
-    if (authKind === "none") {
-      return codexLimits("unauthenticated", null, "Codex is not signed in on this environment.");
-    }
 
-    const response = yield* requestCodexRateLimits({
+    const response = yield* requestCodexAccountLimits({
       binaryPath: codexSettings.binaryPath,
       homePath: layout.effectiveHomePath,
       launchArgs: codexSettings.launchArgs,
     });
     if (response === null) {
-      return codexLimits("unavailable", null, "Codex's app server could not be reached.");
+      // Without local credential evidence, a dead app server most likely
+      // means Codex is absent or signed out rather than broken.
+      return authKind === "chatgpt"
+        ? codexLimits("unavailable", null, "Codex's app server could not be reached.")
+        : codexLimits("unauthenticated", null, "Codex is not signed in on this environment.");
     }
-    const { windows, planType } = mapCodexRateLimits(response);
-    const plan = codexPlanLabel(planType);
+    const account = response.account;
+    if (account === null && response.requiresOpenaiAuth) {
+      return codexLimits("unauthenticated", null, "Codex is not signed in on this environment.");
+    }
+    if (account !== null && (account.type === "apiKey" || account.type === "amazonBedrock")) {
+      return codexLimits("unsupported", null, SUBSCRIPTION_ONLY_MESSAGE);
+    }
+
+    const { windows, planType } = mapCodexRateLimits(response.rateLimits);
+    const plan = codexPlanLabel(
+      planType ?? (account !== null && account.type === "chatgpt" ? account.planType : null),
+    );
     if (windows.length === 0) {
       return codexLimits(
         "unavailable",
