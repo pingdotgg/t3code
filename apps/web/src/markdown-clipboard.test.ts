@@ -74,6 +74,65 @@ class FakeElement {
   hasAttribute(name: string): boolean {
     return Object.hasOwn(this.attributes, name);
   }
+
+  private htmlOverride: string | null = null;
+
+  appendChild(child: FakeElement | FakeText): FakeElement | FakeText {
+    this.append(child);
+    return child;
+  }
+
+  remove(): void {
+    const parent = this.parentElement;
+    if (!parent) return;
+    const index = parent.childNodes.indexOf(this);
+    if (index !== -1) parent.childNodes.splice(index, 1);
+    this.parentElement = null;
+  }
+
+  matches(selector: string): boolean {
+    const trimmed = selector.trim();
+    if (trimmed === ".chat-markdown-mermaid[data-markdown-copy]") {
+      return (
+        this.classList.contains("chat-markdown-mermaid") && this.hasAttribute("data-markdown-copy")
+      );
+    }
+    if (trimmed.startsWith(".") && !trimmed.includes("[")) {
+      return this.classList.contains(trimmed.slice(1));
+    }
+    if (trimmed === '[aria-hidden="true"]') return this.getAttribute("aria-hidden") === "true";
+    return this.localName === trimmed;
+  }
+
+  querySelectorAll(selector: string): FakeElement[] {
+    const parts = selector.split(",").map((part) => part.trim());
+    const matches: FakeElement[] = [];
+    const visit = (element: FakeElement) => {
+      if (parts.some((part) => element.matches(part))) matches.push(element);
+      for (const child of element.childNodes) {
+        if (child.nodeType === ELEMENT_NODE) visit(child as FakeElement);
+      }
+    };
+    for (const child of this.childNodes) {
+      if (child.nodeType === ELEMENT_NODE) visit(child as FakeElement);
+    }
+    return matches;
+  }
+
+  set innerHTML(value: string) {
+    this.htmlOverride = value;
+    this.childNodes.length = 0;
+  }
+
+  get innerHTML(): string {
+    if (this.htmlOverride !== null) return this.htmlOverride;
+    return this.childNodes
+      .map((child) => {
+        if (child.nodeType === TEXT_NODE) return child.textContent;
+        return `<${child.localName}>${child.innerHTML}</${child.localName}>`;
+      })
+      .join("");
+  }
 }
 
 function asNode(element: FakeElement): Node {
@@ -210,6 +269,39 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(payload?.text).toBe(fence);
     expect(payload?.html).toBe(
       '<meta charset="utf-8"><pre><code>```mermaid\nflowchart TD\n  A["&lt;script&gt;"]\n```</code></pre>',
+    );
+  });
+
+  it("keeps mermaid fences in html when the selection includes surrounding prose", () => {
+    const fence = "```mermaid\nflowchart TD\n  A --> B\n```";
+    const liveRoot = new FakeElement("DIV", ["chat-markdown"]).append(
+      new FakeElement("P").append(new FakeText("hello")),
+      new FakeElement("DIV", ["chat-markdown-mermaid"], {
+        "data-markdown-copy": `${fence}\n\n`,
+      }).append(new FakeElement("svg").append(new FakeText("Join form"))),
+    );
+    const clone = new FakeElement("DIV").append(
+      new FakeElement("P").append(new FakeText("hello")),
+      new FakeElement("DIV", ["chat-markdown-mermaid"], {
+        "data-markdown-copy": `${fence}\n\n`,
+      }).append(new FakeElement("svg").append(new FakeText("Join form"))),
+    );
+    vi.stubGlobal("document", {
+      createElement: () => new FakeElement("DIV"),
+    });
+
+    const payload = chatMarkdownClipboardPayload({
+      rangeCount: 1,
+      getRangeAt: () => ({
+        collapsed: false,
+        commonAncestorContainer: asNode(liveRoot),
+        cloneContents: () => asNode(clone),
+      }),
+    } as unknown as Selection);
+
+    expect(payload?.text).toBe(`hello\n\n${fence}`);
+    expect(payload?.html).toBe(
+      '<meta charset="utf-8"><div><p>hello</p><div><pre><code>```mermaid\nflowchart TD\n  A --&gt; B\n```</code></pre></div></div>',
     );
   });
 });

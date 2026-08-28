@@ -315,7 +315,15 @@ export function serializeTableElementToCsv(table: Element): string {
   return lines.join("\n");
 }
 
+function mermaidFenceHtml(markdown: string): string {
+  const escaped = markdown.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return `<pre><code>${escaped}</code></pre>`;
+}
+
 function sanitizedHtmlFrom(container: Element): string {
+  for (const host of container.querySelectorAll(".chat-markdown-mermaid[data-markdown-copy]")) {
+    host.innerHTML = mermaidFenceHtml(tidyMarkdown(host.getAttribute("data-markdown-copy") ?? ""));
+  }
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
     if (
       node.classList.contains("chat-markdown-file-link") ||
@@ -332,8 +340,7 @@ function sanitizedHtmlFrom(container: Element): string {
 }
 
 function htmlClipboardFromMarkdown(markdown: string): string {
-  const escaped = markdown.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-  return `<meta charset="utf-8"><pre><code>${escaped}</code></pre>`;
+  return `<meta charset="utf-8">${mermaidFenceHtml(markdown)}`;
 }
 
 export function chatMarkdownClipboardPayload(
