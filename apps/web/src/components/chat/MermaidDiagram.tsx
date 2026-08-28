@@ -49,25 +49,26 @@ export function MermaidDiagram({
 
   if (error !== null) {
     return (
-      <p
+      <div
         className="px-3 pb-2 text-xs text-destructive"
         data-markdown-copy={clipboardMarkdown}
         role="alert"
       >
         {error}
-      </p>
+      </div>
     );
   }
 
   if (svg === null) {
     return (
-      <p
+      <div
         className="px-3 pb-2 text-xs text-muted-foreground"
         aria-busy="true"
+        role="status"
         data-markdown-copy={clipboardMarkdown}
       >
         Rendering diagram…
-      </p>
+      </div>
     );
   }
 

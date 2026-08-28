@@ -21,6 +21,15 @@ export async function renderMermaidSvg(source: string, theme: MermaidTheme): Pro
       securityLevel: "strict",
       htmlLabels: false,
       theme: theme === "dark" ? "dark" : "neutral",
+      flowchart: { useMaxWidth: false },
+      sequence: { useMaxWidth: false },
+      class: { useMaxWidth: false },
+      state: { useMaxWidth: false },
+      er: { useMaxWidth: false },
+      gantt: { useMaxWidth: false },
+      pie: { useMaxWidth: false },
+      gitGraph: { useMaxWidth: false },
+      mindmap: { useMaxWidth: false },
     });
     initializedTheme = theme;
   }

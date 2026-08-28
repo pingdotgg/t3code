@@ -19,21 +19,25 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
   return sourceLines.join("\n");
 }
 
-const MARKDOWN_FENCE_LINE_REGEX = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
+const MARKDOWN_FENCE_LINE_REGEX = /^(?:(?:\s{0,3}>\s?)*)\s*(`{3,}|~{3,})(.*)$/;
+
+type OpenMarkdownFence = { char: string; length: number; startIndex: number };
 
 function nextOpenMarkdownFence(
-  open: { char: string; length: number } | null,
+  open: OpenMarkdownFence | null,
   line: string,
-): { char: string; length: number } | null {
+  index: number,
+): OpenMarkdownFence | null {
   const match = MARKDOWN_FENCE_LINE_REGEX.exec(line);
   if (!match) return open;
   const marker = match[1] ?? "";
-  const info = (match[2] ?? "").trim();
+  const info = match[2] ?? "";
   const char = marker[0] ?? "`";
   if (open === null) {
-    return { char, length: marker.length };
+    if (char === "`" && info.includes("`")) return null;
+    return { char, length: marker.length, startIndex: index };
   }
-  if (marker[0] === open.char && marker.length >= open.length && info.length === 0) {
+  if (marker[0] === open.char && marker.length >= open.length && info.trim().length === 0) {
     return null;
   }
   return open;
@@ -53,7 +57,7 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   const previewLines: string[] = [];
   let visibleLineCount = 0;
   let hasMoreContent = false;
-  let openFence: { char: string; length: number } | null = null;
+  let openFence: OpenMarkdownFence | null = null;
 
   for (const line of lines) {
     const isVisibleLine = line.trim().length > 0;
@@ -64,10 +68,15 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
       break;
     }
     previewLines.push(line);
-    openFence = nextOpenMarkdownFence(openFence, line);
+    openFence = nextOpenMarkdownFence(openFence, line, previewLines.length - 1);
     if (isVisibleLine) {
       visibleLineCount += 1;
     }
+  }
+
+  if (openFence !== null) {
+    hasMoreContent = true;
+    previewLines.length = openFence.startIndex;
   }
 
   while (previewLines.length > 0 && previewLines.at(-1)?.trim().length === 0) {

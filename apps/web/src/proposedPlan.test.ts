@@ -133,6 +133,67 @@ describe("buildCollapsedProposedPlanPreviewMarkdown", () => {
       ),
     ).toBe("```mermaid\nflowchart LR\n  A --> B\n```\n\n- more work\n\n...");
   });
+
+  it("tracks mermaid fences nested in a blockquote", () => {
+    expect(
+      buildCollapsedProposedPlanPreviewMarkdown(
+        [
+          "# Kataar",
+          "",
+          "Intro",
+          "",
+          "> ```mermaid",
+          "> flowchart LR",
+          ">   A --> B",
+          ">   B --> C",
+          "> ```",
+          "",
+          "- more work",
+        ].join("\n"),
+        { maxLines: 2 },
+      ),
+    ).toBe(
+      [
+        "Intro",
+        "",
+        "> ```mermaid",
+        "> flowchart LR",
+        ">   A --> B",
+        ">   B --> C",
+        "> ```",
+        "",
+        "...",
+      ].join("\n"),
+    );
+  });
+
+  it("does not treat a backtick info string as an opening fence", () => {
+    expect(
+      buildCollapsedProposedPlanPreviewMarkdown(
+        ["# Title", "", "```mermaid`nope", "- one", "- two", "- three"].join("\n"),
+        { maxLines: 2 },
+      ),
+    ).toBe("```mermaid`nope\n- one\n\n...");
+  });
+
+  it("drops an unclosed fence instead of swallowing the rest of the plan", () => {
+    expect(
+      buildCollapsedProposedPlanPreviewMarkdown(
+        [
+          "# Kataar",
+          "",
+          "Intro",
+          "",
+          "```mermaid",
+          "flowchart LR",
+          "  A --> B",
+          "- later work that is not a closing fence",
+          "- still more",
+        ].join("\n"),
+        { maxLines: 2 },
+      ),
+    ).toBe("Intro\n\n...");
+  });
 });
 
 describe("stripDisplayedPlanMarkdown", () => {

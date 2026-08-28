@@ -2289,6 +2289,10 @@ code {
   border-radius: 0.75rem;
   background: var(--muted);
   padding: 0.8rem 0.9rem;
+}
+
+.chat-markdown pre,
+.chat-markdown .chat-markdown-mermaid {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--contrast-border) 78%, transparent) transparent;
 }
@@ -2299,11 +2303,13 @@ code {
   padding: 0;
 }
 
-.chat-markdown pre::-webkit-scrollbar {
+.chat-markdown pre::-webkit-scrollbar,
+.chat-markdown .chat-markdown-mermaid::-webkit-scrollbar {
   height: 7px;
 }
 
-.chat-markdown pre::-webkit-scrollbar-thumb {
+.chat-markdown pre::-webkit-scrollbar-thumb,
+.chat-markdown .chat-markdown-mermaid::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: color-mix(in srgb, var(--contrast-border) 78%, transparent);
 }
@@ -2340,7 +2346,7 @@ code {
 
 .chat-markdown .chat-markdown-mermaid svg {
   display: block;
-  max-width: none;
+  max-width: none !important;
   height: auto;
 }
 

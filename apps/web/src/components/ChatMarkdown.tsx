@@ -872,9 +872,9 @@ function MarkdownCodeBlock({
         </span>
       </div>
       {diagramError !== null ? (
-        <p className="px-3 pb-1 text-xs text-destructive" role="alert">
+        <div className="px-3 pb-1 text-xs text-destructive" role="alert">
           {diagramError}
-        </p>
+        </div>
       ) : null}
       {showDiagram ? (
         <MermaidDiagram

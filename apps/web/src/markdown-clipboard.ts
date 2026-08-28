@@ -201,7 +201,9 @@ function serializeNode(node: Node): string {
   }
   const markdownCopy = element.getAttribute("data-markdown-copy");
   if (markdownCopy !== null) return markdownCopy;
-  if (isSkippedElement(element)) return "";
+  if (isSkippedElement(element)) {
+    return element.closest("[data-markdown-copy]")?.getAttribute("data-markdown-copy") ?? "";
+  }
 
   const headingLevel = /^H([1-6])$/.exec(element.tagName)?.[1];
   if (headingLevel) {
@@ -268,6 +270,15 @@ function tidyMarkdown(markdown: string): string {
 }
 
 export function serializeRenderedMarkdownFragment(container: Node): string {
+  if (container.nodeType === Node.ELEMENT_NODE) {
+    const element = container as Element;
+    const copy =
+      element.getAttribute("data-markdown-copy") ??
+      (element.closest("svg") !== null
+        ? (element.closest("[data-markdown-copy]")?.getAttribute("data-markdown-copy") ?? null)
+        : null);
+    if (copy !== null) return tidyMarkdown(copy);
+  }
   return tidyMarkdown(serializeChildren(container));
 }
 

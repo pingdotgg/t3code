@@ -8,6 +8,7 @@ const ELEMENT_NODE = 1;
 class FakeText {
   readonly nodeType = TEXT_NODE;
   readonly childNodes: ReadonlyArray<never> = [];
+  parentElement: FakeElement | null = null;
 
   constructor(readonly textContent: string) {}
 }
@@ -35,7 +36,24 @@ class FakeElement {
 
   append(...children: Array<FakeElement | FakeText>): this {
     this.childNodes.push(...children);
+    for (const child of children) {
+      child.parentElement = this;
+    }
     return this;
+  }
+
+  parentElement: FakeElement | null = null;
+
+  closest(selector: string): FakeElement | null {
+    let current: FakeElement | null = this;
+    while (current) {
+      if (selector === "svg" && current.tagName.toLowerCase() === "svg") return current;
+      if (selector === "[data-markdown-copy]" && current.hasAttribute("data-markdown-copy")) {
+        return current;
+      }
+      current = current.parentElement;
+    }
+    return null;
   }
 
   getAttribute(name?: string): string | null {
@@ -101,6 +119,22 @@ describe("serializeRenderedMarkdownFragment", () => {
     }).append(new FakeElement("svg").append(new FakeText("ignored svg text")));
     const container = new FakeElement("DIV").append(diagram);
 
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "```mermaid\nflowchart TD\n  A --> B\n```",
+    );
+  });
+
+  it("restores mermaid source when the copied range is inside the svg", () => {
+    const mermaidCopy = "```mermaid\nflowchart TD\n  A --> B\n```\n\n";
+    const svg = new FakeElement("svg").append(new FakeText("Join form"));
+    const diagram = new FakeElement("DIV", ["chat-markdown-mermaid"], {
+      "data-markdown-copy": mermaidCopy,
+    }).append(svg);
+    const container = new FakeElement("DIV").append(diagram);
+
+    expect(serializeRenderedMarkdownFragment(asNode(svg))).toBe(
+      "```mermaid\nflowchart TD\n  A --> B\n```",
+    );
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
       "```mermaid\nflowchart TD\n  A --> B\n```",
     );
