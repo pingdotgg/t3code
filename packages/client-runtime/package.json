@@ -186,6 +186,10 @@
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"
+    },
+    "./state/worktrees": {
+      "types": "./src/state/worktrees.ts",
+      "default": "./src/state/worktrees.ts"
     }
   },
   "scripts": {

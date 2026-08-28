@@ -31,6 +31,7 @@ import {
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as WorktreeLifecycle from "../vcs/WorktreeLifecycle.ts";
 
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
@@ -145,6 +146,7 @@ export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const gitManager = yield* GitManager.GitManager;
+  const worktreeLifecycle = yield* WorktreeLifecycle.WorktreeLifecycle;
 
   const ensureGit = Effect.fn("GitWorkflowService.ensureGit")(function* (
     operation: string,
@@ -296,10 +298,13 @@ export const make = Effect.gen(function* () {
       "GitWorkflowService.resolvePullRequest",
       gitManager.resolvePullRequest,
     ),
-    preparePullRequestThread: routeGitManager(
-      "GitWorkflowService.preparePullRequestThread",
-      gitManager.preparePullRequestThread,
-    ),
+    preparePullRequestThread: (input) =>
+      worktreeLifecycle.withMutationPermit(
+        ensureGit("GitWorkflowService.preparePullRequestThread", input.cwd).pipe(
+          Effect.andThen(gitManager.preparePullRequestThread(input)),
+          Effect.tap(() => worktreeLifecycle.markInventoryChanged),
+        ),
+      ),
     listRefs: (input) =>
       detectGitRepositoryForCommand("GitWorkflowService.listRefs", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
@@ -307,8 +312,11 @@ export const make = Effect.gen(function* () {
         ),
       ),
     createWorktree: (input) =>
-      ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
-        Effect.andThen(git.createWorktree(input)),
+      worktreeLifecycle.withMutationPermit(
+        ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
+          Effect.andThen(git.createWorktree(input)),
+          Effect.tap(() => worktreeLifecycle.markInventoryChanged),
+        ),
       ),
     listLocalBranchNames: (cwd) =>
       ensureGitCommand("GitWorkflowService.listLocalBranchNames", cwd).pipe(
@@ -327,8 +335,11 @@ export const make = Effect.gen(function* () {
         Effect.andThen(git.resolveRemoteTrackingCommit(input)),
       ),
     removeWorktree: (input) =>
-      ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
-        Effect.andThen(git.removeWorktree(input)),
+      worktreeLifecycle.withMutationPermit(
+        ensureGitCommand("GitWorkflowService.removeWorktree", input.cwd).pipe(
+          Effect.andThen(git.removeWorktree(input)),
+          Effect.tap(() => worktreeLifecycle.markInventoryChanged),
+        ),
       ),
     pruneWorktrees: (input) =>
       ensureGitCommand("GitWorkflowService.pruneWorktrees", input.cwd).pipe(
