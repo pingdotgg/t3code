@@ -121,7 +121,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model.name,
-        subtitle: providerLabel,
+        subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
@@ -152,7 +152,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: fallbackModelSelection.model,
-        subtitle: providerLabel,
+        subtitle: "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver: fallbackModelSelection.instanceId,
