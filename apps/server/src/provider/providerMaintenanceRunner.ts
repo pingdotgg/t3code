@@ -448,13 +448,12 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               versionBeforeUpdate !== null && versionBeforeUpdate !== undefined;
             const requiresVersionAdvance =
               freshCapabilities.latestVersion === null || hasVersionBeforeUpdate;
-            const versionAdvanced =
-              hasVersionBeforeUpdate &&
-              verifiedProviders.some(
-                (verifiedProvider) =>
-                  verifiedProvider.version !== null &&
-                  compareMaintenanceVersions(versionBeforeUpdate, verifiedProvider.version) === -1,
-              );
+            const versionAdvanced = verifiedProviders.some(
+              (verifiedProvider) =>
+                verifiedProvider.version !== null &&
+                (!hasVersionBeforeUpdate ||
+                  compareMaintenanceVersions(versionBeforeUpdate, verifiedProvider.version) === -1),
+            );
             const versionUnchanged = requiresVersionAdvance && !versionAdvanced;
             const stillOutdated =
               couldNotVerify ||

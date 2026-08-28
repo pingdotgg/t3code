@@ -769,6 +769,47 @@ describe("providerMaintenanceRunner", () => {
     ),
   );
 
+  it.effect("reports a native update as successful when its version becomes known", () =>
+    Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry({
+        ...baseProvider,
+        version: null,
+      });
+      const nativeCapabilities = makeProviderMaintenanceCapabilities({
+        provider: CODEX_DRIVER,
+        packageName: "@openai/codex",
+        updateExecutable: "/home/test/.local/bin/codex",
+        updateArgs: ["update"],
+        updateLockKey: "codex-native",
+        identityKey: "codex-native-installation",
+        ownershipVerified: true,
+        currentVersion: null,
+        latestVersion: null,
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        resolveProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(nativeCapabilities),
+        refreshInstance: () =>
+          Ref.updateAndGet(providersRef, (providers) =>
+            providers.map((provider) => ({ ...provider, version: "1.1.0" })),
+          ),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      assert.strictEqual(result.providers[0]?.updateState?.message, "Provider updated.");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("1.1.0"),
+          mockSpawnerLayer(() => ({ stdout: "updated" })),
+        ),
+      ),
+    ),
+  );
+
   it.effect("prevents concurrent updates for the same provider", () => {
     const startedLatch: { resolve: () => void } = { resolve: () => {} };
     const releaseLatch: { resolve: () => void } = { resolve: () => {} };
