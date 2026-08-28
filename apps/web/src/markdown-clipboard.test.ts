@@ -175,14 +175,6 @@ describe("serializeRenderedMarkdownFragment", () => {
       "data-markdown-copy": `${fence}\n\n`,
     }).append(liveSvg);
     const detachedClone = new FakeElement("svg").append(new FakeText("Join form"));
-    const htmlHost = {
-      innerHTML: "",
-      appendChild() {},
-      querySelectorAll: () => [],
-    };
-    vi.stubGlobal("document", {
-      createElement: () => htmlHost,
-    });
 
     const payload = chatMarkdownClipboardPayload({
       rangeCount: 1,
@@ -194,5 +186,30 @@ describe("serializeRenderedMarkdownFragment", () => {
     } as unknown as Selection);
 
     expect(payload?.text).toBe(fence);
+    expect(payload?.html).toBe(
+      '<meta charset="utf-8"><pre><code>```mermaid\nflowchart TD\n  A --&gt; B\n```</code></pre>',
+    );
+  });
+
+  it("escapes mermaid source in the html clipboard flavor", () => {
+    const fence = '```mermaid\nflowchart TD\n  A["<script>"]\n```';
+    const liveSvg = new FakeElement("svg").append(new FakeText("A"));
+    new FakeElement("DIV", ["chat-markdown-mermaid"], {
+      "data-markdown-copy": fence,
+    }).append(liveSvg);
+
+    const payload = chatMarkdownClipboardPayload({
+      rangeCount: 1,
+      getRangeAt: () => ({
+        collapsed: false,
+        commonAncestorContainer: asNode(liveSvg),
+        cloneContents: () => asNode(new FakeElement("svg")),
+      }),
+    } as unknown as Selection);
+
+    expect(payload?.text).toBe(fence);
+    expect(payload?.html).toBe(
+      '<meta charset="utf-8"><pre><code>```mermaid\nflowchart TD\n  A["&lt;script&gt;"]\n```</code></pre>',
+    );
   });
 });

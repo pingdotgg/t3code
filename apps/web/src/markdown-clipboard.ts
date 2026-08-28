@@ -331,6 +331,11 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+function htmlClipboardFromMarkdown(markdown: string): string {
+  const escaped = markdown.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return `<meta charset="utf-8"><pre><code>${escaped}</code></pre>`;
+}
+
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
@@ -339,15 +344,16 @@ export function chatMarkdownClipboardPayload(
   for (let index = 0; index < selection.rangeCount; index += 1) {
     const range = selection.getRangeAt(index);
     if (range.collapsed) continue;
-    const container = document.createElement("div");
-    container.appendChild(range.cloneContents());
     const ancestor = range.commonAncestorContainer;
     const mermaidCopy = mermaidMarkdownCopyFromLiveNode(ancestor);
     if (mermaidCopy !== null) {
-      texts.push(tidyMarkdown(mermaidCopy));
-      htmls.push(sanitizedHtmlFrom(container));
+      const text = tidyMarkdown(mermaidCopy);
+      texts.push(text);
+      htmls.push(htmlClipboardFromMarkdown(text));
       continue;
     }
+    const container = document.createElement("div");
+    container.appendChild(range.cloneContents());
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
     if (ancestorElement?.closest("pre")) {
