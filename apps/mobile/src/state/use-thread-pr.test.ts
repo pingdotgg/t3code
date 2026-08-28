@@ -17,7 +17,7 @@ describe("presentThreadPr", () => {
     expect(presentThreadPr(pullRequest, undefined)).toMatchObject({
       label: "3774",
       accessibilityLabel: "#3774 pull request merged",
-      textClassName: "text-violet-600 dark:text-violet-400",
+      textClassName: "text-adaptive-violet-600-400",
     });
   });
 

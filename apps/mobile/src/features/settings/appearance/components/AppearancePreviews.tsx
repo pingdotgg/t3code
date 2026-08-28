@@ -5,7 +5,7 @@ import {
   resolveMarkdownFontSizes,
   resolveMobileCodeSurface,
 } from "../../../../lib/appearancePreferences";
-import { useThemeColor } from "../../../../lib/useThemeColor";
+import { useUniwindTheme } from "../../../../lib/useUniwindTheme";
 import { getMobileTerminalTheme } from "../../../terminal/terminalTheme";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 
@@ -138,8 +138,9 @@ export function CodeAppearancePreview(props: {
   readonly wordBreak: boolean;
 }) {
   const surface = resolveMobileCodeSurface(props.fontSize);
-  const lineNumberColor = useThemeColor("--color-icon-subtle");
-  const keywordColor = useThemeColor("--color-md-link");
+  const theme = useUniwindTheme();
+  const lineNumberColor = theme["--color-icon-subtle"];
+  const keywordColor = theme["--color-md-link"];
 
   const lineNumber = (line: CodePreviewLine, index: number) => (
     <Text

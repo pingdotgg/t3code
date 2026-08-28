@@ -17,6 +17,7 @@ import { cn } from "../../lib/cn";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import {
   buildNativeSourceTokens,
   NATIVE_SOURCE_CONTENT_WIDTH,
@@ -153,6 +154,7 @@ function NativeSourceFileSurface(
   const { NativeView, onRefresh } = props;
   const { codeSurface, codeWordBreak, nativeSourceStyle } = useAppearanceCodeSurface();
   const { themeAppearance, themeId } = useAppearancePreferences();
+  const appTheme = useUniwindTheme();
   const { width: viewportWidth } = useWindowDimensions();
   const { rowsJson, status, targetIndex, tokens } = useSourceFileModel(props);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
@@ -173,8 +175,8 @@ function NativeSourceFileSurface(
     [targetIndex],
   );
   const themeJson = useMemo(
-    () => JSON.stringify(createNativeReviewDiffTheme(themeAppearance, themeId)),
-    [themeAppearance, themeId],
+    () => JSON.stringify(createNativeReviewDiffTheme(themeAppearance, themeId, appTheme)),
+    [appTheme, themeAppearance, themeId],
   );
   const styleJson = useMemo(() => JSON.stringify(nativeSourceStyle), [nativeSourceStyle]);
   const contentWidth = codeWordBreak

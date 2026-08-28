@@ -4,7 +4,6 @@ import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAttachedTerminalSession } from "../../state/use-terminal-session";
@@ -36,7 +35,6 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const nativeTerminalAvailable = hasNativeTerminalSurface();
-  const iconColor = useThemeColor("--color-icon");
   const terminalId = DEFAULT_TERMINAL_ID;
   const lastGridSizeRef = useRef<TerminalGridSize>({
     cols: DEFAULT_TERMINAL_COLS,
@@ -236,7 +234,12 @@ export const ThreadTerminalPanel = memo(function ThreadTerminalPanel(
             className="h-8 w-8 items-center justify-center rounded-[8px] bg-subtle"
             onPress={props.onClose}
           >
-            <SymbolView name="xmark" size={13} tintColor={iconColor} type="monochrome" />
+            <SymbolView
+              name="xmark"
+              size={13}
+              tintColorClassName={"accent-icon"}
+              type="monochrome"
+            />
           </Pressable>
         </View>
       </View>

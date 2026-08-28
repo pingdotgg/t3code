@@ -18,7 +18,6 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
-import { useThemeColor } from "../../lib/useThemeColor";
 import {
   isPendingUserInputOptionSelected,
   type PendingUserInput,
@@ -87,7 +86,6 @@ const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
-  const iconSubtle = useThemeColor("--color-icon-subtle");
   const questionCount = props.pendingUserInput.questions.length;
 
   const cardCoverage = props.cardCoverage;
@@ -163,7 +161,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       pointerEvents={props.collapsed ? "auto" : "none"}
       accessibilityElementsHidden={!props.collapsed}
       importantForAccessibility={props.collapsed ? "auto" : "no-hide-descendants"}
-      className="flex-row items-center gap-2 rounded-full border border-neutral-200 bg-neutral-100 py-1.5 pl-4 pr-1.5 dark:border-white/6 dark:bg-neutral-900"
+      className="flex-row items-center gap-2 rounded-full border border-adaptive-neutral-200-white-a6 bg-adaptive-neutral-100-900 py-1.5 pl-4 pr-1.5"
     >
       <Pressable
         accessibilityRole="button"
@@ -173,14 +171,19 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         onPress={props.onToggleCollapsed}
         className="min-h-10 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
-        <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
+        <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-adaptive-sky-700-300">
           User input needed
         </Text>
-        <Text className="font-sans text-xs text-neutral-500 dark:text-neutral-400">
+        <Text className="font-sans text-xs text-adaptive-neutral-500-400">
           {questionCount} question{questionCount === 1 ? "" : "s"}
         </Text>
         <View className="flex-1" />
-        <SymbolView name="chevron.up" size={12} tintColor={iconSubtle} type="monochrome" />
+        <SymbolView
+          name="chevron.up"
+          size={12}
+          tintColorClassName={"accent-icon-subtle"}
+          type="monochrome"
+        />
       </Pressable>
       {props.onStopThread ? (
         <ControlPill
@@ -213,7 +216,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           : FadeOutDown.duration(USER_INPUT_TOGGLE_DURATION_MS).easing(Easing.out(Easing.cubic))
       }
       layout={CARD_LAYOUT_TRANSITION}
-      className="overflow-hidden gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100 p-4 dark:border-white/6 dark:bg-neutral-900"
+      className="overflow-hidden gap-2.5 rounded-[20px] border border-adaptive-neutral-200-white-a6 bg-adaptive-neutral-100-900 p-4"
       style={
         EXPANDED_CARD_IS_OVERLAY
           ? [{ maxHeight: props.maxHeight }, cardAnimatedStyle]
@@ -227,15 +230,20 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         className="flex-row items-start gap-2"
       >
         <View className="flex-1 gap-2.5">
-          <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
+          <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-adaptive-sky-700-300">
             User input needed
           </Text>
-          <Text className="font-t3-bold text-lg text-neutral-950 dark:text-neutral-50">
+          <Text className="font-t3-bold text-lg text-adaptive-neutral-950-50">
             Fill in the pending answers
           </Text>
         </View>
-        <View className="h-8 w-8 items-center justify-center rounded-full bg-neutral-200/70 dark:bg-white/8">
-          <SymbolView name="chevron.down" size={13} tintColor={iconSubtle} type="monochrome" />
+        <View className="h-8 w-8 items-center justify-center rounded-full bg-adaptive-neutral-200-a70-white-a8">
+          <SymbolView
+            name="chevron.down"
+            size={13}
+            tintColorClassName={"accent-icon-subtle"}
+            type="monochrome"
+          />
         </View>
       </Pressable>
       <ScrollView
@@ -251,10 +259,10 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           const draft = props.drafts[question.id];
           return (
             <View key={question.id} className="gap-2 pt-1">
-              <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-neutral-500 dark:text-neutral-500">
+              <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-neutral-500">
                 {question.header}
               </Text>
-              <Text className="font-sans text-base leading-snug text-neutral-950 dark:text-neutral-50">
+              <Text className="font-sans text-base leading-snug text-adaptive-neutral-950-50">
                 {question.question}
               </Text>
               <View className="gap-2">
@@ -268,8 +276,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                       className={cn(
                         "min-h-12 w-full rounded-2xl border px-3.5 py-3",
                         selected
-                          ? "border-blue-300/50 bg-blue-50 dark:border-blue-400/28 dark:bg-blue-400/14"
-                          : "border-neutral-200 bg-white dark:border-white/6 dark:bg-neutral-950/70",
+                          ? "border-adaptive-blue-300-a50-blue-400-a28 bg-adaptive-blue-50-blue-400-a14"
+                          : "border-adaptive-neutral-200-white-a6 bg-adaptive-white-neutral-950-a70",
                       )}
                       onPress={() =>
                         props.onSelectOption(
@@ -284,14 +292,14 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                           className={cn(
                             "font-t3-bold text-sm",
                             selected
-                              ? "text-sky-700 dark:text-sky-300"
-                              : "text-neutral-700 dark:text-neutral-200",
+                              ? "text-adaptive-sky-700-300"
+                              : "text-adaptive-neutral-600-300",
                           )}
                         >
                           {option.label}
                         </Text>
                         {description ? (
-                          <Text className="font-sans text-sm leading-5 text-neutral-500 dark:text-neutral-400">
+                          <Text className="font-sans text-sm leading-5 text-adaptive-neutral-500-400">
                             {description}
                           </Text>
                         ) : null}
@@ -308,7 +316,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 onFocus={() => props.onInputFocusChange?.(true)}
                 onBlur={() => props.onInputFocusChange?.(false)}
                 placeholder="Or type a custom answer"
-                className="min-h-[54px] rounded-2xl border border-neutral-200 bg-white px-3.5 py-3 font-sans text-base text-neutral-950 dark:border-white/8 dark:bg-neutral-950/70 dark:text-neutral-50"
+                className="min-h-[54px] rounded-2xl border border-adaptive-neutral-200-white-a8 bg-adaptive-white-neutral-950-a70 px-3.5 py-3 font-sans text-base text-adaptive-neutral-950-50"
               />
             </View>
           );
@@ -317,7 +325,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       <Pressable
         className={cn(
           "items-center justify-center rounded-2xl px-4 py-3.5",
-          props.answers ? "bg-blue-500" : "bg-neutral-200 dark:bg-neutral-700/60",
+          props.answers ? "bg-blue-500" : "bg-adaptive-neutral-200-700-a60",
         )}
         disabled={
           props.answers === null || props.respondingUserInputId === props.pendingUserInput.requestId

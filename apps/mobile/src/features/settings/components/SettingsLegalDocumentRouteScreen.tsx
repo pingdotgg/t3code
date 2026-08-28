@@ -6,12 +6,10 @@ import { WebView } from "react-native-webview";
 import { AppText as Text } from "../../../components/AppText";
 import { LoadingStrip } from "../../../components/LoadingStrip";
 import { SymbolView } from "../../../components/AppSymbol";
-import { useThemeColor } from "../../../lib/useThemeColor";
 import { isLegalDocumentUrl, LEGAL_URL } from "../lib/legal-document-url";
 
 export function SettingsLegalDocumentCloseHeaderButton() {
   const navigation = useNavigation();
-  const iconColor = useThemeColor("--color-icon");
 
   return (
     <Pressable
@@ -24,7 +22,7 @@ export function SettingsLegalDocumentCloseHeaderButton() {
       <SymbolView
         name="xmark"
         size={18}
-        tintColor={iconColor}
+        tintColorClassName={"accent-icon"}
         type="monochrome"
         weight="semibold"
       />
@@ -37,7 +35,6 @@ export function SettingsLegalDocumentExternalHeaderButton({
 }: {
   readonly externalUrl?: string;
 }) {
-  const iconColor = useThemeColor("--color-icon");
   const safeExternalUrl = isLegalDocumentUrl(externalUrl) ? externalUrl : LEGAL_URL;
 
   return (
@@ -51,7 +48,7 @@ export function SettingsLegalDocumentExternalHeaderButton({
       <SymbolView
         name="safari"
         size={19}
-        tintColor={iconColor}
+        tintColorClassName={"accent-icon"}
         type="monochrome"
         weight="regular"
       />
@@ -69,7 +66,6 @@ export function SettingsLegalDocumentRouteScreen({
   documentUrl,
 }: SettingsLegalDocumentRouteScreenProps) {
   const navigation = useNavigation<NavigationProp<ParamListBase>>();
-  const iconColor = useThemeColor("--color-icon");
   const [reloadKey, setReloadKey] = useState(0);
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -94,7 +90,7 @@ export function SettingsLegalDocumentRouteScreen({
         <SymbolView
           name="exclamationmark.triangle"
           size={32}
-          tintColor={iconColor}
+          tintColorClassName={"accent-icon"}
           type="monochrome"
           weight="regular"
         />

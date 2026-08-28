@@ -1,12 +1,11 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { SymbolView } from "expo-symbols";
 import { useMemo } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { SymbolView } from "../../components/AppSymbol";
 import {
   clearClientCacheAtom,
   clientCacheSummaryAtom,
@@ -17,8 +16,6 @@ import { SettingsSection } from "./components/SettingsSection";
 
 export function SettingsClientStorageRouteScreen() {
   const insets = useSafeAreaInsets();
-  const iconColor = useThemeColor("--color-icon");
-  const dangerForegroundColor = useThemeColor("--color-danger-foreground");
   const summaryResult = useAtomValue(clientCacheSummaryAtom);
   const clearResult = useAtomValue(clearClientCacheAtom);
   const clearCache = useAtomSet(clearClientCacheAtom);
@@ -84,7 +81,7 @@ export function SettingsClientStorageRouteScreen() {
               <SymbolView
                 name="exclamationmark.triangle"
                 size={28}
-                tintColor={dangerForegroundColor}
+                tintColorClassName={"accent-danger-foreground"}
                 type="monochrome"
                 weight="regular"
               />
@@ -119,7 +116,7 @@ export function SettingsClientStorageRouteScreen() {
               <SymbolView
                 name="checkmark.circle"
                 size={28}
-                tintColor={iconColor}
+                tintColorClassName={"accent-icon"}
                 type="monochrome"
                 weight="regular"
               />
@@ -142,14 +139,16 @@ export function SettingsClientStorageRouteScreen() {
               <SymbolView
                 name="trash"
                 size={22}
-                tintColor={dangerForegroundColor}
+                tintColorClassName={"accent-danger-foreground"}
                 type="monochrome"
                 weight="regular"
               />
               <Text className="flex-1 text-lg tabular-nums text-danger-foreground">
                 {summary ? `Clear ${formatBytes(summary.payloadBytes)}` : "Clear caches"}
               </Text>
-              {isClearing ? <ActivityIndicator color={dangerForegroundColor} /> : null}
+              {isClearing ? (
+                <ActivityIndicator colorClassName={"accent-danger-foreground"} />
+              ) : null}
             </Pressable>
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
@@ -174,7 +173,6 @@ function CacheEnvironmentRow(props: {
   readonly first: boolean;
   readonly onClear: () => void;
 }) {
-  const iconColor = useThemeColor("--color-icon");
   return (
     <View
       className={
@@ -186,7 +184,7 @@ function CacheEnvironmentRow(props: {
       <SymbolView
         name="desktopcomputer"
         size={22}
-        tintColor={iconColor}
+        tintColorClassName={"accent-icon"}
         type="monochrome"
         weight="regular"
       />

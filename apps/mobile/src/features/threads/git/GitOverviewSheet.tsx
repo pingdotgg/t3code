@@ -17,7 +17,7 @@ import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "re
 
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useThemeColor } from "../../../lib/useThemeColor";
+import { useUniwindTheme } from "../../../lib/useUniwindTheme";
 
 import { AndroidSheetHeader } from "../../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../../components/AppText";
@@ -53,10 +53,9 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-
-  const iconColor = useThemeColor("--color-icon");
-  const foregroundColor = String(useThemeColor("--color-foreground"));
-  const sheetColor = String(useThemeColor("--color-sheet"));
+  const theme = useUniwindTheme();
+  const foregroundColor = theme["--color-foreground"];
+  const sheetColor = theme["--color-sheet"];
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -385,7 +384,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
             <SymbolView
               name="arrow.clockwise"
               size={16}
-              tintColor={iconColor}
+              tintColorClassName={"accent-icon"}
               type="monochrome"
               weight="medium"
             />

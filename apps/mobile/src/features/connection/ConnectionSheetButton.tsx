@@ -1,6 +1,5 @@
 import { SymbolView } from "../../components/AppSymbol";
 import { Platform, Pressable } from "react-native";
-import { useThemeColor } from "../../lib/useThemeColor";
 
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
@@ -37,11 +36,12 @@ export function ConnectionSheetButton(props: {
 }) {
   const tone = props.tone ?? "secondary";
 
-  const primaryFg = useThemeColor("--color-primary-foreground");
-  const dangerFg = useThemeColor("--color-danger-foreground");
-  const secondaryFg = useThemeColor("--color-secondary-foreground");
-
-  const textColor = tone === "primary" ? primaryFg : tone === "danger" ? dangerFg : secondaryFg;
+  const textColorClassName =
+    tone === "primary"
+      ? "accent-primary-foreground"
+      : tone === "danger"
+        ? "accent-danger-foreground"
+        : "accent-secondary-foreground";
 
   const primaryShadow =
     tone === "primary"
@@ -79,7 +79,7 @@ export function ConnectionSheetButton(props: {
       <SymbolView
         name={props.icon}
         size={props.compact ? 13 : 14}
-        tintColor={textColor}
+        tintColorClassName={textColorClassName}
         type="monochrome"
       />
       <Text

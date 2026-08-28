@@ -8,7 +8,6 @@ import { ActivityIndicator, Animated, Platform, Pressable, View } from "react-na
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { brandTitleOffset, CompactBrandTitle } from "../../components/CompactBrandTitle";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useWorkspaceState } from "../../state/workspace";
 import {
@@ -98,7 +97,6 @@ export function WorkspaceConnectionTitle(props: {
   /** Horizontal correction so the status aligns with the brand in native title slots. */
   readonly statusOffset?: number;
 }) {
-  const iconColor = String(useThemeColor("--color-icon-muted"));
   const status = useDelayedConnectionStatus();
   const size = props.size ?? "navbar";
 
@@ -125,12 +123,12 @@ export function WorkspaceConnectionTitle(props: {
         style={{ marginLeft: props.statusOffset ?? 0 }}
       >
         {status.showsProgress ? (
-          <ActivityIndicator color={iconColor} size="small" />
+          <ActivityIndicator colorClassName={"accent-icon-muted"} size="small" />
         ) : (
           <SymbolView
             name="wifi.slash"
             size={size === "pageTitle" ? 17 : 15}
-            tintColor={iconColor}
+            tintColorClassName={"accent-icon-muted"}
             type="monochrome"
           />
         )}

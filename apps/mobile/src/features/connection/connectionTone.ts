@@ -6,38 +6,38 @@ export function connectionTone(state: RemoteClientConnectionState): StatusTone {
     case "connected":
       return {
         label: "Connected",
-        pillClassName: "bg-emerald-500/12 dark:bg-emerald-500/16",
-        textClassName: "text-emerald-700 dark:text-emerald-300",
+        pillClassName: "bg-adaptive-emerald-500-a12-a16",
+        textClassName: "text-adaptive-emerald-700-300",
       };
     case "reconnecting":
       return {
         label: "Reconnecting",
-        pillClassName: "bg-amber-500/12 dark:bg-amber-500/16",
-        textClassName: "text-amber-700 dark:text-amber-300",
+        pillClassName: "bg-adaptive-amber-500-a12-a16",
+        textClassName: "text-adaptive-amber-700-300",
       };
     case "connecting":
       return {
         label: "Connecting",
-        pillClassName: "bg-sky-500/12 dark:bg-sky-500/16",
-        textClassName: "text-sky-700 dark:text-sky-300",
+        pillClassName: "bg-adaptive-sky-500-a12-a16",
+        textClassName: "text-adaptive-sky-700-300",
       };
     case "error":
       return {
         label: "Connection failed",
-        pillClassName: "bg-rose-500/12 dark:bg-rose-500/16",
-        textClassName: "text-rose-700 dark:text-rose-300",
+        pillClassName: "bg-adaptive-rose-500-a12-a16",
+        textClassName: "text-adaptive-rose-700-300",
       };
     case "offline":
       return {
         label: "Offline",
-        pillClassName: "bg-rose-500/12 dark:bg-rose-500/16",
-        textClassName: "text-rose-700 dark:text-rose-300",
+        pillClassName: "bg-adaptive-rose-500-a12-a16",
+        textClassName: "text-adaptive-rose-700-300",
       };
     case "available":
       return {
         label: "Available",
-        pillClassName: "bg-neutral-500/10 dark:bg-neutral-500/16",
-        textClassName: "text-neutral-600 dark:text-neutral-300",
+        pillClassName: "bg-adaptive-neutral-500-a10-a16",
+        textClassName: "text-adaptive-neutral-600-300",
       };
   }
 }

@@ -17,9 +17,9 @@ export interface ThreadPrPresentation {
 }
 
 const PR_STATE_TEXT_CLASS: Record<ThreadPr["state"], string> = {
-  open: "text-emerald-600 dark:text-emerald-400",
-  merged: "text-violet-600 dark:text-violet-400",
-  closed: "text-zinc-500 dark:text-zinc-400",
+  open: "text-adaptive-emerald-600-400",
+  merged: "text-adaptive-violet-600-400",
+  closed: "text-adaptive-zinc-500-400",
 };
 
 export function presentThreadPr(
