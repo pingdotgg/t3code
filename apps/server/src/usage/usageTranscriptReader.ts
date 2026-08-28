@@ -326,7 +326,9 @@ function readOpenCodeRows(
       finish(message.status === "ok" ? message.groups : null);
     });
     worker.once("error", () => finish(null));
-    worker.once("exit", () => finish(null));
+    worker.once("exit", (code) => {
+      if (code !== 0) finish(null);
+    });
   });
 }
 
