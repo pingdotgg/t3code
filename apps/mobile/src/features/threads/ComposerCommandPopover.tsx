@@ -127,6 +127,7 @@ const CommandRow = memo(function CommandRow(props: {
 
   return (
     <Pressable
+      accessibilityRole="button"
       onPress={props.onPress}
       className="flex-row items-center gap-2.5 border-border px-3.5 py-2.5 active:opacity-60"
       style={{ borderBottomWidth: props.isLast ? 0 : StyleSheet.hairlineWidth }}
