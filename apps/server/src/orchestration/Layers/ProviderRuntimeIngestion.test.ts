@@ -301,6 +301,7 @@ describe("ProviderRuntimeIngestion", () => {
         threadId: ThreadId.make("thread-1"),
         status: "ready",
         providerName: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
         runtimeMode: "approval-required",
         activeTurnId: null,
         updatedAt: createdAt,
@@ -310,6 +311,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
     provider.setSession({
       provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
       status: "ready",
       runtimeMode: "approval-required",
       threadId: ThreadId.make("thread-1"),
@@ -678,6 +680,50 @@ describe("ProviderRuntimeIngestion", () => {
       );
       expect(thread?.session?.status).toBe("stopped");
       expect(thread?.session?.activeTurnId).toBeNull();
+    }),
+  );
+
+  effectIt.effect("ignores a delayed source exit after target ownership commits", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const threadId = asThreadId("thread-1");
+      const sourceInstanceId = ProviderInstanceId.make("codex-source");
+      const targetInstanceId = ProviderInstanceId.make("codex-target");
+      const committedAt = "2026-01-01T00:00:02.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-target-session-committed"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: targetInstanceId,
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: committedAt,
+        },
+        createdAt: committedAt,
+      });
+
+      harness.emit({
+        type: "session.exited",
+        eventId: asEventId("evt-delayed-source-exit"),
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: sourceInstanceId,
+        threadId,
+        createdAt: "2026-01-01T00:00:03.000Z",
+      });
+
+      yield* Effect.promise(() => harness.drain());
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.session?.status).toBe("ready");
+      expect(thread?.session?.providerInstanceId).toBe(targetInstanceId);
+      expect(thread?.session?.updatedAt).toBe(committedAt);
     }),
   );
 
