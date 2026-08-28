@@ -16,6 +16,9 @@ export {
 import {
   formatDuration,
   timelineEntryIsPersistentResourceCard,
+  workEntryDisplayIndicatesToolFailure,
+  workEntryIndicatesToolNeutralStatus,
+  workLogEntryIsToolLike,
   type TimelineEntry,
   type WorkLogEntry,
 } from "../../session-logic";
@@ -34,6 +37,16 @@ import {
 } from "@t3tools/shared/t3McpToolPresentation";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
+
+export function workEntryIsVisibleInGroup(
+  entry: WorkLogEntry,
+  expandedToolGroupEntry = false,
+): boolean {
+  return (
+    (expandedToolGroupEntry && entry.toolLifecycleStatus === "inProgress") ||
+    !workEntryIndicatesToolNeutralStatus(entry)
+  );
+}
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
@@ -194,6 +207,29 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       groupedEntries: WorkLogEntry[];
+      isExpandedToolGroupEntry: boolean;
+      isLastExpandedToolGroupEntry: boolean;
+    }
+  | {
+      kind: "work-live";
+      id: string;
+      createdAt: string;
+      entry: WorkLogEntry;
+      groupedEntries: WorkLogEntry[];
+      groupId: string;
+      expanded: boolean;
+    }
+  | {
+      kind: "work-toggle";
+      id: string;
+      createdAt: string;
+      groupId: string;
+      hiddenCount: number;
+      expanded: boolean;
+      onlyToolEntries: boolean;
+      summary: string | null;
+      summaryKind: ToolGroupSummaryKind | null;
+      hasFailure: boolean;
     }
   | {
       kind: "turn-fold";
@@ -273,6 +309,118 @@ export function computeMessageDurationStart(
 
 export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+}
+
+type ToolGroupAction = "read" | "edit" | "command" | "code-search" | "search" | "other";
+export type ToolGroupSummaryKind =
+  | ToolGroupAction
+  | "dynamic-tool"
+  | "agent-tool"
+  | "tone-tool"
+  | "mixed";
+
+export function workLogEntryIsLocalCodeSearch(entry: WorkLogEntry): boolean {
+  return (
+    entry.itemType === "file_search" ||
+    (entry.itemType === "web_search" &&
+      /\bgrep\b/i.test(normalizeCompactToolLabel(entry.toolTitle ?? entry.label)))
+  );
+}
+
+export function toolGroupAction(entry: WorkLogEntry): ToolGroupAction {
+  if (
+    entry.itemType === "dynamic_tool" &&
+    /^read(?:\s+file)?$/i.test(normalizeCompactToolLabel(entry.toolTitle ?? entry.label))
+  ) {
+    return "read";
+  }
+  if (entry.itemType === "file_change" || (entry.changedFiles?.length ?? 0) > 0) {
+    return "edit";
+  }
+  if (entry.itemType === "command_execution" || entry.command) {
+    return "command";
+  }
+  if (workLogEntryIsLocalCodeSearch(entry)) return "code-search";
+  if (entry.itemType === "web_search") return "search";
+  return "other";
+}
+
+function toolGroupActionCount(
+  action: ToolGroupAction,
+  entries: ReadonlyArray<WorkLogEntry>,
+): number {
+  if (action !== "edit") return entries.length;
+
+  const changedFiles = new Set<string>();
+  let editsWithoutFileDetails = 0;
+  for (const entry of entries) {
+    if (!entry.changedFiles || entry.changedFiles.length === 0) {
+      editsWithoutFileDetails += 1;
+      continue;
+    }
+    for (const file of entry.changedFiles) changedFiles.add(file);
+  }
+  return changedFiles.size + editsWithoutFileDetails;
+}
+
+function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
+  switch (action) {
+    case "read":
+      return `Read ${count} ${count === 1 ? "file" : "files"}`;
+    case "edit":
+      return `Changed ${count} ${count === 1 ? "file" : "files"}`;
+    case "command":
+      return `Ran ${count} ${count === 1 ? "command" : "commands"}`;
+    case "search":
+      return `Searched the web ${count} ${count === 1 ? "time" : "times"}`;
+    case "code-search":
+      return `Searched code ${count} ${count === 1 ? "time" : "times"}`;
+    case "other":
+      return `Used ${count} ${count === 1 ? "tool" : "tools"}`;
+  }
+}
+
+/** Immediate, provider-neutral fallback while generated tool summaries are unavailable. */
+export function summarizeToolGroup(entries: ReadonlyArray<WorkLogEntry>): string {
+  const groupedEntries = new Map<ToolGroupAction, WorkLogEntry[]>();
+  for (const entry of entries) {
+    const action = toolGroupAction(entry);
+    const group = groupedEntries.get(action);
+    if (group) group.push(entry);
+    else groupedEntries.set(action, [entry]);
+  }
+  const labels = [...groupedEntries].map(([action, actionEntries]) =>
+    toolGroupActionLabel(action, toolGroupActionCount(action, actionEntries)),
+  );
+  const sentenceLabels = labels.map((label, index) =>
+    index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1),
+  );
+  if (sentenceLabels.length < 2) return sentenceLabels[0] ?? "";
+  if (sentenceLabels.length === 2) return sentenceLabels.join(" and ");
+  return `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
+}
+
+function toolGroupSummaryKind(entries: ReadonlyArray<WorkLogEntry>): ToolGroupSummaryKind {
+  const actions = new Set(entries.map(toolGroupAction));
+  if (actions.size !== 1) return "mixed";
+
+  const action = actions.values().next().value!;
+  if (action !== "other") return action;
+
+  const fallbackKinds = new Set(
+    entries.map((entry): ToolGroupSummaryKind => {
+      if (entry.itemType === "dynamic_tool") return "dynamic-tool";
+      if (entry.itemType === "subagent") return "agent-tool";
+      if (entry.tone === "thinking") return "agent-tool";
+      if (entry.tone === "tool") return "tone-tool";
+      return "other";
+    }),
+  );
+  return fallbackKinds.size === 1 ? fallbackKinds.values().next().value! : "mixed";
+}
+
+function workGroupId(timelineEntryId: string): string {
+  return `work-group:${timelineEntryId}`;
 }
 
 export type TimelineToolPresentation = T3McpToolPresentation;
@@ -551,6 +699,7 @@ export function deriveMessagesTimelineRows(input: {
   latestRun?: TimelineLatestRun | null;
   expandedRunIds?: ReadonlySet<RunId>;
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
+  expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
   pendingBackgroundTasks?: ReadonlyArray<{
@@ -589,6 +738,11 @@ export function deriveMessagesTimelineRows(input: {
       }
     }
   }
+  const workEntryIsInActiveRun = (entry: WorkLogEntry) =>
+    input.isWorking &&
+    unsettledRunId !== null &&
+    entry.toolLifecycleStatus === "inProgress" &&
+    entry.runId === unsettledRunId;
 
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const timelineEntry = input.timelineEntries[index];
@@ -657,12 +811,101 @@ export function deriveMessagesTimelineRows(input: {
         groupedEntries.push(nextEntry.entry);
         cursor += 1;
       }
-      nextRows.push({
-        kind: "work",
-        id: timelineEntry.id,
-        createdAt: timelineEntry.createdAt,
-        groupedEntries,
-      });
+      const visibleGroupedEntries = groupedEntries.filter((entry) =>
+        workEntryIsVisibleInGroup(entry, workEntryIsInActiveRun(entry)),
+      );
+      if (visibleGroupedEntries.length > 0) {
+        const onlyToolEntries = visibleGroupedEntries.every(
+          (entry) => workLogEntryIsToolLike(entry) && entry.tone !== "error",
+        );
+        const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
+        const groupId = workGroupId(timelineEntry.id);
+        const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+        const pushExpandedGroupEntries = () => {
+          for (const [entryIndex, workEntry] of visibleGroupedEntries.entries()) {
+            nextRows.push({
+              kind: "work",
+              id: workEntry.id,
+              createdAt: workEntry.createdAt,
+              groupedEntries: [workEntry],
+              isExpandedToolGroupEntry: true,
+              isLastExpandedToolGroupEntry: entryIndex === visibleGroupedEntries.length - 1,
+            });
+          }
+        };
+        if (onlyToolEntries && activeInProgressToolEntries.length > 0) {
+          // The active turn's contiguous tool run renders as one live pill
+          // showing the latest in-flight tool; expanding reveals the entries.
+          nextRows.push({
+            kind: "work-live",
+            id: `work-live:${timelineEntry.id}`,
+            createdAt: timelineEntry.createdAt,
+            entry: activeInProgressToolEntries.at(-1)!,
+            groupedEntries: visibleGroupedEntries,
+            groupId,
+            expanded,
+          });
+          if (expanded) pushExpandedGroupEntries();
+        } else if (onlyToolEntries) {
+          // Settled tool-only groups collapse behind a generated summary
+          // ("Ran 3 commands and changed 1 file").
+          nextRows.push({
+            kind: "work-toggle",
+            id: `work-toggle:${timelineEntry.id}`,
+            createdAt: timelineEntry.createdAt,
+            groupId,
+            hiddenCount: visibleGroupedEntries.length,
+            expanded,
+            onlyToolEntries: true,
+            summary: summarizeToolGroup(visibleGroupedEntries),
+            summaryKind: toolGroupSummaryKind(visibleGroupedEntries),
+            hasFailure: workEntryDisplayIndicatesToolFailure(visibleGroupedEntries.at(-1)!),
+          });
+          if (expanded) pushExpandedGroupEntries();
+        } else if (visibleGroupedEntries.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
+          nextRows.push({
+            kind: "work",
+            id: timelineEntry.id,
+            createdAt: timelineEntry.createdAt,
+            groupedEntries: visibleGroupedEntries,
+            isExpandedToolGroupEntry: false,
+            isLastExpandedToolGroupEntry: false,
+          });
+        } else {
+          // Mixed groups (errors, info rows) keep the recent tail visible and
+          // clamp the rest behind a "+N previous log entries" toggle.
+          const hiddenEntries = visibleGroupedEntries.slice(0, -MAX_VISIBLE_WORK_LOG_ENTRIES);
+          const renderedEntries = expanded
+            ? visibleGroupedEntries
+            : visibleGroupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+          for (const workEntry of renderedEntries) {
+            nextRows.push({
+              kind: "work",
+              id: workEntry.id,
+              createdAt: workEntry.createdAt,
+              groupedEntries: [workEntry],
+              isExpandedToolGroupEntry: false,
+              isLastExpandedToolGroupEntry: false,
+            });
+          }
+          const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
+          nextRows.push({
+            kind: "work-toggle",
+            id: `work-toggle:${timelineEntry.id}`,
+            createdAt: timelineEntry.createdAt,
+            groupId,
+            hiddenCount: hiddenEntries.length,
+            expanded,
+            onlyToolEntries: hiddenEntries.every(workLogEntryIsToolLike),
+            summary: null,
+            summaryKind: null,
+            hasFailure:
+              latestToolEntry !== undefined &&
+              workEntryDisplayIndicatesToolFailure(latestToolEntry) &&
+              hiddenEntries.some(workEntryDisplayIndicatesToolFailure),
+          });
+        }
+      }
       index = cursor - 1;
       continue;
     }
@@ -858,8 +1101,39 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "event":
       return a.projectedItem === (b as typeof a).projectedItem;
 
-    case "work":
-      return Equal.equals(a.groupedEntries, (b as typeof a).groupedEntries);
+    case "work": {
+      const bw = b as typeof a;
+      return (
+        a.isExpandedToolGroupEntry === bw.isExpandedToolGroupEntry &&
+        a.isLastExpandedToolGroupEntry === bw.isLastExpandedToolGroupEntry &&
+        Equal.equals(a.groupedEntries, bw.groupedEntries)
+      );
+    }
+
+    case "work-live": {
+      const bw = b as typeof a;
+      return (
+        a.createdAt === bw.createdAt &&
+        a.groupId === bw.groupId &&
+        a.expanded === bw.expanded &&
+        Equal.equals(a.entry, bw.entry) &&
+        Equal.equals(a.groupedEntries, bw.groupedEntries)
+      );
+    }
+
+    case "work-toggle": {
+      const bw = b as typeof a;
+      return (
+        a.createdAt === bw.createdAt &&
+        a.groupId === bw.groupId &&
+        a.hiddenCount === bw.hiddenCount &&
+        a.expanded === bw.expanded &&
+        a.onlyToolEntries === bw.onlyToolEntries &&
+        a.summary === bw.summary &&
+        a.summaryKind === bw.summaryKind &&
+        a.hasFailure === bw.hasFailure
+      );
+    }
 
     case "message": {
       const bm = b as typeof a;
