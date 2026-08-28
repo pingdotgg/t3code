@@ -18,7 +18,7 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, View } from "react-nat
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useThreadShells } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -99,9 +99,10 @@ export function ThreadRelationshipsBanner(props: {
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, "merge thread back");
   const stopSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
   const insets = useSafeAreaInsets();
-  const backdropColor = useThemeColor("--color-backdrop");
-  const sheetColor = useThemeColor("--color-sheet");
-  const iconColor = useThemeColor("--color-icon-subtle");
+  const theme = useUniwindTheme();
+  const backdropColor = theme["--color-backdrop"];
+  const sheetColor = theme["--color-sheet"];
+  const iconColor = theme["--color-icon-subtle"];
 
   if (rows.length === 0 && !canDetach) return null;
 
