@@ -22,7 +22,7 @@ export default defineConfig({
   },
   staged: {
     // Formatter only for now — no lint or typecheck on commit.
-    "*": "vp fmt",
+    "*": "vp fmt --no-error-on-unmatched-pattern",
   },
   fmt: {
     ignorePatterns: [
@@ -120,6 +120,7 @@ export default defineConfig({
       "t3code/no-global-process-runtime": "error",
       "t3code/no-inline-schema-compile": "warn",
       "t3code/no-manual-effect-runtime-in-tests": "error",
+      "t3code/no-mobile-uniwind-theme-escape-hatches": "error",
       "t3code/no-native-title-tooltip": "error",
       "t3code/namespace-node-imports": "error",
     },
