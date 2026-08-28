@@ -262,11 +262,12 @@ const startup = Effect.gen(function* () {
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
   yield* desktopSettings.load;
   yield* DesktopLoginItem.applyOpenAtLogin((yield* desktopSettings.get).openAtLogin).pipe(
-    Effect.catchTag("ElectronLoginItemSettingsError", (error) =>
-      logStartupWarning("could not apply open-at-login preference", {
-        message: error.message,
-      }),
-    ),
+    Effect.catchTags({
+      ElectronLoginItemSettingsError: (error) =>
+        logStartupWarning("could not apply open-at-login preference", {
+          message: error.message,
+        }),
+    }),
   );
 
   if (linuxElectronOptions !== null) {
