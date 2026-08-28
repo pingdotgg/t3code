@@ -473,18 +473,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const existing = activeSessions.find(
           (session) => session.threadId === input.binding.threadId,
         );
-        if (existing) {
-          yield* upsertSessionBinding(
-            { ...existing, providerInstanceId: bindingInstanceId },
-            input.binding.threadId,
+        if (!existing) {
+          return yield* toValidationError(
+            input.operation,
+            `Provider instance '${bindingInstanceId}' retains a non-routable or ambiguous session for thread '${input.binding.threadId}'. Stop it before recovery.`,
           );
-          yield* analytics.record("provider.session.recovered", {
-            provider: existing.provider,
-            strategy: "adopt-existing",
-            hasResumeCursor: existing.resumeCursor !== undefined,
-          });
-          return { adapter, session: existing } as const;
         }
+        yield* upsertSessionBinding(
+          { ...existing, providerInstanceId: bindingInstanceId },
+          input.binding.threadId,
+        );
+        yield* analytics.record("provider.session.recovered", {
+          provider: existing.provider,
+          strategy: "adopt-existing",
+          hasResumeCursor: existing.resumeCursor !== undefined,
+        });
+        return { adapter, session: existing } as const;
       }
 
       if (!hasResumeCursor) {

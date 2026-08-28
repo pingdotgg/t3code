@@ -114,12 +114,14 @@ describe("proveCodexAppServerWriterReleased", () => {
 
   it.effect("rejects an isRunning probe failure", () =>
     Effect.gen(function* () {
+      const probeFailure = new Error("isRunning probe failed");
       const error = yield* proveCodexAppServerWriterReleased({
         threadId,
         exitCode: Effect.succeed(0),
-        isRunning: Effect.fail(new CodexSessionRuntimeWriterReleaseUnprovenError({ threadId })),
+        isRunning: Effect.fail(probeFailure),
       }).pipe(Effect.flip);
       NodeAssert.equal(isCodexSessionRuntimeWriterReleaseUnprovenError(error), true);
+      NodeAssert.strictEqual(error.cause, probeFailure);
     }),
   );
 });

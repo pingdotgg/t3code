@@ -2235,6 +2235,65 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("does not route or recover a retained non-routable session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-retained-non-routable");
+
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: "/tmp/project-retained-non-routable",
+        runtimeMode: "full-access",
+      });
+
+      const originalHasSession = routing.codex.hasSession.getMockImplementation();
+      const originalListSessions = routing.codex.listSessions.getMockImplementation();
+      yield* Effect.gen(function* () {
+        let sessionProbeCount = 0;
+        routing.codex.hasSession.mockImplementation(() =>
+          Effect.sync(() => {
+            sessionProbeCount += 1;
+            return sessionProbeCount > 1;
+          }),
+        );
+        routing.codex.listSessions.mockImplementation(() => Effect.succeed([]));
+        routing.codex.startSession.mockClear();
+        routing.codex.sendTurn.mockClear();
+
+        const result = yield* provider
+          .sendTurn({
+            threadId,
+            input: "must not route",
+            attachments: [],
+          })
+          .pipe(Effect.result);
+
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(result.failure._tag, "ProviderValidationError");
+          if (result.failure._tag === "ProviderValidationError") {
+            assert.match(result.failure.issue, /non-routable or ambiguous session/);
+          }
+        }
+        assert.equal(routing.codex.startSession.mock.calls.length, 0);
+        assert.equal(routing.codex.sendTurn.mock.calls.length, 0);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (originalHasSession) {
+              routing.codex.hasSession.mockImplementation(originalHasSession);
+            }
+            if (originalListSessions) {
+              routing.codex.listSessions.mockImplementation(originalListSessions);
+            }
+          }),
+        ),
+      );
+    }),
+  );
+
   it.effect("recovers stale claudeAgent sessions for sendTurn using persisted cwd", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;

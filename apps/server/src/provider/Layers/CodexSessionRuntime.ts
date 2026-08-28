@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -281,6 +282,7 @@ export class CodexSessionRuntimeWriterReleaseUnprovenError extends Schema.Tagged
   "CodexSessionRuntimeWriterReleaseUnprovenError",
   {
     threadId: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -310,7 +312,13 @@ export const proveCodexAppServerWriterReleased = <
       });
     }
     const childRunning = yield* input.isRunning.pipe(Effect.exit);
-    if (Exit.isFailure(childRunning) || childRunning.value) {
+    if (Exit.isFailure(childRunning)) {
+      return yield* new CodexSessionRuntimeWriterReleaseUnprovenError({
+        threadId: input.threadId,
+        cause: Cause.squash(childRunning.cause),
+      });
+    }
+    if (childRunning.value) {
       return yield* new CodexSessionRuntimeWriterReleaseUnprovenError({
         threadId: input.threadId,
       });

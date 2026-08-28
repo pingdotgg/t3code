@@ -1859,10 +1859,7 @@ startupReleaseFailureLayer("CodexAdapterLive failed startup release", (it) => {
       NodeAssert.deepStrictEqual(startupReleaseFailureRuntimeFactory.releasedThreadIds, [threadId]);
       NodeAssert.equal(yield* adapter.hasSession(threadId), true);
       const sessions = yield* adapter.listSessions();
-      NodeAssert.equal(sessions.length, 1);
-      NodeAssert.deepStrictEqual(sessions[0]?.resumeCursor, {
-        threadId: "requested-native-thread",
-      });
+      NodeAssert.equal(sessions.length, 0);
 
       const runtime = startupReleaseFailureRuntimeFactory.lastRuntime;
       NodeAssert.ok(runtime);
@@ -1938,6 +1935,16 @@ it.effect("retains the session until runtime close and scope release both comple
       yield* Deferred.await(closeStarted);
       NodeAssert.equal(yield* adapter.hasSession(threadId), true);
       NodeAssert.equal(yield* Deferred.isDone(releaseStarted), false);
+      const turnResult = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "must not route during teardown",
+          attachments: [],
+        })
+        .pipe(Effect.result);
+      NodeAssert.equal(turnResult._tag, "Failure");
+      NodeAssert.equal(turnResult.failure._tag, "ProviderAdapterSessionNotFoundError");
+      NodeAssert.equal(runtime.sendTurnImpl.mock.calls.length, 0);
 
       yield* Deferred.succeed(allowClose, undefined);
       yield* Deferred.await(releaseStarted);
@@ -2003,7 +2010,7 @@ it.effect("propagates close failure and retains authoritative session ownership"
       NodeAssert.equal(result._tag, "Failure");
       NodeAssert.equal(result.failure._tag, "ProviderAdapterProcessError");
       NodeAssert.strictEqual(result.failure.cause, closeFailure);
-      NodeAssert.match(result.failure.detail, /close failed before writer release/);
+      NodeAssert.equal(result.failure.detail, "Failed to release Codex session resources.");
       NodeAssert.deepStrictEqual(releasedThreadIds, [threadId]);
       NodeAssert.equal(yield* adapter.hasSession(threadId), true);
 
@@ -2014,7 +2021,7 @@ it.effect("propagates close failure and retains authoritative session ownership"
   }),
 );
 
-it.effect("flushes managed native logs when the adapter layer shuts down", () =>
+it.effect("shuts down streams and flushes managed logs when teardown stopAll fails", () =>
   Effect.gen(function* () {
     const tempDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3-codex-adapter-native-log-"),
@@ -2064,8 +2071,13 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
       } satisfies ProviderEvent);
       yield* Fiber.join(firstEventFiber);
 
+      const streamCompletionFiber = yield* Stream.runDrain(adapter.streamEvents).pipe(
+        Effect.forkChild,
+      );
+      runtime.closeEffect = Effect.die(new Error("stopAll failed during adapter teardown"));
       yield* Scope.close(scope, Exit.void);
       scopeClosed = true;
+      yield* Fiber.await(streamCompletionFiber);
 
       const threadLogPath = NodePath.join(tempDir, "provider-native.thread-logger.log");
       NodeAssert.equal(NodeFS.existsSync(threadLogPath), true);
