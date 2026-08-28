@@ -94,6 +94,8 @@ import {
   derivePendingUserInputs,
   derivePhase,
   deriveTimelineEntriesFromVisibleTurnItems,
+  deriveRevertTurnCountByUserMessageId,
+  deriveActivePlanState,
   deriveActiveWorkStartedAt,
   findLatestProposedPlan,
   hasActionableProposedPlan,
@@ -1863,6 +1865,28 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }, [activeThreadKey, existingOpenTerminalThreadKeys, terminalUiState.terminalOpen]);
   const latestRunSettled = isLatestRunSettled(activeLatestRun, activeRuntime);
+  const activePlan = useMemo(
+    () => deriveActivePlanState(serverProjection, activeLatestRun?.runId),
+    [activeLatestRun?.runId, serverProjection],
+  );
+  // Tasks progress for the running turn's own plan only — deriveActivePlanState
+  // falls back to older runs' plans, which must not label fresh work.
+  const activeComposerTasksProgress = useMemo(() => {
+    if (latestRunSettled || !activePlan || activePlan.runId !== (activeLatestRun?.runId ?? null)) {
+      return null;
+    }
+    const totalSteps = activePlan.steps.length;
+    if (totalSteps === 0) return null;
+    const completedSteps = activePlan.steps.filter((step) => step.status === "completed").length;
+    const step =
+      activePlan.steps.find((candidate) => candidate.status === "inProgress")?.step ??
+      activePlan.steps.find((candidate) => candidate.status === "pending")?.step ??
+      activePlan.steps.at(-1)!.step;
+    return { step, completedSteps, totalSteps };
+  }, [activeLatestRun?.runId, activePlan, latestRunSettled]);
+  const activeComposerTaskSteps =
+    activeComposerTasksProgress && activePlan ? activePlan.steps : null;
+  const workingStepLabel = activeComposerTasksProgress?.step ?? null;
   const activeProjectRef = useMemo(
     () =>
       activeThread ? scopeProjectRef(activeThread.environmentId, activeThread.projectId) : null,
@@ -6613,6 +6637,7 @@ function ChatViewContent(props: ChatViewProps) {
                 isWorking={isWorking}
                 activeTurnInProgress={isWorking || !latestRunSettled}
                 activeTurnStartedAt={activeWorkStartedAt}
+                workingStepLabel={workingStepLabel}
                 pendingBackgroundTasks={pendingBackgroundTasks}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
@@ -6772,8 +6797,8 @@ function ChatViewContent(props: ChatViewProps) {
                             }
                             activeThreadModelSelection={activeThread?.modelSelection}
                             activeContextWindow={activeContextWindow}
-                            activeTasksProgress={null}
-                            activeTaskSteps={null}
+                            activeTasksProgress={activeComposerTasksProgress}
+                            activeTaskSteps={activeComposerTaskSteps}
                             compactDisabled={composerCompactDisabled}
                             compactDisabledReason={null}
                             sendDisabledReason={null}

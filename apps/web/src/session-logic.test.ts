@@ -335,7 +335,7 @@ describe("V2 session presentation", () => {
       ["event", requestItem.id],
       ["work", commandItem.id],
       ["event", resultItem.id],
-      ["work", todoItem.id],
+      ["turn-plan", todoItem.id],
       ["work", errorItem.id],
       ["event", threadCreatedItem.id],
     ]);
@@ -354,10 +354,14 @@ describe("V2 session presentation", () => {
       expect(commandEntry.entry.structuredPayload).toBe(commandItem);
     }
     const todoEntry = entries[4];
-    expect(todoEntry?.kind).toBe("work");
-    if (todoEntry?.kind === "work") {
-      expect(todoEntry.entry.label).toBe("Updated tasks");
-      expect(todoEntry.entry.detail).toBe("1/2 completed");
+    expect(todoEntry?.kind).toBe("turn-plan");
+    if (todoEntry?.kind === "turn-plan") {
+      expect(todoEntry.turnPlan.id).toBe("turn-plan:plan-visible");
+      expect(todoEntry.turnPlan.plan.explanation).toBe("Keep task detail in the Tasks panel");
+      expect(todoEntry.turnPlan.plan.steps).toEqual([
+        { step: "First", status: "completed" },
+        { step: "Second", status: "pending" },
+      ]);
     }
     const errorEntry = entries[5];
     expect(errorEntry?.kind).toBe("work");
