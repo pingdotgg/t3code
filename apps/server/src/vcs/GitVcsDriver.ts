@@ -331,6 +331,7 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+const CHECKPOINT_INDEX_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -708,6 +709,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
     });
 
+  const resolveGitIndexPath = (cwd: string) =>
+    Effect.gen(function* () {
+      const result = yield* execute({
+        operation: "GitVcsDriver.checkpoints.resolveGitIndexPath",
+        cwd,
+        args: ["rev-parse", "--git-path", "index"],
+      });
+      const indexPath = result.stdout.trim();
+      return path.isAbsolute(indexPath) ? indexPath : path.resolve(cwd, indexPath);
+    });
+
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
@@ -727,17 +739,104 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
       const cleanupTempIndex = fileSystem
         .remove(tempIndexPath, { force: true })
-        .pipe(Effect.ignore);
+        .pipe(
+          Effect.ignore,
+          Effect.andThen(
+            fileSystem.remove(`${tempIndexPath}.lock`, { force: true }).pipe(Effect.ignore),
+          ),
+        );
 
       yield* Effect.gen(function* () {
         const headExists = yield* hasHeadCommit(input.cwd);
         if (headExists) {
-          yield* execute({
-            operation,
-            cwd: input.cwd,
-            args: ["read-tree", "HEAD"],
-            env: commitEnv,
-          });
+          const currentIndexPath = yield* resolveGitIndexPath(input.cwd);
+          const copiedCurrentIndex = yield* fileSystem.exists(currentIndexPath).pipe(
+            Effect.flatMap((exists) =>
+              exists
+                ? fileSystem.copyFile(currentIndexPath, tempIndexPath).pipe(Effect.as(true))
+                : Effect.succeed(false),
+            ),
+            Effect.orElseSucceed(() => false),
+          );
+          if (copiedCurrentIndex) {
+            // Start from HEAD while retaining the copied index's stat cache.
+            // The remaining commands clear flags and extensions that can make
+            // `git add` trust stale worktree state.
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["read-tree", "--reset", "HEAD"],
+              env: commitEnv,
+            });
+            const indexEntries = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["ls-files", "-v", "-z"],
+              env: commitEnv,
+              maxOutputBytes: CHECKPOINT_INDEX_MAX_OUTPUT_BYTES,
+            });
+            if (indexEntries.stdoutTruncated) {
+              yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: ["read-tree", "--empty"],
+                env: commitEnv,
+              });
+              yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: ["read-tree", "HEAD"],
+                env: commitEnv,
+              });
+            } else {
+              const indexRecords = indexEntries.stdout.split("\0");
+              const assumeUnchangedPaths = indexRecords
+                .filter((entry) => {
+                  const tag = entry.charAt(0);
+                  return tag >= "a" && tag <= "z";
+                })
+                .map((entry) => entry.slice(2));
+              if (assumeUnchangedPaths.length > 0) {
+                yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: ["update-index", "--no-assume-unchanged", "-z", "--stdin"],
+                  stdin: `${assumeUnchangedPaths.join("\0")}\0`,
+                  env: commitEnv,
+                });
+              }
+              const skipWorktreePaths = indexRecords
+                .filter((entry) => entry.charAt(0).toUpperCase() === "S")
+                .map((entry) => entry.slice(2));
+              if (skipWorktreePaths.length > 0) {
+                yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: ["update-index", "--no-skip-worktree", "-z", "--stdin"],
+                  stdin: `${skipWorktreePaths.join("\0")}\0`,
+                  env: commitEnv,
+                });
+              }
+              yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: [
+                  "update-index",
+                  "--no-split-index",
+                  "--no-untracked-cache",
+                  "--no-fsmonitor",
+                ],
+                env: commitEnv,
+              });
+            }
+          } else {
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["read-tree", "HEAD"],
+              env: commitEnv,
+            });
+          }
         }
 
         yield* execute({
