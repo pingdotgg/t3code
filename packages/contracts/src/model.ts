@@ -132,6 +132,7 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+const OMP_DRIVER_KIND = ProviderDriverKind.make("omp");
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -147,6 +148,13 @@ export const PREFERRED_DEFAULT_CODEX_MODELS: ReadonlyArray<string> = [
 export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-5.6-luna";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
+/**
+ * Last-resort model per driver, used only when a provider snapshot advertises
+ * no models of its own. `omp` is deliberately absent: it is a harness whose
+ * backends differ per install, and it reports its own current model through
+ * ACP session state, so any static slug here would be forced onto installs
+ * that do not have it.
+ */
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-sonnet-5",
@@ -222,4 +230,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [OMP_DRIVER_KIND]: "OMP",
 };

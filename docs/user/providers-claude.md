@@ -236,8 +236,8 @@ Anthropic credentials instead of the Z.AI token.
 Claude Code's default model roles can be mapped to GLM model IDs:
 
 ```text
-ANTHROPIC_DEFAULT_OPUS_MODEL    glm-4.7
-ANTHROPIC_DEFAULT_SONNET_MODEL  glm-4.7
+ANTHROPIC_DEFAULT_OPUS_MODEL    glm-5.3
+ANTHROPIC_DEFAULT_SONNET_MODEL  glm-5.3
 ANTHROPIC_DEFAULT_HAIKU_MODEL   glm-4.5-air
 ```
 
