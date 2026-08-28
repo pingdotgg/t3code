@@ -408,10 +408,12 @@ describe("WSL runtime cache", () => {
     // Dot-prefixed, so `"$runtime_parent"/*` never matches them, and they carry
     // no ready marker either; without this pass a killed install leaks forever.
     expect(script).toContain(
-      "find \"$runtime_parent\" -maxdepth 1 -type d \\( -name '.*.tmp.*' -o -name '.*.stale.*' \\)",
+      'for scratch in "$runtime_parent"/.*.tmp.* "$runtime_parent"/.*.stale.*; do',
     );
+    expect(script).toContain("original_runtime=$(tr -d '[:space:]' < \"$original_marker\"");
+    expect(script).toContain('runtime_in_use "$original_runtime"');
     // Age guard: a scratch directory younger than this belongs to a live install.
-    expect(script).toContain("-mmin +120 -exec rm -rf -- {} +");
+    expect(script).toContain('find "$scratch" -maxdepth 0 -mmin +120');
   });
 
   it("invalidates a cache by dropping its ready marker, not the tree", () => {
@@ -618,6 +620,37 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       `set -eu\nfind ${sh(fixture.runtimeParent)} -mindepth 1 -maxdepth 1 -type d`,
     );
     expect(leftovers.stdout.trim()).toBe("");
+  });
+
+  it("keeps an aged stale tree while a backend still references its original path", () => {
+    const result = runShell(
+      [
+        "set -eu",
+        "work=$(mktemp -d)",
+        'home="$work/home"',
+        'runtime_parent="$home/.t3/wsl-runtime"',
+        'stale="$runtime_parent/.sha256-old.stale.test"',
+        'original="$runtime_parent/sha256-old"',
+        'mkdir -p "$runtime_parent/sha256-current" "$stale"',
+        'printf ready > "$runtime_parent/sha256-current/.t3code-wsl-runtime-ready"',
+        'printf "%s\\n" "$original" > "$stale/.t3code-wsl-runtime-original-path"',
+        'touch -d "180 minutes ago" "$stale"',
+        'sh -c "sleep 30" "$original/apps/server/dist/bin.mjs" >/dev/null 2>&1 &',
+        "active_pid=$!",
+        "sleep 0.1",
+        `HOME="$home"`,
+        "export HOME",
+        buildWslRuntimePruneScript("sha256-current"),
+        'test -d "$stale"',
+        "kill $active_pid",
+        "wait $active_pid 2>/dev/null || true",
+        buildWslRuntimePruneScript("sha256-current"),
+        'test ! -e "$stale"',
+        'rm -rf "$work"',
+      ].join("\n"),
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
   });
 
   it("prunes old and markerless caches without touching retained, active, locked, or unrelated roots", () => {

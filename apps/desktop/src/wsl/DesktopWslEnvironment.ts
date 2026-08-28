@@ -260,6 +260,7 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")
 // here; the digest is what lets a later launch prove the entry still is what
 // that install wrote.
 const WSL_RUNTIME_READY_MARKER = ".t3code-wsl-runtime-ready";
+const WSL_RUNTIME_ORIGINAL_PATH_MARKER = ".t3code-wsl-runtime-original-path";
 
 export const sanitizeWslRuntimeId = (value: string): string =>
   value.replace(/[^A-Za-z0-9._-]/g, "_");
@@ -362,9 +363,10 @@ export const buildWslRuntimeInstallScript = (
     '  rmdir "$runtime_stale"',
     '  if mv -T "$runtime_root" "$runtime_stale" 2>/dev/null; then',
     '    if [ "$runtime_root_in_use" = 1 ]; then',
-    // Renaming keeps the directory's own mtime, so a tree installed weeks ago
-    // would already be past the sweep's age gate and get collected on the very
-    // next launch. Restart the clock so the grace period is real.
+    // The process keeps the pre-rename path in argv. Preserve that identity so
+    // pruning can protect this stale tree for the process's full lifetime.
+    `      printf '%s\\n' "$runtime_root" > "$runtime_stale/${WSL_RUNTIME_ORIGINAL_PATH_MARKER}"`,
+    // Renaming keeps the directory's old mtime, so restart the cleanup clock.
     '      touch "$runtime_stale"',
     "    else",
     '      rm -rf "$runtime_stale"',
@@ -455,7 +457,20 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
     "  flock -u 9",
     "done",
     // Interrupted installs use dot-prefixed names under this dedicated parent.
-    `find "$runtime_parent" -maxdepth 1 -type d \\( -name '.*.tmp.*' -o -name '.*.stale.*' \\) -mmin +${String(ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES)} -exec rm -rf -- {} +`,
+    // A stale tree can still back a live process whose argv contains its
+    // pre-rename path, recorded by the installer above.
+    'for scratch in "$runtime_parent"/.*.tmp.* "$runtime_parent"/.*.stale.*; do',
+    '  [ -d "$scratch" ] || continue',
+    `  original_marker="$scratch/${WSL_RUNTIME_ORIGINAL_PATH_MARKER}"`,
+    '  if [ -f "$original_marker" ]; then',
+    `    original_runtime=$(tr -d '[:space:]' < "$original_marker" 2>/dev/null)`,
+    '    if [ -n "$original_runtime" ] && runtime_in_use "$original_runtime"; then',
+    "      continue",
+    "    fi",
+    "  fi",
+    `  find "$scratch" -maxdepth 0 -mmin +${String(ORPHANED_RUNTIME_SCRATCH_MAX_AGE_MINUTES)} -print -quit | grep -q . || continue`,
+    '  rm -rf -- "$scratch"',
+    "done",
   ].join("\n");
 };
 
