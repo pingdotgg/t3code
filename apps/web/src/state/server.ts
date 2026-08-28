@@ -1,6 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   type EditorId,
+  type EnvironmentTheme,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -93,6 +94,18 @@ export const primaryServerAvailableEditorsAtom = Atom.make(
 export const primaryServerKeybindingsConfigPathAtom = Atom.make(
   (get): string | null => get(primaryServerConfigAtom)?.keybindingsConfigPath ?? null,
 ).pipe(Atom.withLabel("web-primary-server-keybindings-config-path"));
+
+const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
+
+/**
+ * Palettes published by the primary environment's machine. Only the primary
+ * environment: a client follows the machine it is anchored to, not every
+ * environment it happens to be connected to.
+ */
+export const primaryServerEnvironmentThemesAtom = Atom.make(
+  (get): ReadonlyArray<EnvironmentTheme> =>
+    get(primaryServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,
+).pipe(Atom.withLabel("web-primary-server-environment-themes"));
 
 export const primaryServerObservabilityAtom = Atom.make(
   (get): ServerConfig["observability"] | null =>

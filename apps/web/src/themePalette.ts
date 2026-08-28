@@ -1,3 +1,4 @@
+import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import "culori/css";
 import { converter, parse } from "culori/fn";
@@ -72,6 +73,14 @@ const RESERVED_THEME_IDS = new Set([
   "t3-iris",
 ]);
 
+/**
+ * The environment's palettes are not saved: they are republished by the
+ * server on every change and would go stale the moment the machine's theme
+ * moved on. They ride the custom-theme listeners so every theme consumer
+ * already re-reads when they change.
+ */
+let environmentThemeDefinitions: ReadonlyArray<ThemeDefinition> = [];
+
 const customThemeListeners = new Set<() => void>();
 type CustomThemeLibrarySnapshot =
   | Readonly<{
@@ -130,21 +139,28 @@ function parseThemeCollection(value: unknown): ThemeCollection | undefined {
     : undefined;
 }
 
-function parseStoredThemeColors(value: unknown, appearance: ThemeAppearance): ThemeColors | null {
-  if (!isRecord(value)) return null;
-
-  const colors: Partial<Record<ThemeColorRole, string>> = {
-    ...getDefaultThemeColors(appearance),
-  };
-  // Tolerate unknown roles and malformed values so themes saved by other
-  // builds (for example one that adds a new role) keep their remaining colors.
+/**
+ * Tolerates unknown roles and malformed values so themes written by other
+ * builds (for example one that adds a new role) keep their remaining colors.
+ * The one canonicalization path for every externally supplied color record:
+ * stored themes, imported files, and environment-published themes.
+ */
+export function lenientThemeColorOverrides(
+  value: Readonly<Record<string, unknown>>,
+): Partial<Record<ThemeColorRole, string>> {
+  const overrides: Partial<Record<ThemeColorRole, string>> = {};
   for (const [role, color] of Object.entries(value)) {
     const normalized = toCanonicalThemeColor(color);
     if (THEME_COLOR_ROLE_SET.has(role) && normalized) {
-      colors[role as ThemeColorRole] = normalized;
+      overrides[role as ThemeColorRole] = normalized;
     }
   }
-  return colors as ThemeColors;
+  return overrides;
+}
+
+function parseStoredThemeColors(value: unknown, appearance: ThemeAppearance): ThemeColors | null {
+  if (!isRecord(value)) return null;
+  return { ...getDefaultThemeColors(appearance), ...lenientThemeColorOverrides(value) };
 }
 
 function parseStoredThemeVariants(
@@ -242,6 +258,27 @@ export function invalidateCustomThemes() {
 export function getCustomThemes(): ReadonlyArray<ThemeDefinition> {
   const snapshot = getCustomThemeLibrarySnapshot();
   return snapshot.status === "ready" ? snapshot.themes : [];
+}
+
+export function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
+  return environmentThemeDefinitions;
+}
+
+/**
+ * Returns whether anything changed, structurally: config snapshots arrive as
+ * fresh arrays on every reconnect, and a repaint for identical colors is the
+ * kind of wasted work users of this product notice.
+ */
+export function setEnvironmentThemes(themes: ReadonlyArray<ThemeDefinition>): boolean {
+  if (Equal.equals(environmentThemeDefinitions, themes)) return false;
+  environmentThemeDefinitions = themes;
+  notifyCustomThemeListeners();
+  return true;
+}
+
+/** Ids no published theme may occupy: appearance keywords and built-in ids. */
+export function isReservedThemeId(themeId: string): boolean {
+  return RESERVED_THEME_IDS.has(themeId);
 }
 
 export function getStoredCustomThemeCollection(
@@ -1424,6 +1461,9 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   return (
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId) ??
     getCustomThemes().find((definition) => definition.id === themeId) ??
+    // Resolved last so a theme the user saved always wins over one the
+    // machine happens to publish under the same id.
+    environmentThemeDefinitions.find((definition) => definition.id === themeId) ??
     null
   );
 }

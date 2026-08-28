@@ -306,6 +306,39 @@ describe("server state projection", () => {
     expect(result.latestEvent.type).toBe("settingsUpdated");
   });
 
+  it("carries published environment themes in and out of the projected snapshot", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    const themes = [
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+      },
+    ] as const;
+
+    const published = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "environmentThemesUpdated",
+      payload: { themes },
+    });
+    expect(Option.getOrThrow(published).config.environmentThemes).toEqual(themes);
+
+    // A machine that stops publishing has to clear the palettes, not freeze
+    // clients on the last set it sent.
+    const unpublished = applyServerConfigProjection(published, {
+      version: 1,
+      type: "environmentThemesUpdated",
+      payload: { themes: [] },
+    });
+    expect(Option.getOrThrow(unpublished).config.environmentThemes).toBeUndefined();
+  });
+
   it("retains welcome when a ready event follows in the same stream chunk", () => {
     const welcome = {
       environment: {} as ServerLifecycleWelcomePayload["environment"],
