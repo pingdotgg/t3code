@@ -713,7 +713,7 @@ export function ProviderInstanceCard({
                         size="icon-xs"
                         variant="ghost"
                         className={cn(
-                          "size-5 rounded-sm p-0",
+                          "size-5 rounded-sm p-0 [--control-icon-color:currentColor]",
                           versionAdvisory.emphasis === "strong"
                             ? "text-warning hover:text-warning"
                             : versionAdvisory.emphasis === "muted"
