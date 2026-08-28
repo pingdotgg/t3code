@@ -1488,11 +1488,6 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             ctx.promptsInFlight += 1;
             ctx.promptEpoch += 1;
             const promptEpoch = ctx.promptEpoch;
-            if (steeringTurnId !== undefined) {
-              ctx.discardBeforeEpoch = promptEpoch;
-              yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
-              yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
-            }
             // Bind the turn id before cooperative yields so interruptTurn can
             // settle this prompt even if stop arrives during preparation.
             ctx.activeTurnId = turnId;
@@ -1628,6 +1623,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                   turnId,
                   payload: displayModel ? { model: displayModel } : {},
                 });
+              } else {
+                // Discard the previous epoch only after this replacement is
+                // ready. A failed steer must not skip the live prompt, which
+                // settles without a terminal event when emitTurnCompletion is
+                // false.
+                yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+                yield* settlePendingUserInputsAsCancelled(ctx.pendingUserInputs);
+                ctx.discardBeforeEpoch = promptEpoch;
               }
 
               return {

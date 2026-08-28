@@ -1277,6 +1277,99 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       }).pipe(TestClock.withLive),
   );
 
+  it.effect("keeps the original prompt running when a steer fails during preparation", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-failed-steer-keeps-original-prompt");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-failed-steer-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const firstTurnStarted = yield* Deferred.make<TurnId>();
+      const turnCompleted = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          runtimeEvents.push(event);
+          if (String(event.threadId) !== String(threadId)) {
+            return;
+          }
+          if (event.type === "turn.started" && event.turnId !== undefined) {
+            yield* Deferred.succeed(firstTurnStarted, event.turnId).pipe(Effect.ignore);
+            return;
+          }
+          if (event.type === "turn.completed") {
+            yield* Deferred.succeed(turnCompleted, undefined).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+
+      const firstSendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "hang until a failed steer", attachments: [] })
+        .pipe(Effect.forkChild);
+      const firstTurnId = yield* Deferred.await(firstTurnStarted).pipe(Effect.timeout("2 seconds"));
+
+      const steerError = yield* Effect.flip(
+        adapter.sendTurn({
+          threadId,
+          input: "   ",
+          attachments: [],
+        }),
+      );
+      yield* waitForFileContent(requestLogPath, 80, '"method":"session/prompt"');
+      for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      const sessionsAfterFailedSteer = yield* adapter.listSessions();
+      const sessionAfterFailedSteer = sessionsAfterFailedSteer.find(
+        (session) => session.threadId === threadId,
+      );
+      const completedBeforeInterrupt = runtimeEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+          event.type === "turn.completed" && String(event.threadId) === String(threadId),
+      );
+
+      yield* adapter.interruptTurn(threadId, firstTurnId).pipe(Effect.timeout("2 seconds"));
+      yield* Fiber.join(firstSendTurnFiber).pipe(Effect.timeout("3 seconds"));
+      yield* Deferred.await(turnCompleted).pipe(Effect.timeout("3 seconds"));
+
+      const turnCompletedEvents = runtimeEvents.filter(
+        (event): event is Extract<ProviderRuntimeEvent, { type: "turn.completed" }> =>
+          event.type === "turn.completed" && String(event.threadId) === String(threadId),
+      );
+      const readySessions = yield* adapter.listSessions();
+      const readySession = readySessions.find((session) => session.threadId === threadId);
+
+      assert.equal(steerError._tag, "ProviderAdapterValidationError");
+      assert.equal(sessionAfterFailedSteer?.status, "running");
+      assert.equal(String(sessionAfterFailedSteer?.activeTurnId), String(firstTurnId));
+      assert.lengthOf(completedBeforeInterrupt, 0);
+      assert.lengthOf(turnCompletedEvents, 1);
+      assert.equal(String(turnCompletedEvents[0]?.turnId), String(firstTurnId));
+      assert.equal(turnCompletedEvents[0]?.payload.state, "cancelled");
+      assert.equal(readySession?.status, "ready");
+      assert.isUndefined(readySession?.activeTurnId);
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
+
   it.effect("does not double-complete when interrupt wins before a prompt starts ACP", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-interrupt-before-prompt-start");
