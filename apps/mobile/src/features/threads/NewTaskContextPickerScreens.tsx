@@ -1,4 +1,4 @@
-import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
+import { vcsWorktreeLabel, type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
@@ -27,6 +27,7 @@ import { useFontFamily } from "../../lib/useFontFamily";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useEnvironmentQuery } from "../../state/query";
 import { vcsEnvironment } from "../../state/vcs";
 import {
   createNativeMailSearchToolbarItem,
@@ -143,6 +144,91 @@ function PickerSurface(props: { readonly children: ReactNode }) {
   return <View className="overflow-hidden rounded-2xl bg-card">{props.children}</View>;
 }
 
+export function NewTaskWorkspacePickerRouteScreen() {
+  const flow = useNewTaskFlow();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const worktreesQuery = useEnvironmentQuery(
+    flow.selectedProject
+      ? vcsEnvironment.listWorktrees({
+          environmentId: flow.selectedProject.environmentId,
+          input: { cwd: flow.selectedProject.workspaceRoot },
+        })
+      : null,
+  );
+  const worktrees = worktreesQuery.data?.worktrees ?? [];
+
+  return (
+    <View className="flex-1 bg-sheet" collapsable={false}>
+      <NativeStackScreenOptions
+        options={{ headerShown: Platform.OS !== "android", title: "Workspace" }}
+      />
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader title="Workspace" onBack={() => navigation.goBack()} />
+      ) : null}
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{
+          paddingBottom: Math.max(insets.bottom, 16) + 16,
+          paddingHorizontal: 16,
+          paddingTop: 16,
+        }}
+        showsVerticalScrollIndicator={false}
+      >
+        <PickerSurface>
+          <SelectionRow
+            icon="desktopcomputer"
+            onPress={() => {
+              void Haptics.selectionAsync();
+              flow.setWorkspaceMode("local");
+              navigation.goBack();
+            }}
+            selected={flow.workspaceMode === "local" && flow.selectedWorktreePath === null}
+            title="Current checkout"
+          />
+          <SelectionRow
+            icon="arrow.triangle.branch"
+            isLast
+            onPress={() => {
+              void Haptics.selectionAsync();
+              flow.setWorkspaceMode("worktree");
+              navigation.goBack();
+            }}
+            selected={flow.workspaceMode === "worktree"}
+            title="New worktree"
+          />
+        </PickerSurface>
+        {worktrees.length > 0 ? (
+          <View className="mt-6 gap-2">
+            <Text className="px-1 text-xs font-t3-medium uppercase text-foreground-muted">
+              Worktrees
+            </Text>
+            <PickerSurface>
+              {worktrees.map((worktree, index) => (
+                <SelectionRow
+                  key={worktree.path}
+                  icon="arrow.triangle.branch"
+                  isLast={index === worktrees.length - 1}
+                  onPress={() => {
+                    void Haptics.selectionAsync();
+                    flow.selectWorktree(worktree);
+                    navigation.goBack();
+                  }}
+                  selected={
+                    flow.workspaceMode === "local" && flow.selectedWorktreePath === worktree.path
+                  }
+                  subtitle={worktree.path}
+                  title={vcsWorktreeLabel(worktree)}
+                />
+              ))}
+            </PickerSurface>
+          </View>
+        ) : null}
+      </ScrollView>
+    </View>
+  );
+}
+
 export function NewTaskEnvironmentPickerRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
@@ -195,7 +281,9 @@ export function NewTaskBranchPickerRouteScreen() {
   const insets = useSafeAreaInsets();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
   const fontFamily = useFontFamily("regular");
-  const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
+  const switchRef = useAtomCommand(vcsEnvironment.switchRef, {
+    reportFailure: false,
+  });
   const [switchingBranchName, setSwitchingBranchName] = useState<string | null>(null);
   const selectingBranchNameRef = useRef<string | null>(null);
   const allowSelectionNavigationRef = useRef(false);
@@ -311,7 +399,10 @@ export function NewTaskBranchPickerRouteScreen() {
   const renderBranch = useCallback(
     ({ item, index }: { readonly item: VcsRef; readonly index: number }) => (
       <BranchSelectionRow
-        badge={branchBadgeLabel({ branch: item, project: flow.selectedProject })}
+        badge={branchBadgeLabel({
+          branch: item,
+          project: flow.selectedProject,
+        })}
         branch={item}
         disabled={switchingBranchName !== null}
         isFirst={index === 0}
@@ -345,7 +436,11 @@ export function NewTaskBranchPickerRouteScreen() {
       <ScrollView
         className="flex-1 bg-sheet"
         contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 16, paddingTop: 12 }}
+        contentContainerStyle={{
+          flexGrow: 1,
+          paddingHorizontal: 16,
+          paddingTop: 12,
+        }}
         scrollEnabled={false}
         showsVerticalScrollIndicator={false}
       >

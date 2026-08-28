@@ -42,6 +42,7 @@ import { NewTaskDraftRouteScreen } from "./features/threads/NewTaskDraftRouteScr
 import {
   NewTaskBranchPickerRouteScreen,
   NewTaskEnvironmentPickerRouteScreen,
+  NewTaskWorkspacePickerRouteScreen,
 } from "./features/threads/NewTaskContextPickerScreens";
 import {
   ExistingThreadSettingsRouteProvider,
@@ -271,6 +272,13 @@ const NewTaskSheetStack = createNativeStackNavigator({
       linking: "draft/environment",
       options: {
         title: "Environment",
+      },
+    }),
+    NewTaskWorkspace: createNativeStackScreen({
+      screen: NewTaskWorkspacePickerRouteScreen,
+      linking: "draft/workspace",
+      options: {
+        title: "Workspace",
       },
     }),
     NewTaskBranch: createNativeStackScreen({
