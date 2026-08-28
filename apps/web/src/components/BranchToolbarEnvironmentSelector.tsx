@@ -33,7 +33,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   }, [availableEnvironments, environmentId]);
   const EnvironmentIcon = getEnvironmentIcon({
     isPrimary: activeEnvironment?.isPrimary ?? false,
-    isDesktopLocal: activeEnvironment?.isDesktopLocal ?? false,
+    isWsl: activeEnvironment?.isWsl ?? false,
   });
 
   const environmentItems = useMemo(

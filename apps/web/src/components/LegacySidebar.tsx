@@ -71,7 +71,7 @@ import {
   type SidebarThreadPreviewCount,
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
-import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
+import { isDesktopLocalConnectionTarget, isWslConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { isElectron } from "../env";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
@@ -1125,7 +1125,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   } = props;
   const EnvironmentIcon = getEnvironmentIcon({
     isPrimary: false,
-    isDesktopLocal: project.allRemoteMembersAreDesktopLocal,
+    isWsl: project.allRemoteMembersAreWsl,
   });
   const threadSortOrder = useClientSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
@@ -2323,9 +2323,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               render={
                 <span
                   aria-label={
-                    project.allRemoteMembersAreDesktopLocal
-                      ? "Local sandbox project"
-                      : "Remote project"
+                    project.allRemoteMembersAreWsl ? "Local sandbox project" : "Remote project"
                   }
                   className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-icon-muted transition-opacity duration-150 max-sm:right-7 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0 max-sm:group-hover/project-header:opacity-100 max-sm:group-focus-within/project-header:opacity-100"
                 />
@@ -2334,7 +2332,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               <EnvironmentIcon className="size-3" />
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {project.allRemoteMembersAreDesktopLocal
+              {project.allRemoteMembersAreWsl
                 ? `Local sandbox: ${project.remoteEnvironmentLabels.join(", ")}`
                 : `Remote environment: ${project.remoteEnvironmentLabels.join(", ")}`}
             </TooltipPopup>
@@ -3096,11 +3094,11 @@ export default function LegacySidebar() {
       ),
     [environments],
   );
-  const desktopLocalEnvironmentIds = useMemo(
+  const wslEnvironmentIds = useMemo(
     () =>
       new Set(
         environments
-          .filter((environment) => isDesktopLocalConnectionTarget(environment.entry.target))
+          .filter((environment) => isWslConnectionTarget(environment.entry.target))
           .map((environment) => environment.environmentId),
       ),
     [environments],
@@ -3144,11 +3142,11 @@ export default function LegacySidebar() {
       settings: projectGroupingSettings,
       primaryEnvironmentId,
       resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
-      isDesktopLocalEnvironment: (environmentId) => desktopLocalEnvironmentIds.has(environmentId),
+      isWslEnvironment: (environmentId) => wslEnvironmentIds.has(environmentId),
     });
   }, [
     environmentLabelById,
-    desktopLocalEnvironmentIds,
+    wslEnvironmentIds,
     orderedProjects,
     projectGroupingSettings,
     primaryEnvironmentId,

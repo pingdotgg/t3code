@@ -26,16 +26,14 @@ import * as Result from "effect/Result";
 import {
   ChevronDownIcon,
   CloudIcon,
-  LaptopIcon,
   LoaderIcon,
-  MonitorIcon,
   PlusIcon,
   RefreshCwIcon,
   TerminalIcon,
 } from "lucide-react";
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
+import { isWslConnectionTarget } from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -75,6 +73,7 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
+import { getEnvironmentIcon } from "../Icons";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import { providerSettingsTabClassName } from "./providerSettingsTabs";
@@ -151,18 +150,19 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
 }
 
 function providerEnvironmentIcon(environment: EnvironmentPresentation) {
-  if (environment.entry.target._tag === "PrimaryConnectionTarget") return MonitorIcon;
-  if (environment.entry.target._tag === "RelayConnectionTarget") return CloudIcon;
-  if (environment.entry.target._tag === "SshConnectionTarget") return TerminalIcon;
-  if (isDesktopLocalConnectionTarget(environment.entry.target)) return LaptopIcon;
-  return CloudIcon;
+  const target = environment.entry.target;
+  return getEnvironmentIcon({
+    isPrimary: target._tag === "PrimaryConnectionTarget",
+    isWsl: isWslConnectionTarget(target),
+    remoteIcon: target._tag === "SshConnectionTarget" ? TerminalIcon : CloudIcon,
+  });
 }
 
 function providerEnvironmentDetail(environment: EnvironmentPresentation): string {
   if (environment.entry.target._tag === "PrimaryConnectionTarget") return "Primary device";
   if (environment.relayManaged) return "T3 Connect";
   if (environment.entry.target._tag === "SshConnectionTarget") return "SSH";
-  if (isDesktopLocalConnectionTarget(environment.entry.target)) return "Local device";
+  if (isWslConnectionTarget(environment.entry.target)) return "Local device";
   return environment.displayUrl ?? "Remote device";
 }
 

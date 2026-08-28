@@ -74,7 +74,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../env";
-import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
+import { isWslConnectionTarget } from "../connection/desktopLocal";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -725,7 +725,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
-  isDesktopLocalEnvironment: boolean;
+  isWslEnvironment: boolean;
   projectCwd: string | null;
   projectFaviconPath: string | null;
   projectTitle: string | null;
@@ -782,7 +782,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const threadKey = scopedThreadKey(threadRef);
   const EnvironmentIcon = getEnvironmentIcon({
     isPrimary: false,
-    isDesktopLocal: props.isDesktopLocalEnvironment,
+    isWsl: props.isWslEnvironment,
     remoteIcon: ServerIcon,
   });
   const isRegeneratingTitle = thread.titleRegeneration != null;
@@ -1819,11 +1819,11 @@ export default function Sidebar() {
   );
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const desktopLocalEnvironmentIds = useMemo(
+  const wslEnvironmentIds = useMemo(
     () =>
       new Set(
         environments
-          .filter((environment) => isDesktopLocalConnectionTarget(environment.entry.target))
+          .filter((environment) => isWslConnectionTarget(environment.entry.target))
           .map((environment) => environment.environmentId),
       ),
     [environments],
@@ -3744,9 +3744,7 @@ export default function Sidebar() {
                         }
                         currentEnvironmentId={primaryEnvironmentId}
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
-                        isDesktopLocalEnvironment={desktopLocalEnvironmentIds.has(
-                          thread.environmentId,
-                        )}
+                        isWslEnvironment={wslEnvironmentIds.has(thread.environmentId)}
                         projectCwd={
                           projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                         }

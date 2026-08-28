@@ -85,7 +85,7 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
-import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
+import { isWslConnectionTarget } from "../connection/desktopLocal";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
@@ -1968,22 +1968,21 @@ function ChatViewContent(props: ChatViewProps) {
       projectId: ProjectId;
       label: string;
       isPrimary: boolean;
-      isDesktopLocal: boolean;
+      isWsl: boolean;
     }> = [];
     for (const p of memberProjects) {
       if (seen.has(p.environmentId)) continue;
       seen.add(p.environmentId);
       const isPrimary = p.environmentId === primaryEnvironmentId;
       const environment = environmentById.get(p.environmentId);
-      const isDesktopLocal =
-        environment !== undefined && isDesktopLocalConnectionTarget(environment.entry.target);
+      const isWsl = environment !== undefined && isWslConnectionTarget(environment.entry.target);
       const label = environmentById.get(p.environmentId)?.label ?? p.environmentId;
       envs.push({
         environmentId: p.environmentId,
         projectId: p.id,
         label,
         isPrimary,
-        isDesktopLocal,
+        isWsl,
       });
     }
     // Sort: primary first, then alphabetical
