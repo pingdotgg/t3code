@@ -2,10 +2,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { AttachmentCreateUploadUrlInput } from "./assets.ts";
-import {
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
-  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-} from "./orchestration.ts";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "./chatAttachment.ts";
 
 const isUploadInput = Schema.is(AttachmentCreateUploadUrlInput);
 
