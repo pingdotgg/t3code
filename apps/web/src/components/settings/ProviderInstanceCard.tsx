@@ -6,6 +6,7 @@ import {
   DownloadIcon,
   LoaderIcon,
   PlusIcon,
+  RefreshCwIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
@@ -715,11 +716,17 @@ export function ProviderInstanceCard({
                           "size-5 rounded-sm p-0",
                           versionAdvisory.emphasis === "strong"
                             ? "text-warning hover:text-warning"
-                            : "text-update-foreground hover:text-update-foreground",
+                            : versionAdvisory.emphasis === "muted"
+                              ? "text-muted-foreground hover:text-foreground"
+                              : "text-update-foreground hover:text-update-foreground",
                         )}
                         aria-label={`${versionAdvisory.title} — view details`}
                       >
-                        <ArrowUpCircleIcon className="size-3.5" />
+                        {versionAdvisory.icon === "refresh" ? (
+                          <RefreshCwIcon className="size-3.5" />
+                        ) : (
+                          <ArrowUpCircleIcon className="size-3.5" />
+                        )}
                       </Button>
                     }
                   />

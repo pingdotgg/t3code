@@ -96,7 +96,8 @@ export function getProviderVersionAdvisoryPresentation(
   readonly title: string;
   readonly detail: string;
   readonly updateCommand: string | null;
-  readonly emphasis: "normal" | "strong";
+  readonly emphasis: "muted" | "normal" | "strong";
+  readonly icon: "refresh" | "update";
 } | null {
   if (!advisory || advisory.status === "current") {
     return null;
@@ -108,7 +109,8 @@ export function getProviderVersionAdvisoryPresentation(
           title: "Check for updates",
           detail: "Run the verified installer update, then T3 Code will check the version again.",
           updateCommand: advisory.updateCommand,
-          emphasis: "normal" as const,
+          emphasis: "muted" as const,
+          icon: "refresh" as const,
         }
       : null;
   }
@@ -126,5 +128,6 @@ export function getProviderVersionAdvisoryPresentation(
         : `${label}: install the latest provider version.`),
     updateCommand: advisory.updateCommand,
     emphasis: "normal" as const,
+    icon: "update" as const,
   };
 }

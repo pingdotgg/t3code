@@ -216,6 +216,67 @@ describe("EnvironmentProviderSettings routing", () => {
     });
   });
 
+  it("scopes the updating state to the selected provider instance", async () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [customId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+        },
+      },
+    };
+    atoms.providers = [
+      provider(),
+      {
+        ...provider(),
+        instanceId: customId,
+        versionAdvisory: {
+          ...provider().versionAdvisory!,
+          updateCommand: "npm install -g --prefix /work @openai/codex@latest",
+        },
+      },
+    ];
+    let finishUpdate: ((result: { readonly _tag: "Success" }) => void) | undefined;
+    commands.updateProvider.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishUpdate = resolve;
+        }),
+    );
+
+    let panel = renderPanel();
+    const defaultEditor = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    (defaultEditor?.props.onRunUpdate as (() => void) | undefined)?.();
+    await Promise.resolve();
+
+    panel = renderPanel();
+    const updatingDefaultEditor = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    expect(updatingDefaultEditor?.props.isUpdating).toBe(true);
+
+    const customRow = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "list",
+    );
+    (customRow?.props.onSelect as (() => void) | undefined)?.();
+    panel = renderPanel();
+    const customEditor = visitElements(
+      panel,
+      (element) => element.props.instanceId === customId && element.props.mode === "editor",
+    );
+    expect(customEditor?.props.isUpdating).toBe(false);
+    expect(customEditor?.props.onRunUpdate).toBeTypeOf("function");
+
+    finishUpdate?.({ _tag: "Success" });
+    await flushPromises();
+  });
+
   it("keeps provider selection available while write controls are read only", () => {
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,

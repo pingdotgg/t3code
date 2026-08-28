@@ -427,11 +427,11 @@ export function EnvironmentProviderSettings({
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
-    ReadonlySet<ProviderDriverKind>
+  const [updatingProviderInstanceIds, setUpdatingProviderInstanceIds] = useState<
+    ReadonlySet<ProviderInstanceId>
   >(() => new Set());
   const refreshingRef = useRef(false);
-  const updatingDriversRef = useRef<Set<ProviderDriverKind>>(new Set());
+  const updatingInstanceIdsRef = useRef<Set<ProviderInstanceId>>(new Set());
 
   const providerUpdateCandidateByInstanceId = useMemo(
     () =>
@@ -493,11 +493,11 @@ export function EnvironmentProviderSettings({
     async (candidate: ProviderSettingsUpdateCandidate) => {
       // Ref-based re-entry guard, mirroring refreshProviders: a state updater
       // may run after this function returns, so it cannot gate the dispatch.
-      if (updatingDriversRef.current.has(candidate.driver)) {
+      if (updatingInstanceIdsRef.current.has(candidate.instanceId)) {
         return;
       }
-      updatingDriversRef.current.add(candidate.driver);
-      setUpdatingProviderDrivers((previous) => new Set(previous).add(candidate.driver));
+      updatingInstanceIdsRef.current.add(candidate.instanceId);
+      setUpdatingProviderInstanceIds((previous) => new Set(previous).add(candidate.instanceId));
 
       const result = await updateProvider({
         environmentId,
@@ -519,13 +519,13 @@ export function EnvironmentProviderSettings({
           }),
         );
       }
-      updatingDriversRef.current.delete(candidate.driver);
-      setUpdatingProviderDrivers((previous) => {
-        if (!previous.has(candidate.driver)) {
+      updatingInstanceIdsRef.current.delete(candidate.instanceId);
+      setUpdatingProviderInstanceIds((previous) => {
+        if (!previous.has(candidate.instanceId)) {
           return previous;
         }
         const next = new Set(previous);
-        next.delete(candidate.driver);
+        next.delete(candidate.instanceId);
         return next;
       });
     },
@@ -723,18 +723,15 @@ export function EnvironmentProviderSettings({
     const updateCandidate = liveProvider
       ? providerUpdateCandidateByInstanceId.get(liveProvider.instanceId)
       : undefined;
-    const isDriverUpdateRunning =
+    const isInstanceUpdateRunning =
       updateCandidate !== undefined &&
-      (updatingProviderDrivers.has(updateCandidate.driver) ||
+      (updatingProviderInstanceIds.has(updateCandidate.instanceId) ||
         serverProviders.some(
           (provider) =>
-            provider.driver === updateCandidate.driver && isProviderUpdateActive(provider),
+            provider.instanceId === updateCandidate.instanceId && isProviderUpdateActive(provider),
         ));
     const showInlineUpdateButton = updateCandidate !== undefined;
-    const canRunInlineUpdate =
-      updateCandidate !== undefined &&
-      !isDriverUpdateRunning &&
-      !updatingProviderDrivers.has(updateCandidate.driver);
+    const canRunInlineUpdate = updateCandidate !== undefined && !isInstanceUpdateRunning;
     const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
       hiddenModels: [],
       modelOrder: [],
@@ -806,7 +803,9 @@ export function EnvironmentProviderSettings({
               }
             : undefined
         }
-        isUpdating={mode === "editor" && showInlineUpdateButton ? isDriverUpdateRunning : undefined}
+        isUpdating={
+          mode === "editor" && showInlineUpdateButton ? isInstanceUpdateRunning : undefined
+        }
       />
     );
   };
