@@ -1453,20 +1453,22 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
 
           if (Option.isSome(existingTurn)) {
+            const projectedState = turnStillRunning ? existingTurn.value.state : nextState;
             yield* projectionTurnRepository.upsertByTurnId({
               ...existingTurn.value,
               assistantMessageId: event.payload.assistantMessageId,
-              state: turnStillRunning ? existingTurn.value.state : nextState,
+              state: projectedState,
               checkpointTurnCount: event.payload.checkpointTurnCount,
               checkpointRef: event.payload.checkpointRef,
               checkpointStatus: event.payload.status,
               checkpointFiles: event.payload.files,
               startedAt: existingTurn.value.startedAt ?? event.payload.completedAt,
               requestedAt: existingTurn.value.requestedAt ?? event.payload.completedAt,
-              completedAt: event.payload.completedAt,
+              completedAt: projectedState === "running" ? null : event.payload.completedAt,
             });
             return;
           }
+          const projectedState = turnStillRunning ? "running" : nextState;
           yield* projectionTurnRepository.upsertByTurnId({
             turnId: event.payload.turnId,
             threadId: event.payload.threadId,
@@ -1474,10 +1476,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sourceProposedPlanThreadId: null,
             sourceProposedPlanId: null,
             assistantMessageId: event.payload.assistantMessageId,
-            state: turnStillRunning ? "running" : nextState,
+            state: projectedState,
             requestedAt: event.payload.completedAt,
             startedAt: event.payload.completedAt,
-            completedAt: event.payload.completedAt,
+            completedAt: projectedState === "running" ? null : event.payload.completedAt,
             checkpointTurnCount: event.payload.checkpointTurnCount,
             checkpointRef: event.payload.checkpointRef,
             checkpointStatus: event.payload.status,

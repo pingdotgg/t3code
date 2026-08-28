@@ -692,9 +692,9 @@ export function deriveMessagesTimelineRows(input: {
     }
   }
 
+  const latestUserMessageIndex = lastUserMessageIndex(input.timelineEntries);
   let activeTurnHeaderIndex = input.timelineEntries.length;
   if (input.isWorking) {
-    const latestUserMessageIndex = lastUserMessageIndex(input.timelineEntries);
     const firstOwnedAfterUser =
       unsettledTurnId === null
         ? -1
@@ -994,6 +994,16 @@ export function deriveMessagesTimelineRows(input: {
         createdAt: timelineEntry.createdAt,
         turnPlan: timelineEntry.turnPlan,
       });
+      continue;
+    }
+
+    if (
+      timelineEntry.message.role === "user" &&
+      input.isWorking &&
+      index === latestUserMessageIndex &&
+      timelineEntry.message.text.trim().length === 0 &&
+      (timelineEntry.message.attachments?.length ?? 0) === 0
+    ) {
       continue;
     }
 

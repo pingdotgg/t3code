@@ -1559,6 +1559,28 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         },
       });
 
+      yield* eventStore.append({
+        type: "thread.turn-diff-completed",
+        eventId: EventId.make("evt-tl-checkpoint"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-01-01T00:00:06.000Z",
+        commandId: CommandId.make("cmd-tl-checkpoint"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-tl-checkpoint"),
+        metadata: {},
+        payload: {
+          threadId,
+          turnId,
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-turn-lifecycle/turn/1"),
+          status: "ready",
+          files: [],
+          assistantMessageId: MessageId.make("message-tl-interim"),
+          completedAt: "2026-01-01T00:00:06.000Z",
+        },
+      });
+
       yield* projectionPipeline.bootstrap;
 
       const runningRows = yield* sql<{
