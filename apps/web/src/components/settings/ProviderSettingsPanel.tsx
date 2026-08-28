@@ -837,14 +837,21 @@ export function EnvironmentProviderSettings({
           />
         ) : null}
         <div className="space-y-1">
-          <div className="overflow-hidden rounded-lg border border-border/70 lg:grid lg:grid-cols-[20rem_minmax(0,1fr)]">
-            <div className="border-b border-border/70 lg:border-r lg:border-b-0">
-              <div className="flex min-h-9 items-center justify-between border-b border-border/70 px-3 text-[11px] font-medium text-muted-foreground">
+          <div className="overflow-hidden rounded-lg border border-border/70 lg:grid lg:h-[min(38rem,calc(100dvh-16rem))] lg:min-h-[30rem] lg:grid-cols-[20rem_minmax(0,1fr)]">
+            <div className="border-b border-border/70 lg:flex lg:min-h-0 lg:flex-col lg:border-r lg:border-b-0">
+              <div className="flex min-h-9 shrink-0 items-center justify-between border-b border-border/70 px-3 text-[11px] font-medium text-muted-foreground">
                 <span>Provider</span>
                 <span>On</span>
               </div>
-              {rows.map((row) => renderProviderInstance(row, "list"))}
-              <div className="flex min-h-10 items-center justify-between px-3">
+              <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+                {rows.map((row) => renderProviderInstance(row, "list"))}
+              </div>
+              <div
+                className={cn(
+                  "flex min-h-10 shrink-0 items-center justify-between px-3",
+                  rows.length > 0 && "border-t border-border/60",
+                )}
+              >
                 <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
                 {!readOnly ? (
                   <Tooltip>
@@ -871,7 +878,7 @@ export function EnvironmentProviderSettings({
               </div>
             </div>
 
-            <div className="min-w-0">
+            <div className="min-w-0 lg:min-h-0">
               {selectedRow ? (
                 renderProviderInstance(selectedRow, "editor")
               ) : (
