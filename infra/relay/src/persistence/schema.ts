@@ -110,6 +110,48 @@ export const relayManagedTunnelLimits = pgTable("relay_managed_tunnel_limits", {
   updatedAt: varchar("updated_at", { length: 64 }).notNull(),
 });
 
+export const relayReferralAccounts = pgTable(
+  "relay_referral_accounts",
+  {
+    userId: varchar("user_id", { length: 191 }).primaryKey(),
+    referralCode: varchar("referral_code", { length: 16 }).notNull(),
+    referrerUserId: varchar("referrer_user_id", { length: 191 }),
+    referredAt: varchar("referred_at", { length: 64 }),
+    qualifiedAt: varchar("qualified_at", { length: 64 }),
+    createdAt: varchar("created_at", { length: 64 }).notNull(),
+    updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_relay_referral_accounts_code").on(table.referralCode),
+    index("idx_relay_referral_accounts_referrer").on(table.referrerUserId, table.qualifiedAt),
+  ],
+);
+
+export const relayReferralPointEntries = pgTable(
+  "relay_referral_point_entries",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    userId: varchar("user_id", { length: 191 }).notNull(),
+    points: integer("points").notNull(),
+    reason: varchar("reason", { length: 32 }).notNull().$type<"qualified_referral">(),
+    referredUserId: varchar("referred_user_id", { length: 191 }).notNull(),
+    qualifyingEnvironmentId: varchar("qualifying_environment_id", { length: 191 }).notNull(),
+    createdAt: varchar("created_at", { length: 64 }).notNull(),
+  },
+  (table) => [
+    index("idx_relay_referral_point_entries_user").on(table.userId, table.createdAt),
+    uniqueIndex("idx_relay_referral_point_entries_award").on(
+      table.userId,
+      table.reason,
+      table.referredUserId,
+    ),
+    uniqueIndex("idx_relay_referral_point_entries_environment_award").on(
+      table.reason,
+      table.qualifyingEnvironmentId,
+    ),
+  ],
+);
+
 export const relayEnvironmentCredentials = pgTable(
   "relay_environment_credentials",
   {

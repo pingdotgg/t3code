@@ -68,6 +68,7 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
+import * as ReferralProgram from "../referrals/ReferralProgram.ts";
 import { withSpanAttributes } from "../observability.ts";
 import * as RelayDb from "../db.ts";
 
@@ -166,6 +167,7 @@ export const relayDocsRedirectRoute = HttpRouter.add(
 // contains the exact child span that stalled, and the response still carries
 // the traceparent back to the client.
 export const RELAY_REQUEST_DEADLINE_MS = 9_000;
+export const REFERRAL_SUMMARY_RECOVERY_BUDGET_MS = 500;
 
 const relayRequestDeadline = <E, R>(
   httpEffect: Effect.Effect<
@@ -404,6 +406,34 @@ export const healthApi = HttpApiBuilder.group(
   }),
 );
 
+export const loadReferralSummary = Effect.fn("relay.api.client.loadReferralSummary")(function* (
+  userId: string,
+) {
+  const referrals = yield* ReferralProgram.ReferralProgram;
+  yield* referrals.recoverPendingAwards({ referrerUserId: userId }).pipe(
+    Effect.tapError((error) =>
+      Effect.logWarning("pending referral award recovery before summary failed", {
+        errorTag: error._tag,
+        operation: error.operation,
+        userId,
+      }),
+    ),
+    Effect.timeoutOption(Duration.millis(REFERRAL_SUMMARY_RECOVERY_BUDGET_MS)),
+    Effect.tap(
+      Option.match({
+        onNone: () =>
+          Effect.logWarning("pending referral award recovery before summary timed out", {
+            budgetMs: REFERRAL_SUMMARY_RECOVERY_BUDGET_MS,
+            userId,
+          }),
+        onSome: () => Effect.void,
+      }),
+    ),
+    Effect.ignore,
+  );
+  return yield* referrals.getSummary({ userId });
+});
+
 export const revokeEnvironmentLinkRecord = Effect.fn(
   "relay.api.client.revokeEnvironmentLinkRecord",
 )(function* (input: {
@@ -533,6 +563,7 @@ export const clientApi = HttpApiBuilder.group(
     const links = yield* EnvironmentLinks.EnvironmentLinks;
     const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
     const devices = yield* Devices.Devices;
+    const referrals = yield* ReferralProgram.ReferralProgram;
     return handlers
       .handle(
         "listEnvironments",
@@ -550,6 +581,20 @@ export const clientApi = HttpApiBuilder.group(
         }, mapRelayCommonApiErrors("not_authorized")),
       )
       .handle(
+        "getReferralSummary",
+        Effect.fn("relay.api.client.getReferralSummary")(function* () {
+          const { userId } = yield* RelayClientPrincipal;
+          return yield* loadReferralSummary(userId);
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "claimReferral",
+        Effect.fn("relay.api.client.claimReferral")(function* ({ payload }) {
+          const { userId } = yield* RelayClientPrincipal;
+          return yield* referrals.claim({ userId, referralCode: payload.referralCode });
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
         "linkEnvironment",
         Effect.fn("relay.api.client.linkEnvironment")(
           function* (args) {
@@ -557,6 +602,15 @@ export const clientApi = HttpApiBuilder.group(
             yield* appendRelayCredentialResponseHeaders;
             const { userId } = yield* RelayClientPrincipal;
             const result = yield* linker.link({ userId, request: payload });
+            yield* referrals.qualify({ userId }).pipe(
+              Effect.tapError((error) =>
+                Effect.logWarning("referral qualification after environment link failed", {
+                  errorTag: error._tag,
+                  operation: error.operation,
+                }),
+              ),
+              Effect.ignore,
+            );
             return {
               ok: true,
               cloudUserId: userId,
@@ -1027,6 +1081,7 @@ const RelayCommonPersistenceError = Schema.Union([
   AgentActivityRows.AgentActivityRowListPersistenceError,
   LiveActivities.LiveActivityDeliveryMarkPersistenceError,
   DeliveryAttempts.DeliveryAttemptRecordPersistenceError,
+  ReferralProgram.ReferralProgramPersistenceError,
 ]);
 type RelayCommonPersistenceError = typeof RelayCommonPersistenceError.Type;
 const isRelayCommonPersistenceError = Schema.is(RelayCommonPersistenceError);

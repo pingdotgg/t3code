@@ -36,6 +36,7 @@ catalog:
   "@effect/platform-node": 4.0.0-beta.103
   "@effect/platform-node-shared": 4.0.0-beta.103
   "@effect/sql-pg": 4.0.0-beta.103
+  "@effect/sql-pglite": 4.0.0-beta.103
   "@effect/sql-sqlite-bun": 4.0.0-beta.103
   "@effect/tsgo": 0.13.2
   "@effect/vitest": 4.0.0-beta.103
@@ -105,6 +106,7 @@ overrides:
   "@effect/platform-node": "catalog:"
   "@effect/platform-node-shared": "catalog:"
   "@effect/sql-pg": "catalog:"
+  "@effect/sql-pglite": "catalog:"
   "@effect/sql-sqlite-bun": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"

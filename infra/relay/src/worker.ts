@@ -57,6 +57,7 @@ import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublish
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
+import * as ReferralProgram from "./referrals/ReferralProgram.ts";
 
 const webcryptoLayer = Layer.succeed(
   Crypto.Crypto,
@@ -217,6 +218,7 @@ export const ApiLive = Api.make(
           EnvironmentLinks.layer,
           ManagedEndpointAllocations.layer,
           ManagedTunnelLimits.layer,
+          ReferralProgram.layer,
         ),
       ),
       Layer.provideMerge(LiveActivities.layer),
@@ -274,7 +276,12 @@ export const ApiLive = Api.make(
             ),
           ),
         ),
-        Effect.withSpan("relay.cron.prune_expired_state"),
+        Effect.andThen(
+          ReferralProgram.ReferralProgram.pipe(
+            Effect.flatMap((referrals) => referrals.recoverPendingAwards()),
+          ),
+        ),
+        Effect.withSpan("relay.cron.maintenance"),
         Effect.provide(runtimeLayer),
       ),
     );

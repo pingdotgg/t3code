@@ -1,0 +1,41 @@
+const REFERRAL_CLAIM_RETRY_DELAYS_MS = [250, 1_000, 3_000] as const;
+
+export interface ReferralClaimAttempt {
+  readonly key: string;
+}
+
+function waitForRetry(delay: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, delay));
+}
+
+export function isCurrentReferralClaimAttempt(
+  isCancelled: boolean,
+  activeAttempt: ReferralClaimAttempt | null,
+  attempt: ReferralClaimAttempt,
+): boolean {
+  return !isCancelled && activeAttempt === attempt;
+}
+
+export async function claimReferralWithRetry<Result>({
+  claim,
+  shouldContinue = () => true,
+  shouldRetry,
+  wait = waitForRetry,
+}: {
+  readonly claim: () => Promise<Result>;
+  readonly shouldContinue?: () => boolean;
+  readonly shouldRetry: (result: Result) => boolean;
+  readonly wait?: (delay: number) => Promise<void>;
+}): Promise<Result> {
+  let failedAttempts = 0;
+  while (true) {
+    const result = await claim();
+    if (!shouldRetry(result)) return result;
+
+    const retryDelay = REFERRAL_CLAIM_RETRY_DELAYS_MS[failedAttempts];
+    if (retryDelay === undefined) return result;
+    failedAttempts += 1;
+    await wait(retryDelay);
+    if (!shouldContinue()) return result;
+  }
+}

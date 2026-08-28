@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  claimManagedRelayReferral,
   createManagedRelayQueryManager,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
@@ -7,7 +8,12 @@ import {
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
+  RelayReferralSummary,
 } from "@t3tools/contracts/relay";
+import {
+  createAtomCommandScheduler,
+  createRuntimeCommand,
+} from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect } from "react";
 
@@ -22,6 +28,18 @@ export const managedRelayQueryManager = createManagedRelayQueryManager(managedRe
     cloudDebugLog(`query:${event.operation}:${event.stage}:${event.phase}`, { ...event }),
 });
 
+const managedRelayMutationScheduler = createAtomCommandScheduler();
+
+export const claimManagedRelayReferralCommand = createRuntimeCommand(managedRelayAtomRuntime, {
+  label: "mobile:managed-relay:claim-referral",
+  scheduler: managedRelayMutationScheduler,
+  concurrency: {
+    mode: "serial",
+    key: (input: { readonly accountId: string; readonly referralCode: string }) => input.accountId,
+  },
+  execute: (input, registry) => claimManagedRelayReferral(registry, input),
+});
+
 const EMPTY_ENVIRONMENTS_ATOM = Atom.make(
   AsyncResult.success<ReadonlyArray<RelayClientEnvironmentRecord>>([]),
 ).pipe(Atom.keepAlive, Atom.withLabel("managed-relay:mobile:environments:null"));
@@ -29,6 +47,10 @@ const EMPTY_ENVIRONMENTS_ATOM = Atom.make(
 const EMPTY_ENVIRONMENT_STATUS_ATOM = Atom.make(
   AsyncResult.initial<RelayEnvironmentStatusResponse, never>(false),
 ).pipe(Atom.keepAlive, Atom.withLabel("managed-relay:mobile:environment-status:null"));
+
+const EMPTY_REFERRAL_SUMMARY_ATOM = Atom.make(
+  AsyncResult.initial<RelayReferralSummary, never>(false),
+).pipe(Atom.keepAlive, Atom.withLabel("managed-relay:mobile:referrals:null"));
 
 export function useManagedRelayEnvironments() {
   const session = useAtomValue(managedRelaySessionAtom);
@@ -84,6 +106,35 @@ export function useManagedRelayEnvironmentStatus(environment: RelayClientEnviron
       });
     }
   }, [accountId, environment]);
+
+  return {
+    ...snapshot,
+    accountId,
+    refresh,
+  };
+}
+
+export function useManagedRelayReferralSummary() {
+  const session = useAtomValue(managedRelaySessionAtom);
+  const accountId = session?.accountId ?? null;
+  const atom = accountId
+    ? managedRelayQueryManager.referralSummaryAtom(accountId)
+    : EMPTY_REFERRAL_SUMMARY_ATOM;
+  const result = useAtomValue(atom);
+  const snapshot = readManagedRelaySnapshotState(result);
+  useEffect(() => {
+    if (snapshot.error) {
+      console.error("[t3-cloud] Relay referral summary failed", {
+        message: snapshot.error,
+        traceId: snapshot.errorTraceId,
+      });
+    }
+  }, [snapshot.error, snapshot.errorTraceId]);
+  const refresh = useCallback(() => {
+    if (accountId) {
+      managedRelayQueryManager.refreshReferralSummary(appAtomRegistry, accountId);
+    }
+  }, [accountId]);
 
   return {
     ...snapshot,

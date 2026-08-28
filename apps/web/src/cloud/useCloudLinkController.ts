@@ -10,6 +10,7 @@ import { useState } from "react";
 import { toastManager } from "../components/ui/toast";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { useAtomCommand } from "../state/use-atom-command";
+import { CloudEnvironmentLinkError } from "./linkEnvironment";
 import {
   linkPrimaryEnvironment as linkPrimaryEnvironmentAtom,
   unlinkPrimaryEnvironment as unlinkPrimaryEnvironmentAtom,
@@ -17,6 +18,11 @@ import {
 } from "./linkEnvironmentAtoms";
 import { usePrimaryCloudLinkState } from "./primaryCloudLinkState";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
+import {
+  clearPendingReferralCode,
+  clearReferralCodeFromCurrentUrl,
+  readPendingReferralCode,
+} from "./referralLinks";
 
 export interface CloudLinkDesiredState {
   readonly managedTunnel: boolean;
@@ -116,18 +122,30 @@ export function useCloudLinkController() {
         return false;
       }
       if (!linked || managedTunnelActive !== desired.managedTunnel) {
+        const referralCode = linked ? null : readPendingReferralCode();
         const linkResult = await linkPrimaryEnvironment({
           target,
           clerkToken,
           mode: desired.managedTunnel ? "managed" : "publish_only",
+          ...(referralCode ? { referralCode } : {}),
         });
         if (linkResult._tag === "Failure") {
           if (!isAtomCommandInterrupted(linkResult)) {
-            reportUpdateFailure(squashAtomCommandFailure(linkResult));
+            const cause = squashAtomCommandFailure(linkResult);
+            if (
+              referralCode &&
+              cause instanceof CloudEnvironmentLinkError &&
+              cause.referralClaimResult !== undefined
+            ) {
+              clearPendingReferralCode();
+              clearReferralCodeFromCurrentUrl(referralCode);
+            }
+            reportUpdateFailure(cause);
           }
           primaryCloudLinkState.refresh();
           return false;
         }
+        if (referralCode) clearPendingReferralCode();
       }
       const prefResult = await updatePrimaryEnvironmentPreferences({
         target,
