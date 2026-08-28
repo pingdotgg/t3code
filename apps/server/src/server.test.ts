@@ -5261,7 +5261,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         }) as const;
 
       const wsUrl = yield* getWsServerUrl(
-        "/ws?clientSurface=mobile&clientAppVersion=1.2.3&clientOs=iOS&clientOsMajorVersion=18&clientDeviceModel=iPhone+15+Pro",
+        "/ws?clientSurface=mobile&clientAppVersion=1.2.3&clientDeviceType=phone&clientOs=iOS&clientOsMajorVersion=18&clientDeviceModel=iPhone+15+Pro&connectionMethod=relay",
       );
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
@@ -5298,12 +5298,141 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         {
           surface: "mobile",
           appVersion: "1.2.3",
+          clientAppVersion: "1.2.3",
+          clientOs: "iOS",
           os: "iOS",
+          clientDeviceType: "phone",
           osMajorVersion: 18,
+          clientOsMajorVersion: 18,
           deviceModel: "iPhone 15 Pro",
+          clientDeviceModel: "iPhone 15 Pro",
+          connectionMethod: "relay",
         },
-        { surface: "mobile", appVersion: "1.2.3" },
+        {
+          surface: "mobile",
+          appVersion: "1.2.3",
+          clientAppVersion: "1.2.3",
+          clientOs: "iOS",
+          os: "iOS",
+          clientDeviceType: "phone",
+          osMajorVersion: 18,
+          clientOsMajorVersion: 18,
+          deviceModel: "iPhone 15 Pro",
+          clientDeviceModel: "iPhone 15 Pro",
+          connectionMethod: "relay",
+        },
       ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps telemetry separate for simultaneous clients", () =>
+    Effect.gen(function* () {
+      const analyticsEvents: Array<{
+        event: string;
+        properties: Readonly<Record<string, unknown>> | undefined;
+      }> = [];
+
+      yield* buildAppUnderTest({
+        layers: {
+          analyticsService: {
+            record: (event, properties) =>
+              Effect.sync(() => analyticsEvents.push({ event, properties })),
+          },
+          orchestrationEngine: {
+            dispatch: () => Effect.succeed({ sequence: 1 }),
+          },
+        },
+      });
+
+      const webUrl = yield* getWsServerUrl(
+        "/ws?clientSurface=web&clientAppVersion=2.0.0&clientDeviceType=desktop&clientOs=Windows&clientWebDeployment=hosted&clientBrowser=Chrome&connectionMethod=direct",
+      );
+      const mobileUrl = yield* getWsServerUrl(
+        "/ws?clientSurface=mobile&clientAppVersion=3.0.0&clientDeviceType=tablet&clientOs=Android&clientOsMajorVersion=15&clientDeviceModel=Pixel+Tablet&connectionMethod=relay",
+      );
+      const turnCommand = (client: string) => ({
+        type: "thread.turn.start" as const,
+        commandId: CommandId.make(`cmd-${client}-turn`),
+        threadId: ThreadId.make(`thread-${client}`),
+        message: {
+          messageId: MessageId.make(`message-${client}`),
+          role: "user" as const,
+          text: "hello",
+          attachments: [],
+        },
+        modelSelection: defaultModelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.scoped(
+        withWsRpcClient(webUrl, (webClient) =>
+          withWsRpcClient(mobileUrl, (mobileClient) =>
+            Effect.gen(function* () {
+              yield* mobileClient[ORCHESTRATION_WS_METHODS.dispatchCommand](turnCommand("mobile"));
+              yield* webClient[ORCHESTRATION_WS_METHODS.dispatchCommand](turnCommand("web"));
+            }),
+          ),
+        ),
+      );
+
+      assert.deepEqual(
+        analyticsEvents
+          .filter(({ event }) => event === "client.turn.requested")
+          .map(({ properties }) => properties),
+        [
+          {
+            surface: "mobile",
+            appVersion: "3.0.0",
+            clientAppVersion: "3.0.0",
+            clientOs: "Android",
+            os: "Android",
+            clientDeviceType: "tablet",
+            osMajorVersion: 15,
+            clientOsMajorVersion: 15,
+            deviceModel: "Pixel Tablet",
+            clientDeviceModel: "Pixel Tablet",
+            connectionMethod: "relay",
+          },
+          {
+            surface: "web",
+            appVersion: "2.0.0",
+            clientAppVersion: "2.0.0",
+            clientOs: "Windows",
+            clientDeviceType: "desktop",
+            webDeployment: "hosted",
+            clientBrowser: "Chrome",
+            connectionMethod: "direct",
+          },
+        ],
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("ignores invalid client telemetry without rejecting the connection", () =>
+    Effect.gen(function* () {
+      const connectedProperties: Array<Readonly<Record<string, unknown>> | undefined> = [];
+
+      yield* buildAppUnderTest({
+        layers: {
+          analyticsService: {
+            record: (event, properties) =>
+              event === "client.connected"
+                ? Effect.sync(() => connectedProperties.push(properties))
+                : Effect.void,
+          },
+        },
+      });
+
+      const invalidUrl = yield* getWsServerUrl(
+        "/ws?clientSurface=watch&clientDeviceType=television&clientOs=Plan9&clientWebDeployment=cdn&clientBrowser=&clientOsMajorVersion=-1&connectionMethod=teleport",
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(invalidUrl, (client) => client[WS_METHODS.serverGetSettings]({})),
+      );
+
+      assert.deepEqual(connectedProperties, [{}]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
