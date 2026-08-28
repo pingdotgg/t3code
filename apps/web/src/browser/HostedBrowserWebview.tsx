@@ -260,8 +260,10 @@ export function HostedBrowserWebview(props: {
           ref={setWebviewRef}
           // Must be an attribute on the element itself: Electron reads it when the
           // guest attaches, so setting it from the ref callback lands too late and
-          // the guest attaches with popups disabled.
-          allowpopups="true"
+          // the guest attaches with popups disabled. React types `allowpopups` as a
+          // boolean, but react-dom drops boolean values for unrecognized attributes,
+          // so the literal string has to be spread past the type.
+          {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
           src={webviewGeneration === 0 ? initialSrc : recoverySrc}
           partition={config.partition}
           webpreferences={config.webPreferences}
