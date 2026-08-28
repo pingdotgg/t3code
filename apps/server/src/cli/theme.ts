@@ -322,9 +322,11 @@ const publishThemeFile = Effect.fn(function* (input: {
     return yield* Effect.fail(new ThemeFileIdInvalidError({ themeId, filePath: input.filePath }));
   }
 
+  // Written verbatim: appending so much as a newline could push a file at
+  // the size limit past it and have the watcher skip what was just accepted.
   yield* writeFileStringAtomically({
     filePath: path.join(input.themesDir, `${themeId}.json`),
-    contents: raw.endsWith("\n") ? raw : `${raw}\n`,
+    contents: raw,
   }).pipe(Effect.mapError((cause) => new ThemePublishError({ themesDir: input.themesDir, cause })));
   return themeId;
 });
