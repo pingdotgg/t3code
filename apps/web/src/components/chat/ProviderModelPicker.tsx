@@ -58,10 +58,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   const activeInstanceId = props.activeInstanceId;
   const selectedInstanceOptions = props.modelOptionsByInstance.get(activeInstanceId) ?? [];
-  // A running thread can keep a model while a transient catalog refresh no
-  // longer reports it. Show the stored identifier instead of naming a
-  // different model that the next message will not use.
-  const selectedModel = selectedInstanceOptions.find((option) => option.slug === props.model);
+  // OpenCode can keep a model through a transient catalog refresh. Other
+  // providers keep the active instance's first option as their normal fallback.
+  const selectedModel =
+    selectedInstanceOptions.find((option) => option.slug === props.model) ??
+    (activeEntry?.driverKind === "opencode" ? undefined : selectedInstanceOptions[0]);
   const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
   const triggerLabel = selectedModel
     ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`

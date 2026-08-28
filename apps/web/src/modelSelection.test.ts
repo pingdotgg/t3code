@@ -554,7 +554,7 @@ describe("instance-scoped model selection", () => {
     ).toEqual(saved);
   });
 
-  it("keeps an intentional custom-instance draft override through dispatch", () => {
+  it("keeps a custom-instance draft model while dropping unsupported options", () => {
     const instanceId = ProviderInstanceId.make("claude_openrouter");
     const driver = ProviderDriverKind.make("claudeAgent");
     const providers = [
@@ -589,7 +589,7 @@ describe("instance-scoped model selection", () => {
 
     expect(
       createModelSelection(instanceId, state.selectedModel, dispatch.modelOptionsForDispatch),
-    ).toEqual(draftSelection);
+    ).toEqual(createModelSelection(instanceId, "openai/gpt-5.5"));
   });
 
   it("preserves custom provider instances in settings model selection", () => {

@@ -259,6 +259,21 @@ describe("getComposerProviderState", () => {
     );
   });
 
+  it.each(["codex", "claudeAgent", "cursor", "grok"])(
+    "does not preserve unknown options for a missing %s model",
+    (provider) => {
+      const state = getComposerProviderState({
+        provider: ProviderDriverKind.make(provider),
+        model: "missing-model",
+        models: modelWith([]),
+        modelOptions: selections(["unknown", "value"]),
+        planModeEnabled: true,
+      });
+
+      expect(state.modelOptionsForDispatch).toBeUndefined();
+    },
+  );
+
   it("preserves explicit options while the catalog is empty", () => {
     const state = getComposerProviderState({
       provider: ProviderDriverKind.make("opencode"),
