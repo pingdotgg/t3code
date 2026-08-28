@@ -39,6 +39,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as RcMap from "effect/RcMap";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
@@ -982,18 +983,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     () => reconcileInstanceSubscriptions,
   ).pipe(Effect.forkScoped);
 
-  const recoveryLocks = yield* Ref.make<ReadonlyMap<ThreadId, Semaphore.Semaphore>>(new Map());
-  const getRecoveryLock = (threadId: ThreadId) =>
-    Ref.modify(recoveryLocks, (locks) => {
-      const existing = locks.get(threadId);
-      if (existing) return [existing, locks] as const;
-      const lock = Semaphore.makeUnsafe(1);
-      const next = new Map(locks);
-      next.set(threadId, lock);
-      return [lock, next] as const;
-    });
+  const recoveryLocks = yield* RcMap.make({
+    lookup: (_threadId: ThreadId) => Semaphore.make(1),
+  });
   const withRecoveryLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
-    Effect.flatMap(getRecoveryLock(threadId), (lock) => lock.withPermit(effect));
+    RcMap.get(recoveryLocks, threadId).pipe(
+      Effect.flatMap((lock) => lock.withPermit(effect)),
+      Effect.scoped,
+    );
 
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
