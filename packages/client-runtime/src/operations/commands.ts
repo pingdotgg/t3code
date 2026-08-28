@@ -111,7 +111,7 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly worktreePath?: string | null;
   /** Kick off an async title regeneration for the thread. */
   readonly regenerateTitle?: boolean;
-  /** Link or unlink (#8160) a pull request; v2 servers ignore it for now. */
+  /** Link (object) or unlink (null) a pull request (#8160). */
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
 }
 
@@ -484,7 +484,8 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       input.title !== undefined ||
       input.branch !== undefined ||
       input.worktreePath !== undefined ||
-      input.regenerateTitle !== undefined
+      input.regenerateTitle !== undefined ||
+      input.linkedPullRequest !== undefined
     ) {
       result = yield* dispatch({
         type: "thread.metadata.update",
@@ -494,6 +495,9 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         ...(input.branch === undefined ? {} : { branch: input.branch }),
         ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
         ...(input.regenerateTitle === undefined ? {} : { regenerateTitle: input.regenerateTitle }),
+        ...(input.linkedPullRequest === undefined
+          ? {}
+          : { linkedPullRequest: input.linkedPullRequest }),
       });
     }
     if (input.modelSelection !== undefined) {
