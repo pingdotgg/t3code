@@ -12,8 +12,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 
 import {
+  attachmentFileExtension,
   createPendingAttachmentId,
   parseThreadSegmentFromAttachmentId,
   PENDING_ATTACHMENT_THREAD_SEGMENT,
@@ -41,6 +44,9 @@ const lastPendingSweepByDirectory = new Map<string, number>();
 const AttachmentUploadClaims = Schema.Struct({
   version: Schema.Literal(1),
   kind: Schema.Literal("attachment-upload"),
+  type: Schema.Literals(["image", "file"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("image" as const)),
+  ),
   attachmentId: Schema.String,
   name: Schema.String,
   mimeType: Schema.String,
@@ -89,12 +95,16 @@ export const issueAttachmentUploadUrl = Effect.fn("AttachmentUpload.issueUrl")(f
     }
   }
 
-  const attachmentId = createPendingAttachmentId();
+  const attachmentType = input.type ?? "image";
+  const attachmentId = createPendingAttachmentId(
+    attachmentType === "file" ? attachmentFileExtension(input.name) : undefined,
+  );
   const expiresAt = nowMs + ATTACHMENT_UPLOAD_URL_TTL_MS;
   const encodedPayload = base64UrlEncode(
     encodeAttachmentUploadClaims({
       version: 1,
       kind: "attachment-upload",
+      type: attachmentType,
       attachmentId,
       name: input.name,
       mimeType: input.mimeType,
@@ -141,18 +151,21 @@ export type StoreAttachmentUploadResult =
 
 export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(function* (
   claims: AttachmentUploadClaims,
-  bytes: Uint8Array,
+  body: Uint8Array | HttpServerRequest.HttpServerRequest["stream"],
 ) {
-  if (bytes.byteLength !== claims.sizeBytes) {
+  if (body instanceof Uint8Array && body.byteLength !== claims.sizeBytes) {
     return {
       ok: false,
       status: 400,
-      detail: `Body was ${bytes.byteLength} bytes, expected ${claims.sizeBytes}.`,
+      detail: `Body was ${body.byteLength} bytes, expected ${claims.sizeBytes}.`,
     } satisfies StoreAttachmentUploadResult;
   }
 
   const config = yield* ServerConfig.ServerConfig;
-  const extension = inferImageExtension({ mimeType: claims.mimeType, fileName: claims.name });
+  const extension =
+    claims.type === "file"
+      ? attachmentFileExtension(claims.name)
+      : inferImageExtension({ mimeType: claims.mimeType, fileName: claims.name });
   const relativePath = `${claims.attachmentId}${extension}`;
   const finalPath = resolveAttachmentRelativePath({
     attachmentsDir: config.attachmentsDir,
@@ -168,27 +181,43 @@ export const storeAttachmentUpload = Effect.fn("AttachmentUpload.store")(functio
 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  let receivedBytes = 0;
+  const bodyStream = body instanceof Uint8Array ? Stream.make(body) : body;
   return yield* Effect.gen(function* () {
     yield* fileSystem.makeDirectory(path.dirname(finalPath), { recursive: true });
-    yield* fileSystem.writeFile(partPath, bytes);
+    yield* Stream.run(
+      bodyStream.pipe(
+        Stream.takeWhile((chunk) => {
+          receivedBytes += chunk.byteLength;
+          return receivedBytes <= claims.sizeBytes;
+        }),
+      ),
+      fileSystem.sink(partPath),
+    );
+    if (receivedBytes !== claims.sizeBytes) {
+      return {
+        ok: false,
+        status: 400,
+        detail: `Body was ${receivedBytes} bytes, expected ${claims.sizeBytes}.`,
+      } satisfies StoreAttachmentUploadResult;
+    }
     yield* fileSystem.rename(partPath, finalPath);
     return { ok: true } satisfies StoreAttachmentUploadResult;
   }).pipe(
     Effect.catch((cause) =>
-      fileSystem.remove(partPath, { force: true }).pipe(
-        Effect.orElseSucceed(() => undefined),
-        Effect.andThen(
-          Effect.logError("Failed to persist attachment upload.", {
-            attachmentId: claims.attachmentId,
-            cause,
-          }),
-        ),
+      Effect.logError("Failed to persist attachment upload.", {
+        attachmentId: claims.attachmentId,
+        cause,
+      }).pipe(
         Effect.as({
           ok: false,
           status: 500,
           detail: "Failed to persist upload.",
         } satisfies StoreAttachmentUploadResult),
       ),
+    ),
+    Effect.ensuring(
+      fileSystem.remove(partPath, { force: true }).pipe(Effect.orElseSucceed(() => undefined)),
     ),
   );
 });
