@@ -60,7 +60,7 @@ export class EnvironmentThemeService extends Context.Service<
   }
 >()("t3/environmentTheme/EnvironmentThemeService") {}
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const changes = yield* PubSub.unbounded<ReadonlyArray<EnvironmentTheme>>();

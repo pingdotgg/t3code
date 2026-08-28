@@ -110,6 +110,25 @@ describe("environment themes", () => {
     }
   });
 
+  // ThemeEditorPanel opens Duplicate in the guided editor for managed themes,
+  // and the guided editor regenerates from canvas and accent -- which would
+  // discard any role the machine tuned by hand.
+  it("marks only the pure seeded form as managed", () => {
+    expect(environmentThemeDefinition(NIGHTFALL_THEME).managed).toBe(true);
+    expect(
+      environmentThemeDefinition({ ...NIGHTFALL_THEME, colors: { error: "#f7768e" } }).managed,
+    ).toBeUndefined();
+    expect(
+      environmentThemeDefinition({
+        id: "shared-light",
+        version: 1,
+        name: "Shared Light",
+        appearance: "light",
+        colors: { canvas: "#eff1f5", accent: "#1e66f5" },
+      }).managed,
+    ).toBeUndefined();
+  });
+
   it("resolves published ids only while the machine publishes them", () => {
     expect(getThemeDefinition("nightfall")).toBe(null);
 

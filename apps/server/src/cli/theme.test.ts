@@ -202,6 +202,25 @@ describe("t3 theme", () => {
     }),
   );
 
+  // An unreadable settings file must never read as "no settings": writing a
+  // fresh sparse file over it would discard every key the user had.
+  it.effect("refuses to write when the settings file cannot be read", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      writeSettings(baseDir, { enableProviderUpdateChecks: false });
+      NodeFS.chmodSync(settingsPathFor(baseDir), 0o000);
+
+      const failure = yield* runCli(["theme", "set", "nightfall", "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+
+      NodeFS.chmodSync(settingsPathFor(baseDir), 0o644);
+      assert.include(String(failure), "Could not read");
+      assert.equal(readSettings(baseDir).enableProviderUpdateChecks, false);
+      assert.equal(Object.hasOwn(readSettings(baseDir), "defaultTheme"), false);
+    }),
+  );
+
   it.effect("refuses a settings file that is not a JSON object", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();

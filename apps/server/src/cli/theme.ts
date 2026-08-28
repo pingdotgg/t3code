@@ -28,7 +28,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
-import * as CliError from "effect/unstable/cli/CliError";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as ServerConfig from "../config.ts";
@@ -45,9 +44,85 @@ const decodeThemeFileJsonExit = Schema.decodeUnknownExit(
 );
 const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
 
-class ThemeSettingsError extends CliError.UserError {
-  override get message() {
-    return String(this.cause);
+export class ThemeSettingsUnreadableError extends Schema.TaggedErrorClass<ThemeSettingsUnreadableError>()(
+  "ThemeSettingsUnreadableError",
+  { settingsPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not read ${this.settingsPath}. Fix its permissions, then run this again.`;
+  }
+}
+
+export class ThemeSettingsMalformedError extends Schema.TaggedErrorClass<ThemeSettingsMalformedError>()(
+  "ThemeSettingsMalformedError",
+  { settingsPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `${this.settingsPath} is not a JSON object. Fix or remove it, then run this again.`;
+  }
+}
+
+export class ThemeSettingsWriteError extends Schema.TaggedErrorClass<ThemeSettingsWriteError>()(
+  "ThemeSettingsWriteError",
+  { settingsPath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not write ${this.settingsPath}.`;
+  }
+}
+
+export class ThemeFileUnreadableError extends Schema.TaggedErrorClass<ThemeFileUnreadableError>()(
+  "ThemeFileUnreadableError",
+  { filePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not read ${this.filePath}.`;
+  }
+}
+
+export class ThemeFileInvalidError extends Schema.TaggedErrorClass<ThemeFileInvalidError>()(
+  "ThemeFileInvalidError",
+  { filePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `${this.filePath} is not a valid theme file. Use a theme exported from T3 Code, or a seeded file with name, appearance, canvas, and accent.`;
+  }
+}
+
+export class ThemeFileColorlessError extends Schema.TaggedErrorClass<ThemeFileColorlessError>()(
+  "ThemeFileColorlessError",
+  { filePath: Schema.String },
+) {
+  override get message(): string {
+    return `${this.filePath} has no colors to publish.`;
+  }
+}
+
+export class ThemePublishError extends Schema.TaggedErrorClass<ThemePublishError>()(
+  "ThemePublishError",
+  { themesDir: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Could not publish the theme into ${this.themesDir}.`;
+  }
+}
+
+export class ThemeIdInvalidError extends Schema.TaggedErrorClass<ThemeIdInvalidError>()(
+  "ThemeIdInvalidError",
+  { themeId: Schema.String, fromFile: Schema.Boolean },
+) {
+  override get message(): string {
+    const remedy = this.fromFile ? " Pass one with --id." : "";
+    return `"${this.themeId}" is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword).${remedy}`;
+  }
+}
+
+export class ThemeTargetMissingError extends Schema.TaggedErrorClass<ThemeTargetMissingError>()(
+  "ThemeTargetMissingError",
+  {},
+) {
+  override get message(): string {
+    return "Provide a theme id or file, or run `t3 theme clear` to remove the theme.";
   }
 }
 
@@ -69,43 +144,78 @@ const resolveThemePaths = Effect.fn(function* (explicitBaseDir: Option.Option<st
   };
 });
 
-/** Reads the sparse settings object, tolerating a missing or empty file. */
+/**
+ * Reads the sparse settings object, treating only a genuinely absent file as
+ * empty. A permission or I/O error must propagate: reading it as "no settings"
+ * would have the caller write a fresh sparse file over settings it never saw.
+ */
 const readSettingsObject = Effect.fn(function* (settingsPath: string) {
   const fs = yield* FileSystem.FileSystem;
-  const raw = yield* fs.readFileString(settingsPath).pipe(Effect.orElseSucceed(() => ""));
-  if (raw.trim().length === 0) return {};
+  const exists = yield* fs
+    .exists(settingsPath)
+    .pipe(Effect.mapError((cause) => new ThemeSettingsUnreadableError({ settingsPath, cause })));
+  if (!exists) return { raw: "", settings: {} };
 
-  return yield* decodeSettingsJson(raw).pipe(
-    Effect.mapError(
-      () =>
-        new ThemeSettingsError({
-          cause: `${settingsPath} is not a JSON object. Fix or remove it, then run this again.`,
-        }),
-    ),
+  const raw = yield* fs
+    .readFileString(settingsPath)
+    .pipe(Effect.mapError((cause) => new ThemeSettingsUnreadableError({ settingsPath, cause })));
+  if (raw.trim().length === 0) return { raw, settings: {} };
+
+  const settings = yield* decodeSettingsJson(raw).pipe(
+    Effect.mapError((cause) => new ThemeSettingsMalformedError({ settingsPath, cause })),
   );
+  return { raw, settings };
 });
+
+/**
+ * A running server owns this file too, and its write path is an in-process
+ * semaphore that cannot serialize against another process. So the document is
+ * re-read immediately before the rename and the whole edit is retried when it
+ * moved underneath us, which is what turns "last writer wins" into "last
+ * writer merges". A concurrent write landing inside the remaining rename
+ * window is still possible; the server's own watcher reconciles the file
+ * afterwards either way.
+ */
+const CONCURRENT_WRITE_ATTEMPTS = 5;
 
 const writeDefaultTheme = Effect.fn(function* (input: {
   readonly settingsPath: string;
   readonly themeId: string;
 }) {
-  const settings = yield* readSettingsObject(input.settingsPath);
-  const setAt = DateTime.formatIso(yield* DateTime.now);
-  const next =
-    input.themeId.length > 0
-      ? // The timestamp is the set-generation: it lets clients apply a re-set
-        // of the same value they already applied once.
-        { ...settings, defaultTheme: input.themeId, defaultThemeSetAt: setAt }
-      : // Clearing removes the keys rather than storing empty strings, so the
-        // file reads the same as one that never set a theme.
-        Object.fromEntries(
-          Object.entries(settings).filter(
-            ([key]) => key !== "defaultTheme" && key !== "defaultThemeSetAt",
-          ),
-        );
+  const fs = yield* FileSystem.FileSystem;
 
-  const contents = yield* encodeSettingsJson(next);
-  yield* writeFileStringAtomically({ filePath: input.settingsPath, contents: `${contents}\n` });
+  for (let attempt = 1; ; attempt++) {
+    const { raw, settings } = yield* readSettingsObject(input.settingsPath);
+    const setAt = DateTime.formatIso(yield* DateTime.now);
+    const next =
+      input.themeId.length > 0
+        ? // The timestamp is the set-generation: it lets clients apply a re-set
+          // of the same value they already applied once.
+          { ...settings, defaultTheme: input.themeId, defaultThemeSetAt: setAt }
+        : // Clearing removes the keys rather than storing empty strings, so the
+          // file reads the same as one that never set a theme.
+          Object.fromEntries(
+            Object.entries(settings).filter(
+              ([key]) => key !== "defaultTheme" && key !== "defaultThemeSetAt",
+            ),
+          );
+
+    const contents = yield* encodeSettingsJson(next);
+    const current = yield* fs
+      .readFileString(input.settingsPath)
+      .pipe(Effect.orElseSucceed(() => ""));
+    if (current !== raw && attempt < CONCURRENT_WRITE_ATTEMPTS) continue;
+
+    yield* writeFileStringAtomically({
+      filePath: input.settingsPath,
+      contents: `${contents}\n`,
+    }).pipe(
+      Effect.mapError(
+        (cause) => new ThemeSettingsWriteError({ settingsPath: input.settingsPath, cause }),
+      ),
+    );
+    return;
+  }
 });
 
 /** Publishes a theme file into the environment's themes directory and returns
@@ -120,42 +230,29 @@ const publishThemeFile = Effect.fn(function* (input: {
   const raw = yield* fs
     .readFileString(input.filePath)
     .pipe(
-      Effect.mapError(() => new ThemeSettingsError({ cause: `Could not read ${input.filePath}.` })),
+      Effect.mapError((cause) => new ThemeFileUnreadableError({ filePath: input.filePath, cause })),
     );
 
   const decoded = decodeThemeFileJsonExit(raw);
   if (decoded._tag === "Failure") {
     return yield* Effect.fail(
-      new ThemeSettingsError({
-        cause: `${input.filePath} is not a valid theme file. Use a theme exported from T3 Code, or a seeded file with name, appearance, canvas, and accent.`,
-      }),
+      new ThemeFileInvalidError({ filePath: input.filePath, cause: decoded.cause }),
     );
   }
   if (!environmentThemeFileHasColors(decoded.value)) {
-    return yield* Effect.fail(
-      new ThemeSettingsError({ cause: `${input.filePath} has no colors to publish.` }),
-    );
+    return yield* Effect.fail(new ThemeFileColorlessError({ filePath: input.filePath }));
   }
 
   const fileBasename = path.basename(input.filePath, ".json");
   const themeId = Option.getOrElse(input.explicitId, () => fileBasename);
   if (!isEnvironmentThemeId(themeId)) {
-    return yield* Effect.fail(
-      new ThemeSettingsError({
-        cause: `"${themeId}" is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword). Pass one with --id.`,
-      }),
-    );
+    return yield* Effect.fail(new ThemeIdInvalidError({ themeId, fromFile: true }));
   }
 
   yield* writeFileStringAtomically({
     filePath: path.join(input.themesDir, `${themeId}.json`),
     contents: raw.endsWith("\n") ? raw : `${raw}\n`,
-  }).pipe(
-    Effect.mapError(
-      () =>
-        new ThemeSettingsError({ cause: `Could not publish the theme into ${input.themesDir}.` }),
-    ),
-  );
+  }).pipe(Effect.mapError((cause) => new ThemePublishError({ themesDir: input.themesDir, cause })));
   return themeId;
 });
 
@@ -177,11 +274,7 @@ const themeSetCommand = Command.make("set", {
       const fs = yield* FileSystem.FileSystem;
       const target = yield* expandHomePath(flags.theme.trim());
       if (target.length === 0) {
-        return yield* Effect.fail(
-          new ThemeSettingsError({
-            cause: "Provide a theme id or file, or run `t3 theme clear` to remove the theme.",
-          }),
-        );
+        return yield* Effect.fail(new ThemeTargetMissingError());
       }
       const paths = yield* resolveThemePaths(flags.baseDir);
 
@@ -200,15 +293,13 @@ const themeSetCommand = Command.make("set", {
           explicitId: flags.id,
         });
       } else if (looksLikePath) {
-        return yield* Effect.fail(new ThemeSettingsError({ cause: `Could not read ${target}.` }));
+        return yield* Effect.fail(
+          new ThemeFileUnreadableError({ filePath: target, cause: "no such file" }),
+        );
       } else if (isEnvironmentThemeId(target)) {
         themeId = target;
       } else {
-        return yield* Effect.fail(
-          new ThemeSettingsError({
-            cause: `"${target}" is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword).`,
-          }),
-        );
+        return yield* Effect.fail(new ThemeIdInvalidError({ themeId: target, fromFile: false }));
       }
 
       yield* writeDefaultTheme({ settingsPath: paths.settingsPath, themeId });
@@ -238,7 +329,7 @@ const themeShowCommand = Command.make("show", { baseDir: baseDirFlag }).pipe(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const paths = yield* resolveThemePaths(flags.baseDir);
-      const settings = yield* readSettingsObject(paths.settingsPath);
+      const { settings } = yield* readSettingsObject(paths.settingsPath);
       const defaultTheme =
         typeof settings.defaultTheme === "string" && settings.defaultTheme.length > 0
           ? settings.defaultTheme

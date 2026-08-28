@@ -58,7 +58,16 @@ export function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefini
     appearance: theme.appearance,
     colors: publishedThemeColors(theme, theme.appearance, theme.colors),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
-    managed: true,
+    // Only the pure seeded form is guided-generator output. An exported file,
+    // or seeds carrying explicit role overrides, must open Duplicate in the
+    // advanced editor -- the guided one regenerates from canvas and accent and
+    // would discard whatever the machine hand-tuned.
+    ...(theme.canvas !== undefined &&
+    theme.accent !== undefined &&
+    theme.colors === undefined &&
+    theme.variants === undefined
+      ? { managed: true }
+      : {}),
   };
 }
 
