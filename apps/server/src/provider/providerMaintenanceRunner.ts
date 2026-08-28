@@ -444,19 +444,21 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               instanceId,
             );
             const couldNotVerify = verifiedProviders.length === 0;
-            const requiresVersionAdvance = freshCapabilities.latestVersion === null;
+            const hasVersionBeforeUpdate =
+              versionBeforeUpdate !== null && versionBeforeUpdate !== undefined;
+            const requiresVersionAdvance =
+              freshCapabilities.latestVersion === null || hasVersionBeforeUpdate;
             const versionAdvanced =
-              versionBeforeUpdate !== null &&
-              versionBeforeUpdate !== undefined &&
+              hasVersionBeforeUpdate &&
               verifiedProviders.some(
                 (verifiedProvider) =>
                   verifiedProvider.version !== null &&
                   compareMaintenanceVersions(versionBeforeUpdate, verifiedProvider.version) === -1,
               );
-            const nativeVersionUnchanged = requiresVersionAdvance && !versionAdvanced;
+            const versionUnchanged = requiresVersionAdvance && !versionAdvanced;
             const stillOutdated =
               couldNotVerify ||
-              nativeVersionUnchanged ||
+              versionUnchanged ||
               verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
             return yield* finish(
               makeUpdateState({
@@ -465,7 +467,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 finishedAt,
                 message: couldNotVerify
                   ? "Update command completed, but T3 Code could not verify the provider version."
-                  : nativeVersionUnchanged
+                  : versionUnchanged
                     ? "Update command completed, but the provider version did not advance."
                     : stillOutdated
                       ? "Update command completed, but T3 Code still detects an outdated provider version."

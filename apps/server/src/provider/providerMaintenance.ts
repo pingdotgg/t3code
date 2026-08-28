@@ -305,6 +305,32 @@ function makeManualProviderMaintenanceCapabilities(
   });
 }
 
+export const makeProviderMaintenanceCapabilitySources = Effect.fn(
+  "makeProviderMaintenanceCapabilitySources",
+)(function* (
+  resolveFresh: Effect.Effect<ProviderMaintenanceCapabilities>,
+  fallback: ProviderMaintenanceCapabilities,
+  options: { readonly enabled: boolean },
+) {
+  if (!options.enabled) {
+    return {
+      advisory: Effect.succeed(fallback),
+      fresh: resolveFresh,
+    } as const;
+  }
+
+  const [advisory, invalidateAdvisory] = yield* Effect.cachedInvalidateWithTTL(
+    resolveFresh,
+    "5 minutes",
+  );
+  return {
+    advisory,
+    // Update execution must never trust cached ownership. Invalidating here
+    // also makes the next advisory observe the post-update installation.
+    fresh: invalidateAdvisory.pipe(Effect.andThen(resolveFresh)),
+  } as const;
+});
+
 export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   "resolveProviderMaintenanceCapabilitiesEffect",
 )(function* (

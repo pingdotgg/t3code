@@ -525,7 +525,7 @@ describe("providerMaintenanceRunner", () => {
       const personalInstanceId = ProviderInstanceId.make("codex_personal");
       const workInstanceId = ProviderInstanceId.make("codex_work");
       const refreshedInstanceIds: Array<ProviderInstanceId> = [];
-      const { registry } = yield* makeRegistry([
+      const { registry, providersRef } = yield* makeRegistry([
         {
           ...baseProvider,
           instanceId: personalInstanceId,
@@ -552,7 +552,13 @@ describe("providerMaintenanceRunner", () => {
             Effect.tap(() => Effect.sync(() => assert.strictEqual(instanceId, personalInstanceId))),
           ),
         refreshInstance: (instanceId) =>
-          registry.refreshInstance(instanceId).pipe(
+          Ref.updateAndGet(providersRef, (providers) =>
+            providers.map((provider) =>
+              provider.instanceId === instanceId
+                ? { ...provider, version: "0.124.0-alpha.4" }
+                : provider,
+            ),
+          ).pipe(
             Effect.tap(() =>
               Effect.sync(() => {
                 refreshedInstanceIds.push(instanceId);
@@ -627,7 +633,7 @@ describe("providerMaintenanceRunner", () => {
         const result = yield* updater.updateProvider(CODEX_DRIVER);
 
         assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
-        assert.include(result.providers[0]?.updateState?.message ?? "", "still detects");
+        assert.include(result.providers[0]?.updateState?.message ?? "", "did not advance");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -677,6 +683,49 @@ describe("providerMaintenanceRunner", () => {
         ),
       ),
     ),
+  );
+
+  it.effect(
+    "does not report a known-latest update as successful when its version does not advance",
+    () =>
+      Effect.gen(function* () {
+        const { registry } = yield* makeRegistry({
+          ...baseProvider,
+          version: "1.0.0",
+        });
+        const knownLatestCapabilities = makeProviderMaintenanceCapabilities({
+          provider: CODEX_DRIVER,
+          packageName: "@openai/codex",
+          updateExecutable: "/usr/local/bin/npm",
+          updateArgs: ["install", "-g", "@openai/codex@latest"],
+          updateLockKey: "npm:/usr/local",
+          identityKey: "codex-npm-installation",
+          ownershipVerified: true,
+          currentVersion: "1.0.0",
+          latestVersion: "1.0.0",
+        });
+        const updater = yield* makeTestRunner({
+          ...registry,
+          resolveProviderMaintenanceCapabilitiesForInstance: () =>
+            Effect.succeed(knownLatestCapabilities),
+        });
+
+        const result = yield* updater.updateProvider(CODEX_DRIVER);
+
+        assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
+        assert.strictEqual(
+          result.providers[0]?.updateState?.message,
+          "Update command completed, but the provider version did not advance.",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NonWindowsPlatform,
+            latestVersionHttpClient("1.0.0"),
+            mockSpawnerLayer(() => ({ stdout: "already current" })),
+          ),
+        ),
+      ),
   );
 
   it.effect("reports a native update as successful when its version advances", () =>

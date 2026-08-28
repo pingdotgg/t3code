@@ -16,6 +16,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilitySources,
   makeStaticProviderMaintenanceResolver,
   normalizeCommandPath,
   ProviderVersionCache,
@@ -98,6 +99,39 @@ const installedPackageToolProvider: ServerProvider = {
 };
 
 it.layer(NodeServices.layer)("providerMaintenance", (it) => {
+  it.effect("caches advisory ownership probes and invalidates them before fresh resolution", () =>
+    Effect.gen(function* () {
+      let probeCount = 0;
+      const fallback = packageToolUpdate.resolve();
+      const resolveFresh = Effect.sync(() => {
+        probeCount += 1;
+        return makeProviderMaintenanceCapabilities({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          updateExecutable: "/usr/local/bin/npm",
+          updateArgs: ["install", "-g", "@example/package-tool@latest"],
+          updateLockKey: "npm:/usr/local",
+          currentVersion: `${probeCount}.0.0`,
+        });
+      });
+      const enabled = yield* makeProviderMaintenanceCapabilitySources(resolveFresh, fallback, {
+        enabled: true,
+      });
+
+      expect((yield* enabled.advisory).currentVersion).toBe("1.0.0");
+      expect((yield* enabled.advisory).currentVersion).toBe("1.0.0");
+      expect((yield* enabled.fresh).currentVersion).toBe("2.0.0");
+      expect((yield* enabled.advisory).currentVersion).toBe("3.0.0");
+      expect(probeCount).toBe(3);
+
+      const disabled = yield* makeProviderMaintenanceCapabilitySources(resolveFresh, fallback, {
+        enabled: false,
+      });
+      expect(yield* disabled.advisory).toEqual(fallback);
+      expect(probeCount).toBe(3);
+    }),
+  );
+
   it.effect("rejects truncated maintenance probe output", () =>
     runMaintenanceProbe({
       executable: NodeProcess.execPath,

@@ -535,13 +535,15 @@ it.effect("proves Bun ownership for its copied Windows global executable", () =>
 it.effect("proves Homebrew ownership and fails closed for unresolved shims", () => {
   const brew = "/opt/homebrew/bin/brew";
   const resolve = (version: string) => {
-    const formulaPrefix = `/opt/homebrew/Cellar/codex/${version}`;
+    const formulaPrefix = "/opt/homebrew/opt/codex";
+    const realFormulaPrefix = `/opt/homebrew/Cellar/codex/${version}`;
     return resolveInstallation(
       context({
         binaryPath: "codex",
         resolvedCommandPath: "/opt/homebrew/bin/codex",
-        realCommandPath: `${formulaPrefix}/bin/codex`,
+        realCommandPath: `${realFormulaPrefix}/bin/codex`,
         commands: { brew },
+        realPaths: { [formulaPrefix]: realFormulaPrefix },
         probes: {
           [`${brew} --prefix --installed codex`]: {
             stdout: formulaPrefix,

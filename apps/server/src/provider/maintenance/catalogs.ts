@@ -443,12 +443,13 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
             context.environment,
           );
           const formulaPrefix = output(formulaPrefixProbe?.stdout);
+          const realFormulaPrefix = formulaPrefix ? yield* context.realPath(formulaPrefix) : null;
           if (
             formulaPrefixProbe?.exitCode === 0 &&
-            formulaPrefix &&
-            within(context, observed, formulaPrefix)
+            realFormulaPrefix &&
+            within(context, observed, realFormulaPrefix)
           ) {
-            return { formula, prefix: formulaPrefix };
+            return { formula, prefix: realFormulaPrefix };
           }
           const caskPrefixProbe = yield* context.run(
             executable,
@@ -456,10 +457,11 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
             context.environment,
           );
           const caskPrefix = output(caskPrefixProbe?.stdout);
+          const realCaskPrefix = caskPrefix ? yield* context.realPath(caskPrefix) : null;
           return caskPrefixProbe?.exitCode === 0 &&
-            caskPrefix &&
-            within(context, observed, caskPrefix)
-            ? { formula, prefix: caskPrefix }
+            realCaskPrefix &&
+            within(context, observed, realCaskPrefix)
+            ? { formula, prefix: realCaskPrefix }
             : null;
         }),
       );
