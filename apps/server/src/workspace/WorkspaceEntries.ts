@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
@@ -138,6 +139,17 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   return path.resolve(expandHomePath(input.cwd, path), input.partialPath);
 });
 
+const isBrowsableDirectory = (dirent: NodeFS.Dirent, parentPath: string, path: Path.Path) => {
+  if (dirent.isDirectory()) return Effect.succeed(true);
+  if (!dirent.isSymbolicLink()) return Effect.succeed(false);
+  return Effect.promise(() =>
+    NodeFSP.stat(path.join(parentPath, dirent.name)).then(
+      (stats) => stats.isDirectory(),
+      () => false,
+    ),
+  );
+};
+
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -219,15 +231,18 @@ export const make = Effect.gen(function* () {
       const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
       for (const dirent of dirents) {
         if (
-          dirent.isDirectory() &&
-          dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
+          !dirent.name.toLowerCase().startsWith(lowerPrefix) ||
+          (!showHidden && dirent.name.startsWith("."))
         ) {
-          entries.push({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          });
+          continue;
         }
+        if (!(yield* isBrowsableDirectory(dirent, parentPath, path))) {
+          continue;
+        }
+        entries.push({
+          name: dirent.name,
+          fullPath: path.join(parentPath, dirent.name),
+        });
       }
 
       return {
