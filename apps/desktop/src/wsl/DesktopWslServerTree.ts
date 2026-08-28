@@ -179,7 +179,14 @@ export const make = Effect.gen(function* () {
   const cleanupLegacy = gate
     .withPermits(1)(
       needsExtraction
-        ? fs.remove(treeRoot, { recursive: true, force: true }).pipe(
+        ? Effect.gen(function* () {
+            // Invalidate completeness before recursive deletion. Windows can
+            // remove part of a tree and then fail on a locked file; without
+            // this ordering, a surviving marker makes ensure reuse that
+            // half-deleted fallback instead of extracting it again.
+            yield* fs.remove(join(versionDir, MARKER_FILE_NAME), { force: true });
+            yield* fs.remove(treeRoot, { recursive: true, force: true });
+          }).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("[wsl-server-tree] Could not remove the legacy extraction cache.", {
                 treeRoot,
