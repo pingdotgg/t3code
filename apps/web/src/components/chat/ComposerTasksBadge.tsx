@@ -174,7 +174,11 @@ export const ComposerTasksDrawer = memo(function ComposerTasksDrawer({
   readonly steps: readonly ComposerTaskStep[];
 }) {
   return (
-    <div className="chat-composer-top-drawer" data-chat-composer-tasks-drawer="true">
+    <div
+      className="chat-composer-top-drawer"
+      data-chat-composer-collapsed-controls="true"
+      data-chat-composer-tasks-drawer="true"
+    >
       <div className="flex items-center gap-1 px-3 py-1.5 sm:px-4">
         <button
           type="button"

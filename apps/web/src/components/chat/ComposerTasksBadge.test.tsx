@@ -96,6 +96,7 @@ describe("ComposerTasksBadge", () => {
     );
 
     expect(markup).toContain('data-chat-composer-tasks-drawer="true"');
+    expect(markup).toContain('data-chat-composer-collapsed-controls="true"');
     expect(markup).not.toContain("data-variant");
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain('aria-label="Collapse tasks. 1 of 3 complete."');
