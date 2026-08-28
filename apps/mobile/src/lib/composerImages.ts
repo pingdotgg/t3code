@@ -27,6 +27,15 @@ export function toUploadChatImageAttachments(
 }
 
 const OWNED_PASTED_IMAGE_DIRECTORY = "t3-composer-paste";
+const HEIF_IMAGE_MIME_TYPES = new Set([
+  "image/heic",
+  "image/heic-sequence",
+  "image/heif",
+  "image/heif-sequence",
+  "image/vnd.android.heic",
+  "image/x-heic",
+  "image/x-heif",
+]);
 
 async function loadImagePicker() {
   try {
@@ -41,6 +50,42 @@ async function loadClipboard() {
     return await import("expo-clipboard");
   } catch (error) {
     throw new Error("Clipboard paste is unavailable right now.", { cause: error });
+  }
+}
+
+function isHeifImage(mimeType: string | undefined, fileName: string | null | undefined): boolean {
+  return (
+    (mimeType !== undefined && HEIF_IMAGE_MIME_TYPES.has(mimeType)) ||
+    /\.(?:heic|heif)$/i.test(fileName ?? "")
+  );
+}
+
+function jpegFileName(fileName: string | null | undefined): string {
+  const stem = (fileName ?? "image").replace(/\.(?:heic|heif)$/i, "");
+  return `${stem.slice(0, 251)}.jpg`;
+}
+
+async function convertHeifImage(
+  uri: string,
+): Promise<{ readonly base64: string; readonly uri: string }> {
+  const { ImageManipulator, SaveFormat } = await import("expo-image-manipulator");
+  const context = ImageManipulator.manipulate(uri);
+  let rendered: Awaited<ReturnType<typeof context.renderAsync>> | null = null;
+
+  try {
+    rendered = await context.renderAsync();
+    const result = await rendered.saveAsync({
+      base64: true,
+      compress: 0.9,
+      format: SaveFormat.JPEG,
+    });
+    if (!result.base64) {
+      throw new Error("HEIF conversion did not return image data.");
+    }
+    return { base64: result.base64, uri: result.uri };
+  } finally {
+    rendered?.release();
+    context.release();
   }
 }
 
@@ -94,36 +139,68 @@ export async function pickComposerImages(input: { readonly existingCount: number
   let error: string | null = null;
 
   for (const asset of result.assets) {
-    const mimeType = asset.mimeType?.toLowerCase();
+    const originalMimeType = asset.mimeType?.toLowerCase();
+    let mimeType = originalMimeType;
+    let fileName = asset.fileName ?? "image";
+    let base64 = asset.base64;
+    let previewUri = asset.uri;
+    let sizeBytes = asset.fileSize;
+    let convertedFromHeif = false;
+
+    if (isHeifImage(originalMimeType, asset.fileName)) {
+      try {
+        const converted = await convertHeifImage(asset.uri);
+        mimeType = "image/jpeg";
+        fileName = jpegFileName(asset.fileName);
+        base64 = converted.base64;
+        previewUri = converted.uri;
+        sizeBytes = undefined;
+        convertedFromHeif = true;
+      } catch {
+        error = `Failed to convert '${asset.fileName ?? "image"}' to JPEG.`;
+        continue;
+      }
+    }
+
     if (!mimeType?.startsWith("image/")) {
-      error = `Unsupported file type for '${asset.fileName ?? "image"}'.`;
+      error = `Unsupported file type for '${fileName}'.`;
       continue;
     }
     if (!isProviderSendTurnSupportedImageMimeType(mimeType)) {
-      error = `'${asset.fileName ?? "image"}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
+      error = `'${fileName}' is not a supported image type. Attach GIF, JPEG, PNG, or WebP images.`;
       continue;
     }
 
-    const base64 = asset.base64;
     if (!base64) {
-      error = `Failed to read '${asset.fileName ?? "image"}'.`;
+      try {
+        const { File } = await import("expo-file-system");
+        base64 = await new File(asset.uri).base64();
+      } catch {
+        // Keep the existing user-facing error below when the picker URI cannot
+        // be read on a particular Android media provider.
+      }
+    }
+    if (!base64) {
+      error = `Failed to read '${fileName}'.`;
       continue;
     }
 
-    const sizeBytes = asset.fileSize ?? estimateBase64ByteSize(base64);
+    sizeBytes ??= estimateBase64ByteSize(base64);
     if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-      error = `'${asset.fileName ?? "image"}' exceeds the 10 MB attachment limit.`;
+      error = convertedFromHeif
+        ? `'${asset.fileName ?? "image"}' exceeds the 10 MB attachment limit after JPEG conversion.`
+        : `'${fileName}' exceeds the 10 MB attachment limit.`;
       continue;
     }
 
     nextImages.push({
       id: uuidv4(),
       type: "image",
-      name: asset.fileName ?? "image",
+      name: fileName,
       mimeType,
       sizeBytes,
       dataUrl: `data:${mimeType};base64,${base64}`,
-      previewUri: asset.uri,
+      previewUri,
     });
   }
 

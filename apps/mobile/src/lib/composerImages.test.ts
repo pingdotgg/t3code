@@ -2,6 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 
 const files = new Map<string, { base64: string; deleted: boolean }>();
+const launchImageLibraryAsync = vi.fn();
+const saveAsync = vi.fn();
+const renderedRelease = vi.fn();
+const contextRelease = vi.fn();
+const renderAsync = vi.fn(async () => ({ release: renderedRelease, saveAsync }));
+const manipulate = vi.fn(() => ({ release: contextRelease, renderAsync }));
+
+vi.mock("expo-image-picker", () => ({
+  launchImageLibraryAsync,
+}));
+
+vi.mock("expo-image-manipulator", () => ({
+  ImageManipulator: { manipulate },
+  SaveFormat: { JPEG: "jpeg" },
+}));
 
 vi.mock("expo-file-system", () => ({
   File: class {
@@ -39,6 +54,7 @@ vi.mock("./uuid", () => ({
 import {
   convertPastedImagesToAttachments,
   isOwnedPastedImageUri,
+  pickComposerImages,
   toUploadChatImageAttachments,
 } from "./composerImages";
 
@@ -71,6 +87,12 @@ describe("toUploadChatImageAttachments", () => {
 describe("native pasted image cleanup", () => {
   beforeEach(() => {
     files.clear();
+    launchImageLibraryAsync.mockReset();
+    saveAsync.mockReset();
+    renderedRelease.mockClear();
+    contextRelease.mockClear();
+    renderAsync.mockClear();
+    manipulate.mockClear();
   });
 
   it("recognizes only files created in the native composer paste directory", () => {
@@ -81,6 +103,67 @@ describe("native pasted image cleanup", () => {
     ).toBe(true);
     expect(isOwnedPastedImageUri("file:///private/var/mobile/photos/id.png")).toBe(false);
     expect(isOwnedPastedImageUri("https://example.com/t3-composer-paste/id.png")).toBe(false);
+  });
+
+  it("reads a selected image URI when Android omits picker base64", async () => {
+    const uri = "file:///data/user/0/app/cache/selected.png";
+    files.set(uri, { base64: "aGVsbG8=", deleted: false });
+    launchImageLibraryAsync.mockResolvedValue({
+      canceled: false,
+      assets: [{ fileName: "selected.png", fileSize: 5, mimeType: "image/png", uri }],
+    });
+
+    await expect(pickComposerImages({ existingCount: 0 })).resolves.toEqual({
+      error: null,
+      images: [
+        expect.objectContaining({
+          dataUrl: "data:image/png;base64,aGVsbG8=",
+          previewUri: uri,
+        }),
+      ],
+    });
+  });
+
+  it("converts selected HEIF images to provider-supported JPEG data", async () => {
+    const uri = "file:///data/user/0/app/cache/selected.heif";
+    launchImageLibraryAsync.mockResolvedValue({
+      canceled: false,
+      assets: [{ fileName: "selected.heif", fileSize: 2, mimeType: "image/heif", uri }],
+    });
+    saveAsync.mockResolvedValue({ base64: "aGVsbG8=", uri: `${uri}.jpg` });
+
+    await expect(pickComposerImages({ existingCount: 0 })).resolves.toEqual({
+      error: null,
+      images: [
+        expect.objectContaining({
+          dataUrl: "data:image/jpeg;base64,aGVsbG8=",
+          mimeType: "image/jpeg",
+          name: "selected.jpg",
+          previewUri: `${uri}.jpg`,
+          sizeBytes: 5,
+        }),
+      ],
+    });
+    expect(manipulate).toHaveBeenCalledWith(uri);
+    expect(saveAsync).toHaveBeenCalledWith({ base64: true, compress: 0.9, format: "jpeg" });
+    expect(renderedRelease).toHaveBeenCalledOnce();
+    expect(contextRelease).toHaveBeenCalledOnce();
+  });
+
+  it("reports failed HEIF conversion and releases native image resources", async () => {
+    const uri = "file:///data/user/0/app/cache/selected.heic";
+    launchImageLibraryAsync.mockResolvedValue({
+      canceled: false,
+      assets: [{ fileName: "selected.heic", mimeType: "image/heic", uri }],
+    });
+    saveAsync.mockRejectedValue(new Error("conversion failed"));
+
+    await expect(pickComposerImages({ existingCount: 0 })).resolves.toEqual({
+      error: "Failed to convert 'selected.heic' to JPEG.",
+      images: [],
+    });
+    expect(renderedRelease).toHaveBeenCalledOnce();
+    expect(contextRelease).toHaveBeenCalledOnce();
   });
 
   it("converts owned files to data-backed previews and deletes the source", async () => {
