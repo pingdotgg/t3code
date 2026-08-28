@@ -20,7 +20,6 @@ export interface InstallationContext {
   readonly provider: ProviderDriverKind;
   readonly packageName: string;
   readonly binaryPath: string;
-  readonly isBareCommand: boolean;
   readonly resolvedCommandPath: string | null;
   readonly realCommandPath: string | null;
   readonly environment: NodeJS.ProcessEnv;

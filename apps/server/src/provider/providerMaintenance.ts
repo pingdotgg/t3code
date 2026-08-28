@@ -135,9 +135,7 @@ export interface ProviderMaintenanceDefinition {
   readonly executableName: string;
   readonly homebrewFormula: string | null;
   readonly nativeUpdate: {
-    readonly executable: string;
     readonly args: ReadonlyArray<string>;
-    readonly lockKey: string;
     readonly isCommandPath: (commandPath: string) => boolean;
     readonly environment?: (
       executable: string,
@@ -425,7 +423,6 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     provider: legacy.provider,
     packageName: legacy.packageName ?? "",
     binaryPath,
-    isBareCommand: !hasPathSeparator(binaryPath),
     resolvedCommandPath,
     realCommandPath,
     environment: env,

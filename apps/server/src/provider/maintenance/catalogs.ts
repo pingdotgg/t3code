@@ -200,7 +200,6 @@ const nodeManagers = [
 type NodeManager = (typeof nodeManagers)[number];
 const NODE_WRAPPER_MAX_BYTES = 64 * 1_024;
 interface NodeEvidence {
-  readonly manager: NodeManager;
   readonly executable: string;
   readonly updateRoot: string;
   readonly currentVersion: string | null;
@@ -269,7 +268,6 @@ function detectNodePackage(input: ProviderMaintenanceDefinitionInput, manager: N
       return notMatched;
     }
     return matched({
-      manager,
       executable,
       updateRoot,
       currentVersion: normalizeMaintenanceVersion(text(manifest?.version)),
@@ -284,27 +282,27 @@ function resolveNodePackage(input: ProviderMaintenanceDefinitionInput, manager: 
   ) {
     const latest = yield* context.run(
       evidence.executable,
-      evidence.manager.latestArgs(input.packageName),
+      manager.latestArgs(input.packageName),
       context.environment,
     );
     const updateArgs =
-      evidence.manager.id === "npm"
+      manager.id === "npm"
         ? [
             ...npmGlobalUpdateArgs(input.packageName).slice(0, 2),
             "--prefix",
             evidence.updateRoot,
             ...npmGlobalUpdateArgs(input.packageName).slice(2),
           ]
-        : evidence.manager.updateArgs(input.packageName);
+        : manager.updateArgs(input.packageName);
     return resolved(input, context, {
-      kind: evidence.manager.id,
-      label: `Managed by ${evidence.manager.label}`,
+      kind: manager.id,
+      label: `Managed by ${manager.label}`,
       root: evidence.updateRoot,
       executable: evidence.executable,
       currentVersion: evidence.currentVersion,
       latestVersion: normalizeMaintenanceVersion(output(latest?.stdout)),
       args: updateArgs,
-      displayCommand: `${evidence.manager.command} ${updateArgs.join(" ")}`,
+      displayCommand: `${manager.command} ${updateArgs.join(" ")}`,
     });
   });
 }
@@ -322,7 +320,6 @@ function resolved(
     readonly args: ReadonlyArray<string>;
     readonly displayCommand: string;
     readonly environment?: NodeJS.ProcessEnv;
-    readonly ownershipVerified?: boolean;
     readonly identityQualifier?: string;
     readonly identityExecutable?: string;
   },
@@ -337,7 +334,7 @@ function resolved(
     }),
     lockKey: `${value.kind}:${normalize(context, value.root)}`,
     label: value.label,
-    ownershipVerified: value.ownershipVerified ?? true,
+    ownershipVerified: true,
     packageName: input.packageName,
     currentVersion: value.currentVersion,
     latestVersion: value.latestVersion,
@@ -414,6 +411,8 @@ function homebrewPackageFromPath(path: string): string | null {
 }
 
 function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
+  if (!input.homebrewFormula) return null;
+  const configuredFormula = input.homebrewFormula;
   return defineInstallation<{
     executable: string;
     formula: string;
@@ -424,7 +423,6 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
   }>({
     id: `${input.provider}-homebrew`,
     detect: Effect.fn("detect-homebrew")(function* (context) {
-      if (!input.homebrewFormula) return notMatched;
       const observed = normalize(context, context.realCommandPath ?? context.binaryPath);
       const observedLower = observed.toLowerCase();
       if (!observedLower.includes("/cellar/") && !observedLower.includes("/caskroom/")) {
@@ -437,7 +435,7 @@ function homebrewDefinition(input: ProviderMaintenanceDefinitionInput) {
       const pathPackage = homebrewPackageFromPath(observed);
       const candidates = [
         ...new Set(
-          [pathPackage, input.homebrewFormula].filter(
+          [pathPackage, configuredFormula].filter(
             (candidate): candidate is string => candidate !== null,
           ),
         ),

@@ -51,7 +51,6 @@ function context(input: {
     provider,
     packageName: "@openai/codex",
     binaryPath: input.binaryPath,
-    isBareCommand: !input.binaryPath.includes("/") && !input.binaryPath.includes("\\"),
     resolvedCommandPath: input.resolvedCommandPath,
     realCommandPath: input.realCommandPath ?? input.resolvedCommandPath,
     environment: input.environment ?? { PATH: "test-path" },

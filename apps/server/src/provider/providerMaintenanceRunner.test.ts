@@ -623,17 +623,26 @@ describe("providerMaintenanceRunner", () => {
     "marks successful commands as unchanged when the refreshed provider is still outdated",
     () =>
       Effect.gen(function* () {
-        const { registry } = yield* makeRegistry({
+        const { registry, providersRef } = yield* makeRegistry({
           ...baseProvider,
           installed: true,
           version: "0.1.0",
         });
-        const updater = yield* makeTestRunner(registry);
+        const updater = yield* makeTestRunner({
+          ...registry,
+          refreshInstance: () =>
+            Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) => ({ ...provider, version: "0.2.0" })),
+            ),
+        });
 
         const result = yield* updater.updateProvider(CODEX_DRIVER);
 
         assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
-        assert.include(result.providers[0]?.updateState?.message ?? "", "did not advance");
+        assert.strictEqual(
+          result.providers[0]?.updateState?.message,
+          "Update command completed, but T3 Code still detects an outdated provider version.",
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

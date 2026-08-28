@@ -53,9 +53,7 @@ export const GrokMaintenanceResolver = makeProviderMaintenanceResolver({
   packageName: "@xai-official/grok",
   homebrewFormula: null,
   nativeUpdate: {
-    executable: "grok",
     args: ["update"],
-    lockKey: "grok-native",
     isCommandPath: isGrokNativeCommandPath,
   },
   executableName: "grok",

@@ -66,9 +66,7 @@ const nativePackageToolUpdate = makeProviderMaintenanceResolver({
   executableName: "native-package-tool",
   homebrewFormula: "native-package-tool",
   nativeUpdate: {
-    executable: "native-package-tool",
     args: ["update"],
-    lockKey: "native-package-tool-native",
     isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
     environment: (executable, environment) => ({
       ...environment,
@@ -82,9 +80,7 @@ const scopedPackageToolUpdate = makeProviderMaintenanceResolver({
   executableName: "scoped-package-tool",
   homebrewFormula: "example/tap/scoped-package-tool",
   nativeUpdate: {
-    executable: "scoped-package-tool",
     args: ["upgrade"],
-    lockKey: "scoped-package-tool-native",
     isCommandPath: isNativeTestCommandPath("/.scoped-package-tool/bin/scoped-package-tool"),
   },
 });
@@ -261,7 +257,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("codex"),
           packageName: "@openai/codex",
           binaryPath: "codex",
-          isBareCommand: true,
           resolvedCommandPath,
           realCommandPath: `/home/test/.codex/packages/standalone/releases/${version}-x86_64-unknown-linux-musl/bin/codex`,
           environment: { PATH: "/home/test/.local/bin" },
@@ -816,9 +811,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       executableName: "claude",
       homebrewFormula: "claude-code",
       nativeUpdate: {
-        executable: "claude",
         args: ["update"],
-        lockKey: "claude-native",
         isCommandPath: isNativeTestCommandPath("/.local/bin/claude"),
       },
     });

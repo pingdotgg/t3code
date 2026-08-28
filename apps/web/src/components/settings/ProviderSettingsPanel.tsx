@@ -720,16 +720,11 @@ export function EnvironmentProviderSettings({
     const liveProvider = serverProviders.find(
       (candidate) => candidate.instanceId === row.instanceId,
     );
-    const updateCandidate = liveProvider
-      ? providerUpdateCandidateByInstanceId.get(liveProvider.instanceId)
-      : undefined;
+    const updateCandidate = providerUpdateCandidateByInstanceId.get(row.instanceId);
     const isInstanceUpdateRunning =
       updateCandidate !== undefined &&
       (updatingProviderInstanceIds.has(updateCandidate.instanceId) ||
-        serverProviders.some(
-          (provider) =>
-            provider.instanceId === updateCandidate.instanceId && isProviderUpdateActive(provider),
-        ));
+        isProviderUpdateActive(updateCandidate));
     const showInlineUpdateButton = updateCandidate !== undefined;
     const canRunInlineUpdate = updateCandidate !== undefined && !isInstanceUpdateRunning;
     const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
