@@ -11,6 +11,7 @@
  * @module OrchestrationEngineService
  */
 import type {
+  OrchestrationClientOrigin,
   OrchestrationEvent,
   ProjectOrchestrationCommand,
 } from "@t3tools/contracts/legacy-orchestration";
@@ -61,6 +62,8 @@ export interface OrchestrationEngineShape {
    * Dispatch a validated orchestration command.
    *
    * @param command - Valid orchestration command.
+   * @param options - Optional client origin (surface/app version) stamped into
+   *   the metadata of every event the command produces.
    * @returns Effect containing the sequence of the persisted event.
    *
    * Dispatch is serialized through an internal queue and deduplicated via
@@ -68,6 +71,7 @@ export interface OrchestrationEngineShape {
    */
   readonly dispatch: (
     command: ProjectOrchestrationCommand,
+    options?: { readonly origin?: OrchestrationClientOrigin },
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**

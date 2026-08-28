@@ -13,6 +13,7 @@ import * as ServerConfig from "./config.ts";
 import {
   otlpTracesProxyRouteLayer,
   assetRouteLayer,
+  attachmentUploadRouteLayer,
   serverEnvironmentHttpApiLayer,
   staticAndDevRouteLayer,
   browserApiCorsLayer,
@@ -29,6 +30,8 @@ import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import * as ModelManifest from "./provider/ModelManifest.ts";
+import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
@@ -38,7 +41,6 @@ import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
-import { layer as ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -142,7 +144,10 @@ const PtyAdapterLive = Layer.unwrap(
   }),
 );
 
-const ServerSettingsLayerLive = ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer));
+const ServerSettingsLayerLive = ServerSettings.layer.pipe(
+  Layer.provide(ServerSecretStore.layer),
+  Layer.provideMerge(SqlitePersistenceLayerLive),
+);
 
 const NativeTelemetryLayerLive = NativeTelemetryClient.layer.pipe(
   Layer.provide(ResourceMonitorBinary.layer),
@@ -390,7 +395,10 @@ const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
   // the rewritten telemetry pipeline can account for logical NDJSON writes.
   // Provided once at the runtime level so every consumer sees the same
   // logger instances.
-  Layer.provideMerge(ProviderEventLoggersLive),
+  // `ModelManifest.layer` is the legacy-model classification data, refreshed
+  // from the repo's `model-manifest.json` on `main` and applied by the
+  // Codex/Claude drivers.
+  Layer.provideMerge(Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer)),
   // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
   // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
   // the rewritten registry reads snapshots off the instance registry and
@@ -449,6 +457,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     ),
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
+    attachmentUploadRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
