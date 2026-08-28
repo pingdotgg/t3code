@@ -10,13 +10,11 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 
 import { ServerConfig } from "../config.ts";
 import {
@@ -60,7 +58,6 @@ export class ImageGenerationService extends Context.Service<
       const path = yield* Path.Path;
       const processRunner = yield* ProcessRunner.ProcessRunner;
       const clock = yield* Clock.Clock;
-      const runLock = yield* Semaphore.make(1);
 
       const requireEnabled = Effect.fn("ImageGenerationService.requireEnabled")(function* () {
         const settings = yield* settingsService.getSettings.pipe(
@@ -109,34 +106,16 @@ export class ImageGenerationService extends Context.Service<
               detail: "Could not resolve the T3 Code images directory.",
             });
           }
-          const generated = yield* runLock.withPermits(1)(
-            generateGrokImage({
-              settings: decodeGrokSettings(settings.providers.grok),
-              generate: input,
-              destinationPath,
-              model: settings.imageGenerationGrokModel,
-            }).pipe(
-              Effect.provideService(FileSystem.FileSystem, fileSystem),
-              Effect.provideService(Path.Path, path),
-              Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-              Effect.provideService(Clock.Clock, clock),
-              Effect.timeout(Duration.minutes(5)),
-              Effect.mapError((cause) =>
-                cause._tag === "TimeoutError"
-                  ? new ImageGenerationUnavailableError({
-                      reason: "provider-error",
-                      provider: "grok",
-                      detail: "Grok image generation timed out after 5 minutes.",
-                    })
-                  : cause._tag === "ImageGenerationUnavailableError"
-                    ? cause
-                    : new ImageGenerationUnavailableError({
-                        reason: "provider-error",
-                        provider: "grok",
-                        detail: "Grok did not start. Check the Grok binary path in Settings.",
-                      }),
-              ),
-            ),
+          const generated = yield* generateGrokImage({
+            settings: decodeGrokSettings(settings.providers.grok),
+            generate: input,
+            destinationPath,
+            model: settings.imageGenerationGrokModel,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+            Effect.provideService(Clock.Clock, clock),
           );
           return {
             image: {
@@ -169,33 +148,15 @@ export class ImageGenerationService extends Context.Service<
             detail: "Could not resolve the T3 Code images directory.",
           });
         }
-        const generated = yield* runLock.withPermits(1)(
-          generateCodexImage({
-            settings: decodeCodexSettings(settings.providers.codex),
-            generate: input,
-            destinationPath,
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, path),
-            Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-            Effect.provideService(Clock.Clock, clock),
-            Effect.timeout(Duration.minutes(3)),
-            Effect.mapError((cause) =>
-              cause._tag === "TimeoutError"
-                ? new ImageGenerationUnavailableError({
-                    reason: "provider-error",
-                    provider: "codex",
-                    detail: "Codex image generation timed out after 3 minutes.",
-                  })
-                : cause._tag === "ImageGenerationUnavailableError"
-                  ? cause
-                  : new ImageGenerationUnavailableError({
-                      reason: "provider-error",
-                      provider: "codex",
-                      detail: "Codex did not start. Check the Codex binary path in Settings.",
-                    }),
-            ),
-          ),
+        const generated = yield* generateCodexImage({
+          settings: decodeCodexSettings(settings.providers.codex),
+          generate: input,
+          destinationPath,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+          Effect.provideService(Clock.Clock, clock),
         );
         return {
           image: {
@@ -254,35 +215,17 @@ export class ImageGenerationService extends Context.Service<
               detail: "Could not resolve the T3 Code images directory.",
             });
           }
-          const generated = yield* runLock.withPermits(1)(
-            editGrokImage({
-              settings: decodeGrokSettings(settings.providers.grok),
-              edit: input,
-              sourcePath,
-              destinationPath,
-              model: settings.imageGenerationGrokModel,
-            }).pipe(
-              Effect.provideService(FileSystem.FileSystem, fileSystem),
-              Effect.provideService(Path.Path, path),
-              Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-              Effect.provideService(Clock.Clock, clock),
-              Effect.timeout(Duration.minutes(5)),
-              Effect.mapError((cause) =>
-                cause._tag === "TimeoutError"
-                  ? new ImageGenerationUnavailableError({
-                      reason: "provider-error",
-                      provider: "grok",
-                      detail: "Grok image editing timed out after 5 minutes.",
-                    })
-                  : cause._tag === "ImageGenerationUnavailableError"
-                    ? cause
-                    : new ImageGenerationUnavailableError({
-                        reason: "provider-error",
-                        provider: "grok",
-                        detail: "Grok did not start. Check the Grok binary path in Settings.",
-                      }),
-              ),
-            ),
+          const generated = yield* editGrokImage({
+            settings: decodeGrokSettings(settings.providers.grok),
+            edit: input,
+            sourcePath,
+            destinationPath,
+            model: settings.imageGenerationGrokModel,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+            Effect.provideService(Clock.Clock, clock),
           );
           return {
             image: {

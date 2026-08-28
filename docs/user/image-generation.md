@@ -10,6 +10,8 @@ Turn it on in Settings → Integrations → Image generation. The default backen
 
 **Grok** uses Grok Build (the same CLI as the Grok provider) with your existing `grok login` and full access for that isolated image job. You can pick Imagine 2.0, Imagine Quality, or Imagine.
 
+Grok adds its watermark to generated images. xAI does not provide a setting to remove it.
+
 If the selected backend is missing or signed out, the tool reports that instead of generating.
 
 ## Where files go

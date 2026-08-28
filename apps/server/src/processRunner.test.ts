@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -317,6 +318,23 @@ describe("runProcess", () => {
       expect(result.stdout).toBe("stdin payload");
       expect(result.code).toBe(0);
     }),
+  );
+
+  it.effect("closes stdin when no input is provided", () =>
+    Effect.gen(function* () {
+      const runner = yield* ProcessRunner.ProcessRunner;
+      const result = yield* runner.run({
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write('stdin closed'))",
+        ],
+        timeout: "2 seconds",
+      });
+
+      expect(result.stdout).toBe("stdin closed");
+      expect(result.code).toBe(0);
+    }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
   );
 
   it.effect("returns output for non-zero exit codes", () =>

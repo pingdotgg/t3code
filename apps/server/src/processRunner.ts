@@ -331,23 +331,20 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       ),
     );
 
-  const stdin = input.stdin;
-  const writeStdin =
-    stdin === undefined
-      ? Effect.void
-      : Stream.run(Stream.encodeText(Stream.make(stdin)), child.stdin).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProcessStdinError({
-                command: input.command,
-                argumentCount: input.args.length,
-                cwd: input.cwd,
-                spawnCwd: input.spawnCwd,
-                stdinBytes: Buffer.byteLength(stdin),
-                cause,
-              }),
-          ),
-        );
+  const stdin = input.stdin ?? "";
+  const writeStdin = Stream.run(Stream.encodeText(Stream.make(stdin)), child.stdin).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ProcessStdinError({
+          command: input.command,
+          argumentCount: input.args.length,
+          cwd: input.cwd,
+          spawnCwd: input.spawnCwd,
+          stdinBytes: Buffer.byteLength(stdin),
+          cause,
+        }),
+    ),
+  );
 
   const [stdout, stderr] = yield* Effect.all(
     [
