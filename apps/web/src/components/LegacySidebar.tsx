@@ -3,7 +3,6 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   CloudIcon,
-  ContainerIcon,
   FolderPlusIcon,
   Globe2Icon,
   LoaderIcon,
@@ -23,6 +22,7 @@ import {
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { LinuxIcon } from "./LinuxIcon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -2328,7 +2328,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               }
             >
               {project.allRemoteMembersAreDesktopLocal ? (
-                <ContainerIcon className="size-3" />
+                <LinuxIcon className="size-3" />
               ) : (
                 <CloudIcon className="size-3" />
               )}
