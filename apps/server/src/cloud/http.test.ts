@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -50,6 +52,7 @@ import {
   isSupportedLinkProviderKind,
   linkProofScopes,
   pendingServiceUpdateExists,
+  parseManagedEndpointLocalOrigin,
   reconcileDesiredCloudLink,
   reconcileDesiredCloudLinkIfStillDesired,
   recoverManagedCloudTunnel,
@@ -57,6 +60,7 @@ import {
   releaseManagedTunnelOnShutdown,
   startManagedCloudTunnelIfOriginConfirmed,
 } from "./http.ts";
+import { managedTunnelStartupAction } from "./managedTunnelStartup.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
 
@@ -258,6 +262,39 @@ describe("reconcileDesiredCloudLink", () => {
   );
 });
 
+describe("parseManagedEndpointLocalOrigin", () => {
+  it.each([
+    {
+      input: "http://127.0.0.1:80",
+      httpBaseUrl: "http://127.0.0.1",
+      wsBaseUrl: "ws://127.0.0.1",
+      port: 80,
+    },
+    {
+      input: "https://127.0.0.1:443",
+      httpBaseUrl: "https://127.0.0.1",
+      wsBaseUrl: "wss://127.0.0.1",
+      port: 443,
+    },
+  ])("accepts an explicit default port in $input", ({ input, httpBaseUrl, wsBaseUrl, port }) => {
+    expect(parseManagedEndpointLocalOrigin(input)).toEqual({
+      httpBaseUrl,
+      wsBaseUrl,
+      origin: { localHttpHost: "127.0.0.1", localHttpPort: port },
+    });
+  });
+
+  it.each([
+    "ftp://127.0.0.1:3773",
+    "http://user:password@127.0.0.1:3773",
+    "http://127.0.0.1:3773/api",
+    "http://127.0.0.1:3773?mode=test",
+    "http://127.0.0.1:3773#fragment",
+  ])("rejects non-origin URL %s", (input) => {
+    expect(() => parseManagedEndpointLocalOrigin(input)).toThrow("Invalid local origin");
+  });
+});
+
 describe("releaseManagedTunnelOnShutdown", () => {
   const cliToken: CliTokenManager.PersistedToken = {
     accessToken: "cli-access-token",
@@ -292,7 +329,9 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly store: ServerSecretStore.ServerSecretStore["Service"];
     readonly applyConfigCalls: Array<unknown>;
     readonly requests: Array<HttpClientRequest.HttpClientRequest>;
+    readonly onRequest?: (request: HttpClientRequest.HttpClientRequest) => Effect.Effect<void>;
     readonly respond?: () => Response;
+    readonly respondEffect?: Effect.Effect<Response>;
   }
 
   // Writes the launcher's durable state file into this test's baseDir with
@@ -378,11 +417,14 @@ describe("releaseManagedTunnelOnShutdown", () => {
           HttpClient.make((request) =>
             Effect.sync(() => {
               harness.requests.push(request);
-              return HttpClientResponse.fromWeb(
-                request,
-                (harness.respond ?? (() => Response.json({ ok: true })))(),
-              );
-            }),
+            }).pipe(
+              Effect.andThen(harness.onRequest?.(request) ?? Effect.void),
+              Effect.andThen(
+                harness.respondEffect ??
+                  Effect.sync(() => (harness.respond ?? (() => Response.json({ ok: true })))()),
+              ),
+              Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
+            ),
           ),
         ),
         // The release consults the launcher state file under the configured
@@ -823,7 +865,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     },
   );
 
-  it.effect("does not register recovery without a recorded tunnel ID", () => {
+  it.effect("requests startup recovery for a legacy config without a recorded tunnel ID", () => {
     const { store } = makeMemorySecretStore([
       [
         CLOUD_ENDPOINT_RUNTIME_CONFIG,
@@ -837,8 +879,19 @@ describe("releaseManagedTunnelOnShutdown", () => {
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
 
     return Effect.gen(function* () {
-      expect(yield* registerManagedCloudTunnelRecovery("http://127.0.0.1:3773")).toEqual({
-        status: "not_linked",
+      const registration = yield* registerManagedCloudTunnelRecovery("http://127.0.0.1:3773");
+      expect(registration).toEqual({
+        status: "recovery_required",
+        config: { providerKind: "cloudflare_tunnel", connectorToken: "token" },
+      });
+      expect(
+        managedTunnelStartupAction({
+          wantsCliLink: false,
+          registration,
+        }),
+      ).toEqual({
+        action: "request_recovery",
+        config: { providerKind: "cloudflare_tunnel", connectorToken: "token" },
       });
       expect(requests).toEqual([]);
       expect(applyConfigCalls).toEqual([]);
@@ -891,6 +944,58 @@ describe("releaseManagedTunnelOnShutdown", () => {
       }),
     );
   });
+
+  it.effect("allows managed tunnel provisioning to take longer than ten seconds", () =>
+    Effect.gen(function* () {
+      const oldConfig =
+        '{"providerKind":"cloudflare_tunnel","connectorToken":"old-token","tunnelId":"old-tunnel"}';
+      const nextConfig = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "new-token",
+        tunnelId: "new-tunnel",
+      };
+      const { store } = makeMemorySecretStore([
+        [CLOUD_ENDPOINT_RUNTIME_CONFIG, oldConfig],
+        [RELAY_URL_SECRET, "https://relay.example.test"],
+        [CLOUD_LINKED_USER_ID, "user-123"],
+        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      const requestStarted = yield* Deferred.make<void>();
+      const response = yield* Deferred.make<Response>();
+      const recovery = yield* recoverManagedCloudTunnel("http://127.0.0.1:3773").pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls,
+          requests,
+          onRequest: () => Deferred.succeed(requestStarted, undefined),
+          respondEffect: Deferred.await(response),
+        }),
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+      yield* Deferred.await(requestStarted);
+      expect(requests).toHaveLength(1);
+      yield* TestClock.adjust("11 seconds");
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(
+        response,
+        Response.json({
+          endpoint: {
+            httpBaseUrl: "https://environment.example.test/",
+            wsBaseUrl: "wss://environment.example.test/ws",
+            providerKind: "cloudflare_tunnel",
+          },
+          endpointRuntime: nextConfig,
+        }),
+      );
+
+      expect(yield* Fiber.join(recovery)).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(applyConfigCalls).toEqual([nextConfig]);
+    }),
+  );
 
   it.effect("does not recover an environment without a managed tunnel credential", () => {
     const { store } = makeMemorySecretStore([

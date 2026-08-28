@@ -3844,6 +3844,84 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect(
+    "queues recovery without starting a connector when relay registration requires it",
+    () =>
+      Effect.gen(function* () {
+        const appliedRuntimeConfigs: Array<unknown> = [];
+        const requestedRecoveryConfigs: Array<unknown> = [];
+        const relayRequests: Array<HttpClientRequest.HttpClientRequest> = [];
+        yield* buildAppUnderTest({
+          layers: {
+            cloudManagedEndpointRuntime: {
+              applyConfig: (config) =>
+                Effect.sync(() => {
+                  appliedRuntimeConfigs.push(config);
+                  return config === null
+                    ? ({ status: "disabled" } as const)
+                    : ({ status: "running", providerKind: "cloudflare_tunnel", pid: 123 } as const);
+                }),
+              requestRecovery: (config) =>
+                Effect.sync(() => {
+                  requestedRecoveryConfigs.push(config);
+                }),
+            },
+            httpClient: HttpClient.make((request) =>
+              Effect.sync(() => {
+                relayRequests.push(request);
+                return HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ status: "recovery_required" }),
+                );
+              }),
+            ),
+          },
+        });
+
+        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+          privateKeyEncoding: { format: "pem", type: "pkcs8" },
+          publicKeyEncoding: { format: "pem", type: "spki" },
+        });
+        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+        const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
+        const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
+          method: "POST",
+          headers: {
+            cookie: ownerCookie,
+            "content-type": "application/json",
+          },
+          body: jsonRequestBody({
+            relayUrl: "https://relay.example.test",
+            cloudUserId: "user_123",
+            environmentCredential: "t3env_test_credential",
+            cloudMintPublicKey: cloudKeyPair.publicKey,
+            endpointRuntime: {
+              providerKind: "cloudflare_tunnel",
+              connectorToken: "connector-token",
+              tunnelId: "tunnel-1",
+            },
+          }),
+        });
+        const relayConfigBody = yield* responseJsonEffect<{
+          readonly _tag?: string;
+          readonly endpointRuntimeStatus?: { readonly status?: string };
+        }>(relayConfigResponse);
+
+        assert.equal(relayConfigResponse.status, 503);
+        assert.equal(relayConfigBody._tag, "EnvironmentCloudEndpointUnavailableError");
+        assert.equal(relayConfigBody.endpointRuntimeStatus?.status, "disabled");
+        assert.equal(relayRequests.length, 1);
+        assert.deepEqual(appliedRuntimeConfigs, [null]);
+        assert.deepEqual(requestedRecoveryConfigs, [
+          {
+            providerKind: "cloudflare_tunnel",
+            connectorToken: "connector-token",
+            tunnelId: "tunnel-1",
+          },
+        ]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("fails relay config when the managed endpoint connector cannot start", () =>
     Effect.gen(function* () {
       const appliedRuntimeConfigs: Array<unknown> = [];

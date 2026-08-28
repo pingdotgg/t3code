@@ -108,6 +108,7 @@ const CLOUD_PROOF_MAX_LIFETIME_SECONDS = 5 * 60;
 const CLOUD_PROOF_CLOCK_SKEW_SECONDS = 60;
 // The desktop app stops its backends within seconds of writing the marker.
 const DESKTOP_UPDATE_RESTART_MARKER_TTL = Duration.minutes(1);
+const MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT = Duration.minutes(2);
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const CLOUD_CREDENTIAL_RESPONSE_HEADERS = {
   "cache-control": "no-store",
@@ -312,6 +313,33 @@ function endpointRequestPort(url: URL): number {
   return Number(url.port || (url.protocol === "https:" ? 443 : 80));
 }
 
+export function parseManagedEndpointLocalOrigin(localOrigin: string) {
+  const url = new URL(localOrigin);
+  if (
+    localOrigin !== localOrigin.trim() ||
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.pathname !== "/" ||
+    url.search !== "" ||
+    url.hash !== "" ||
+    localOrigin.includes("?") ||
+    localOrigin.includes("#")
+  ) {
+    throw new Error("Invalid local origin");
+  }
+  const wsUrl = new URL(url.origin);
+  wsUrl.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return {
+    httpBaseUrl: url.origin,
+    wsBaseUrl: wsUrl.origin,
+    origin: {
+      localHttpHost: url.hostname,
+      localHttpPort: endpointRequestPort(url),
+    } satisfies RelayManagedEndpointOrigin,
+  };
+}
+
 function isAllowedEndpointOrigin(input: {
   readonly origin: RelayManagedEndpointOrigin;
   readonly requestUrl: string;
@@ -466,17 +494,6 @@ const cloudLinkProofHandler = Effect.fn("environment.cloud.linkProof")(
   ),
 );
 
-function managedEndpointOriginFromLocalUrl(localOrigin: string): RelayManagedEndpointOrigin {
-  const localUrl = new URL(localOrigin);
-  if (localUrl.origin !== localOrigin) {
-    throw new Error("Invalid local origin");
-  }
-  return {
-    localHttpHost: localUrl.hostname,
-    localHttpPort: endpointRequestPort(localUrl),
-  };
-}
-
 function managedEndpointRuntimeConfigsMatch(
   left: RelayManagedEndpointRuntimeConfig,
   right: RelayManagedEndpointRuntimeConfig,
@@ -553,8 +570,8 @@ export const startManagedCloudTunnelIfOriginConfirmed = Effect.fn(
   "environment.cloud.startManagedCloudTunnelIfOriginConfirmed",
 )(function* (localOrigin: string) {
   const dependencies = yield* cloudHttpDependencies;
-  const origin = yield* Effect.try({
-    try: () => managedEndpointOriginFromLocalUrl(localOrigin),
+  const parsedOrigin = yield* Effect.try({
+    try: () => parseManagedEndpointLocalOrigin(localOrigin),
     catch: () =>
       new EnvironmentHttpBadRequestError({
         message: "Could not resolve local environment origin.",
@@ -573,8 +590,8 @@ export const startManagedCloudTunnelIfOriginConfirmed = Effect.fn(
         config === null ||
         marker === null ||
         !managedEndpointRuntimeConfigsMatch(marker.config, config) ||
-        marker.origin.localHttpHost !== origin.localHttpHost ||
-        marker.origin.localHttpPort !== origin.localHttpPort
+        marker.origin.localHttpHost !== parsedOrigin.origin.localHttpHost ||
+        marker.origin.localHttpPort !== parsedOrigin.origin.localHttpPort
       ) {
         return false;
       }
@@ -696,6 +713,9 @@ const cloudRelayConfigHandler = Effect.fn("environment.cloud.relayConfig")(
           message: "The managed tunnel configuration changed during registration.",
         });
       }
+      if (registration.status === "recovery_required") {
+        yield* dependencies.endpointRuntime.requestRecovery(registration.config);
+      }
       if (registration.status !== "ready") {
         return yield* new EnvironmentCloudEndpointUnavailableError({
           message: "Managed endpoint origin could not be confirmed.",
@@ -733,6 +753,7 @@ const relayClientRequest = <A>(
     readonly token: string;
     readonly payload: unknown;
     readonly schema: Schema.Decoder<A>;
+    readonly timeout?: Duration.Input;
   },
 ) =>
   HttpClientRequest.post(input.url).pipe(
@@ -741,26 +762,20 @@ const relayClientRequest = <A>(
     Effect.flatMap(dependencies.httpClient.execute),
     Effect.flatMap(filterRelayResponse),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(input.schema)),
-    Effect.timeout("10 seconds"),
+    Effect.timeout(input.timeout ?? "10 seconds"),
     Effect.mapError(relayRequestError),
     withRelayClientTracing,
   );
 
 const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesiredLinkWith")(
   function* (dependencies: CloudHttpDependencies, localOrigin: string) {
-    const localUrl = yield* Effect.try({
-      try: () => new URL(localOrigin),
+    const parsedOrigin = yield* Effect.try({
+      try: () => parseManagedEndpointLocalOrigin(localOrigin),
       catch: () =>
         new EnvironmentHttpBadRequestError({
           message: "Could not resolve local environment origin.",
         }),
     });
-    if (localUrl.origin !== localOrigin) {
-      return yield* new EnvironmentHttpBadRequestError({
-        message: "Could not resolve local environment origin.",
-      });
-    }
-    const localWsOrigin = localOrigin.replace(/^http/u, "ws");
     const token = yield* dependencies.cliTokenManager.getExisting.pipe(
       Effect.flatMap(
         Option.match({
@@ -793,16 +808,13 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
         challenge: challenge.challenge,
         relayIssuer: relayUrl,
         endpoint: {
-          httpBaseUrl: localOrigin,
-          wsBaseUrl: localWsOrigin,
+          httpBaseUrl: parsedOrigin.httpBaseUrl,
+          wsBaseUrl: parsedOrigin.wsBaseUrl,
           providerKind: managedTunnelsEnabled ? "cloudflare_tunnel" : "manual",
         },
-        origin: {
-          localHttpHost: localUrl.hostname,
-          localHttpPort: endpointRequestPort(localUrl),
-        },
+        origin: parsedOrigin.origin,
       },
-      localOrigin,
+      parsedOrigin.httpBaseUrl,
     );
     const link = yield* relayClientRequest(dependencies, {
       url: `${relayUrl}/v1/client/environment-links`,
@@ -814,6 +826,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
         managedTunnelsEnabled,
       },
       schema: RelayEnvironmentLinkResponse,
+      timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
     });
     yield* setCliDesiredCloudLink(true, mode);
     return yield* applyCloudRelayConfig(
@@ -828,10 +841,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
       },
       {
         lockHeld: true,
-        confirmedOrigin: {
-          localHttpHost: localUrl.hostname,
-          localHttpPort: endpointRequestPort(localUrl),
-        },
+        confirmedOrigin: parsedOrigin.origin,
       },
     );
   },
@@ -949,17 +959,21 @@ export const registerManagedCloudTunnelRecovery = Effect.fn(
   }
 
   const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeConfig.value)));
-  if (config?.providerKind !== "cloudflare_tunnel" || config.tunnelId === undefined) {
+  if (config?.providerKind !== "cloudflare_tunnel") {
     return { status: "not_linked" as const };
   }
 
-  const origin = yield* Effect.try({
-    try: () => managedEndpointOriginFromLocalUrl(localOrigin),
+  const parsedOrigin = yield* Effect.try({
+    try: () => parseManagedEndpointLocalOrigin(localOrigin),
     catch: () =>
       new EnvironmentHttpBadRequestError({
         message: "Could not resolve local environment origin.",
       }),
   });
+  if (config.tunnelId === undefined) {
+    return { status: "recovery_required" as const, config };
+  }
+  const origin = parsedOrigin.origin;
   const environmentId = yield* dependencies.environment.getEnvironmentId;
   const relayUrlValue = bytesToString(relayUrl.value);
   const cloudUserIdValue = bytesToString(cloudUserId.value);
@@ -1033,26 +1047,18 @@ export const recoverManagedCloudTunnel = Effect.fn("environment.cloud.recoverMan
       }
     }
 
-    const localUrl = yield* Effect.try({
-      try: () => new URL(localOrigin),
+    const parsedOrigin = yield* Effect.try({
+      try: () => parseManagedEndpointLocalOrigin(localOrigin),
       catch: () =>
         new EnvironmentHttpBadRequestError({
           message: "Could not resolve local environment origin.",
         }),
     });
-    if (localUrl.origin !== localOrigin) {
-      return yield* new EnvironmentHttpBadRequestError({
-        message: "Could not resolve local environment origin.",
-      });
-    }
 
     const environmentId = yield* dependencies.environment.getEnvironmentId;
     const relayUrlValue = bytesToString(relayUrl.value);
     const cloudUserIdValue = bytesToString(cloudUserId.value);
-    const origin = {
-      localHttpHost: localUrl.hostname,
-      localHttpPort: endpointRequestPort(localUrl),
-    };
+    const origin = parsedOrigin.origin;
     const proof = yield* makeManagedTunnelRecoveryProof(dependencies, {
       action: "recover",
       environmentId,
@@ -1069,6 +1075,7 @@ export const recoverManagedCloudTunnel = Effect.fn("environment.cloud.recoverMan
         proof,
       },
       schema: RelayManagedEndpointRecoveryResponse,
+      timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
     });
     if (recovered.endpointRuntime.providerKind !== "cloudflare_tunnel") {
       return yield* new EnvironmentHttpInternalServerError({
