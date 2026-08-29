@@ -25,6 +25,14 @@ describe("wizard target selection", () => {
       name: "Existing new",
     });
   });
+
+  it("rejects an existing target that is no longer listed", () => {
+    expect(
+      resolveWizardTarget({ kind: "existing", profileId: "removed" }, "generated", [
+        { id: "default", name: "Default" },
+      ]),
+    ).toBeUndefined();
+  });
 });
 
 const source = (over: Partial<BrowserImportSource> = {}): BrowserImportSource => ({

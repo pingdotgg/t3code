@@ -26,12 +26,14 @@ export function resolveWizardTarget(
   selection: WizardTargetSelection,
   newProfileId: string,
   targetProfiles: ReadonlyArray<WizardTargetProfile>,
-): WizardTarget {
+): WizardTarget | undefined {
   if (selection.kind === "new") return { kind: "new", profileId: newProfileId };
+  const profile = targetProfiles.find((candidate) => candidate.id === selection.profileId);
+  if (profile === undefined) return undefined;
   return {
     kind: "existing",
     profileId: selection.profileId,
-    name: targetProfiles.find((profile) => profile.id === selection.profileId)?.name ?? "",
+    name: profile.name,
   };
 }
 

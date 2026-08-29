@@ -82,13 +82,21 @@ export function BrowserImportWizard({
   const [target, setTarget] = useState<WizardTargetSelection>(() =>
     initialTargetSelection(canCreateProfile, targetProfiles),
   );
+  const [targetError, setTargetError] = useState<string>();
   // Stable across retries so a keychain re-approval lands in one profile, not
   // a new one each time.
   const newProfileId = useRef(`profile-${randomUUID()}`);
 
   const runImport = () => {
-    setStep({ step: "importing" });
     const chosen = resolveWizardTarget(target, newProfileId.current, targetProfiles);
+    if (chosen === undefined) {
+      setTarget(initialTargetSelection(canCreateProfile, targetProfiles));
+      setTargetError("That profile is no longer available. Choose where to import these cookies.");
+      setStep({ step: "configure" });
+      return;
+    }
+    setTargetError(undefined);
+    setStep({ step: "importing" });
     void onImport({ sourceProfileDirectory, target: chosen })
       .then((outcome) => setStep(outcomeToStep(outcome)))
       .catch(() => setStep({ step: "blocked", reason: "readFailed" }));
@@ -140,7 +148,11 @@ export function BrowserImportWizard({
             sourceProfileDirectory={sourceProfileDirectory}
             onSourceProfileChange={setSourceProfileDirectory}
             target={target}
-            onTargetChange={setTarget}
+            onTargetChange={(selection) => {
+              setTarget(selection);
+              setTargetError(undefined);
+            }}
+            targetError={targetError}
             onCancel={onClose}
             onImport={runImport}
           />
@@ -196,6 +208,7 @@ type ConfigureStepProps = {
   readonly sourceProfileDirectory: string;
   readonly onSourceProfileChange: (directory: string) => void;
   readonly target: WizardTargetSelection;
+  readonly targetError: string | undefined;
   readonly onTargetChange: (target: WizardTargetSelection) => void;
   readonly onCancel: () => void;
   readonly onImport: () => void;
@@ -209,6 +222,7 @@ function ConfigureStep({
   sourceProfileDirectory,
   onSourceProfileChange,
   target,
+  targetError,
   onTargetChange,
   onCancel,
   onImport,
@@ -266,11 +280,22 @@ function ConfigureStep({
           </section>
         </div>
       </DialogPanel>
+      {targetError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {targetError}
+        </p>
+      ) : null}
       <DialogFooter>
         <Button variant="outline" onClick={onCancel}>
           Cancel
         </Button>
-        <Button disabled={sourceProfileDirectory === ""} onClick={onImport}>
+        <Button
+          disabled={
+            sourceProfileDirectory === "" ||
+            resolveWizardTarget(target, "pending-new-profile", targetProfiles) === undefined
+          }
+          onClick={onImport}
+        >
           Import
         </Button>
       </DialogFooter>

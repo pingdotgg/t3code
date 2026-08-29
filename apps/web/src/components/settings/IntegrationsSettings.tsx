@@ -796,6 +796,14 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   ): Promise<ImportOutcome> => {
     if (!previewBridge) return { kind: "blocked", reason: "sessionUnavailable" };
     if (!settingsHydrated) return { kind: "blocked", reason: "sessionUnavailable" };
+    if (
+      input.target.kind === "existing" &&
+      !resolveBrowserProfiles(getClientSettings().browserProfiles).some(
+        (profile) => profile.id === input.target.profileId,
+      )
+    ) {
+      return { kind: "blocked", reason: "readFailed" };
+    }
     if (importInFlightRef.current) return { kind: "blocked", reason: "readFailed" };
     importInFlightRef.current = true;
     setImportInFlight(true);
@@ -806,6 +814,14 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
         sourceProfileDirectory: input.sourceProfileDirectory,
         targetProfileId: input.target.profileId,
       });
+      if (
+        input.target.kind === "existing" &&
+        !resolveBrowserProfiles(getClientSettings().browserProfiles).some(
+          (profile) => profile.id === input.target.profileId,
+        )
+      ) {
+        return { kind: "blocked", reason: "readFailed" };
+      }
       let targetName: string;
       if (input.target.kind === "new") {
         // Registered only when something actually came over: an import that
