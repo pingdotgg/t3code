@@ -271,6 +271,35 @@ validationLayer("CodexAdapterLive validation", (it) => {
       NodeAssert.equal(validationRuntimeFactory.factory.mock.calls.length, 0);
     }),
   );
+  it.effect("rejects an undeclared provider-namespaced model before starting Codex", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const result = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-namespaced-model"),
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("codex"),
+            "z-ai/glm-5.3-flash",
+          ),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.deepStrictEqual(
+        result.failure,
+        new ProviderAdapterValidationError({
+          provider: ProviderDriverKind.make("codex"),
+          operation: "startSession",
+          issue:
+            "Provider-namespaced model 'z-ai/glm-5.3-flash' is not configured on instance 'codex'.",
+        }),
+      );
+      NodeAssert.equal(validationRuntimeFactory.factory.mock.calls.length, 0);
+    }),
+  );
   it.effect("maps codex model options before starting a session", () =>
     Effect.gen(function* () {
       validationRuntimeFactory.factory.mockClear();

@@ -30,6 +30,7 @@ import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
+  isProviderNamespacedModelSlug,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
@@ -224,31 +225,47 @@ export function applyPreferredCodexDefaultModel(
   });
 }
 
-function appendCustomCodexModels(
+/**
+ * Codex stores one model catalog cache per home, even when that home is used
+ * with multiple model providers. A provider-namespaced slug from that cache is
+ * therefore not evidence that the current instance can run it. Require an
+ * explicit custom-model declaration on this instance before exposing it.
+ */
+export function scopeCodexModelsToInstance(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<string>,
 ): ReadonlyArray<ServerProviderModel> {
-  if (customModels.length === 0) {
-    return models;
+  const customSlugs = new Set(customModels.map((model) => model.trim()).filter(Boolean));
+  const scopedModels: ServerProviderModel[] = [];
+  const seen = new Set<string>();
+
+  for (const model of models) {
+    if (isProviderNamespacedModelSlug(model.slug)) {
+      if (customSlugs.has(model.slug)) {
+        const { isLegacy: _isLegacy, ...rest } = model;
+        scopedModels.push({ ...rest, isCustom: true });
+        seen.add(model.slug);
+      }
+      continue;
+    }
+
+    scopedModels.push(model);
+    seen.add(model.slug);
   }
 
-  const seen = new Set(models.map((model) => model.slug));
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
-  const customEntries: ServerProviderModel[] = [];
-  for (const rawModel of customModels) {
-    const slug = rawModel.trim();
-    if (!slug || seen.has(slug)) {
+  for (const slug of customSlugs) {
+    if (seen.has(slug)) {
       continue;
     }
     seen.add(slug);
-    customEntries.push({
+    scopedModels.push({
       slug,
       name: slug,
       isCustom: true,
-      capabilities: fallbackCapabilities,
+      capabilities: null,
     });
   }
-  return customEntries.length === 0 ? models : [...models, ...customEntries];
+  return scopedModels;
 }
 
 function parseCodexSkillsListResponse(
@@ -389,7 +406,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     return {
       account: accountResponse,
       version,
-      models: appendCustomCodexModels([], input.customModels ?? []),
+      models: scopeCodexModelsToInstance([], input.customModels ?? []),
       skills: [],
     } satisfies CodexAppServerProviderSnapshot;
   }
@@ -408,7 +425,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     account: accountResponse,
     version,
     models: applyPreferredCodexDefaultModel(
-      appendCustomCodexModels(models, input.customModels ?? []),
+      scopeCodexModelsToInstance(models, input.customModels ?? []),
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
