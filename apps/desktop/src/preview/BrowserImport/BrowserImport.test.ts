@@ -33,12 +33,16 @@ const cookie = {
  * Dies if the import reaches session work: every case here covers a request
  * that must be rejected before a cookie is read or written.
  */
-const rejectedBeforeSession = Layer.succeed(BrowserSession.BrowserSession, {
-  derivePartition: () => Effect.die("derivePartition must not be reached"),
-  getSession: () => Effect.die("getSession must not be reached"),
-  clearStorage: () => Effect.die("clearStorage must not be reached"),
-  clearCache: () => Effect.die("clearCache must not be reached"),
-} as unknown as BrowserSession.BrowserSession["Service"]);
+const rejectedBeforeSession = Layer.succeed(
+  BrowserSession.BrowserSession,
+  BrowserSession.BrowserSession.of({
+    getPartition: () => Effect.die("getPartition must not be reached"),
+    isPartition: () => false,
+    getSession: () => Effect.die("getSession must not be reached"),
+    clearCookies: () => Effect.die("clearCookies must not be reached"),
+    clearCache: () => Effect.die("clearCache must not be reached"),
+  }),
+);
 
 /**
  * Builds the service against a scratch home containing an installed, closed
