@@ -16,7 +16,10 @@ import {
   type SDKResultMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { WebSearchOutput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
+import type {
+  AskUserQuestionInput,
+  WebSearchOutput,
+} from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
@@ -2246,6 +2249,21 @@ export function claudeUserInputQuestions(
       },
     ];
   });
+}
+
+export function claudeSdkUserInputAnswers(
+  answers: ProviderUserInputAnswers,
+): NonNullable<AskUserQuestionInput["answers"]> {
+  return Object.fromEntries(
+    Object.entries(answers).map(([question, answer]) => [
+      question,
+      Array.isArray(answer)
+        ? answer.filter((value): value is string => typeof value === "string").join(", ")
+        : typeof answer === "string"
+          ? answer
+          : String(answer ?? ""),
+    ]),
+  );
 }
 
 export function claudeTodoSteps(input: unknown): ReadonlyArray<OrchestrationV2PlanStep> {
@@ -4689,7 +4707,10 @@ export function makeClaudeAdapterV2(
                 } satisfies PermissionResult)
               : ({
                   behavior: "allow",
-                  updatedInput: { questions: toolInput.questions, answers: resolvedAnswers },
+                  updatedInput: {
+                    questions: toolInput.questions,
+                    answers: claudeSdkUserInputAnswers(resolvedAnswers),
+                  },
                   toolUseID: callbackOptions.toolUseID,
                 } satisfies PermissionResult);
           }
