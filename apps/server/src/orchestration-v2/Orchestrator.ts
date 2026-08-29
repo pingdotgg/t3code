@@ -25,8 +25,10 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   ProviderInstanceId,
+  type ProviderInteractionMode,
   type ProviderSessionId,
   RunId,
+  type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -286,6 +288,42 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.merge_back":
       return command.targetThreadId;
   }
+}
+
+function runtimeModeRank(mode: RuntimeMode): number {
+  switch (mode) {
+    case "approval-required":
+      return 0;
+    case "auto-accept-edits":
+      return 1;
+    case "auto":
+      return 2;
+    case "full-access":
+      return 3;
+  }
+}
+
+function interactionModeRank(mode: ProviderInteractionMode): number {
+  return mode === "plan" ? 0 : 1;
+}
+
+function commandPolicyCeiling(command: OrchestrationV2Command) {
+  switch (command.type) {
+    case "thread.runtime-mode.set":
+    case "thread.interaction-mode.set":
+    case "thread.model-selection.set":
+    case "provider.switch":
+      return command.policyCeiling;
+    default:
+      return undefined;
+  }
+}
+
+function dispatchLockKeys(command: OrchestrationV2Command): ReadonlyArray<ThreadId> {
+  const policyCeiling = commandPolicyCeiling(command);
+  return [...new Set([commandThreadId(command), policyCeiling?.callerThreadId])]
+    .filter((threadId): threadId is ThreadId => threadId !== undefined)
+    .toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
 function pendingThreadTitleGenerationEffect(
@@ -1476,6 +1514,65 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is deleted.`,
       });
     }
+    const policyCeiling = commandPolicyCeiling(command);
+    if (policyCeiling !== undefined) {
+      const callerProjection =
+        policyCeiling.callerThreadId === command.threadId
+          ? projection
+          : yield* projectionStore.getThreadProjection(policyCeiling.callerThreadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorProjectionError({
+                    threadId: policyCeiling.callerThreadId,
+                    cause,
+                  }),
+              ),
+            );
+      if (callerProjection.thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Calling thread ${policyCeiling.callerThreadId} is deleted.`,
+        });
+      }
+      const prospectiveRuntimeMode =
+        command.type === "thread.runtime-mode.set" ? command.runtimeMode : thread.runtimeMode;
+      const prospectiveInteractionMode =
+        command.type === "thread.interaction-mode.set"
+          ? command.interactionMode
+          : thread.interactionMode;
+      const isStrictlyRestrictiveModeChange =
+        (command.type === "thread.runtime-mode.set" &&
+          runtimeModeRank(command.runtimeMode) < runtimeModeRank(thread.runtimeMode)) ||
+        (command.type === "thread.interaction-mode.set" &&
+          interactionModeRank(command.interactionMode) <
+            interactionModeRank(thread.interactionMode));
+      if (
+        !isStrictlyRestrictiveModeChange &&
+        (runtimeModeRank(prospectiveRuntimeMode) > runtimeModeRank(policyCeiling.runtimeMode) ||
+          runtimeModeRank(prospectiveRuntimeMode) >
+            runtimeModeRank(callerProjection.thread.runtimeMode))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Target runtime mode ${prospectiveRuntimeMode} exceeds the calling thread ceiling.`,
+        });
+      }
+      if (
+        !isStrictlyRestrictiveModeChange &&
+        (interactionModeRank(prospectiveInteractionMode) >
+          interactionModeRank(policyCeiling.interactionMode) ||
+          interactionModeRank(prospectiveInteractionMode) >
+            interactionModeRank(callerProjection.thread.interactionMode))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Target interaction mode ${prospectiveInteractionMode} exceeds the calling thread ceiling.`,
+        });
+      }
+    }
     if (
       command.type === "thread.metadata.update" &&
       command.expectedWorktreePath !== undefined &&
@@ -1486,6 +1583,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: `Thread ${command.threadId} worktree changed before the metadata update could be applied.`,
       });
+    }
+    if (
+      (command.type === "thread.model-selection.set" || command.type === "provider.switch") &&
+      command.expectedModelSelection !== undefined &&
+      !modelSelectionsEqual(command.expectedModelSelection, thread.modelSelection)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} model selection changed before the partial selection update could be applied.`,
+      });
+    }
+    if (
+      (command.type === "thread.runtime-mode.set" && command.runtimeMode === thread.runtimeMode) ||
+      (command.type === "thread.interaction-mode.set" &&
+        command.interactionMode === thread.interactionMode) ||
+      ((command.type === "thread.model-selection.set" || command.type === "provider.switch") &&
+        modelSelectionsEqual(command.modelSelection, thread.modelSelection))
+    ) {
+      return;
     }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
@@ -1870,7 +1987,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.worktreePath !== undefined &&
             command.worktreePath !== thread.worktreePath
           ? projection.providerSessions.map((session) => session.id)
-          : command.type === "thread.runtime-mode.set"
+          : command.type === "thread.runtime-mode.set" && command.runtimeMode !== thread.runtimeMode
             ? projection.providerSessions
                 .filter(
                   (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
@@ -7103,7 +7220,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
-        planned.events.length > 0
+        planned.events.length > 0 ||
+        command.type === "thread.runtime-mode.set" ||
+        command.type === "thread.interaction-mode.set" ||
+        command.type === "thread.model-selection.set" ||
+        command.type === "provider.switch"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({
@@ -7181,7 +7302,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   const dispatchWithReceipt = (command: OrchestrationV2Command) =>
-    threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
+    dispatchLockKeys(command).reduceRight(
+      (effect, threadId) => threadDispatch.withLock(threadId, effect),
+      dispatchWithReceiptEffect(command),
+    );
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {

@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  ConversationConfigurationResult,
+  ConversationConfigureResult,
   EnvironmentId,
   IsoDateTime,
   MessageId,
@@ -36,6 +38,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -48,7 +51,10 @@ import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/Claud
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
-import { layer as threadManagementServiceLayer } from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  layer as threadManagementServiceLayer,
+  ThreadManagementService,
+} from "../orchestration-v2/ThreadManagementService.ts";
 import {
   type ProviderAdapterV2Event,
   ProviderAdapterProtocolError,
@@ -56,6 +62,7 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "../orchestration-v2/ProviderAdapter.ts";
 import { makeLayer as makeProviderAdapterRegistryLayer } from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import { layer as providerSwitchServiceLayer } from "../orchestration-v2/ProviderSwitchService.ts";
 import {
   type ProviderContinuationRequest,
   ProviderContinuationRequests,
@@ -90,6 +97,8 @@ const queuedFollowupPrompt = "Complete the queued follow-up and return the final
 const queuedFollowupResult = "Queued delegated follow-up completed.";
 
 const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
+const decodeConfigurationResult = Schema.decodeUnknownEffect(ConversationConfigurationResult);
+const decodeConfigureResult = Schema.decodeUnknownEffect(ConversationConfigureResult);
 const decodeCreatedThread = Schema.decodeUnknownEffect(OrchestratorMcpCreatedThread);
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
 const decodeTaskCancelResult = Schema.decodeUnknownEffect(OrchestratorMcpTaskCancelResult);
@@ -175,13 +184,17 @@ function makeDeterministicAdapter(input: {
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly shouldComplete: (turn: ProviderAdapterV2TurnInput) => boolean;
   readonly terminalGate?: (turn: ProviderAdapterV2TurnInput) => Deferred.Deferred<void> | undefined;
+  readonly selectionPlanGate?: Effect.Effect<void>;
   readonly response: (turn: ProviderAdapterV2TurnInput) => string;
 }): ProviderAdapterV2Shape {
   return {
     instanceId: input.instanceId,
     driver: input.driver,
     getCapabilities: () => Effect.succeed(input.capabilities),
-    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+    planSelectionTransition: () =>
+      input.selectionPlanGate === undefined
+        ? Effect.succeed({ type: "apply_on_next_turn" })
+        : input.selectionPlanGate.pipe(Effect.as({ type: "apply_on_next_turn" as const })),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
         const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
@@ -471,6 +484,13 @@ describe("orchestrator MCP toolkit", () => {
         Effect.gen(function* () {
           const cwd = yield* checkpointWorkspace("orchestrator-mcp-toolkit");
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const selectionPlanArmed = yield* Ref.make(false);
+          const selectionPlanEntered = yield* Deferred.make<void>();
+          const selectionPlanRelease = yield* Deferred.make<void>();
+          const runtimeDispatchEntered = yield* Deferred.make<void>();
+          const runtimeDispatchRelease = yield* Deferred.make<void>();
+          const callerCeilingDispatchEntered = yield* Deferred.make<void>();
+          const callerCeilingDispatchRelease = yield* Deferred.make<void>();
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const registryLayer = makeProviderAdapterRegistryLayer([
@@ -479,6 +499,11 @@ describe("orchestrator MCP toolkit", () => {
               driver: ProviderDriverKind.make("codex"),
               capabilities: CodexProviderCapabilitiesV2,
               capturedTurns,
+              selectionPlanGate: Effect.gen(function* () {
+                if (!(yield* Ref.getAndSet(selectionPlanArmed, false))) return;
+                yield* Deferred.succeed(selectionPlanEntered, undefined);
+                yield* Deferred.await(selectionPlanRelease);
+              }),
               shouldComplete: (turn) =>
                 turn.threadId !== parentThreadId && turn.message.text !== cancellationPrompt,
               terminalGate: (turn) =>
@@ -552,10 +577,33 @@ describe("orchestrator MCP toolkit", () => {
             },
             registryLayer,
           ).pipe(Layer.provide(continuationProbeLayer));
-          const orchestrationLayer = Layer.merge(
-            orchestratorLayer,
-            threadManagementServiceLayer.pipe(Layer.provide(orchestratorLayer)),
+          const baseThreadManagementLayer = threadManagementServiceLayer.pipe(
+            Layer.provide(orchestratorLayer),
           );
+          const gatedThreadManagementLayer = Layer.effect(
+            ThreadManagementService,
+            Effect.gen(function* () {
+              const service = yield* ThreadManagementService;
+              return ThreadManagementService.of({
+                ...service,
+                dispatch: (command) =>
+                  command.type === "thread.runtime-mode.set" &&
+                  command.commandId.includes("configuration-preflight-equal-race")
+                    ? Deferred.succeed(runtimeDispatchEntered, undefined).pipe(
+                        Effect.andThen(Deferred.await(runtimeDispatchRelease)),
+                        Effect.andThen(service.dispatch(command)),
+                      )
+                    : command.type === "thread.interaction-mode.set" &&
+                        command.commandId.includes("configuration-caller-ceiling-race")
+                      ? Deferred.succeed(callerCeilingDispatchEntered, undefined).pipe(
+                          Effect.andThen(Deferred.await(callerCeilingDispatchRelease)),
+                          Effect.andThen(service.dispatch(command)),
+                        )
+                      : service.dispatch(command),
+              });
+            }),
+          ).pipe(Layer.provide(baseThreadManagementLayer));
+          const orchestrationLayer = Layer.merge(orchestratorLayer, gatedThreadManagementLayer);
           const providerRegistryLayer = makeProviderRegistryLayer([
             makeProviderSnapshot({
               instanceId: codexInstanceId,
@@ -614,6 +662,7 @@ describe("orchestrator MCP toolkit", () => {
           const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(orchestrationLayer),
+            Layer.provide(providerSwitchServiceLayer.pipe(Layer.provide(registryLayer))),
             Layer.provide(providerRegistryLayer),
             Layer.provide(scheduledTaskStubLayer),
             Layer.provide(NodeServices.layer),
@@ -1193,6 +1242,28 @@ describe("orchestrator MCP toolkit", () => {
               ({ tool }) => tool.name === "t3_thread_interrupt",
             );
             expect(threadInterruptTool?.tool.annotations?.destructiveHint).toBe(true);
+            const threadConfigurationTool = server.tools.find(
+              ({ tool }) => tool.name === "t3_thread_configuration",
+            );
+            expect(threadConfigurationTool?.tool.annotations?.readOnlyHint).toBe(true);
+            expect(threadConfigurationTool?.tool.inputSchema).toMatchObject({
+              type: "object",
+              properties: { threadId: expect.any(Object) },
+            });
+            const threadConfigureTool = server.tools.find(
+              ({ tool }) => tool.name === "t3_thread_configure",
+            );
+            expect(threadConfigureTool?.tool.annotations?.destructiveHint).toBe(true);
+            expect(threadConfigureTool?.tool.inputSchema).toMatchObject({
+              type: "object",
+              properties: {
+                providerInstanceId: expect.any(Object),
+                model: expect.any(Object),
+                options: expect.any(Object),
+                runtimeMode: expect.any(Object),
+                interactionMode: expect.any(Object),
+              },
+            });
 
             const capabilities = yield* invoke("orchestrator_capabilities", {});
             expect(capabilities.isError).toBe(false);
@@ -2732,6 +2803,475 @@ describe("orchestrator MCP toolkit", () => {
               removedDelivery.subagents.find((task) => task.id === removeTask.id),
             ).toMatchObject({ result: expect.any(String), status: "completed" });
             yield* expectOffersToStay(0);
+
+            const configurationBefore = yield* invoke("t3_thread_configuration", {
+              threadId: lateParentThreadId,
+            });
+            expect(configurationBefore.isError).toBe(false);
+            const decodedConfigurationBefore = yield* decodeConfigurationResult(
+              configurationBefore.structuredContent,
+            );
+            expect(decodedConfigurationBefore.selection).toMatchObject({
+              providerInstanceId: codexInstanceId,
+              model: codexModel,
+              options: [],
+            });
+            expect(decodedConfigurationBefore.allowedRuntimeModes).toContain("full-access");
+            expect(decodedConfigurationBefore.providers[0]?.models[0]?.options).toEqual(
+              expect.arrayContaining([expect.objectContaining({ id: "reasoning" })]),
+            );
+
+            const invalidConfiguration = yield* invoke("t3_thread_configure", {
+              threadId: lateParentThreadId,
+              model: "missing-model",
+              runtimeMode: "approval-required",
+              clientRequestId: "configuration-invalid-before-dispatch",
+            });
+            expect(invalidConfiguration.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "model_unavailable",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(lateParentThreadId)).thread,
+            ).toMatchObject({ runtimeMode: "full-access", interactionMode: "default" });
+
+            const configureInput = {
+              threadId: lateParentThreadId,
+              options: [{ id: "reasoning", value: "high" }],
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+              clientRequestId: "configuration-restart-retry",
+            } as const;
+            const configuredCall = yield* invoke("t3_thread_configure", configureInput);
+            expect(configuredCall.isError).toBe(false);
+            const configured = yield* decodeConfigureResult(configuredCall.structuredContent);
+            expect(configured.outcome).toBe("applied");
+            expect(configured.selection.options).toEqual([{ id: "reasoning", value: "high" }]);
+            expect(configured.runtimeMode).toBe("approval-required");
+            expect(configured.interactionMode).toBe("plan");
+            expect(configured.activeRunIds).toContain(removeParentRun.id);
+            expect(configured.changes).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({ setting: "selection", behavior: "next_turn" }),
+                expect.objectContaining({
+                  setting: "runtime_mode",
+                  behavior: "next_turn",
+                }),
+                expect.objectContaining({ setting: "interaction_mode", behavior: "next_turn" }),
+              ]),
+            );
+            expect(configured.changes.every((change) => change.receipt !== null)).toBe(true);
+            const committedConfiguration =
+              yield* orchestrator.getThreadProjection(lateParentThreadId);
+            expect(committedConfiguration.thread.modelSelection.options).toEqual([
+              { id: "reasoning", value: "high" },
+            ]);
+            expect(committedConfiguration.thread.runtimeMode).toBe("approval-required");
+            expect(committedConfiguration.thread.interactionMode).toBe("plan");
+            const repeatedConfiguredCall = yield* invoke("t3_thread_configure", configureInput);
+            expect(repeatedConfiguredCall.isError).toBe(false);
+            const repeatedConfigured = yield* decodeConfigureResult(
+              repeatedConfiguredCall.structuredContent,
+            );
+            expect(
+              repeatedConfigured.changes.map((change) => change.receipt?.commandId ?? null),
+            ).toEqual(configured.changes.map((change) => change.receipt?.commandId ?? null));
+            expect(
+              repeatedConfigured.changes.map((change) => change.receipt?.eventIds ?? []),
+            ).toEqual(configured.changes.map((change) => change.receipt?.eventIds ?? []));
+
+            const reversedCall = yield* invoke("t3_thread_configure", {
+              threadId: lateParentThreadId,
+              options: [],
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              clientRequestId: "configuration-reverse",
+            });
+            expect(reversedCall.isError).toBe(false);
+            const reversed = yield* decodeConfigureResult(reversedCall.structuredContent);
+            expect(reversed.selection.options).toEqual([]);
+            expect(reversed.runtimeMode).toBe("full-access");
+            expect(reversed.interactionMode).toBe("default");
+
+            const claudeChildBeforeNoop = yield* orchestrator.getThreadProjection(
+              delegated.childThreadId,
+            );
+            expect(
+              claudeChildBeforeNoop.providerSessions.some(
+                (session) =>
+                  session.status !== "stopped" &&
+                  session.status !== "error" &&
+                  !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+              ),
+            ).toBe(true);
+            const unchangedRuntimeCall = yield* invoke("t3_thread_configure", {
+              threadId: delegated.childThreadId,
+              runtimeMode: claudeChildBeforeNoop.thread.runtimeMode,
+              clientRequestId: "configuration-fresh-unchanged-claude-runtime",
+            });
+            const unchangedRuntime = yield* decodeConfigureResult(
+              unchangedRuntimeCall.structuredContent,
+            );
+            expect(unchangedRuntime).toMatchObject({
+              outcome: "unchanged",
+              changes: [
+                {
+                  setting: "runtime_mode",
+                  behavior: "unchanged",
+                  requestedEffects: [],
+                  receipt: expect.objectContaining({ commandType: "thread.runtime-mode.set" }),
+                },
+              ],
+            });
+            const claudeChildAfterNoop = yield* orchestrator.getThreadProjection(
+              delegated.childThreadId,
+            );
+            expect(claudeChildAfterNoop.providerSessions).toEqual(
+              claudeChildBeforeNoop.providerSessions,
+            );
+            const directRuntimeNoop = yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-configuration:direct-runtime-noop"),
+              threadId: delegated.childThreadId,
+              runtimeMode: claudeChildAfterNoop.thread.runtimeMode,
+            });
+            expect(directRuntimeNoop.storedEvents).toEqual([]);
+            expect(
+              (yield* orchestrator.getThreadProjection(delegated.childThreadId)).providerSessions,
+            ).toEqual(claudeChildAfterNoop.providerSessions);
+
+            yield* invoke("t3_thread_configure", {
+              threadId: delegated.childThreadId,
+              runtimeMode: "approval-required",
+              clientRequestId: "configuration-change-after-durable-noop",
+            });
+            const reopenedAfterNoopChangeCall = yield* invoke("t3_thread_send", {
+              threadId: delegated.childThreadId,
+              message: "Reopen after changing the field covered by a durable no-op.",
+              clientRequestId: "configuration-reopen-after-noop-change",
+            });
+            const reopenedAfterNoopChange = yield* decodeThreadSendResult(
+              reopenedAfterNoopChangeCall.structuredContent,
+            );
+            yield* invoke("t3_thread_wait", {
+              threadId: delegated.childThreadId,
+              runId: reopenedAfterNoopChange.runId,
+              timeoutMs: 10_000,
+            });
+            const claudeBeforeNoopRetry = yield* orchestrator.getThreadProjection(
+              delegated.childThreadId,
+            );
+            const repeatedNoopRuntime = yield* decodeConfigureResult(
+              (yield* invoke("t3_thread_configure", {
+                threadId: delegated.childThreadId,
+                runtimeMode: claudeChildBeforeNoop.thread.runtimeMode,
+                clientRequestId: "configuration-fresh-unchanged-claude-runtime",
+              })).structuredContent,
+            );
+            expect(repeatedNoopRuntime.runtimeMode).toBe("approval-required");
+            expect(repeatedNoopRuntime).toMatchObject({
+              outcome: "unchanged",
+              changes: [
+                {
+                  setting: "runtime_mode",
+                  behavior: "unchanged",
+                  requestedEffects: [],
+                },
+              ],
+            });
+            expect(repeatedNoopRuntime.changes[0]?.receipt).toEqual(
+              unchangedRuntime.changes[0]?.receipt,
+            );
+            expect(
+              (yield* orchestrator.getThreadProjection(delegated.childThreadId)).providerSessions,
+            ).toEqual(claudeBeforeNoopRetry.providerSessions);
+
+            const preflightEqualRaceFiber = yield* Effect.forkChild(
+              invoke("t3_thread_configure", {
+                threadId: delegated.childThreadId,
+                runtimeMode: "approval-required",
+                clientRequestId: "configuration-preflight-equal-race",
+              }),
+            );
+            yield* Deferred.await(runtimeDispatchEntered);
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-configuration:concurrent-runtime-writer"),
+              threadId: delegated.childThreadId,
+              runtimeMode: "full-access",
+            });
+            const reopenedDuringRaceCall = yield* invoke("t3_thread_send", {
+              threadId: delegated.childThreadId,
+              message: "Reopen before the preflight-equal configuration command commits.",
+              clientRequestId: "configuration-reopen-during-preflight-race",
+            });
+            const reopenedDuringRace = yield* decodeThreadSendResult(
+              reopenedDuringRaceCall.structuredContent,
+            );
+            yield* invoke("t3_thread_wait", {
+              threadId: delegated.childThreadId,
+              runId: reopenedDuringRace.runId,
+              timeoutMs: 10_000,
+            });
+            yield* Deferred.succeed(runtimeDispatchRelease, undefined);
+            const preflightEqualRace = yield* decodeConfigureResult(
+              (yield* Fiber.join(preflightEqualRaceFiber)).structuredContent,
+            );
+            expect(preflightEqualRace).toMatchObject({
+              outcome: "applied",
+              runtimeMode: "approval-required",
+              changes: [
+                {
+                  setting: "runtime_mode",
+                  behavior: "session_detach_requested",
+                  requestedEffects: ["provider_session_detach"],
+                },
+              ],
+            });
+
+            const reopenedAfterRaceCall = yield* invoke("t3_thread_send", {
+              threadId: delegated.childThreadId,
+              message: "Reopen before the next accepted runtime policy change.",
+              clientRequestId: "configuration-reopen-after-preflight-race",
+            });
+            const reopenedAfterRace = yield* decodeThreadSendResult(
+              reopenedAfterRaceCall.structuredContent,
+            );
+            yield* invoke("t3_thread_wait", {
+              threadId: delegated.childThreadId,
+              runId: reopenedAfterRace.runId,
+              timeoutMs: 10_000,
+            });
+
+            const acceptedClaudeRuntimeInput = {
+              threadId: delegated.childThreadId,
+              runtimeMode: "full-access",
+              clientRequestId: "configuration-accepted-claude-runtime",
+            } as const;
+            const acceptedClaudeRuntime = yield* decodeConfigureResult(
+              (yield* invoke("t3_thread_configure", acceptedClaudeRuntimeInput)).structuredContent,
+            );
+            expect(acceptedClaudeRuntime.changes).toEqual([
+              expect.objectContaining({
+                setting: "runtime_mode",
+                behavior: "session_detach_requested",
+                requestedEffects: ["provider_session_detach"],
+              }),
+            ]);
+            const reopenedClaudeCall = yield* invoke("t3_thread_send", {
+              threadId: delegated.childThreadId,
+              message: "Reopen the provider session after the runtime policy change.",
+              clientRequestId: "configuration-reopen-claude-session",
+            });
+            const reopenedClaude = yield* decodeThreadSendResult(
+              reopenedClaudeCall.structuredContent,
+            );
+            yield* invoke("t3_thread_wait", {
+              threadId: delegated.childThreadId,
+              runId: reopenedClaude.runId,
+              timeoutMs: 10_000,
+            });
+            yield* invoke("t3_thread_configure", {
+              threadId: delegated.childThreadId,
+              interactionMode: "plan",
+              clientRequestId: "configuration-claude-interaction-after-runtime",
+            });
+            const claudeBeforeAcceptedRetry = yield* orchestrator.getThreadProjection(
+              delegated.childThreadId,
+            );
+            expect(
+              claudeBeforeAcceptedRetry.providerSessions.some(
+                (session) => session.status !== "stopped" && session.status !== "error",
+              ),
+            ).toBe(true);
+            const repeatedClaudeRuntime = yield* decodeConfigureResult(
+              (yield* invoke("t3_thread_configure", acceptedClaudeRuntimeInput)).structuredContent,
+            );
+            expect(repeatedClaudeRuntime.changes).toEqual(acceptedClaudeRuntime.changes);
+            expect(
+              (yield* orchestrator.getThreadProjection(delegated.childThreadId)).providerSessions,
+            ).toEqual(claudeBeforeAcceptedRetry.providerSessions);
+
+            const callerCeilingRaceFiber = yield* Effect.forkChild(
+              invoke("t3_thread_configure", {
+                threadId: delegated.childThreadId,
+                interactionMode: "default",
+                clientRequestId: "configuration-caller-ceiling-race",
+              }),
+            );
+            yield* Deferred.await(callerCeilingDispatchEntered);
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-configuration:caller-downgrade"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            const acceptedRetryAfterCallerDowngrade = yield* decodeConfigureResult(
+              (yield* invoke("t3_thread_configure", acceptedClaudeRuntimeInput)).structuredContent,
+            );
+            expect(acceptedRetryAfterCallerDowngrade.changes).toEqual(
+              acceptedClaudeRuntime.changes,
+            );
+            yield* Deferred.succeed(callerCeilingDispatchRelease, undefined);
+            const callerCeilingRace = yield* Fiber.join(callerCeilingRaceFiber);
+            expect(callerCeilingRace.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "orchestration_error",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(delegated.childThreadId)).thread,
+            ).toMatchObject({ runtimeMode: "full-access", interactionMode: "plan" });
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-configuration:caller-restore"),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-configuration:caller-restrict-runtime"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-configuration:caller-restrict-interaction"),
+              threadId: parentThreadId,
+              interactionMode: "plan",
+            });
+            const restrictiveCombinedInput = {
+              threadId: lateParentThreadId,
+              options: [{ id: "reasoning", value: "high" }],
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+              clientRequestId: "configuration-restrict-both-before-selection",
+            } as const;
+            const restrictiveCombined = yield* decodeConfigureResult(
+              (yield* invoke("t3_thread_configure", restrictiveCombinedInput)).structuredContent,
+            );
+            expect(restrictiveCombined.outcome).toBe("applied");
+            expect(restrictiveCombined.changes.map((change) => change.setting)).toEqual([
+              "selection",
+              "runtime_mode",
+              "interaction_mode",
+            ]);
+            const restrictiveReceiptSequence = (setting: string) =>
+              restrictiveCombined.changes.find((change) => change.setting === setting)?.receipt
+                ?.sequence ?? Number.MAX_SAFE_INTEGER;
+            expect(restrictiveReceiptSequence("runtime_mode")).toBeLessThan(
+              restrictiveReceiptSequence("interaction_mode"),
+            );
+            expect(restrictiveReceiptSequence("interaction_mode")).toBeLessThan(
+              restrictiveReceiptSequence("selection"),
+            );
+            expect(
+              (yield* orchestrator.getThreadProjection(lateParentThreadId)).thread,
+            ).toMatchObject({
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+              modelSelection: expect.objectContaining({
+                options: [{ id: "reasoning", value: "high" }],
+              }),
+            });
+            const restrictiveCombinedRetry = yield* decodeConfigureResult(
+              (yield* invoke("t3_thread_configure", restrictiveCombinedInput)).structuredContent,
+            );
+            expect(
+              restrictiveCombinedRetry.changes.map((change) => change.receipt?.commandId),
+            ).toEqual(restrictiveCombined.changes.map((change) => change.receipt?.commandId));
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make(
+                "command:mcp-configuration:caller-restore-after-restrictions",
+              ),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make(
+                "command:mcp-configuration:caller-interaction-restore-after-restrictions",
+              ),
+              threadId: parentThreadId,
+              interactionMode: "default",
+            });
+            yield* invoke("t3_thread_configure", {
+              threadId: lateParentThreadId,
+              options: [],
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              clientRequestId: "configuration-target-restore-after-restrictions",
+            });
+
+            yield* Ref.set(selectionPlanArmed, true);
+            const stalePartialFiber = yield* Effect.forkChild(
+              invoke("t3_thread_configure", {
+                threadId: lateParentThreadId,
+                options: [{ id: "reasoning", value: "high" }],
+                clientRequestId: "configuration-stale-partial-selection",
+              }),
+            );
+            yield* Deferred.await(selectionPlanEntered);
+            const concurrentSelection = {
+              instanceId: codexInstanceId,
+              model: "gpt-5.5-concurrent",
+            } satisfies ModelSelection;
+            yield* orchestrator.dispatch({
+              type: "thread.model-selection.set",
+              commandId: CommandId.make("command:mcp-configuration:concurrent-selection"),
+              threadId: lateParentThreadId,
+              modelSelection: concurrentSelection,
+            });
+            yield* Deferred.succeed(selectionPlanRelease, undefined);
+            const stalePartialCall = yield* Fiber.join(stalePartialFiber);
+            expect(stalePartialCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "orchestration_error",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(lateParentThreadId)).thread.modelSelection,
+            ).toEqual(concurrentSelection);
+
+            const crossProviderInput = {
+              threadId: lateParentThreadId,
+              providerInstanceId: claudeInstanceId,
+              model: claudeModel,
+              options: [],
+              clientRequestId: "configuration-cross-provider-retry",
+            } as const;
+            const crossProviderCall = yield* invoke("t3_thread_configure", crossProviderInput);
+            const crossProvider = yield* decodeConfigureResult(crossProviderCall.structuredContent);
+            expect(crossProvider.selection).toMatchObject({
+              providerInstanceId: claudeInstanceId,
+              model: claudeModel,
+              options: [],
+            });
+            expect(crossProvider.changes).toEqual([
+              expect.objectContaining({
+                setting: "selection",
+                behavior: "handoff_required_next_turn",
+                requestedEffects: ["provider_session_detach"],
+                receipt: expect.objectContaining({ commandType: "provider.switch" }),
+              }),
+            ]);
+            yield* orchestrator.dispatch({
+              type: "provider.switch",
+              commandId: CommandId.make(
+                "command:mcp-configuration:selection-after-accepted-switch",
+              ),
+              threadId: lateParentThreadId,
+              modelSelection: codexSelection,
+            });
+            const repeatedCrossProviderCall = yield* invoke(
+              "t3_thread_configure",
+              crossProviderInput,
+            );
+            const repeatedCrossProvider = yield* decodeConfigureResult(
+              repeatedCrossProviderCall.structuredContent,
+            );
+            expect(repeatedCrossProvider.changes).toEqual(crossProvider.changes);
+            expect(repeatedCrossProvider.selection.providerInstanceId).toBe(codexInstanceId);
           }).pipe(Effect.provide(testLayer));
         }),
       ),

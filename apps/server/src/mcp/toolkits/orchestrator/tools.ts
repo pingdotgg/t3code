@@ -1,4 +1,8 @@
 import {
+  ConversationConfigurationInput,
+  ConversationConfigurationResult,
+  ConversationConfigureInput,
+  ConversationConfigureResult,
   OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpCreatedThread,
   OrchestratorMcpCreateThreadsInput,
@@ -30,9 +34,14 @@ import {
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { ConversationConfigurationMcpService } from "../../ConversationConfigurationMcpService.ts";
 import { OrchestratorMcpService } from "../../OrchestratorMcpService.ts";
 
 const dependencies = [McpInvocationContext.McpInvocationContext, OrchestratorMcpService];
+const configurationDependencies = [
+  McpInvocationContext.McpInvocationContext,
+  ConversationConfigurationMcpService,
+];
 
 export const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
@@ -229,6 +238,32 @@ export const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   .annotate(Tool.Title, "Interrupt a T3 thread")
   .annotate(Tool.Destructive, true);
 
+export const ThreadConfigurationTool = Tool.make("t3_thread_configuration", {
+  description:
+    "Read the current provider instance, model, model options, runtime mode, and interaction mode for a T3 thread in the calling project. Omit threadId for this thread. The result lists provider models and option descriptors plus the runtime and interaction modes allowed by this caller's permission ceiling.",
+  parameters: ConversationConfigurationInput,
+  success: ConversationConfigurationResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: configurationDependencies,
+})
+  .annotate(Tool.Title, "Get thread configuration")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+export const ThreadConfigureTool = Tool.make("t3_thread_configure", {
+  description:
+    "Change an existing T3 thread's provider, model, full model-option selection, runtime mode, or interaction mode through V2 orchestration. Omit threadId for this thread. Read t3_thread_configuration first to choose advertised values. The calling thread's runtime and interaction modes are hard ceilings. The result separates committed settings from requested provider-session detaches and next-turn context-handoff requirements; a detach can interrupt active provider work. It also reports current active and queued runs, durable command receipts, and any partial failure. Reusing clientRequestId replays accepted or rejected decisions without reapplying accepted legs. After resolving the cause of a rejected leg, use a new clientRequestId for a new attempt.",
+  parameters: ConversationConfigureInput,
+  success: ConversationConfigureResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: configurationDependencies,
+})
+  .annotate(Tool.Title, "Configure a T3 thread")
+  .annotate(Tool.Destructive, true);
+
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
@@ -245,4 +280,6 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadSendTool,
   ThreadWaitTool,
   ThreadInterruptTool,
+  ThreadConfigurationTool,
+  ThreadConfigureTool,
 );
