@@ -28,6 +28,12 @@ import {
   ProjectionStoreV2,
   layer as projectionStoreLayer,
 } from "./ProjectionStore.ts";
+import {
+  buildBoundedThreadProjection,
+  decodeThreadHistoryCursor,
+  selectHistoryPageFromCursor,
+  THREAD_HISTORY_PAGE_POLICY,
+} from "./threadHistoryPaging.ts";
 
 const TestLayer = Layer.mergeAll(
   projectionStoreLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
@@ -309,6 +315,45 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       assert.lengthOf(older.projection.runs, 76);
       assert.strictEqual(older.projection.turnItems[0]?.ordinal, 850);
       assert.strictEqual(older.projection.turnItems.at(-1)?.ordinal, 925);
+
+      const sqlPageLimit = THREAD_HISTORY_PAGE_POLICY.maxItems + 2;
+      const initialSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+      });
+      const initialPage = buildBoundedThreadProjection({
+        projection: initialSnapshot.projection,
+        snapshotSequence: initialSnapshot.snapshotSequence,
+      });
+      const loadedIds = initialPage.projection.visibleTurnItems.map((row) =>
+        String(row.sourceItemId),
+      );
+      let cursor = initialPage.historyCursor;
+      let pageCount = 1;
+      while (cursor !== null) {
+        const anchorItemId = TurnItemId.make(decodeThreadHistoryCursor(cursor).si);
+        const snapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+          rowLimit: sqlPageLimit,
+          anchorItemId,
+        });
+        const page = selectHistoryPageFromCursor({
+          items: snapshot.projection.visibleTurnItems,
+          cursor,
+          snapshotSequence: snapshot.snapshotSequence,
+        });
+        loadedIds.push(...page.items.map((row) => String(row.sourceItemId)));
+        pageCount += 1;
+        cursor = page.nextCursor;
+      }
+
+      assert.isAtLeast(pageCount, 4);
+      assert.lengthOf(loadedIds, 1_000);
+      assert.strictEqual(new Set(loadedIds).size, 1_000);
+      assert.deepEqual(
+        loadedIds.toSorted(
+          (left, right) => Number(left.split(":").at(-1)) - Number(right.split(":").at(-1)),
+        ),
+        Array.from({ length: 1_000 }, (_, index) => `turn-item:bounded-sql-history:${index + 1}`),
+      );
     }),
   );
 
