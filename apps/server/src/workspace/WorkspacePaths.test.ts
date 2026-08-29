@@ -47,6 +47,169 @@ it.layer(TestLayer)("WorkspacePathsLive", (it) => {
       }),
     );
 
+    it.effect("rejects a bare repository root that only holds worktrees", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* makeTempDir();
+        yield* fileSystem
+          .makeDirectory(path.join(root, ".bare", "worktrees", "develop"), { recursive: true })
+          .pipe(Effect.orDie);
+        yield* writeTextFile(root, ".git", "gitdir: ./.bare\n");
+
+        const error = yield* workspacePaths
+          .normalizeWorkspaceRoot(root)
+          .pipe(Effect.flatMap(workspacePaths.ensureNotBareRepositoryLayout), Effect.flip);
+
+        expect(error.message).toContain("holds a bare repository and its worktrees");
+      }),
+    );
+
+    it.effect("accepts a bare repository root when the caller does not check the layout", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* makeTempDir();
+        yield* fileSystem
+          .makeDirectory(path.join(root, ".bare", "worktrees", "develop"), { recursive: true })
+          .pipe(Effect.orDie);
+        yield* writeTextFile(root, ".git", "gitdir: ./.bare\n");
+
+        const resolved = yield* workspacePaths.normalizeWorkspaceRoot(root);
+
+        expect(resolved).toBe(root);
+      }),
+    );
+
+    it.effect("accepts a worktree of a bare repository root", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* makeTempDir();
+        yield* fileSystem
+          .makeDirectory(path.join(root, ".bare", "worktrees", "develop"), { recursive: true })
+          .pipe(Effect.orDie);
+        yield* writeTextFile(root, ".git", "gitdir: ./.bare\n");
+        const worktree = path.join(root, "develop");
+        yield* writeTextFile(
+          worktree,
+          ".git",
+          `gitdir: ${path.join(root, ".bare", "worktrees", "develop")}\n`,
+        );
+
+        const resolved = yield* workspacePaths
+          .normalizeWorkspaceRoot(worktree)
+          .pipe(Effect.flatMap(workspacePaths.ensureNotBareRepositoryLayout));
+
+        expect(resolved).toBe(worktree);
+      }),
+    );
+
+    it.effect("accepts an ordinary repository and a linked worktree", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* makeTempDir();
+        const ordinary = path.join(parent, "ordinary");
+        yield* fileSystem
+          .makeDirectory(path.join(ordinary, ".git", "worktrees", "feature"), { recursive: true })
+          .pipe(Effect.orDie);
+        const linked = path.join(parent, "feature");
+        yield* writeTextFile(
+          linked,
+          ".git",
+          `gitdir: ${path.join(ordinary, ".git", "worktrees", "feature")}\n`,
+        );
+
+        const resolvedOrdinary = yield* workspacePaths
+          .normalizeWorkspaceRoot(ordinary)
+          .pipe(Effect.flatMap(workspacePaths.ensureNotBareRepositoryLayout));
+        const resolvedLinked = yield* workspacePaths
+          .normalizeWorkspaceRoot(linked)
+          .pipe(Effect.flatMap(workspacePaths.ensureNotBareRepositoryLayout));
+
+        expect(resolvedOrdinary).toBe(ordinary);
+        expect(resolvedLinked).toBe(linked);
+      }),
+    );
+
+    it.effect("accepts a bare repository root before any worktree is added", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* makeTempDir();
+        yield* fileSystem
+          .makeDirectory(path.join(root, ".bare", "objects"), { recursive: true })
+          .pipe(Effect.orDie);
+        yield* writeTextFile(root, ".git", "gitdir: ./.bare\n");
+
+        const resolved = yield* workspacePaths
+          .normalizeWorkspaceRoot(root)
+          .pipe(Effect.flatMap(workspacePaths.ensureNotBareRepositoryLayout));
+
+        expect(resolved).toBe(root);
+      }),
+    );
+
+    it.effect("accepts a freshly initialized separate git directory inside the root", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* makeTempDir();
+        yield* fileSystem
+          .makeDirectory(path.join(root, "store", "objects"), { recursive: true })
+          .pipe(Effect.orDie);
+        yield* writeTextFile(root, ".git", `gitdir: ${path.join(root, "store")}\n`);
+
+        const resolved = yield* workspacePaths
+          .normalizeWorkspaceRoot(root)
+          .pipe(Effect.flatMap(workspacePaths.ensureNotBareRepositoryLayout));
+
+        expect(resolved).toBe(root);
+      }),
+    );
+
+    it.effect("accepts a separate git directory inside a root that stages work", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* makeTempDir();
+        yield* fileSystem
+          .makeDirectory(path.join(root, "store", "worktrees", "feature"), { recursive: true })
+          .pipe(Effect.orDie);
+        yield* writeTextFile(root, "store/index", "");
+        yield* writeTextFile(root, ".git", `gitdir: ${path.join(root, "store")}\n`);
+
+        const resolved = yield* workspacePaths
+          .normalizeWorkspaceRoot(root)
+          .pipe(Effect.flatMap(workspacePaths.ensureNotBareRepositoryLayout));
+
+        expect(resolved).toBe(root);
+      }),
+    );
+
+    it.effect("accepts a root whose git file points at the root itself", () =>
+      Effect.gen(function* () {
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+        const path = yield* Path.Path;
+        const root = yield* makeTempDir();
+        yield* writeTextFile(root, ".git", `gitdir: ${path.join(root, ".")}\n`);
+
+        const resolved = yield* workspacePaths
+          .normalizeWorkspaceRoot(root)
+          .pipe(Effect.flatMap(workspacePaths.ensureNotBareRepositoryLayout));
+
+        expect(resolved).toBe(root);
+      }),
+    );
+
     it.effect("rejects missing directories", () =>
       Effect.gen(function* () {
         const workspacePaths = yield* WorkspacePaths.WorkspacePaths;

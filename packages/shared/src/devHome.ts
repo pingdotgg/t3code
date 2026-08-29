@@ -13,6 +13,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import { parseGitDirPointer } from "./git.ts";
+
 /**
  * A `.git` file points at the real git directory. A linked worktree's lives at
  * `<common-dir>/worktrees/<name>`; a submodule's at
@@ -25,19 +27,14 @@ import * as Path from "effect/Path";
  * rather than on the name of the directory containing it.
  */
 const pointsAtLinkedWorktree = (gitFileContents: string, path: Path.Path): boolean => {
-  const gitdir = gitFileContents
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.startsWith("gitdir:"))
-    ?.slice("gitdir:".length)
-    .trim();
-  if (gitdir === undefined || gitdir.length === 0) {
+  const gitdir = parseGitDirPointer(gitFileContents);
+  if (gitdir === undefined) {
     return false;
   }
   // Compare as path segments so a directory merely named `…worktrees…` cannot
   // match as a substring. Trailing separators normalize away first.
   const segments = path
-    .normalize(gitdir.replaceAll("\\", "/"))
+    .normalize(gitdir)
     .split(/[/\\]/)
     .filter((segment) => segment.length > 0);
   // `<common-dir>/worktrees/<name>`: `worktrees` is the penultimate segment,

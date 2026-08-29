@@ -100,6 +100,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
           createIfMissing: createIfMissing === true,
         })
         .pipe(
+          Effect.flatMap(workspacePaths.ensureNotBareRepositoryLayout),
           Effect.mapError(
             (cause) =>
               new OrchestrationDispatchCommandError({

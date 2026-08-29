@@ -461,7 +461,10 @@ const projectAddCommand = Command.make("add", {
           command: ProjectCliDispatchCommand,
         ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
       }) {
-        const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
+        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+        const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(
+          flags.workspaceRoot,
+        ).pipe(Effect.flatMap(workspacePaths.ensureNotBareRepositoryLayout));
         const existingProject = snapshot.projects.find(
           (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
         );
