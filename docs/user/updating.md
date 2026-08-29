@@ -31,21 +31,51 @@ The offered action depends on how the server runs:
 | **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
 | **Copy update command**    | Stop the command-line server on its host and relaunch with the copied command, keeping your usual startup options.                                                                              |
 
-On the host, run:
+The update does not remove saved threads, settings, or project files.
+
+Updates from the previous orchestration system preserve conversation transcripts but cannot carry
+every kind of runtime history forward. Read [Threads from older T3 Code versions](./thread-migration.md)
+before continuing an important older thread.
+
+## Choose the Action You See
+
+| Action                     | What to do                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Update server**          | Available for the T3 Code Linux background service and for servers run by a current T3 Code desktop app. Select the button and leave T3 Code open while it downloads, installs, restarts, and reconnects. For desktop-app servers this closes and relaunches the desktop app on that machine. If installation fails, the desktop app stays open and reconnects to its server. |
+| **Update the desktop app** | Shown for desktop apps that predate remote updates. Open the T3 Code desktop app on the machine that runs the server and install the app update there. Reopen it if needed.                                                                                                                                                                                                   |
+| **Copy update command**    | Copy the command, open a terminal on the server machine, stop the current T3 Code server, and relaunch it with the copied command and any startup options you normally use.                                                                                                                                                                                                   |
+
+The available action depends on how that server was started. T3 Code does not update connected
+servers silently in the background.
+
+An older background-service launcher may ask you to run the exact
+`npx t3@<version> service update` command on the server machine. That one local update installs the
+rollback support needed for later remote updates, including versions that change the database.
+
+After selecting **Update**, the notice becomes a live status line: **Downloading…** while the new
+version is fetched and verified, then **Restarting…** while the server restarts into it. The same
+status appears in the conversation and in Connections, so navigating between them does not lose the
+update. A failure remains visible with its error and an option to retry.
+
+**Copy update command** gives you `npx t3@<client-version>`, which relaunches the server directly
+at the matching version. Add whatever startup options you normally use.
+
+If the server instead runs as the T3 Code background service, update the service on the host and
+pin the same version:
 
 ```sh
-t3 update <client-version>
+npx t3@<client-version> service update
 ```
 
-Replace `<client-version>` with the version shown in the notice. The command
-asks before restarting the background service; if you decline, run
-`t3 service restart` when you are ready. For a server you started by hand,
-stop it and start it again afterwards with your usual options such as `--host`
-or `--tailscale-serve`.
+Replace `<client-version>` with the version shown in the notice. Using
+`@latest` only resolves the mismatch if your client is on that release. An older
+service launcher may require this local update before it supports remote updates
+and rollback.
 
-If you run the server with `npx` rather than an installed `t3`, there is
-nothing to update on the host: stop the server and relaunch it as
-`npx t3@<client-version>` with the same subcommand and options.
+For a foreground server, the copied command is `npx t3@<client-version>`. Add
+`serve` if you normally run without a browser, and preserve options such as
+`--host` or `--tailscale-serve`. See
+[background services](./background-service.md) for service management.
 
 ## If an update fails
 
