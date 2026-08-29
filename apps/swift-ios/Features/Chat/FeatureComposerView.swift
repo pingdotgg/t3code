@@ -286,7 +286,7 @@ struct FeatureComposerView: View {
     private var composerFooter: some View {
         HStack(spacing: 2) {
             if FeatureComposerKeyboardDismissPolicy.showsDismissControl(
-                isFocused: focused.wrappedValue,
+                isFocused: focused,
                 isEnabled: showsKeyboardDismissControl,
                 canDismiss: onDismissKeyboard != nil
             ) {
