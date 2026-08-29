@@ -7,6 +7,9 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  NodeId,
+  ProviderThreadId,
+  ProviderTurnId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -102,6 +105,45 @@ const emptyProjection = {
 } as OrchestrationV2ThreadProjection;
 
 describe("applyOrchestrationV2ProjectionEvent", () => {
+  it("keeps live token usage when the terminal provider turn omits it", () => {
+    const providerTurnId = ProviderTurnId.make("provider-turn-reducer");
+    const running = {
+      id: providerTurnId,
+      providerThreadId: ProviderThreadId.make("provider-thread-reducer"),
+      nodeId: NodeId.make("provider-node-reducer"),
+      runAttemptId: null,
+      nativeTurnRef: null,
+      ordinal: 1,
+      status: "running" as const,
+      startedAt: now,
+      completedAt: null,
+      tokenUsage: {
+        usedTokens: 50_000,
+        maxTokens: 200_000,
+        updatedAt: "2026-08-29T00:00:00.000Z",
+      },
+    };
+    const projection = { ...emptyProjection, providerTurns: [running] };
+    const event = {
+      id: "event-provider-turn-terminal",
+      type: "provider-turn.updated",
+      threadId,
+      driver: "codex",
+      occurredAt: now,
+      payload: {
+        ...running,
+        status: "completed",
+        completedAt: now,
+        tokenUsage: undefined,
+      },
+    } as OrchestrationV2DomainEvent;
+
+    const next = applyOrchestrationV2ProjectionEvent(projection, event);
+
+    expect(next?.providerTurns[0]?.status).toBe("completed");
+    expect(next?.providerTurns[0]?.tokenUsage).toEqual(running.tokenUsage);
+  });
+
   it("applies thread lifecycle payloads instead of leaving stale metadata", () => {
     const archivedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
     const event = {
