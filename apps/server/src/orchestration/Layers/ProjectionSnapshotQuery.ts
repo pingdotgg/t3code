@@ -848,19 +848,28 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WITH candidate AS (
           SELECT
             threads.thread_id AS thread_id,
-            threads.project_id AS project_id,
+            COALESCE(v2_threads.project_id, threads.project_id) AS project_id,
             messages.role AS role,
             messages.text AS match_text,
             messages.created_at AS message_created_at,
             messages.message_id AS message_id,
-            threads.updated_at AS thread_updated_at
+            COALESCE(v2_threads.updated_at, threads.updated_at) AS thread_updated_at
           FROM projection_thread_messages AS messages
           INNER JOIN projection_threads AS threads
             ON threads.thread_id = messages.thread_id
+          LEFT JOIN orchestration_v2_projection_threads AS v2_threads
+            ON v2_threads.thread_id = threads.thread_id
           INNER JOIN projection_projects AS projects
-            ON projects.project_id = threads.project_id
-          WHERE threads.deleted_at IS NULL
-            AND threads.archived_at IS NULL
+            ON projects.project_id = COALESCE(v2_threads.project_id, threads.project_id)
+          WHERE (
+              v2_threads.thread_id IS NULL
+              AND threads.deleted_at IS NULL
+              AND threads.archived_at IS NULL
+            OR
+              v2_threads.thread_id IS NOT NULL
+              AND v2_threads.deleted_at IS NULL
+              AND v2_threads.archived_at IS NULL
+            )
             AND projects.deleted_at IS NULL
             AND messages.is_streaming = 0
             AND (
