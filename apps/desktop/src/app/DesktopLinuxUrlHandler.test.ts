@@ -197,6 +197,7 @@ describe("DesktopLinuxUrlHandler", () => {
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
         environment: {
+          isPackaged: false,
           desktopExecutable: Option.some("/nix/store/t3code/bin/t3code-desktop"),
         },
       });
@@ -205,14 +206,15 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
-  it.effect("registers unpackaged production builds", () => {
+  it.effect("does nothing for unpackaged production launches without an explicit launcher", () => {
     const recorded = emptyRecording();
 
     return Effect.gen(function* () {
       yield* runRegister(recorded, { environment: { isPackaged: false } });
 
-      assert.equal(recorded.files.length, 1);
-      assert.equal(recorded.commands.length, 1);
+      assert.deepEqual(recorded.directories, []);
+      assert.deepEqual(recorded.files, []);
+      assert.deepEqual(recorded.commands, []);
     });
   });
 

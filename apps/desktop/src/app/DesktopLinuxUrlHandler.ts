@@ -168,7 +168,13 @@ export const make = Effect.gen(function* () {
   );
 
   const register = Effect.gen(function* () {
-    if (environment.platform !== "linux" || environment.isDevelopment) {
+    const isSupportedProductionLaunch =
+      environment.isPackaged || Option.isSome(environment.desktopExecutable);
+    if (
+      environment.platform !== "linux" ||
+      environment.isDevelopment ||
+      !isSupportedProductionLaunch
+    ) {
       return;
     }
     yield* writeDesktopEntry;
