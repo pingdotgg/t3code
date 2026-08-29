@@ -51,7 +51,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   return (
     <SidebarHeader
       className={cn(
-        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center overflow-hidden px-3 py-0 md:px-0",
+        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
         isElectron && "drag-region",
       )}
     >
@@ -64,11 +64,11 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           backdropVariant && resolveSidebarStageFocusRingOffsetClass(backdropVariant),
         )}
       />
-      <div className="relative z-10 flex min-w-0 items-center gap-1 md:ml-[var(--workspace-titlebar-content-left)]">
+      <div className="relative z-10 flex min-w-0 flex-1 items-center gap-1 overflow-hidden md:mr-3 md:ml-[var(--workspace-titlebar-content-left)]">
         <SidebarBrand onBackdrop={backdropVariant !== null} />
         {pillLabel ? (
           <Badge
-            className="rounded-full px-1 text-muted-foreground"
+            className="ml-auto shrink-0 rounded-full px-1 text-muted-foreground"
             data-environment-identification="pill"
             size="sm"
             variant="secondary"
