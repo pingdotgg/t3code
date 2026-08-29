@@ -213,6 +213,16 @@ export interface CancelQueuedRunInput extends ThreadCommandInput {
 export interface EditQueuedRunInput extends ThreadCommandInput {
   readonly runId: RunId;
   readonly text: string;
+  /**
+   * Full replacement attachment list for the queued message. Omitted =
+   * text-only edit that leaves attachments untouched. `dataUrl` entries are
+   * persisted against `messageId` (the queued run's user message) before
+   * dispatch, so `messageId` is required whenever attachments are present.
+   */
+  readonly edit?: {
+    readonly messageId: MessageId;
+    readonly attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>;
+  };
 }
 
 const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(function* (
@@ -833,11 +843,16 @@ export const cancelQueuedRun = Effect.fn("EnvironmentCommands.cancelQueuedRun")(
 export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(function* (
   input: EditQueuedRunInput,
 ) {
+  const attachments =
+    input.edit === undefined
+      ? undefined
+      : yield* persistAttachments(input.threadId, input.edit.messageId, input.edit.attachments);
   return yield* dispatch({
     type: "queued-run.edit",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     runId: input.runId,
     text: input.text,
+    ...(attachments === undefined ? {} : { attachments }),
   });
 });

@@ -447,6 +447,24 @@ describe("V2 environment commands", () => {
           runId: RunId.make("run-3"),
           text: "updated queued text",
         }).pipe(provide);
+        yield* editQueuedRun({
+          commandId: CommandId.make("edit-attachments"),
+          threadId: v2ThreadId,
+          runId: RunId.make("run-3"),
+          text: "updated queued text with attachments",
+          edit: {
+            messageId: MessageId.make("message-3"),
+            attachments: [
+              {
+                type: "image",
+                id: "attachment-kept",
+                name: "kept.png",
+                mimeType: "image/png",
+                sizeBytes: 64,
+              },
+            ],
+          },
+        }).pipe(provide);
 
         expect(commands).toMatchObject([
           { type: "thread.fork", sourcePoint: { type: "run", runId: "run-1" } },
@@ -459,7 +477,15 @@ describe("V2 environment commands", () => {
           },
           { type: "queued-run.cancel", runId: "run-3" },
           { type: "queued-run.edit", runId: "run-3", text: "updated queued text" },
+          {
+            type: "queued-run.edit",
+            runId: "run-3",
+            text: "updated queued text with attachments",
+            attachments: [{ id: "attachment-kept" }],
+          },
         ]);
+        // A text-only edit must not send an attachments replacement list.
+        expect(commands[5]).not.toHaveProperty("attachments");
       }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
