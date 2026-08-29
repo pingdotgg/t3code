@@ -44,7 +44,7 @@ Before `ProviderSessionManager` opens a new V2 provider session, it asks
 - the concrete provider instance; and
 - the provider session.
 
-The credential grants `preview` and `orchestration` capabilities. Credentials
+The credential grants `preview`, `orchestration`, and `worktree` capabilities. Credentials
 expire after a maximum lifetime, expire when idle, and are revoked when the
 provider session is released. The raw token is not persisted in orchestration
 state.
@@ -338,6 +338,34 @@ complete. A missing or unreadable checkout remains in the page with an availabil
 instead of failing discovery of the other worktrees. The tool does not create, remove, prune, or
 repair worktrees.
 
+### `t3_thread_checkout`
+
+Changes the calling existing thread to one of four typed targets:
+
+- a branch, optionally creating it in the current checkout or project root;
+- an existing worktree returned by `t3_worktree_list`;
+- the project root; or
+- a new worktree created through the existing Git worktree service.
+
+The service verifies project scope and the actual Git ref before it writes the durable
+`thread.metadata.update` command. The command includes the expected old branch and worktree path,
+so a concurrent metadata change is rejected. A failed metadata write rolls a branch switch back
+when possible and reports a typed partial failure if rollback also fails.
+
+The service never stashes or discards files. Branch switches reject dirty checkouts. Reusing a
+dedicated worktree bound to another thread is rejected, as is mutating a shared project root while
+another live thread is bound there. Moving to a shared project root without switching its branch is
+allowed unless another root-bound thread has an active run.
+
+Changing the worktree path detaches the calling provider session. If `continuationPrompt` is
+present, the service writes the new binding and then durably queues the next turn before the detach
+can interrupt the MCP call. The next provider session derives its working directory from the new
+thread projection. Same-path branch changes do not detach the session.
+
+`t3_worktree_handoff` remains the direct convenience tool for creating a new worktree and uses the
+same binding, continuation, race, and rollback rules. Neither tool removes the source or target
+worktree.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters
@@ -381,8 +409,8 @@ falls back to a terminal-status message when no assistant text exists.
 - General thread management is limited to the calling thread's project. Send
   additionally enforces the same runtime and interaction privilege ceiling as
   child creation.
-- Workspace discovery is limited to the calling thread's current project. It does not accept an
-  environment or cross-project target.
+- Workspace reads and checkout are limited to the calling thread and its current project. They do
+  not accept an environment or cross-project target.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the
