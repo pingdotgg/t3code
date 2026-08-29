@@ -33,36 +33,35 @@ const DEFAULT_LIST_LIMIT = 50;
 const DEFAULT_LIST_MESSAGE_CHARS = 2_000;
 const DEFAULT_READ_MESSAGE_CHARS = 120_000;
 
-export interface QueueMcpServiceShape {
-  readonly list: (
-    scope: McpInvocationScope,
-    input: QueueMcpListInput,
-  ) => Effect.Effect<QueueMcpListResult, QueueMcpFailure>;
-  readonly read: (
-    scope: McpInvocationScope,
-    input: QueueMcpReadInput,
-  ) => Effect.Effect<QueueMcpReadResult, QueueMcpFailure>;
-  readonly edit: (
-    scope: McpInvocationScope,
-    input: QueueMcpEditInput,
-  ) => Effect.Effect<QueueMcpEditResult, QueueMcpFailure>;
-  readonly reorder: (
-    scope: McpInvocationScope,
-    input: QueueMcpReorderInput,
-  ) => Effect.Effect<QueueMcpReorderResult, QueueMcpFailure>;
-  readonly cancel: (
-    scope: McpInvocationScope,
-    input: QueueMcpCancelInput,
-  ) => Effect.Effect<QueueMcpCancelResult, QueueMcpFailure>;
-  readonly promote: (
-    scope: McpInvocationScope,
-    input: QueueMcpPromoteInput,
-  ) => Effect.Effect<QueueMcpPromoteResult, QueueMcpFailure>;
-}
-
-export class QueueMcpService extends Context.Service<QueueMcpService, QueueMcpServiceShape>()(
-  "t3/mcp/QueueMcpService",
-) {}
+export class QueueMcpService extends Context.Service<
+  QueueMcpService,
+  {
+    readonly list: (
+      scope: McpInvocationScope,
+      input: QueueMcpListInput,
+    ) => Effect.Effect<QueueMcpListResult, QueueMcpFailure>;
+    readonly read: (
+      scope: McpInvocationScope,
+      input: QueueMcpReadInput,
+    ) => Effect.Effect<QueueMcpReadResult, QueueMcpFailure>;
+    readonly edit: (
+      scope: McpInvocationScope,
+      input: QueueMcpEditInput,
+    ) => Effect.Effect<QueueMcpEditResult, QueueMcpFailure>;
+    readonly reorder: (
+      scope: McpInvocationScope,
+      input: QueueMcpReorderInput,
+    ) => Effect.Effect<QueueMcpReorderResult, QueueMcpFailure>;
+    readonly cancel: (
+      scope: McpInvocationScope,
+      input: QueueMcpCancelInput,
+    ) => Effect.Effect<QueueMcpCancelResult, QueueMcpFailure>;
+    readonly promote: (
+      scope: McpInvocationScope,
+      input: QueueMcpPromoteInput,
+    ) => Effect.Effect<QueueMcpPromoteResult, QueueMcpFailure>;
+  }
+>()("t3/mcp/QueueMcpService") {}
 
 function failure(code: QueueMcpFailure["code"], message: string): QueueMcpFailure {
   return new QueueMcpFailure({ code, message });
