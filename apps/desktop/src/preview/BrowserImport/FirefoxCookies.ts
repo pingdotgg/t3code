@@ -17,12 +17,6 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { cookieScope, snapshotCookieDatabase, type ImportedCookie } from "./CookieDatabase.ts";
 
 /**
- * `moz_cookies.sameSite` uses 0 = none, 1 = lax, 2 = strict. Unlike Chromium
- * there is no "unspecified" sentinel, but treat anything unrecognised as lax:
- * that is the modern default, and guessing "none" would widen a cookie's scope
- * on import.
- */
-/**
  * Mirrors `ChromiumCookieReadError` so both engines fail with a tagged error
  * the service can tell apart, rather than one of them widening the channel to
  * an anonymous shape.
@@ -49,6 +43,12 @@ export class FirefoxCookieReadError extends Schema.TaggedErrorClass<FirefoxCooki
   }
 }
 
+/**
+ * `moz_cookies.sameSite` uses 0 = none, 1 = lax, 2 = strict. Unlike Chromium
+ * there is no "unspecified" sentinel, but treat anything unrecognised as lax:
+ * that is the modern default, and guessing "none" would widen a cookie's scope
+ * on import.
+ */
 const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
   if (value === 0) return "no_restriction";
   if (value === 2) return "strict";

@@ -32,6 +32,14 @@ export interface ImportedCookie {
   readonly sameSite: "no_restriction" | "lax" | "strict";
 }
 
+/** Cookies recovered from one database and rows that could not be decrypted. */
+export interface CookieReadResult {
+  readonly cookies: ReadonlyArray<ImportedCookie>;
+  readonly undecryptable: number;
+  /** Distinct hosts of the rows that could not be decrypted. */
+  readonly undecryptableHosts: ReadonlyArray<string>;
+}
+
 /**
  * The URL and domain Electron should register a stored row under.
  *

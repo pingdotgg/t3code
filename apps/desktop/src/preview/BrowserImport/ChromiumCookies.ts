@@ -26,6 +26,7 @@ import {
   bareHost,
   cookieScope,
   snapshotCookieDatabase,
+  type CookieReadResult,
   type ImportedCookie,
 } from "./CookieDatabase.ts";
 
@@ -36,8 +37,6 @@ const MAC_KEY_LENGTH = 16;
 /** OSCrypt uses a fixed IV of 16 spaces rather than a per-record one. */
 const AES_IV = Buffer.alloc(16, 0x20);
 const V10_PREFIX = "v10";
-
-export type ChromiumCookie = ImportedCookie;
 
 export const ChromiumCookieReadReason = Schema.Literals([
   "needsKeychainApproval",
@@ -96,7 +95,7 @@ const decodeSchemaVersion = Schema.decodeUnknownEffect(
  * modern Chromium, so it maps there rather than to `no_restriction`, which
  * would widen the cookie's scope on import.
  */
-const sameSiteFromColumn = (value: number): ChromiumCookie["sameSite"] => {
+const sameSiteFromColumn = (value: number): ImportedCookie["sameSite"] => {
   if (value === 0) return "no_restriction";
   if (value === 2) return "strict";
   return "lax";
@@ -228,7 +227,7 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
       return { rows: yield* decodeCookieRows(raw), schemaVersion };
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath, readonly: true })));
 
-    const cookies: ChromiumCookie[] = [];
+    const cookies: ImportedCookie[] = [];
     let undecryptable = 0;
     const undecryptableHosts = new Set<string>();
     for (const row of rows.rows) {
@@ -279,13 +278,6 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
  * rows it could not. The count reaches the user as part of the skipped total
  * rather than disappearing.
  */
-export interface CookieReadResult {
-  readonly cookies: ReadonlyArray<ChromiumCookie>;
-  readonly undecryptable: number;
-  /** Distinct hosts of the rows that could not be decrypted. */
-  readonly undecryptableHosts: ReadonlyArray<string>;
-}
-
 export interface ChromiumCookieSource {
   readonly cookieDatabasePath: string;
   readonly keychainService: string;

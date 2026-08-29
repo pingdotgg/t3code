@@ -23,11 +23,8 @@ import * as Scope from "effect/Scope";
 import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as BrowserSession from "../BrowserSession.ts";
-import {
-  ChromiumCookieReadError,
-  readChromiumCookies,
-  type CookieReadResult,
-} from "./ChromiumCookies.ts";
+import { ChromiumCookieReadError, readChromiumCookies } from "./ChromiumCookies.ts";
+import type { CookieReadResult } from "./CookieDatabase.ts";
 import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,

@@ -1,63 +1,84 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Scope from "effect/Scope";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { snapshotCookieDatabase } from "./CookieDatabase.ts";
 
-const run = <A, E>(effect: Effect.Effect<A, E, never>) => effect;
+const runNode = <A, E>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Scope.Scope>,
+) => effect.pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("snapshotCookieDatabase", () => {
-  it.effect("copies the write-ahead sidecars alongside the database", () =>
-    run(
+  it.effect("includes committed WAL data in one consistent database", () =>
+    runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-snap-" });
-        const source = `${directory}/Cookies`;
-        yield* fileSystem.writeFileString(source, "db");
-        yield* fileSystem.writeFileString(`${source}-wal`, "wal");
-
-        const snapshot = yield* snapshotCookieDatabase(source);
-
-        assert.equal(yield* fileSystem.readFileString(snapshot), "db");
-        assert.equal(yield* fileSystem.readFileString(`${snapshot}-wal`), "wal");
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+        const path = yield* Path.Path;
+        const sourceDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-cookie-source-",
+        });
+        const source = path.join(sourceDirectory, "Cookies");
+        const snapshot = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`PRAGMA journal_mode = WAL`;
+          yield* sql`PRAGMA wal_autocheckpoint = 0`;
+          yield* sql`CREATE TABLE cookies(name TEXT NOT NULL)`;
+          yield* sql`INSERT INTO cookies(name) VALUES (${"committed-in-wal"})`;
+          expect(yield* fileSystem.exists(`${source}-wal`)).toBe(true);
+          return yield* snapshotCookieDatabase(source);
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: source })));
+        const rows = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql<{ readonly name: string }>`SELECT name FROM cookies`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshot, readonly: true })));
+        expect(rows).toEqual([{ name: "committed-in-wal" }]);
+      }),
     ),
   );
 
-  it.effect("treats an absent sidecar as normal", () =>
-    run(
+  it.effect("propagates snapshot failures and removes its temporary directory", () =>
+    runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-snap-" });
-        const source = `${directory}/Cookies`;
-        // A closed browser has already checkpointed its WAL away, which is the
-        // common case rather than a failure.
-        yield* fileSystem.writeFileString(source, "db");
-
-        const snapshot = yield* snapshotCookieDatabase(source);
-
-        assert.equal(yield* fileSystem.readFileString(snapshot), "db");
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+        const path = yield* Path.Path;
+        const sourceDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-cookie-invalid-source-",
+        });
+        const source = path.join(sourceDirectory, "Cookies");
+        yield* fileSystem.writeFileString(source, "not a sqlite database");
+        const prefix = `t3code-cookie-failed-${process.pid}-`;
+        const error = yield* snapshotCookieDatabase(source, prefix).pipe(
+          Effect.scoped,
+          Effect.flip,
+        );
+        expect(error._tag).toBe("SqlError");
+        const temporaryEntries = yield* fileSystem.readDirectory(path.dirname(sourceDirectory));
+        expect(temporaryEntries.some((entry) => entry.startsWith(prefix))).toBe(false);
+      }),
     ),
   );
 
-  it.effect("fails when a sidecar exists but cannot be read", () =>
-    run(
+  it.effect("removes a successful snapshot when its scope closes", () =>
+    runNode(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-snap-" });
-        const source = `${directory}/Cookies`;
-        yield* fileSystem.writeFileString(source, "db");
-        // A sidecar that is present but uncopyable, rather than absent.
-        yield* fileSystem.makeDirectory(`${source}-wal`);
-
-        // Ignoring this would open the snapshot without its write-ahead log
-        // and silently return a cookie set missing its newest transactions.
-        const error = yield* snapshotCookieDatabase(source).pipe(Effect.scoped, Effect.flip);
-
-        assert.notEqual(error.reason._tag, "NotFound");
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+        const path = yield* Path.Path;
+        const sourceDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-cookie-cleanup-source-",
+        });
+        const source = path.join(sourceDirectory, "Cookies");
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`CREATE TABLE cookies(name TEXT NOT NULL)`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: source })));
+        const snapshot = yield* snapshotCookieDatabase(source).pipe(Effect.scoped);
+        expect(yield* fileSystem.exists(snapshot)).toBe(false);
+      }),
     ),
   );
 });
