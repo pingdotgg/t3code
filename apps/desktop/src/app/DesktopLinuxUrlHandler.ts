@@ -11,9 +11,11 @@ import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
-// Linux ships as an AppImage, so the .desktop entry users end up with is
-// created by whatever integration tool they use (AppImageLauncher names it
-// appimagekit_<hash>-….desktop) and its filename is not under our control.
+// Linux release builds ship as an AppImage, while distro packages may launch
+// the app through a shared Electron executable. In either case the .desktop
+// entry users end up with may not be a stable protocol-handler identity.
+// AppImage integration tools, for example, name it
+// appimagekit_<hash>-….desktop, so its filename is not under our control.
 // Electron's app.setAsDefaultProtocolClient resolves the desktop id from
 // setDesktopName, which cannot match those files — so the browser keeps
 // prompting "Choose an application" for every OAuth callback. Instead, write
@@ -104,9 +106,13 @@ export const make = Effect.gen(function* () {
   );
 
   const writeDesktopEntry = Effect.gen(function* () {
+    // Distro packages can provide their launcher explicitly because
+    // process.execPath points at the shared Electron executable.
     // Inside the mounted AppImage, process.execPath points at a transient
     // /tmp/.mount_* path — the handler must launch the AppImage itself.
-    const execTarget = Option.getOrElse(environment.appImagePath, () => process.execPath);
+    const execTarget = Option.getOrElse(environment.desktopExecutable, () =>
+      Option.getOrElse(environment.appImagePath, () => process.execPath),
+    );
     yield* fileSystem.makeDirectory(environment.linuxApplicationsDir, { recursive: true });
     yield* fileSystem.writeFileString(
       desktopEntryPath,
@@ -162,7 +168,7 @@ export const make = Effect.gen(function* () {
   );
 
   const register = Effect.gen(function* () {
-    if (environment.platform !== "linux" || !environment.isPackaged) {
+    if (environment.platform !== "linux" || environment.isDevelopment) {
       return;
     }
     yield* writeDesktopEntry;

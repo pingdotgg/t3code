@@ -25,6 +25,7 @@ const makeEnvironment = (overrides: Record<string, unknown> = {}) =>
     displayName: "T3 Code (Alpha)",
     linuxWmClass: "t3code",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
+    desktopExecutable: Option.none(),
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
     path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
     ...overrides,
@@ -190,15 +191,40 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
-  it.effect("does nothing on other platforms or unpackaged builds", () => {
+  it.effect("prefers a configured distro launcher over AppImage metadata", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        environment: {
+          desktopExecutable: Option.some("/nix/store/t3code/bin/t3code-desktop"),
+        },
+      });
+
+      assert.include(recorded.files[0]?.content, 'Exec="/nix/store/t3code/bin/t3code-desktop" %U');
+    });
+  });
+
+  it.effect("registers unpackaged production builds", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, { environment: { isPackaged: false } });
+
+      assert.equal(recorded.files.length, 1);
+      assert.equal(recorded.commands.length, 1);
+    });
+  });
+
+  it.effect("does nothing on other platforms or development builds", () => {
     const nonLinux = emptyRecording();
-    const unpackaged = emptyRecording();
+    const development = emptyRecording();
 
     return Effect.gen(function* () {
       yield* runRegister(nonLinux, { environment: { platform: "darwin" } });
-      yield* runRegister(unpackaged, { environment: { isPackaged: false } });
+      yield* runRegister(development, { environment: { isDevelopment: true } });
 
-      for (const recorded of [nonLinux, unpackaged]) {
+      for (const recorded of [nonLinux, development]) {
         assert.deepEqual(recorded.directories, []);
         assert.deepEqual(recorded.files, []);
         assert.deepEqual(recorded.commands, []);

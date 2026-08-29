@@ -47,6 +47,7 @@ describe("DesktopEnvironment", () => {
           T3CODE_DEV_REMOTE_T3_SERVER_ENTRY_PATH: " /remote/server.mjs ",
           T3CODE_OTLP_TRACES_URL: " http://127.0.0.1:4318/v1/traces ",
           T3CODE_OTLP_EXPORT_INTERVAL_MS: "2500",
+          T3CODE_DESKTOP_EXECUTABLE: " /nix/store/t3code/bin/t3code-desktop ",
         },
       );
 
@@ -79,6 +80,10 @@ describe("DesktopEnvironment", () => {
       assert.deepEqual(environment.commitHashOverride, Option.some("0123456789abcdef"));
       assert.deepEqual(environment.otlpTracesUrl, Option.some("http://127.0.0.1:4318/v1/traces"));
       assert.equal(environment.otlpExportIntervalMs, 2500);
+      assert.deepEqual(
+        environment.desktopExecutable,
+        Option.some("/nix/store/t3code/bin/t3code-desktop"),
+      );
     }),
   );
 
