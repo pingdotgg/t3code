@@ -76,6 +76,13 @@ interface Props {
   ) => void;
 }
 
+export function previewProfileName(
+  profiles: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+  profileId: string,
+): string {
+  return profiles.find((profile) => profile.id === profileId)?.name ?? "Removed profile";
+}
+
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
 
 /**
@@ -154,7 +161,7 @@ export function PreviewView({
   // Passing the snapshot's raw `undefined` through would reach the IPC layer
   // as "every profile".
   const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
-  const activeProfile = browserDefaults.profiles.find((profile) => profile.id === activeProfileId);
+  const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
@@ -701,7 +708,7 @@ export function PreviewView({
           // Only when it differs from the default: labelling every tab
           // "Default" would be noise on the common case, while a tab in
           // another profile is exactly what needs calling out.
-          activeProfile && activeProfile.id !== browserDefaults.profileId ? (
+          activeProfileId !== browserDefaults.profileId ? (
             // Capped: profile names run to 48 characters, and an unbounded
             // badge in this row takes its width from the URL input, the only
             // flexible element in the compact chrome. The cap sits on the
@@ -711,9 +718,9 @@ export function PreviewView({
             // at both ends with no ellipsis.
             <Tooltip>
               <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
-                <span className="truncate">{activeProfile.name}</span>
+                <span className="truncate">{activeProfileName}</span>
               </TooltipTrigger>
-              <TooltipPopup side="top">{activeProfile.name}</TooltipPopup>
+              <TooltipPopup side="top">{activeProfileName}</TooltipPopup>
             </Tooltip>
           ) : null
         }
@@ -722,7 +729,7 @@ export function PreviewView({
             <PreviewMoreMenu
               environmentId={threadRef.environmentId}
               profileId={activeProfileId}
-              profileName={activeProfile?.name}
+              profileName={activeProfileName}
               tabId={runtimeTabId}
               hasWebContents={desktopOverlay?.hasWebContents ?? false}
               zoomFactor={desktopOverlay?.zoomFactor ?? 1}

@@ -712,8 +712,8 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Remove “{profilePendingRemoval?.name}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              Its cookies, logins, and cache are deleted with it. Tabs open in this profile move to
-              the default one.
+              Its cookies, logins, and cache are deleted with it. Tabs already open in this profile
+              stay open until you close them.
             </AlertDialogDescription>
             {profileRemovalError ? (
               <p aria-live="polite" className="text-sm text-destructive">
