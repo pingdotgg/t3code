@@ -2,10 +2,10 @@ import type { AuthClientPresentationMetadata } from "@t3tools/contracts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { appendClientConnectionParams } from "../authorization/remote.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -20,13 +20,10 @@ import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
   credentialMissingError,
   environmentMismatchError,
+  mapManagedRelayError,
   mapRemoteEnvironmentError,
   profileMissingError,
 } from "./errors.ts";
-import {
-  GitHubRoutingPermissions,
-  gitHubRoutingConnectionKey,
-} from "./githubRoutingPermissions.ts";
 import type {
   BearerConnectionTarget,
   ConnectionTarget,
@@ -207,20 +204,14 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       expectedEnvironmentId: target.environmentId,
       target: profile.target,
     });
-    const preparedProfile = new SshConnectionProfile({
-      connectionId: profile.connectionId,
-      environmentId: profile.environmentId,
-      label: profile.label,
-      target: prepared.bootstrap.target,
-    });
-    if (
-      gitHubRoutingConnectionKey(entry) !==
-      gitHubRoutingConnectionKey({ ...entry, profile: Option.some(preparedProfile) })
-    ) {
-      const permissions = yield* GitHubRoutingPermissions;
-      yield* permissions.forget(target.environmentId);
-    }
-    yield* profiles.put(preparedProfile);
+    yield* profiles.put(
+      new SshConnectionProfile({
+        connectionId: profile.connectionId,
+        environmentId: profile.environmentId,
+        label: profile.label,
+        target: prepared.bootstrap.target,
+      }),
+    );
     const authorized = yield* remote.authorizeBearer({
       expectedEnvironmentId: target.environmentId,
       httpBaseUrl: prepared.bootstrap.httpBaseUrl,
@@ -283,7 +274,10 @@ export const make = Effect.gen(function* () {
     if (compatibilityError !== null) {
       return yield* compatibilityError;
     }
-    return { ...prepared, socketUrl: appendOrchestrationProtocol(prepared.socketUrl) };
+    return {
+      ...prepared,
+      socketUrl: appendOrchestrationProtocol(prepared.socketUrl),
+    };
   });
 
   return ConnectionResolver.of({ prepare });
