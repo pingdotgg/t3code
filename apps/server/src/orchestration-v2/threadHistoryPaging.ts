@@ -43,6 +43,7 @@ export type BoundedProjectionResult = {
   readonly hasMoreHistory: boolean;
   /** Max ordinal across the authoritative full projection's local turnItems. */
   readonly latestLocalTurnOrdinal: number | null;
+  readonly payloadBudgetExceeded: boolean;
 };
 
 export class InvalidThreadHistoryCursorError extends Error {
@@ -387,6 +388,14 @@ export function buildBoundedThreadProjection(input: {
 }): BoundedProjectionResult {
   const policy = input.policy ?? THREAD_HISTORY_PAGE_POLICY;
   const threadId = input.projection.thread.id;
+  const controlProjection = {
+    ...input.projection,
+    plans: input.projection.plans.filter((plan) => plan.status === "active"),
+    contextHandoffs: input.projection.contextHandoffs.filter(
+      (handoff) => handoff.status === "pending" || handoff.status === "ready",
+    ),
+  };
+  const latestLocalTurnOrdinal = computeLatestLocalTurnOrdinal(input.projection.turnItems);
 
   // Reserve bytes for small interrupt-request dependencies that may sit outside
   // the recent window but are required for visibility of results inside it.
@@ -394,14 +403,23 @@ export function buildBoundedThreadProjection(input: {
     // Upper bound: all request items in the full projection. Window selection
     // uses this reserve so the final contribution stays under the cap.
     let reserve = 0;
-    for (const item of input.projection.turnItems) {
+    for (const item of controlProjection.turnItems) {
       if (item.type === "run_interrupt_request") {
         reserve += bytesOfJson(item);
       }
     }
     return reserve;
   })();
-  const windowBudget = Math.max(0, policy.maxEncodedBytes - dependencyReserve);
+  const controlBytes = bytesOfJson({
+    ...controlProjection,
+    messages: [],
+    turnItems: [],
+    visibleTurnItems: [],
+  });
+  const windowBudget = Math.max(
+    0,
+    policy.maxEncodedBytes - dependencyReserve - controlBytes - 1_024,
+  );
   const windowPolicy: ThreadHistoryPagePolicy = {
     maxItems: policy.maxItems,
     // Zero still admits the first row via the at-least-one rule.
@@ -409,14 +427,17 @@ export function buildBoundedThreadProjection(input: {
   };
 
   const window = selectRecentTimelineWindow({
-    items: input.projection.visibleTurnItems,
+    items: controlProjection.visibleTurnItems,
     snapshotSequence: input.snapshotSequence,
     policy: windowPolicy,
     rowEncodedBytes: (row) => projectedRowBoundedSnapshotEncodedBytes(row, threadId),
   });
   const visibleTurnItems = renumberPositions(window.items);
-  const windowTurnItems = localTurnItemsForVisibleWindow(input.projection, visibleTurnItems);
-  const dependencyTurnItems = retainedInterruptRequestTurnItems(input.projection, visibleTurnItems);
+  const windowTurnItems = localTurnItemsForVisibleWindow(controlProjection, visibleTurnItems);
+  const dependencyTurnItems = retainedInterruptRequestTurnItems(
+    controlProjection,
+    visibleTurnItems,
+  );
   const turnItemById = new Map<string, OrchestrationV2TurnItem>();
   for (const item of windowTurnItems) {
     turnItemById.set(String(item.id), item);
@@ -426,17 +447,51 @@ export function buildBoundedThreadProjection(input: {
   }
   const turnItems = [...turnItemById.values()];
 
+  const visiblePlanIds = new Set(
+    turnItems.flatMap((item) =>
+      item.type === "proposed_plan" || item.type === "todo_list" ? [String(item.planId)] : [],
+    ),
+  );
+  const visibleHandoffIds = new Set(
+    turnItems.flatMap((item) => (item.type === "handoff" ? [String(item.contextHandoffId)] : [])),
+  );
+  const plans = input.projection.plans
+    .filter((plan) => plan.status === "active" || visiblePlanIds.has(String(plan.id)))
+    .map((plan) =>
+      plan.status === "active"
+        ? plan
+        : plan.kind === "proposed_plan"
+          ? { ...plan, markdown: "", detailInTurnItem: true as const }
+          : { ...plan, explanation: undefined, detailInTurnItem: true as const },
+    );
+  const contextHandoffs = input.projection.contextHandoffs
+    .filter(
+      (handoff) =>
+        handoff.status === "pending" ||
+        handoff.status === "ready" ||
+        visibleHandoffIds.has(String(handoff.id)),
+    )
+    .map((handoff) =>
+      handoff.status === "pending" || handoff.status === "ready"
+        ? handoff
+        : { ...handoff, summaryText: "", detailInTurnItem: true as const },
+    );
+
+  const projection = {
+    ...controlProjection,
+    plans,
+    contextHandoffs,
+    messages: messagesForBoundedProjection(controlProjection, turnItems),
+    turnItems,
+    visibleTurnItems,
+  };
   return {
-    projection: {
-      ...input.projection,
-      messages: messagesForBoundedProjection(input.projection, turnItems),
-      turnItems,
-      visibleTurnItems,
-    },
+    projection,
     historyCursor: window.nextCursor,
     hasMoreHistory: window.hasMoreHistory,
     // Always from the full projection so inherited-only windows still carry a
     // watermark for partial live reducers.
-    latestLocalTurnOrdinal: computeLatestLocalTurnOrdinal(input.projection.turnItems),
+    latestLocalTurnOrdinal,
+    payloadBudgetExceeded: bytesOfJson(projection) > policy.maxEncodedBytes,
   };
 }
