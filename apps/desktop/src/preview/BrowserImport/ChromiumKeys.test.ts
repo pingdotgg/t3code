@@ -92,9 +92,9 @@ describe("Linux Chromium secrets", () => {
       const stdout = Stream.fromEffect(Deferred.await(stderrDrainStarted)).pipe(
         Stream.flatMap(() => Stream.encodeText(Stream.make("linux-secret\n"))),
       );
-      const stderr = Stream.fromEffect(
-        Deferred.succeed(stderrDrainStarted, undefined),
-      ).pipe(Stream.drain);
+      const stderr = Stream.fromEffect(Deferred.succeed(stderrDrainStarted, undefined)).pipe(
+        Stream.drain,
+      );
 
       const secret = yield* readLinuxSecret("chrome").pipe(
         Effect.provide(secretToolLayer({ stdoutStream: stdout, stderrStream: stderr })),

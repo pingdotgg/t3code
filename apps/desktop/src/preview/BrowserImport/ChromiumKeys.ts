@@ -136,13 +136,14 @@ export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(functio
           }),
         )
         .pipe(Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })));
-      const [stdout, stderr, exitCode] = yield* Effect.all([
-        handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
-        handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
-        handle.exitCode,
-      ], { concurrency: "unbounded" }).pipe(
-        Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })),
-      );
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
+          handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
+          handle.exitCode,
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })));
       // secret-tool terminates successful output with one newline. Remove
       // only that transport delimiter: spaces and tabs can be part of the
       // stored passphrase and must survive key derivation unchanged.
