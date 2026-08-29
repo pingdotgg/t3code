@@ -698,15 +698,17 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <Button
-                        size="icon-sm"
-                        variant="ghost-muted"
-                        disabled={disabled || !removalAvailable}
-                        aria-label={`Remove ${profile.name}`}
-                        onClick={() => setProfilePendingRemoval(profile)}
-                      >
-                        <Trash2Icon />
-                      </Button>
+                      <span className="inline-flex" {...(!removalAvailable ? { tabIndex: 0 } : {})}>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost-muted"
+                          disabled={disabled || !removalAvailable}
+                          aria-label={`Remove ${profile.name}`}
+                          onClick={() => setProfilePendingRemoval(profile)}
+                        >
+                          <Trash2Icon />
+                        </Button>
+                      </span>
                     }
                   />
                   <TooltipPopup side="top">
