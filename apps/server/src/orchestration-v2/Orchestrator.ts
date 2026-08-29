@@ -2202,6 +2202,48 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
 
+    if (command.policyCeiling !== undefined) {
+      const ceiling = command.policyCeiling;
+      const callerProjection =
+        ceiling.callerThreadId === command.sourceThreadId
+          ? sourceProjection
+          : ceiling.callerThreadId === command.targetThreadId
+            ? targetProjection
+            : yield* projectionStore.getThreadProjection(ceiling.callerThreadId).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestratorProjectionError({
+                      threadId: ceiling.callerThreadId,
+                      cause,
+                    }),
+                ),
+              );
+      if (
+        runtimeModeRank(targetProjection.thread.runtimeMode) >
+          runtimeModeRank(ceiling.runtimeMode) ||
+        runtimeModeRank(targetProjection.thread.runtimeMode) >
+          runtimeModeRank(callerProjection.thread.runtimeMode)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Merge-back target runtime mode ${targetProjection.thread.runtimeMode} exceeds the caller ceiling.`,
+        });
+      }
+      if (
+        interactionModeRank(targetProjection.thread.interactionMode) >
+          interactionModeRank(ceiling.interactionMode) ||
+        interactionModeRank(targetProjection.thread.interactionMode) >
+          interactionModeRank(callerProjection.thread.interactionMode)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Merge-back target interaction mode ${targetProjection.thread.interactionMode} exceeds the caller ceiling.`,
+        });
+      }
+    }
+
     if (
       sourceProjection.thread.lineage.relationshipToParent !== "fork" ||
       sourceProjection.thread.lineage.parentThreadId !== command.targetThreadId
@@ -7267,7 +7309,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.policyCeiling === undefined ? [] : [command.policyCeiling.callerThreadId]),
           ]
         : command.type === "thread.merge_back"
-          ? [command.sourceThreadId, command.targetThreadId]
+          ? [
+              command.sourceThreadId,
+              command.targetThreadId,
+              ...(command.policyCeiling === undefined
+                ? []
+                : [command.policyCeiling.callerThreadId]),
+            ]
           : [commandThreadId(command)];
     return [...new Set(keys)].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0));
   };

@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
   ConversationForkResult,
+  ConversationMergeBackResult,
   ConversationTransferListResult,
   EnvironmentId,
   IsoDateTime,
@@ -98,6 +99,7 @@ const queuedFollowupResult = "Queued delegated follow-up completed.";
 
 const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
 const decodeConversationForkResult = Schema.decodeUnknownEffect(ConversationForkResult);
+const decodeConversationMergeBackResult = Schema.decodeUnknownEffect(ConversationMergeBackResult);
 const decodeConversationTransferListResult = Schema.decodeUnknownEffect(
   ConversationTransferListResult,
 );
@@ -399,7 +401,39 @@ function makeDeterministicAdapter(input: {
           readThreadSnapshot: () =>
             unsupported(input.driver, "readThreadSnapshot is unused in this test"),
           rollbackThread: () => unsupported(input.driver, "rollbackThread is unused in this test"),
-          forkThread: () => unsupported(input.driver, "forkThread is unused in this test"),
+          forkThread: (forkInput) =>
+            DateTime.now.pipe(
+              Effect.map(
+                (createdAt) =>
+                  ({
+                    ...forkInput.sourceProviderThread,
+                    id: ProviderThreadId.make(
+                      `provider-thread:${input.instanceId}:${forkInput.targetThreadId}:fork`,
+                    ),
+                    providerSessionId: sessionInput.providerSessionId,
+                    appThreadId: forkInput.targetThreadId,
+                    ownerNodeId: forkInput.ownerNodeId ?? null,
+                    nativeThreadRef: {
+                      driver: input.driver,
+                      nativeId: `native-fork:${forkInput.targetThreadId}`,
+                      strength: "strong",
+                    },
+                    nativeConversationHeadRef: null,
+                    status: "idle",
+                    firstRunOrdinal: null,
+                    lastRunOrdinal: null,
+                    handoffIds: [],
+                    forkedFrom: {
+                      providerThreadId: forkInput.sourceProviderThread.id,
+                      ...(forkInput.providerTurnId === undefined
+                        ? {}
+                        : { providerTurnId: forkInput.providerTurnId }),
+                    },
+                    createdAt,
+                    updatedAt: createdAt,
+                  }) satisfies OrchestrationV2ProviderThread,
+              ),
+            ),
         };
       }),
   };
@@ -2132,6 +2166,203 @@ describe("orchestrator MCP toolkit", () => {
               scope: "current_project",
               hasMore: false,
               transfers: [{ id: forked.transfer.id, type: "fork", status: "pending" }],
+            });
+
+            const forkSendCall = yield* invoke("t3_thread_send", {
+              threadId: forkedThreadId,
+              message: "Produce the result that will merge back.",
+              clientRequestId: "fork-result-for-merge-back",
+            });
+            expect(forkSendCall.isError).toBe(false);
+            const forkSend = yield* decodeThreadSendResult(forkSendCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            const forkWaitCall = yield* invoke("t3_thread_wait", {
+              threadId: forkedThreadId,
+              runId: forkSend.runId,
+              timeoutMs: 10_000,
+            });
+            const forkWait = yield* decodeThreadWaitResult(forkWaitCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(forkWait.status).toBe("completed");
+
+            const mergeBackInput = {
+              sourceThreadId: forkedThreadId,
+              targetThreadId: promptedThread.threadId,
+              sourcePoint: { type: "latest_stable" },
+              clientRequestId: "merge-fork-result-back",
+            } as const;
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-merge:lower-caller-runtime"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-merge:lower-caller-interaction"),
+              threadId: parentThreadId,
+              interactionMode: "plan",
+            });
+            const deniedMergeBackCall = yield* invoke("t3_thread_merge_back", {
+              ...mergeBackInput,
+              clientRequestId: "merge-fork-result-back-denied-ceiling",
+            });
+            expect(deniedMergeBackCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "runtime_mode_escalation_denied",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-merge:restore-caller-runtime"),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-merge:restore-caller-interaction"),
+              threadId: parentThreadId,
+              interactionMode: "default",
+            });
+            const deniedMergeAtMutation = yield* orchestrator
+              .dispatch({
+                type: "thread.merge_back",
+                createdBy: "agent",
+                creationSource: "mcp",
+                commandId: CommandId.make("command:mcp-merge:denied-policy-ceiling"),
+                sourceThreadId: forkedThreadId,
+                targetThreadId: promptedThread.threadId,
+                sourcePoint: { type: "latest_stable" },
+                policyCeiling: {
+                  callerThreadId: parentThreadId,
+                  runtimeMode: "approval-required",
+                  interactionMode: "plan",
+                },
+              })
+              .pipe(Effect.flip);
+            expect(deniedMergeAtMutation._tag).toBe("OrchestratorDispatchError");
+            const mergeBackCall = yield* invoke("t3_thread_merge_back", mergeBackInput);
+            expect(mergeBackCall.isError).toBe(false);
+            const mergeBack = yield* decodeConversationMergeBackResult(
+              mergeBackCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(mergeBack).toMatchObject({
+              sourceThreadId: forkedThreadId,
+              targetThreadId: promptedThread.threadId,
+              scope: "fork_delta_through_source_point",
+              requestedSourcePoint: { type: "latest_stable" },
+              transfer: { type: "merge_back", status: "pending" },
+              consumption: "next_target_turn",
+              receipt: { commandType: "thread.merge_back" },
+            });
+            expect(mergeBack.basePoint.runId).toBe(forked.canonicalSourcePoint.runId);
+
+            const repeatedMergeBackCall = yield* invoke("t3_thread_merge_back", mergeBackInput);
+            const repeatedMergeBack = yield* decodeConversationMergeBackResult(
+              repeatedMergeBackCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(repeatedMergeBack.transfer.id).toBe(mergeBack.transfer.id);
+            expect(repeatedMergeBack.receipt).toEqual(mergeBack.receipt);
+
+            const replacementMergeCall = yield* invoke("t3_thread_merge_back", {
+              ...mergeBackInput,
+              clientRequestId: "merge-fork-result-back-replacement",
+            });
+            const replacementMerge = yield* decodeConversationMergeBackResult(
+              replacementMergeCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(replacementMerge.transfer.id).not.toBe(mergeBack.transfer.id);
+            expect(replacementMerge.supersededTransferIds).toContain(mergeBack.transfer.id);
+
+            const mergeTransfersCall = yield* invoke("t3_thread_transfers", {
+              threadId: promptedThread.threadId,
+              type: "merge_back",
+              limit: 1,
+            });
+            const mergeTransfers = yield* decodeConversationTransferListResult(
+              mergeTransfersCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(mergeTransfers.transfers[0]).toMatchObject({
+              id: replacementMerge.transfer.id,
+              sourceThreadId: forkedThreadId,
+              targetThreadId: promptedThread.threadId,
+              status: "pending",
+            });
+
+            const consumeMergeText = "Consume the selected merge-back delta.";
+            const consumeMergeCall = yield* invoke("t3_thread_send", {
+              threadId: promptedThread.threadId,
+              message: consumeMergeText,
+              clientRequestId: "consume-selected-merge-back",
+            });
+            const consumeMerge = yield* decodeThreadSendResult(
+              consumeMergeCall.structuredContent,
+            ).pipe(Effect.orDie);
+            const consumeMergeWaitCall = yield* invoke("t3_thread_wait", {
+              threadId: promptedThread.threadId,
+              runId: consumeMerge.runId,
+              timeoutMs: 10_000,
+            });
+            const consumeMergeWait = yield* decodeThreadWaitResult(
+              consumeMergeWaitCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(consumeMergeWait.status).toBe("completed");
+            const consumedTurn = (yield* Ref.get(capturedTurns)).findLast(
+              (turn) =>
+                turn.threadId === promptedThread.threadId && turn.text.includes(consumeMergeText),
+            );
+            expect(consumedTurn?.text).toContain(
+              "Context handoff (merge_back / fork_delta_summary):",
+            );
+            expect(consumedTurn?.text).toContain(
+              "Claude completed: Produce the result that will merge back.",
+            );
+            const targetAfterMergeConsumption = yield* orchestrator.getThreadProjection(
+              promptedThread.threadId,
+            );
+            expect(
+              targetAfterMergeConsumption.contextTransfers.find(
+                (transfer) => transfer.id === replacementMerge.transfer.id,
+              )?.status,
+            ).toBe("consumed");
+            expect(
+              targetAfterMergeConsumption.contextTransfers.find(
+                (transfer) => transfer.id === mergeBack.transfer.id,
+              )?.status,
+            ).toBe("superseded");
+            expect(
+              targetAfterMergeConsumption.contextHandoffs.some(
+                (handoff) => handoff.transferId === replacementMerge.transfer.id,
+              ),
+            ).toBe(true);
+            expect(
+              targetAfterMergeConsumption.contextHandoffs.some(
+                (handoff) => handoff.transferId === mergeBack.transfer.id,
+              ),
+            ).toBe(false);
+
+            yield* orchestrator.dispatch({
+              type: "thread.delete",
+              commandId: CommandId.make("command:mcp-merge:delete-source-after-acceptance"),
+              threadId: forkedThreadId,
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.archive",
+              commandId: CommandId.make("command:mcp-merge:archive-target-after-consumption"),
+              threadId: promptedThread.threadId,
+            });
+            const lifecycleReplayCall = yield* invoke("t3_thread_merge_back", mergeBackInput);
+            expect(lifecycleReplayCall.isError).toBe(false);
+            const lifecycleReplay = yield* decodeConversationMergeBackResult(
+              lifecycleReplayCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(lifecycleReplay.transfer.id).toBe(mergeBack.transfer.id);
+            expect(lifecycleReplay.receipt).toEqual(mergeBack.receipt);
+            yield* orchestrator.dispatch({
+              type: "thread.unarchive",
+              commandId: CommandId.make("command:mcp-merge:restore-target-after-replay"),
+              threadId: promptedThread.threadId,
             });
 
             const ordinaryLoopPrompt = "Run an ordinary thread loop iteration.";

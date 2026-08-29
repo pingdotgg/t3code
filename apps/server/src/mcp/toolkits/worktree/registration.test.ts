@@ -4,11 +4,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
+import { CommandReceiptStoreV2 } from "../../../orchestration-v2/CommandReceiptStore.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
@@ -22,6 +24,9 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 
 const StubServicesLive = Layer.mergeAll(
   Layer.mock(ThreadManagementService)({}),
+  Layer.mock(CommandReceiptStoreV2)({
+    getByCommandId: () => Effect.succeed(Option.none()),
+  }),
   Layer.mock(ProviderRegistry)({}),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(ProjectService.ProjectService)({}),
@@ -116,6 +121,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       expect(toolNames).toContain("delegate_task");
       expect(toolNames).toContain("t3_thread_transfers");
       expect(toolNames).toContain("t3_thread_fork");
+      expect(toolNames).toContain("t3_thread_merge_back");
 
       // The handoff tool mutates thread state, reaches the network (origin
       // fetch), and runs project setup scripts, so its MCP hints must not
@@ -132,6 +138,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       expect(transfers?.annotations?.destructiveHint).toBe(false);
       const fork = tools.find((tool) => tool.name === "t3_thread_fork");
       expect(fork?.annotations?.destructiveHint).toBe(true);
+      const mergeBack = tools.find((tool) => tool.name === "t3_thread_merge_back");
+      expect(mergeBack?.annotations?.destructiveHint).toBe(true);
 
       // MCP requires every tool input schema to be a top-level object schema.
       // A non-object schema (e.g. the anyOf produced by an empty

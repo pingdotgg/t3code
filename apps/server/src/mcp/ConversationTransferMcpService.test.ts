@@ -9,9 +9,11 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import { CommandReceiptStoreV2 } from "../orchestration-v2/CommandReceiptStore.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as ConversationTransfer from "./ConversationTransferMcpService.ts";
@@ -31,6 +33,11 @@ function projection(input: {
       projectId,
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: input.threadId,
+      },
     },
     runs: [],
     contextTransfers: [],
@@ -52,15 +59,21 @@ function testLayer(input: {
   readonly source: OrchestrationV2ThreadProjection;
   readonly dispatch: ThreadManagementService["Service"]["dispatch"];
   readonly getThreadProjection?: ThreadManagementService["Service"]["getThreadProjection"];
+  readonly getReceipt?: CommandReceiptStoreV2["Service"]["getByCommandId"];
 }) {
   return ConversationTransfer.layer.pipe(
     Layer.provide(
-      Layer.mock(ThreadManagementService)({
-        getThreadProjection: input.getThreadProjection ?? (() => Effect.succeed(input.parent)),
-        getProjectThread: ({ threadId }) =>
-          Effect.succeed(threadId === parentThreadId ? input.parent : input.source),
-        dispatch: input.dispatch,
-      }),
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService)({
+          getThreadProjection: input.getThreadProjection ?? (() => Effect.succeed(input.parent)),
+          getProjectThread: ({ threadId }) =>
+            Effect.succeed(threadId === parentThreadId ? input.parent : input.source),
+          dispatch: input.dispatch,
+        }),
+        Layer.mock(CommandReceiptStoreV2)({
+          getByCommandId: input.getReceipt ?? (() => Effect.succeed(Option.none())),
+        }),
+      ),
     ),
   );
 }
@@ -217,5 +230,33 @@ describe("ConversationTransferMcpService", () => {
         assert.equal(error.code, "orchestration_error");
         assert.equal(yield* Ref.get(dispatched), 0);
       }),
+  );
+
+  it.effect("rejects merge-back from a thread without fork provenance", () =>
+    Effect.gen(function* () {
+      const parent = projection({
+        threadId: parentThreadId,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const error = yield* Effect.gen(function* () {
+        const service = yield* ConversationTransfer.ConversationTransferMcpService;
+        return yield* service
+          .mergeBack(scope(), {
+            sourcePoint: { type: "latest_stable" },
+            clientRequestId: "not-a-fork",
+          })
+          .pipe(Effect.flip);
+      }).pipe(
+        Effect.provide(
+          testLayer({
+            parent,
+            source: parent,
+            dispatch: () => Effect.die("dispatch should not run"),
+          }),
+        ),
+      );
+      assert.equal(error.code, "invalid_request");
+    }),
   );
 });
