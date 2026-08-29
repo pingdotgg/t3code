@@ -1,6 +1,5 @@
 import { SymbolView } from "../components/AppSymbol";
 import { Image, Pressable, ScrollView, View } from "react-native";
-import { useThemeColor } from "../lib/useThemeColor";
 
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 
@@ -24,7 +23,6 @@ export interface ComposerAttachmentStripProps {
  * buttons.  Used by both the thread composer and the new-task draft screen.
  */
 export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
-  const subtleBg = useThemeColor("--color-subtle");
   const size = props.imageSize ?? 72;
   const radius = props.imageBorderRadius ?? 16;
   const removeButtonPlacement = props.removeButtonPlacement ?? "overlay";
@@ -56,11 +54,11 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
             >
               <Image
                 source={{ uri: image.previewUri }}
+                className="bg-subtle"
                 style={{
                   width: size,
                   height: size,
                   borderRadius: radius,
-                  backgroundColor: subtleBg,
                 }}
                 resizeMode="cover"
               />
