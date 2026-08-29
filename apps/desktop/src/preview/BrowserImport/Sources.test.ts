@@ -32,6 +32,26 @@ import {
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
 
+describe("Linux Chromium secret applications", () => {
+  it("pins the libsecret application attribute for each supported fork", () => {
+    assert.deepEqual(
+      Object.fromEntries(
+        BROWSER_IMPORT_SOURCES.filter((source) => source.platforms.includes("linux")).map(
+          (source) => [source.id, source.linuxSecretApplication],
+        ),
+      ),
+      {
+        chrome: "chrome",
+        edge: "msedge",
+        brave: "brave",
+        vivaldi: "vivaldi",
+        opera: "opera",
+        firefox: undefined,
+      },
+    );
+  });
+});
+
 /** A scratch home with the source's user-data directory already created. */
 const withSourceHome = Effect.fnUntraced(function* () {
   const fileSystem = yield* FileSystem.FileSystem;

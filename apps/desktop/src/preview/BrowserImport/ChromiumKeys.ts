@@ -22,6 +22,8 @@ import * as NodeCrypto from "node:crypto";
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const KEY_SALT = "saltysalt";
 const KEY_LENGTH = 16;
@@ -69,8 +71,7 @@ const derive = (passphrase: string, iterations: number) =>
   NodeCrypto.pbkdf2Sync(passphrase, KEY_SALT, iterations, KEY_LENGTH, "sha1");
 
 /**
- * Reads the OSCrypt secret from the login keychain (macOS) or libsecret/kwallet
- * (Linux).
+ * Reads the macOS OSCrypt secret from the login keychain.
  *
  * Uses the in-process Keychain API rather than shelling out to
  * `/usr/bin/security`, because macOS attributes both the consent prompt and the
@@ -107,15 +108,65 @@ const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function
   return secret;
 });
 
+const secretToolFailure = (stderr: string): ChromiumKeyFailure => {
+  if (stderr.trim() === "" || /no such secret|not found/i.test(stderr)) {
+    return "keychainItemMissing";
+  }
+  if (/denied|locked|cancel|dismiss|permission/i.test(stderr)) {
+    return "needsKeychainApproval";
+  }
+  return "readFailed";
+};
+
+/**
+ * Chromium's Linux backend uses a custom libsecret schema keyed by its
+ * `application` attribute. `secret-tool lookup` performs that same attribute
+ * search through Secret Service and keeps its normal unlock/consent prompt.
+ */
+export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(function* (
+  application: string,
+) {
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const handle = yield* spawner
+        .spawn(
+          ChildProcess.make("secret-tool", ["lookup", "application", application], {
+            stdin: "ignore",
+          }),
+        )
+        .pipe(Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })));
+      const [stdout, stderr, exitCode] = yield* Effect.all([
+        handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
+        handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
+        handle.exitCode,
+      ]).pipe(Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })));
+      const secret = stdout.trimEnd();
+      if (Number(exitCode) !== 0) {
+        return yield* new ChromiumKeyError({ reason: secretToolFailure(stderr) });
+      }
+      if (secret === "") {
+        return yield* new ChromiumKeyError({ reason: "keychainItemMissing" });
+      }
+      return secret;
+    }),
+  );
+});
+
 export interface ChromiumKeyRequest {
   readonly platform: NodeJS.Platform;
   readonly keychainService: string | undefined;
   readonly keychainAccount: string | undefined;
+  readonly linuxSecretApplication: string | undefined;
 }
 
 export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")(function* (
   request: ChromiumKeyRequest,
-): Effect.fn.Return<ChromiumKeyMaterial, ChromiumKeyError, never> {
+): Effect.fn.Return<
+  ChromiumKeyMaterial,
+  ChromiumKeyError,
+  ChildProcessSpawner.ChildProcessSpawner
+> {
   if (request.platform === "darwin") {
     if (!request.keychainService || !request.keychainAccount) {
       return yield* new ChromiumKeyError({ reason: "unsupportedPlatform" });
@@ -128,13 +179,13 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
     // The fallback passphrase always applies to `v10` records; a keyring
     // secret, when one is reachable, additionally unlocks `v11`. Failing to
     // reach the keyring is not fatal — it just leaves those records skipped.
-    const keyringSecret =
-      request.keychainService && request.keychainAccount
-        ? yield* readKeychainSecret(request.keychainService, request.keychainAccount).pipe(
-            // No Secret Service, locked keyring, or a differently-keyed entry.
-            Effect.orElseSucceed(() => undefined),
-          )
-        : undefined;
+    const keyringSecret = request.linuxSecretApplication
+      ? yield* readLinuxSecret(request.linuxSecretApplication).pipe(
+          // v10 remains importable when Secret Service is absent, locked, or
+          // does not contain a key for this browser.
+          Effect.orElseSucceed(() => undefined),
+        )
+      : undefined;
     return {
       cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
       ...(keyringSecret ? { cbcV11: derive(keyringSecret, LINUX_KEY_ITERATIONS) } : {}),

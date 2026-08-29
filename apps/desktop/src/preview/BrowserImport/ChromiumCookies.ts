@@ -22,6 +22,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   ChromiumKeyError,
@@ -180,6 +181,7 @@ export interface ChromiumCookieSource {
   readonly cookieDatabasePath: string;
   readonly keychainService: string | undefined;
   readonly keychainAccount: string | undefined;
+  readonly linuxSecretApplication: string | undefined;
   /** Supplied by the caller from `HostProcessPlatform` rather than read here. */
   readonly platform: NodeJS.Platform;
 }
@@ -189,12 +191,13 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
 ): Effect.fn.Return<
   CookieReadResult,
   ChromiumCookieReadError,
-  FileSystem.FileSystem | Path.Path | Scope.Scope
+  FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
 > {
   const keys = yield* resolveChromiumKeys({
     platform: source.platform,
     keychainService: source.keychainService,
     keychainAccount: source.keychainAccount,
+    linuxSecretApplication: source.linuxSecretApplication,
   }).pipe(
     Effect.mapError(
       (cause: ChromiumKeyError) =>
