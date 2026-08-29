@@ -35,7 +35,6 @@ import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as ServerSettingsService from "../serverSettings.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
-import { ProjectMcpService } from "./ProjectMcpService.ts";
 import * as ProjectMcp from "./ProjectMcpService.ts";
 
 const scope: McpInvocationScope = {
@@ -142,7 +141,7 @@ it.effect("creates, reads, and updates project defaults through the project MCP 
     );
 
     yield* Effect.gen(function* () {
-      const service = yield* ProjectMcpService;
+      const service = yield* ProjectMcp.ProjectMcpService;
       const invalidKey = yield* service
         .create(scope, {
           title: "Invalid key",
@@ -217,7 +216,7 @@ it.effect("loads response settings before committing project mutations", () =>
     );
 
     yield* Effect.gen(function* () {
-      const service = yield* ProjectMcpService;
+      const service = yield* ProjectMcp.ProjectMcpService;
       const error = yield* service
         .create(scope, {
           title: "Uncommitted project",
@@ -342,7 +341,7 @@ it.effect("clones before registration and requires explicit cascading for nonemp
     );
 
     yield* Effect.gen(function* () {
-      const service = yield* ProjectMcpService;
+      const service = yield* ProjectMcp.ProjectMcpService;
       const created = yield* service.create(scope, {
         title: project.title,
         source: {
@@ -458,7 +457,7 @@ it.effect("serializes project deletion against new thread claims", () =>
     );
 
     yield* Effect.gen(function* () {
-      const service = yield* ProjectMcpService;
+      const service = yield* ProjectMcp.ProjectMcpService;
       const deletion = yield* Effect.forkChild(
         service.delete(scope, { projectId, clientRequestId: "delete-launch-race" }),
         { startImmediately: true },
@@ -573,7 +572,7 @@ it.effect("serializes delegated thread admission with cascading project deletion
     );
 
     yield* Effect.gen(function* () {
-      const projects = yield* ProjectMcpService;
+      const projects = yield* ProjectMcp.ProjectMcpService;
       const threads = yield* ThreadManagementService;
       yield* threads.dispatch({
         type: "thread.create",
@@ -712,7 +711,7 @@ it.effect("paginates summaries before loading project files and reads settings o
     );
 
     yield* Effect.gen(function* () {
-      const service = yield* ProjectMcpService;
+      const service = yield* ProjectMcp.ProjectMcpService;
       const page = yield* service.list(scope, { cursor: 10, limit: 5 });
       expect(page).toMatchObject({ nextCursor: 15, totalCount: 40 });
       expect(page.projects.map((project) => project.id)).toEqual(
@@ -789,7 +788,7 @@ it.effect("serializes overlapping create retries with the same idempotency key",
     };
 
     yield* Effect.gen(function* () {
-      const service = yield* ProjectMcpService;
+      const service = yield* ProjectMcp.ProjectMcpService;
       const first = yield* Effect.forkChild(service.create(scope, input), {
         startImmediately: true,
       });
@@ -876,7 +875,7 @@ it.effect("retries registration after a completed clone without changing the pro
     };
 
     yield* Effect.gen(function* () {
-      const service = yield* ProjectMcpService;
+      const service = yield* ProjectMcp.ProjectMcpService;
       const firstFailure = yield* service.create(scope, input).pipe(Effect.flip);
       expect(firstFailure).toBeInstanceOf(ProjectMcpFailure);
       const retried = yield* service.create(scope, input);
