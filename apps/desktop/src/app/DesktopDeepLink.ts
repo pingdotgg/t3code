@@ -140,6 +140,7 @@ export const make = Effect.gen(function* () {
 
   // Last-wins buffer for links that arrive before any renderer subscribes.
   const pending = yield* Ref.make<Option.Option<DesktopThreadDeepLinkPayload>>(Option.none());
+  const generation = yield* Ref.make(0);
 
   // Renderer webContents that completed the subscribe handshake, oldest
   // first. A subscriber has mounted its deep-link listener, so a push cannot
@@ -171,8 +172,9 @@ export const make = Effect.gen(function* () {
 
   const subscribe = (sender: DesktopIpc.DesktopIpcSenderWebContents | undefined) =>
     Effect.gen(function* () {
+      const currentGeneration = yield* Ref.get(generation);
       if (sender === undefined || sender.isDestroyed()) {
-        return null;
+        return { payload: null, generation: currentGeneration };
       }
       yield* Effect.sync(() => {
         if (!subscribers.includes(sender)) {
@@ -181,7 +183,10 @@ export const make = Effect.gen(function* () {
         }
       });
       const payload = yield* Ref.getAndSet(pending, Option.none());
-      return Option.getOrNull(payload);
+      return {
+        payload: Option.getOrNull(payload),
+        generation: currentGeneration,
+      };
     });
 
   // The renderer's preload invokes this when its deep-link listener tears
@@ -206,6 +211,7 @@ export const make = Effect.gen(function* () {
 
       const open = (payload: DesktopThreadDeepLinkPayload) =>
         Effect.gen(function* () {
+          yield* Ref.update(generation, (value) => value + 1);
           const subscriber = latestLiveSubscriber();
           if (subscriber === null) {
             yield* Ref.set(pending, Option.some(payload));
@@ -275,15 +281,24 @@ export const make = Effect.gen(function* () {
           channel: DEEP_LINK_REQUEUE_CHANNEL,
           handler: (raw) => {
             const payload = raw as Record<string, unknown> | null;
+            const requeuedPayload = payload?.payload as Record<string, unknown> | null | undefined;
+            const environmentId = requeuedPayload?.environmentId;
+            const threadId = requeuedPayload?.threadId;
             if (
               payload === null ||
               typeof payload !== "object" ||
-              typeof payload.environmentId !== "string" ||
-              typeof payload.threadId !== "string"
+              requeuedPayload === null ||
+              typeof requeuedPayload !== "object" ||
+              typeof environmentId !== "string" ||
+              typeof threadId !== "string" ||
+              typeof payload.generation !== "number"
             ) {
               return Effect.succeed(null);
             }
-            return open({ environmentId: payload.environmentId, threadId: payload.threadId });
+            return Effect.gen(function* () {
+              if ((yield* Ref.get(generation)) !== payload.generation) return null;
+              return yield* open({ environmentId, threadId });
+            });
           },
         })
         .pipe(

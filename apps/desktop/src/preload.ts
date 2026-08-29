@@ -150,14 +150,23 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     // (cold start) — or null.
     ipcRenderer
       .invoke(IpcChannels.DEEP_LINK_SUBSCRIBE_CHANNEL)
-      .then((payload) => {
+      .then((result) => {
+        const response =
+          typeof result === "object" && result !== null && "payload" in result
+            ? (result as { payload?: unknown; generation?: unknown })
+            : { payload: result, generation: null };
         if (active) {
-          deliver(payload);
+          deliver(response.payload);
           return;
         }
-        const parsed = parsePayload(payload);
-        if (parsed !== null) {
-          ipcRenderer.invoke(IpcChannels.DEEP_LINK_REQUEUE_CHANNEL, parsed).catch(() => undefined);
+        const parsed = parsePayload(response.payload);
+        if (parsed !== null && typeof response.generation === "number") {
+          ipcRenderer
+            .invoke(IpcChannels.DEEP_LINK_REQUEUE_CHANNEL, {
+              payload: parsed,
+              generation: response.generation,
+            })
+            .catch(() => undefined);
         }
       })
       .catch(() => undefined);

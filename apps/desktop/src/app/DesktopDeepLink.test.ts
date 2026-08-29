@@ -248,7 +248,10 @@ const subscribeAs = (harness: TestHarness, fake: FakeSender) =>
   Effect.gen(function* () {
     const handler = harness.ipcHandlers.get(DEEP_LINK_SUBSCRIBE_CHANNEL);
     assert.isDefined(handler);
-    return yield* handler!(undefined, { sender: fake.sender });
+    const result = yield* handler!(undefined, { sender: fake.sender });
+    return typeof result === "object" && result !== null && "payload" in result
+      ? result.payload
+      : result;
   });
 
 const unsubscribeAs = (harness: TestHarness, fake: FakeSender) =>
@@ -432,9 +435,40 @@ describe("DesktopDeepLink", () => {
       yield* subscribeAs(harness, renderer);
       yield* unsubscribeAs(harness, renderer);
 
-      yield* requeue(harness, renderer, PAYLOAD);
+      yield* requeue(harness, renderer, { payload: PAYLOAD, generation: 0 });
 
       assert.deepEqual(yield* subscribeAs(harness, next), PAYLOAD);
+    });
+  });
+
+  it.effect("does not requeue an older subscribe result over a newer link", () => {
+    const harness = makeHarness();
+    const renderer = makeSender(7);
+    const next = makeSender(9);
+
+    return Effect.gen(function* () {
+      yield* configureWith(makeServices(harness));
+      yield* subscribeAs(harness, renderer);
+      yield* unsubscribeAs(harness, renderer);
+
+      const openUrl = harness.listeners.get("open-url");
+      assert.isDefined(openUrl);
+      openUrl!({ preventDefault: vi.fn() }, `t3code://app/${ENVIRONMENT_ID}/${THREAD_ID}`);
+      yield* settleDelivery;
+      const staleResult = yield* harness.ipcHandlers.get(DEEP_LINK_SUBSCRIBE_CHANNEL)!(undefined, {
+        sender: renderer.sender,
+      });
+      assert.deepEqual(staleResult, { payload: PAYLOAD, generation: 1 });
+      yield* unsubscribeAs(harness, renderer);
+
+      openUrl!({ preventDefault: vi.fn() }, `t3code://app/${ENVIRONMENT_ID}/${OTHER_THREAD_ID}`);
+      yield* settleDelivery;
+      yield* requeue(harness, renderer, staleResult);
+
+      assert.deepEqual(yield* subscribeAs(harness, next), {
+        environmentId: ENVIRONMENT_ID,
+        threadId: OTHER_THREAD_ID,
+      });
     });
   });
 
