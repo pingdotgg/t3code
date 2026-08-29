@@ -314,8 +314,16 @@ export const importBrowserCookies = DesktopIpc.makeIpcMethod({
     const browserImport = yield* BrowserImport.BrowserImport;
     // Derived in main from the same helper the webview config uses, so cookies
     // land in exactly the partition the profile's tabs attach to.
-    const { scope, persistent } = resolvePartitionScope(environmentId, importInput.targetProfileId);
-    return yield* browserImport.importCookies({ input: importInput, scope, persistent });
+    const { scope, persistent, namespace } = resolvePartitionScope(
+      environmentId,
+      importInput.targetProfileId,
+    );
+    return yield* browserImport.importCookies({
+      input: importInput,
+      scope,
+      persistent,
+      ...(namespace === undefined ? {} : { namespace }),
+    });
   }),
 });
 

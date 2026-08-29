@@ -72,6 +72,7 @@ export class BrowserImport extends Context.Service<
       /** Partition scope of the target profile, derived by the caller in main. */
       readonly scope: string;
       readonly persistent: boolean;
+      readonly namespace?: BrowserSession.BrowserSessionPartitionNamespace;
     }) => Effect.Effect<BrowserImportResult, BrowserImportFailedError>;
   }
 >()("@t3tools/desktop/preview/BrowserImport/BrowserImport") {}
@@ -163,6 +164,7 @@ export const make = Effect.gen(function* BrowserImportMake() {
     readonly input: BrowserImportInput;
     readonly scope: string;
     readonly persistent: boolean;
+    readonly namespace?: BrowserSession.BrowserSessionPartitionNamespace;
   }) {
     const definition = BROWSER_IMPORT_SOURCES.find(
       (candidate) => candidate.id === input.input.sourceId,
@@ -220,16 +222,18 @@ export const make = Effect.gen(function* BrowserImportMake() {
       ),
     );
 
-    const session = yield* browserSession.getSession(input.scope, input.persistent).pipe(
-      Effect.mapError(
-        (cause) =>
-          new BrowserImportFailedError({
-            sourceId: definition.id,
-            reason: "sessionUnavailable",
-            cause,
-          }),
-      ),
-    );
+    const session = yield* browserSession
+      .getSession(input.scope, input.persistent, input.namespace)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new BrowserImportFailedError({
+              sourceId: definition.id,
+              reason: "sessionUnavailable",
+              cause,
+            }),
+        ),
+      );
 
     // Written one at a time rather than in parallel: Chromium's cookie store
     // serialises writes anyway, and a rejected cookie should only cost itself.
