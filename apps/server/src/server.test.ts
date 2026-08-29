@@ -1484,6 +1484,58 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("rejects WebSocket-only turn bootstrap over HTTP with a typed error", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const response = yield* HttpClient.post("/api/orchestration/dispatch", {
+        headers: {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+        },
+        body: yield* HttpBody.json({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-http-bootstrap-turn-start"),
+          threadId: ThreadId.make("thread-http-bootstrap"),
+          message: {
+            messageId: MessageId.make("msg-http-bootstrap"),
+            role: "user",
+            text: "hello",
+            attachments: [],
+          },
+          modelSelection: defaultModelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          bootstrap: {
+            createThread: {
+              projectId: defaultProjectId,
+              title: "Bootstrap Thread",
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: "main",
+              worktreePath: null,
+              createdAt,
+            },
+          },
+          createdAt,
+        }),
+      });
+      const body = (yield* response.json) as {
+        readonly _tag: string;
+        readonly code: string;
+        readonly reason: string;
+        readonly traceId: string;
+      };
+
+      assert.equal(response.status, 400);
+      assert.equal(body._tag, "EnvironmentRequestInvalidError");
+      assert.equal(body.code, "invalid_request");
+      assert.equal(body.reason, "http_bootstrap_not_supported");
+      assert.equal(typeof body.traceId, "string");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("serves static index content for GET / when staticDir is configured", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
