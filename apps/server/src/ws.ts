@@ -1222,18 +1222,12 @@ const makeWsRpcLayer = (
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
-              // Archive and settle both mean "done with this thread", so a
-              // live provider session must not keep running background work
-              // (PR monitors, dev servers, subagent fleets) after either
-              // lands. The decider rejects settling a starting/running
-              // session, so for settle this only ever stops an idle one; a
-              // stopped session-set does not count as activity, so the stop
-              // cannot un-settle the thread it follows.
+              // Archive removes the thread from the client, so this transport
+              // closes its session and terminals after the command lands.
+              // Settlement cleanup is driven by thread.settled events in the
+              // provider reactor, including settlements that have no client.
               const parkingCommand =
-                normalizedCommand.type === "thread.archive" ||
-                normalizedCommand.type === "thread.settle"
-                  ? normalizedCommand
-                  : undefined;
+                normalizedCommand.type === "thread.archive" ? normalizedCommand : undefined;
               // Best-effort on purpose: the user's archive/settle must not
               // fail because this cleanup read blipped, so a failed read
               // logs and skips the stop instead of propagating.
@@ -1259,7 +1253,7 @@ const makeWsRpcLayer = (
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
               if (parkingCommand) {
-                const parkingKind = parkingCommand.type === "thread.archive" ? "archive" : "settle";
+                const parkingKind = "archive";
                 if (shouldStopSessionAfterCommand) {
                   yield* Effect.gen(function* () {
                     const stopCommand = yield* normalizeDispatchCommand({
@@ -1269,12 +1263,6 @@ const makeWsRpcLayer = (
                       ),
                       threadId: parkingCommand.threadId,
                       createdAt: yield* nowIso,
-                      // A settled thread can be re-engaged before this stop is
-                      // decided; the decider then drops the stop instead of
-                      // killing the new session. Archive stops stay
-                      // unconditional: turn starts on archived threads are
-                      // rejected, so there is no new session to protect.
-                      ...(parkingKind === "settle" ? { onlyIfSettled: true } : {}),
                     });
 
                     yield* dispatchNormalizedCommand(stopCommand);
@@ -1292,16 +1280,14 @@ const makeWsRpcLayer = (
                 // work: archive removes the thread from view so they close
                 // with it, but a settled thread stays reachable and may be
                 // un-settled, so its terminals stay up.
-                if (parkingCommand.type === "thread.archive") {
-                  yield* terminalManager.close({ threadId: parkingCommand.threadId }).pipe(
-                    Effect.catch((error) =>
-                      Effect.logWarning("failed to close thread terminals after archive", {
-                        threadId: parkingCommand.threadId,
-                        error: error.message,
-                      }),
-                    ),
-                  );
-                }
+                yield* terminalManager.close({ threadId: parkingCommand.threadId }).pipe(
+                  Effect.catch((error) =>
+                    Effect.logWarning("failed to close thread terminals after archive", {
+                      threadId: parkingCommand.threadId,
+                      error: error.message,
+                    }),
+                  ),
+                );
               }
               return result;
             }).pipe(

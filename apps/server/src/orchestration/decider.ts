@@ -450,15 +450,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
-    case "thread.settle": {
+    case "thread.settle":
+    case "thread.auto-settle": {
       const thread = yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
-      // Server-side twin of the client's canSettle session check: a stale
-      // or raced client must not settle a thread whose session is coming
-      // alive or working.
+      if (
+        command.type === "thread.auto-settle" &&
+        (thread.updatedAt !== command.expectedUpdatedAt || thread.settledOverride !== null)
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} changed before automatic settlement`,
+          }),
+        );
+      }
+      // The server owns settle eligibility. A stale command must not settle
+      // a thread whose session is coming alive or working.
       if (thread.session?.status === "starting" || thread.session?.status === "running") {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({

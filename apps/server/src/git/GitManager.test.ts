@@ -974,6 +974,144 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("branch PR lookup returns null when the repository has no remotes", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const { manager, ghCalls } = yield* makeManager();
+
+      const pullRequest = yield* manager.branchPullRequest({ cwd: repoDir, branch: "main" });
+
+      expect(pullRequest).toBeNull();
+      expect(ghCalls).toHaveLength(0);
+    }),
+  );
+
+  it.effect("branch PR lookup uses a saved tracked branch without changing checkout", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/saved-branch"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/saved-branch"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 216,
+                title: "Saved branch PR",
+                url: "https://github.com/pingdotgg/t3code/pull/216",
+                baseRefName: "main",
+                headRefName: "feature/saved-branch",
+                state: "OPEN",
+                updatedAt: "2026-04-03T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const pullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/saved-branch",
+      });
+
+      expect(pullRequest).toEqual({
+        state: "open",
+        updatedAt: "2026-04-03T15:00:00.000Z",
+      });
+      expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
+    }),
+  );
+
+  it.effect("branch PR lookup uses the saved name after the local branch is deleted", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/deleted-local-branch"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/deleted-local-branch"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/deleted-local-branch"]);
+      yield* runGit(repoDir, ["branch", "feature/deleted-local-branch/child"]);
+      yield* runGit(repoDir, [
+        "branch",
+        "--set-upstream-to",
+        "origin/main",
+        "feature/deleted-local-branch/child",
+      ]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 217,
+                title: "Deleted local branch PR",
+                url: "https://github.com/pingdotgg/t3code/pull/217",
+                baseRefName: "main",
+                headRefName: "feature/deleted-local-branch",
+                state: "MERGED",
+                updatedAt: "2026-04-04T15:00:00Z",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const pullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/deleted-local-branch",
+      });
+
+      expect(pullRequest).toEqual({
+        state: "merged",
+        updatedAt: "2026-04-04T15:00:00.000Z",
+      });
+      expect(ghCalls.some((call) => call.includes("--head feature/deleted-local-branch"))).toBe(
+        true,
+      );
+    }),
+  );
+
+  it.effect("branch PR lookup propagates provider failures", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/lookup-failure"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/lookup-failure"]);
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          failWith: new GitHubCli.GitHubCliUnavailableError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("gh is not available on PATH"),
+          }),
+        },
+      });
+
+      const error = yield* manager
+        .branchPullRequest({ cwd: repoDir, branch: "feature/lookup-failure" })
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("SourceControlProviderError");
+    }),
+  );
+
   it.effect("status finds a merged PR after its remote branch was deleted", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

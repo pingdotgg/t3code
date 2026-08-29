@@ -10,6 +10,14 @@ confirmation applies to the sidebar controls, thread menus, and the `mod+shift+p
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.
 
+Each environment owns its automatic settlement settings. The server checks them even when no web,
+desktop, or mobile client is connected. By default, it settles threads after three days without
+activity and when their pull request merges. An eligible idle thread also settles when its pull
+request closes. An open pull request blocks inactivity settlement. Active work, pending input, and
+a manual un-settle keep the thread active. Change these rules in **Settings > General** for the
+environment. A settings change affects future settlement and does not reopen a settled thread.
+Settings saved by older clients on one device no longer control this behavior.
+
 When you un-settle a thread, it returns to the top of the active list so you can find it right
 away. Its timestamps do not change. Other threads keep their positions.
 
