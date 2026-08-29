@@ -1,6 +1,7 @@
 import {
   EventId,
   ProviderDriverKind,
+  ProviderInstanceId,
   RuntimeTaskId,
   ThreadId,
   type ProviderRuntimeEvent,
@@ -16,6 +17,31 @@ const base = {
 };
 
 describe("runtimeEventToActivities task progress", () => {
+  it("persists modelProvider on typed agent lifecycle rows", () => {
+    const event = {
+      ...base,
+      type: "task.started",
+      eventId: EventId.make("evt-agent-provider"),
+      providerInstanceId: ProviderInstanceId.make("codex_glm53"),
+      payload: {
+        taskId: RuntimeTaskId.make("glm-child-1"),
+        title: "glm_worker_1",
+        role: "researcher",
+        modelProvider: "openrouter",
+        model: "z-ai/glm-5.3-flash",
+        effort: "max",
+      },
+    } satisfies ProviderRuntimeEvent;
+
+    const [activity] = runtimeEventToActivities(event);
+    expect(activity?.payload).toMatchObject({
+      agentKind: "agent",
+      modelProvider: "openrouter",
+      model: "z-ai/glm-5.3-flash",
+      effort: "max",
+    });
+  });
+
   it("persists usage independently from replaceable activity", () => {
     const taskId = RuntimeTaskId.make("agent-1");
     const usageOnly = {

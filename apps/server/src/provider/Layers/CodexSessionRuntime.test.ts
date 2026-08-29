@@ -17,6 +17,8 @@ import {
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
+  codexChildProfileMismatch,
+  codexProfileMismatch,
   describeMcpElicitation,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
@@ -39,6 +41,53 @@ describe("CodexSessionRuntimeIdentifierGenerationError", () => {
     NodeAssert.equal(
       error.message,
       "Failed to generate Codex App Server identifier for provider-event.",
+    );
+  });
+});
+
+describe("Codex effective profile verification", () => {
+  const expected = {
+    modelProvider: "openrouter",
+    model: "z-ai/glm-5.3-flash",
+    reasoningEffort: "max",
+  } as const;
+
+  it("accepts only the exact provider, model, and effort", () => {
+    NodeAssert.equal(
+      codexProfileMismatch({ scope: "parent", expected, actual: expected }),
+      undefined,
+    );
+    const mismatch = codexProfileMismatch({
+      scope: "native child 'child-1'",
+      expected,
+      actual: { ...expected, reasoningEffort: "high" },
+    });
+    NodeAssert.equal(mismatch?._tag, "CodexSessionRuntimeProfileMismatchError");
+    NodeAssert.match(mismatch?.message ?? "", /received openrouter\/z-ai\/glm-5\.3-flash\/high/);
+  });
+
+  it("accepts High or Max for native same-model children and rejects other efforts", () => {
+    const childProfile = {
+      modelProvider: expected.modelProvider,
+      model: expected.model,
+      reasoningEfforts: ["high", "max"],
+    } as const;
+    NodeAssert.equal(
+      codexChildProfileMismatch({
+        scope: "native child 'child-1'",
+        expected: childProfile,
+        actual: { ...expected, reasoningEffort: "high" },
+      }),
+      undefined,
+    );
+    const mismatch = codexChildProfileMismatch({
+      scope: "native child 'child-2'",
+      expected: childProfile,
+      actual: { ...expected, reasoningEffort: "medium" },
+    });
+    NodeAssert.match(
+      mismatch?.message ?? "",
+      /expected openrouter\/z-ai\/glm-5\.3-flash\/high\|max/,
     );
   });
 });

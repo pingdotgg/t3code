@@ -49,6 +49,8 @@ export interface CodexAppServerPatchedProtocolOptions {
 export interface CodexAppServerPatchedProtocol {
   readonly incomingNotifications: Stream.Stream<CodexAppServerIncomingNotification>;
   readonly incomingRequests: Stream.Stream<CodexAppServerIncomingRequest>;
+  /** In-flight client requests awaiting a response. Primarily a lifecycle diagnostic. */
+  readonly pendingRequestCount: Effect.Effect<number>;
   readonly request: (
     method: string,
     payload?: unknown,
@@ -414,6 +416,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     return {
       incomingNotifications: Stream.fromQueue(incomingNotifications),
       incomingRequests: Stream.fromQueue(incomingRequests),
+      pendingRequestCount: Ref.get(pending).pipe(Effect.map((current) => current.size)),
       request,
       notify,
       respond,

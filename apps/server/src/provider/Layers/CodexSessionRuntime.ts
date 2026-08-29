@@ -38,6 +38,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
+import type { CodexAuthorizedChildProfile, CodexEffectiveProfile } from "./CodexNativeProfile.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
@@ -139,10 +140,19 @@ const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffe
 );
 const CodexChildResumeMetadata = Schema.Struct({
   thread: Schema.Struct({ id: Schema.String }),
-  model: Schema.String,
+  modelProvider: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  model: Schema.optionalKey(Schema.NullOr(Schema.String)),
   reasoningEffort: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 const decodeCodexChildResumeMetadata = Schema.decodeUnknownEffect(CodexChildResumeMetadata);
+
+// Profile proof reads are control-plane RPCs against a local app-server. Give
+// each parent read two seconds and each child read three seconds, with two
+// retries. This tolerates one slow or malformed response while bounding the
+// parent blast radius at six seconds and an individual child at nine seconds.
+const CODEX_PARENT_PROFILE_PROOF_ATTEMPT_TIMEOUT = "2 seconds" as const;
+const CODEX_CHILD_PROFILE_PROOF_ATTEMPT_TIMEOUT = "3 seconds" as const;
+const CODEX_PROFILE_PROOF_RETRIES = 2;
 
 export type CodexTurnStartParamsWithCollaborationMode =
   typeof CodexTurnStartParamsWithCollaborationMode.Type;
@@ -166,6 +176,8 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  readonly expectedProfile?: CodexEffectiveProfile;
+  readonly expectedChildProfile?: CodexAuthorizedChildProfile;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -221,7 +233,152 @@ export type CodexSessionRuntimeError =
   | CodexSessionRuntimePendingApprovalNotFoundError
   | CodexSessionRuntimePendingUserInputNotFoundError
   | CodexSessionRuntimeInvalidUserInputAnswersError
-  | CodexSessionRuntimeThreadIdMissingError;
+  | CodexSessionRuntimeThreadIdMissingError
+  | CodexSessionRuntimeProfileMismatchError
+  | CodexSessionRuntimeProfileProofError;
+
+export class CodexSessionRuntimeProfileProofError extends Schema.TaggedErrorClass<CodexSessionRuntimeProfileProofError>()(
+  "CodexSessionRuntimeProfileProofError",
+  {
+    scope: Schema.String,
+    operation: Schema.String,
+    causeTag: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Codex ${this.scope} profile proof failed during ${this.operation} after bounded retries (${this.causeTag})`;
+  }
+}
+
+function codexProfileProofCauseTag(cause: unknown): string {
+  if (typeof cause === "object" && cause !== null && "_tag" in cause) {
+    const tag = (cause as { readonly _tag?: unknown })._tag;
+    if (typeof tag === "string" && tag.length > 0) return tag;
+  }
+  if (cause instanceof Error && cause.name.length > 0) return cause.name;
+  return "UnknownProfileProofError";
+}
+
+function codexProfileProofError(
+  scope: string,
+  cause: unknown,
+): CodexSessionRuntimeProfileProofError {
+  return new CodexSessionRuntimeProfileProofError({
+    scope,
+    operation: "thread/resume",
+    causeTag: codexProfileProofCauseTag(cause),
+    cause,
+  });
+}
+
+export class CodexSessionRuntimeProfileMismatchError extends Schema.TaggedErrorClass<CodexSessionRuntimeProfileMismatchError>()(
+  "CodexSessionRuntimeProfileMismatchError",
+  {
+    scope: Schema.String,
+    expectedModelProvider: Schema.String,
+    expectedModel: Schema.String,
+    expectedReasoningEffort: Schema.String,
+    actualModelProvider: Schema.String,
+    actualModel: Schema.String,
+    actualReasoningEffort: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Codex ${this.scope} profile mismatch: expected ${this.expectedModelProvider}/${this.expectedModel}/${this.expectedReasoningEffort}, received ${this.actualModelProvider}/${this.actualModel}/${this.actualReasoningEffort}`;
+  }
+}
+
+export function codexProfileMismatch(input: {
+  readonly scope: string;
+  readonly expected: CodexEffectiveProfile;
+  readonly actual: {
+    readonly modelProvider: string | null | undefined;
+    readonly model: string | null | undefined;
+    readonly reasoningEffort: string | null | undefined;
+  };
+}): CodexSessionRuntimeProfileMismatchError | undefined {
+  const actualModelProvider = nonEmptyMetadataValue(input.actual.modelProvider) ?? "<missing>";
+  const actualModel = nonEmptyMetadataValue(input.actual.model) ?? "<missing>";
+  const actualReasoningEffort = nonEmptyMetadataValue(input.actual.reasoningEffort) ?? "<missing>";
+  if (
+    actualModelProvider === input.expected.modelProvider &&
+    actualModel === input.expected.model &&
+    actualReasoningEffort === input.expected.reasoningEffort
+  ) {
+    return undefined;
+  }
+  return new CodexSessionRuntimeProfileMismatchError({
+    scope: input.scope,
+    expectedModelProvider: input.expected.modelProvider,
+    expectedModel: input.expected.model,
+    expectedReasoningEffort: input.expected.reasoningEffort,
+    actualModelProvider,
+    actualModel,
+    actualReasoningEffort,
+  });
+}
+
+export function codexChildProfileMismatch(input: {
+  readonly scope: string;
+  readonly expected: CodexAuthorizedChildProfile;
+  readonly actual: {
+    readonly modelProvider: string | null | undefined;
+    readonly model: string | null | undefined;
+    readonly reasoningEffort: string | null | undefined;
+  };
+}): CodexSessionRuntimeProfileMismatchError | undefined {
+  const actualModelProvider = nonEmptyMetadataValue(input.actual.modelProvider) ?? "<missing>";
+  const actualModel = nonEmptyMetadataValue(input.actual.model) ?? "<missing>";
+  const actualReasoningEffort = nonEmptyMetadataValue(input.actual.reasoningEffort) ?? "<missing>";
+  if (
+    actualModelProvider === input.expected.modelProvider &&
+    actualModel === input.expected.model &&
+    input.expected.reasoningEfforts.includes(actualReasoningEffort)
+  ) {
+    return undefined;
+  }
+  return new CodexSessionRuntimeProfileMismatchError({
+    scope: input.scope,
+    expectedModelProvider: input.expected.modelProvider,
+    expectedModel: input.expected.model,
+    expectedReasoningEffort: input.expected.reasoningEfforts.join("|"),
+    actualModelProvider,
+    actualModel,
+    actualReasoningEffort,
+  });
+}
+
+export function codexParentOpenProfileMismatch(input: {
+  readonly expected: CodexEffectiveProfile;
+  readonly authorizedReasoningEfforts: ReadonlyArray<string>;
+  readonly actual: {
+    readonly modelProvider: string | null | undefined;
+    readonly model: string | null | undefined;
+    readonly reasoningEffort: string | null | undefined;
+  };
+}): CodexSessionRuntimeProfileMismatchError | undefined {
+  const actualModelProvider = nonEmptyMetadataValue(input.actual.modelProvider) ?? "<missing>";
+  const actualModel = nonEmptyMetadataValue(input.actual.model) ?? "<missing>";
+  const actualReasoningEffort = nonEmptyMetadataValue(input.actual.reasoningEffort);
+  if (
+    actualModelProvider === input.expected.modelProvider &&
+    actualModel === input.expected.model &&
+    (actualReasoningEffort === undefined ||
+      input.authorizedReasoningEfforts.includes(actualReasoningEffort))
+  ) {
+    return undefined;
+  }
+  return new CodexSessionRuntimeProfileMismatchError({
+    scope: "parent open",
+    expectedModelProvider: input.expected.modelProvider,
+    expectedModel: input.expected.model,
+    expectedReasoningEffort: input.authorizedReasoningEfforts.join("|"),
+    actualModelProvider,
+    actualModel,
+    actualReasoningEffort: actualReasoningEffort ?? "<missing>",
+  });
+}
 
 export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
   "CodexSessionRuntimePendingApprovalNotFoundError",
@@ -913,6 +1070,7 @@ interface CollabChildAgentState {
 }
 
 interface CollabChildMetadataState {
+  readonly modelProvider: string | undefined;
   readonly model: string | undefined;
   readonly effort: string | undefined;
   readonly lookupStarted: boolean;
@@ -928,6 +1086,7 @@ function collabChildIdentity(
     ...(child.nickname ? { nickname: child.nickname } : {}),
     ...(child.role ? { role: child.role } : {}),
     ...(child.agentPath ? { agentPath: child.agentPath } : {}),
+    ...(metadata?.modelProvider ? { modelProvider: metadata.modelProvider } : {}),
     ...(metadata?.model ? { model: metadata.model } : {}),
     ...(metadata?.effort ? { effort: metadata.effort } : {}),
   };
@@ -1206,6 +1365,7 @@ export const makeCodexSessionRuntime = (
             }),
         ),
       );
+    const appServerProcess = child;
 
     const clientContext = yield* CodexClient.layerChildProcess(child).pipe(
       Layer.build,
@@ -1264,32 +1424,45 @@ export const makeCodexSessionRuntime = (
 
     const updateCollabChildMetadata = (
       agentThreadId: string,
-      update: { readonly model?: string; readonly effort?: string },
+      update: {
+        readonly modelProvider?: string;
+        readonly model?: string;
+        readonly effort?: string;
+      },
       overwriteKnown: boolean,
     ) =>
       Ref.modify(collabChildMetadataRef, (current) => {
         const previous = current.get(agentThreadId) ?? {
+          modelProvider: undefined,
           model: undefined,
           effort: undefined,
           lookupStarted: false,
           closed: false,
         };
+        const modelProvider =
+          update.modelProvider && (overwriteKnown || !previous.modelProvider)
+            ? update.modelProvider
+            : previous.modelProvider;
         const model =
           update.model && (overwriteKnown || !previous.model) ? update.model : previous.model;
         const effort =
           update.effort && (overwriteKnown || !previous.effort) ? update.effort : previous.effort;
-        const changed = model !== previous.model || effort !== previous.effort;
+        const changed =
+          modelProvider !== previous.modelProvider ||
+          model !== previous.model ||
+          effort !== previous.effort;
         if (!changed) {
           return [false, current] as const;
         }
         const next = new Map(current);
-        next.set(agentThreadId, { ...previous, model, effort });
+        next.set(agentThreadId, { ...previous, modelProvider, model, effort });
         return [true, next] as const;
       });
 
     const markCollabChildClosed = (agentThreadId: string) =>
       Ref.update(collabChildMetadataRef, (current) => {
         const previous = current.get(agentThreadId) ?? {
+          modelProvider: undefined,
           model: undefined,
           effort: undefined,
           lookupStarted: false,
@@ -1331,11 +1504,107 @@ export const makeCodexSessionRuntime = (
       });
     });
 
+    const terminateUnverifiedCollabChild = Effect.fn(
+      "CodexSessionRuntime.terminateUnverifiedCollabChild",
+    )(function* (agentThreadId: string) {
+      const child = (yield* Ref.get(collabChildAgentsRef)).get(agentThreadId);
+      const metadata = (yield* Ref.get(collabChildMetadataRef)).get(agentThreadId);
+      const liveTurnId = (yield* Ref.get(collabChildLiveTurnsRef)).get(agentThreadId);
+      if (liveTurnId) {
+        yield* client
+          .request("turn/interrupt", { threadId: agentThreadId, turnId: liveTurnId })
+          .pipe(Effect.timeoutOption("1 second"), Effect.ignore);
+      }
+      // thread/archive is the narrow app-server operation addressed to one
+      // thread. It prevents an unverified child from remaining resident while
+      // preserving the parent and verified siblings.
+      yield* client
+        .request("thread/archive", { threadId: agentThreadId })
+        .pipe(Effect.timeoutOption("1 second"), Effect.retry({ times: 1 }), Effect.ignore);
+      yield* markCollabChildClosed(agentThreadId);
+      yield* Ref.update(collabChildLiveTurnsRef, (current) => {
+        const next = new Map(current);
+        next.delete(agentThreadId);
+        return next;
+      });
+      return { child, metadata } as const;
+    });
+
+    const failClosedCollabChildProfile = Effect.fn(
+      "CodexSessionRuntime.failClosedCollabChildProfile",
+    )(function* (
+      agentThreadId: string,
+      actual: {
+        readonly modelProvider?: string;
+        readonly model?: string;
+        readonly effort?: string;
+      },
+      authoritative = true,
+    ) {
+      if (!options.expectedChildProfile) return false;
+      if (!authoritative) {
+        const knownFieldMismatch =
+          (actual.modelProvider !== undefined &&
+            actual.modelProvider !== options.expectedChildProfile.modelProvider) ||
+          (actual.model !== undefined && actual.model !== options.expectedChildProfile.model) ||
+          (actual.effort !== undefined &&
+            !options.expectedChildProfile.reasoningEfforts.includes(actual.effort));
+        const allFieldsPresent =
+          actual.modelProvider !== undefined &&
+          actual.model !== undefined &&
+          actual.effort !== undefined;
+        if (!knownFieldMismatch && !allFieldsPresent) return false;
+      }
+      const mismatch = codexChildProfileMismatch({
+        scope: `native child '${agentThreadId}'`,
+        expected: options.expectedChildProfile,
+        actual: {
+          modelProvider: actual.modelProvider,
+          model: actual.model,
+          reasoningEffort: actual.effort,
+        },
+      });
+      if (!mismatch) return false;
+      const { child, metadata } = yield* terminateUnverifiedCollabChild(agentThreadId);
+      yield* emitEvent({
+        kind: "notification",
+        threadId: options.threadId,
+        ...(child?.spawnTurnId ? { turnId: child.spawnTurnId } : {}),
+        method: "collabAgent/profileMismatch",
+        payload: {
+          ...(child ? collabChildIdentity(child, metadata) : { agentThreadId }),
+          ...actual,
+          error: mismatch.message,
+        },
+      });
+      return true;
+    });
+
+    const failClosedCollabChildProfileProof = Effect.fn(
+      "CodexSessionRuntime.failClosedCollabChildProfileProof",
+    )(function* (agentThreadId: string, cause: unknown) {
+      if (!options.expectedChildProfile) return;
+      const proofError = codexProfileProofError(`native child '${agentThreadId}'`, cause);
+      const { child, metadata } = yield* terminateUnverifiedCollabChild(agentThreadId);
+      yield* emitEvent({
+        kind: "notification",
+        threadId: options.threadId,
+        ...(child?.spawnTurnId ? { turnId: child.spawnTurnId } : {}),
+        method: "collabAgent/profileProofFailed",
+        payload: {
+          ...(child ? collabChildIdentity(child, metadata) : { agentThreadId }),
+          error: proofError.message,
+          errorTag: proofError.causeTag,
+        },
+      });
+    });
+
     const startCollabChildMetadataLookup = Effect.fn(
       "CodexSessionRuntime.startCollabChildMetadataLookup",
     )(function* (agentThreadId: string) {
       const shouldStart = yield* Ref.modify(collabChildMetadataRef, (current) => {
         const previous = current.get(agentThreadId) ?? {
+          modelProvider: undefined,
           model: undefined,
           effort: undefined,
           lookupStarted: false,
@@ -1354,11 +1623,10 @@ export const makeCodexSessionRuntime = (
 
       // The child is already loaded. This rejoins it without starting a turn,
       // and excludeTurns avoids loading or replaying its history.
-      yield* client.raw
+      const lookup = client.raw
         .request("thread/resume", { threadId: agentThreadId, excludeTurns: true })
         .pipe(
           Effect.flatMap(decodeCodexChildResumeMetadata),
-          Effect.timeout("5 seconds"),
           Effect.flatMap((response) =>
             Effect.gen(function* () {
               if (response.thread.id !== agentThreadId) {
@@ -1369,11 +1637,22 @@ export const makeCodexSessionRuntime = (
               if (!child || metadata?.closed) {
                 return;
               }
+              const modelProvider = nonEmptyMetadataValue(response.modelProvider);
               const model = nonEmptyMetadataValue(response.model);
               const effort = nonEmptyMetadataValue(response.reasoningEffort);
+              if (
+                yield* failClosedCollabChildProfile(agentThreadId, {
+                  ...(modelProvider ? { modelProvider } : {}),
+                  ...(model ? { model } : {}),
+                  ...(effort ? { effort } : {}),
+                })
+              ) {
+                return;
+              }
               const changed = yield* updateCollabChildMetadata(
                 agentThreadId,
                 {
+                  ...(modelProvider ? { modelProvider } : {}),
                   ...(model ? { model } : {}),
                   ...(effort ? { effort } : {}),
                 },
@@ -1384,9 +1663,18 @@ export const makeCodexSessionRuntime = (
               }
             }),
           ),
-          Effect.catch(() => Effect.void),
-          Effect.forkIn(runtimeScope),
         );
+      yield* (
+        options.expectedChildProfile
+          ? lookup.pipe(
+              Effect.timeout(CODEX_CHILD_PROFILE_PROOF_ATTEMPT_TIMEOUT),
+              Effect.retry({ times: CODEX_PROFILE_PROOF_RETRIES }),
+            )
+          : lookup.pipe(Effect.timeout("5 seconds"))
+      ).pipe(
+        Effect.catch((cause) => failClosedCollabChildProfileProof(agentThreadId, cause)),
+        Effect.forkIn(runtimeScope),
+      );
     });
 
     const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
@@ -1563,13 +1851,34 @@ export const makeCodexSessionRuntime = (
               ? notification.params.threadSettings.model
               : notification.params.toModel,
           );
+          const previousMetadata = (yield* Ref.get(collabChildMetadataRef)).get(
+            providerConversationId,
+          );
           const effort =
             notification.method === "thread/settings/updated"
               ? nonEmptyMetadataValue(notification.params.threadSettings.effort)
-              : undefined;
+              : previousMetadata?.effort;
+          const modelProvider =
+            notification.method === "thread/settings/updated"
+              ? nonEmptyMetadataValue(notification.params.threadSettings.modelProvider)
+              : previousMetadata?.modelProvider;
+          if (
+            yield* failClosedCollabChildProfile(
+              providerConversationId,
+              {
+                ...(modelProvider ? { modelProvider } : {}),
+                ...(model ? { model } : {}),
+                ...(effort ? { effort } : {}),
+              },
+              false,
+            )
+          ) {
+            return true;
+          }
           const changed = yield* updateCollabChildMetadata(
             providerConversationId,
             {
+              ...(modelProvider ? { modelProvider } : {}),
               ...(model ? { model } : {}),
               ...(effort ? { effort } : {}),
             },
@@ -2246,6 +2555,22 @@ export const makeCodexSessionRuntime = (
       });
 
       const providerThreadId = opened.thread.id;
+      const mismatch = options.expectedProfile
+        ? codexParentOpenProfileMismatch({
+            expected: options.expectedProfile,
+            authorizedReasoningEfforts: options.expectedChildProfile?.reasoningEfforts ?? [
+              options.expectedProfile.reasoningEffort,
+            ],
+            actual: {
+              modelProvider: opened.modelProvider,
+              model: opened.model,
+              reasoningEffort: opened.reasoningEffort,
+            },
+          })
+        : undefined;
+      if (mismatch) {
+        return yield* mismatch;
+      }
       const session = {
         ...(yield* Ref.get(sessionRef)),
         status: "ready",
@@ -2333,6 +2658,52 @@ export const makeCodexSessionRuntime = (
             ),
           );
           const turnId = TurnId.make(response.turn.id);
+          if (options.expectedProfile) {
+            const expectedTurnProfile: CodexEffectiveProfile = {
+              modelProvider: options.expectedProfile.modelProvider,
+              model: normalizedModel ?? options.expectedProfile.model,
+              reasoningEffort: input.effort ?? options.expectedProfile.reasoningEffort,
+            };
+            const readback = yield* client.raw
+              .request("thread/resume", {
+                threadId: providerThreadId,
+                excludeTurns: true,
+              })
+              .pipe(
+                Effect.flatMap(decodeCodexChildResumeMetadata),
+                Effect.timeout(CODEX_PARENT_PROFILE_PROOF_ATTEMPT_TIMEOUT),
+                Effect.retry({ times: CODEX_PROFILE_PROOF_RETRIES }),
+                Effect.result,
+              );
+            if (readback._tag === "Failure") {
+              yield* appServerProcess
+                .kill({ killSignal: "SIGTERM", forceKillAfter: "1 second" })
+                .pipe(Effect.ignore);
+              return yield* codexProfileProofError(`parent turn '${turnId}'`, readback.failure);
+            }
+            const mismatch = codexProfileMismatch({
+              scope: `parent turn '${turnId}'`,
+              expected: expectedTurnProfile,
+              actual:
+                readback.success.thread.id === providerThreadId
+                  ? {
+                      modelProvider: readback.success.modelProvider,
+                      model: readback.success.model,
+                      reasoningEffort: readback.success.reasoningEffort,
+                    }
+                  : {
+                      modelProvider: undefined,
+                      model: undefined,
+                      reasoningEffort: undefined,
+                    },
+            });
+            if (mismatch) {
+              yield* appServerProcess
+                .kill({ killSignal: "SIGTERM", forceKillAfter: "1 second" })
+                .pipe(Effect.ignore);
+              return yield* mismatch;
+            }
+          }
           yield* updateSession(sessionRef, (session) => ({
             status: "running",
             // Codex accepts follow-ups while the current turn is still

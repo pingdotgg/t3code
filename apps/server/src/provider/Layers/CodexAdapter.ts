@@ -11,6 +11,7 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
+  type ModelSelection,
   ProviderDriverKind,
   type ProviderEvent,
   ProviderInstanceId,
@@ -54,6 +55,7 @@ import {
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { isProviderNamespacedModelSlug } from "../providerSnapshot.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
@@ -63,6 +65,13 @@ import {
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
+import {
+  codexNativeProfileExpectedParent,
+  codexNativeProfileHomeIssue,
+  codexNativeProfileLaunchArgs,
+  codexNativeProfilePolicy,
+  codexNativeProfileSelectionIssue,
+} from "./CodexNativeProfile.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
@@ -537,6 +546,8 @@ function mapCollabAgentEvent(
   const title = knownName ?? agentThreadId;
   const model = typeof payload.model === "string" ? payload.model.trim() : "";
   const effort = typeof payload.effort === "string" ? payload.effort.trim() : "";
+  const modelProvider =
+    typeof payload.modelProvider === "string" ? payload.modelProvider.trim() : "";
   // Identity repeated on every status patch so rows are self-describing when
   // the start row ages out of activity retention (review finding: a
   // reconstructed agent had a UUID name and no role/path).
@@ -545,6 +556,7 @@ function mapCollabAgentEvent(
     ...(knownName ? { title: knownName } : {}),
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
+    ...(modelProvider ? { modelProvider } : {}),
     ...(agentPath ? { agentPath } : {}),
     timelineBypass: true,
   } as const;
@@ -572,6 +584,23 @@ function mapCollabAgentEvent(
           ...base,
           type: "task.updated",
           payload: { taskId, ...linkage },
+        },
+      ];
+    case "collabAgent/profileMismatch":
+    case "collabAgent/profileProofFailed":
+      return [
+        {
+          ...base,
+          type: "task.updated",
+          payload: {
+            taskId,
+            status: "failed",
+            error:
+              typeof payload.error === "string"
+                ? payload.error
+                : "Native child profile proof failed.",
+            ...linkage,
+          },
         },
       ];
     case "collabAgent/activity": {
@@ -1662,6 +1691,44 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const nativeProfilePolicy = codexNativeProfilePolicy(boundInstanceId);
+  const customModelSlugs = new Set(codexConfig.customModels.map((model) => model.trim()));
+  const validateModelSelection = (
+    operation: "startSession" | "sendTurn",
+    selection: ModelSelection | undefined,
+  ): ProviderAdapterValidationError | undefined => {
+    if (nativeProfilePolicy) {
+      const homeIssue = codexNativeProfileHomeIssue(nativeProfilePolicy, codexConfig.homePath);
+      if (homeIssue) {
+        return new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation,
+          issue: homeIssue,
+        });
+      }
+      const issue = codexNativeProfileSelectionIssue(nativeProfilePolicy, selection);
+      if (issue) {
+        return new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation,
+          issue,
+        });
+      }
+    }
+    if (
+      nativeProfilePolicy === undefined ||
+      selection?.instanceId !== boundInstanceId ||
+      !isProviderNamespacedModelSlug(selection.model) ||
+      customModelSlugs.has(selection.model)
+    ) {
+      return undefined;
+    }
+    return new ProviderAdapterValidationError({
+      provider: PROVIDER,
+      operation,
+      issue: `Provider-namespaced model '${selection.model}' is not configured on instance '${boundInstanceId}'.`,
+    });
+  };
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -1674,6 +1741,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           });
         }
 
+        const modelSelectionError = validateModelSelection("startSession", input.modelSelection);
+        if (modelSelectionError) {
+          return yield* modelSelectionError;
+        }
+
         const existing = sessions.get(input.threadId);
         if (existing && !existing.stopped) {
           yield* Effect.suspend(() => stopSessionInternal(existing));
@@ -1683,19 +1755,50 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           input.modelSelection?.instanceId === boundInstanceId
             ? getCodexServiceTierOptionValue(input.modelSelection)
             : undefined;
-        const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+        // The GLM isolated home intentionally has no T3 MCP credential path.
+        // Do not advertise or inject a bearer token until that path is reviewed.
+        const mcpSession = nativeProfilePolicy
+          ? undefined
+          : McpProviderSession.readMcpProviderSession(input.threadId);
+        const resolvedLaunchArgs = resolveCodexLaunchArgs(
+          codexConfig.launchArgs,
+          options?.environment,
+        );
+        const launchArgs = yield* codexNativeProfileLaunchArgs(
+          nativeProfilePolicy,
+          resolvedLaunchArgs,
+          codexConfig.homePath,
+        ).pipe(
+          Effect.mapError(
+            (error) =>
+              new ProviderAdapterValidationError({
+                provider: PROVIDER,
+                operation: "startSession",
+                issue: error.issue,
+              }),
+          ),
+        );
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
-          launchArgs: resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment),
+          launchArgs,
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
             : {}),
           runtimeMode: input.runtimeMode,
+          ...(nativeProfilePolicy
+            ? {
+                expectedProfile: codexNativeProfileExpectedParent(
+                  nativeProfilePolicy,
+                  input.modelSelection,
+                ),
+                expectedChildProfile: nativeProfilePolicy.authorizedChildProfile,
+              }
+            : {}),
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
             : {}),
@@ -1822,6 +1925,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   });
 
   const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+    const modelSelectionError = validateModelSelection("sendTurn", input.modelSelection);
+    if (modelSelectionError) {
+      return yield* modelSelectionError;
+    }
+
     // Codex ingests images only. Anything else would be base64-encoded as an
     // image and rejected or misread; generic files reach the agent through the
     // path line ProviderService puts in the prompt.
@@ -1834,7 +1942,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     const session = yield* requireSession(input.threadId);
     const reasoningEffort =
       input.modelSelection?.instanceId === boundInstanceId
-        ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
+        ? (getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort") ??
+          nativeProfilePolicy?.effectiveProfile.reasoningEffort)
         : undefined;
     const serviceTier =
       input.modelSelection?.instanceId === boundInstanceId

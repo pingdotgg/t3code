@@ -586,6 +586,69 @@ describe("formatSubagentTokenCount", () => {
 });
 
 describe("model and effort attribution", () => {
+  it("keeps a native GLM child's identity and max effort through running, waiting, and idle", () => {
+    const rows = [
+      activity("task.started", {
+        taskId: "native-glm-child-thread",
+        title: "glm_research",
+        role: "researcher",
+        modelProvider: "openrouter",
+        model: "z-ai/glm-5.3-flash",
+        effort: "max",
+        timelineBypass: true,
+      }),
+      activity("task.updated", {
+        taskId: "native-glm-child-thread",
+        status: "running",
+        model: "z-ai/glm-5.3-flash",
+        effort: "max",
+        timelineBypass: true,
+      }),
+      activity("task.updated", {
+        taskId: "native-glm-child-thread",
+        status: "waiting",
+        model: "z-ai/glm-5.3-flash",
+        effort: "max",
+        timelineBypass: true,
+      }),
+      activity("task.updated", {
+        taskId: "native-glm-child-thread",
+        status: "idle",
+        model: "z-ai/glm-5.3-flash",
+        effort: "max",
+        timelineBypass: true,
+      }),
+    ];
+
+    const running = deriveAgentPanelModel({ agents: fold(rows.slice(0, 2)) });
+    expect(running.directAgents[0]).toMatchObject({
+      id: "native-glm-child-thread",
+      title: "glm_research",
+      modelProvider: "openrouter",
+      model: "z-ai/glm-5.3-flash",
+      effort: "max",
+      status: "running",
+    });
+    expect(running.runningCount).toBe(1);
+
+    const waiting = deriveAgentPanelModel({ agents: fold(rows.slice(0, 3)) });
+    expect(waiting.directAgents[0]?.status).toBe("waiting");
+    expect(waiting.waitingCount).toBe(1);
+
+    const idle = deriveAgentPanelModel({ agents: fold(rows) });
+    expect(idle.directAgents[0]).toMatchObject({
+      id: "native-glm-child-thread",
+      modelProvider: "openrouter",
+      model: "z-ai/glm-5.3-flash",
+      effort: "max",
+      status: "idle",
+    });
+    expect(idle.idleCount).toBe(1);
+    expect(
+      formatSubagentModelLabel(idle.directAgents[0]!.model, idle.directAgents[0]!.effort),
+    ).toBe("z-ai/glm-5.3-flash · max");
+  });
+
   it("carries model/effort from start rows and refines model from later rows", () => {
     const agents = fold([
       activity("task.started", {

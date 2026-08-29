@@ -11,17 +11,31 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
+import { codexNativeProfilePolicy } from "./Layers/CodexNativeProfile.ts";
+import { isProviderNamespacedModelSlug } from "./providerSnapshot.ts";
 
 const decodeProviderStatusCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ServerProviderSchema),
 );
 
 const mergeProviderModels = (
+  driver: ProviderDriverKind,
+  instanceId: ProviderInstanceId,
   fallbackModels: ReadonlyArray<ServerProvider["models"][number]>,
   cachedModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const fallbackSlugs = new Set(fallbackModels.map((model) => model.slug));
-  return [...fallbackModels, ...cachedModels.filter((model) => !fallbackSlugs.has(model.slug))];
+  const restrictProviderNamespacedModels = codexNativeProfilePolicy(instanceId) !== undefined;
+  return [
+    ...fallbackModels,
+    ...cachedModels.filter(
+      (model) =>
+        !fallbackSlugs.has(model.slug) &&
+        (driver !== "codex" ||
+          !restrictProviderNamespacedModels ||
+          !isProviderNamespacedModelSlug(model.slug)),
+    ),
+  ];
 };
 
 export const orderProviderSnapshots = (
@@ -59,7 +73,12 @@ export const hydrateCachedProvider = (input: {
   const { message: _fallbackMessage, ...fallbackWithoutMessage } = input.fallbackProvider;
   const hydratedProvider: ServerProvider = {
     ...fallbackWithoutMessage,
-    models: mergeProviderModels(input.fallbackProvider.models, input.cachedProvider.models),
+    models: mergeProviderModels(
+      input.fallbackProvider.driver,
+      input.fallbackProvider.instanceId,
+      input.fallbackProvider.models,
+      input.cachedProvider.models,
+    ),
     installed: input.cachedProvider.installed,
     version: input.cachedProvider.version,
     status: input.cachedProvider.status,

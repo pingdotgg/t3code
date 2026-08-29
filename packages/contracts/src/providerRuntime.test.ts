@@ -6,6 +6,29 @@ import { classifyTaskAgentKind, ProviderRuntimeEvent } from "./providerRuntime.t
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("decodes modelProvider on typed task agent linkage", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "task.started",
+      eventId: "event-agent-provider",
+      provider: "codex",
+      providerInstanceId: "codex_glm53",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        taskId: "glm-child-1",
+        agentKind: "agent",
+        title: "glm_worker_1",
+        modelProvider: "openrouter",
+        model: "z-ai/glm-5.3-flash",
+        effort: "max",
+      },
+    });
+
+    expect(parsed.type).toBe("task.started");
+    if (parsed.type !== "task.started") throw new Error("expected task.started");
+    expect(parsed.payload.modelProvider).toBe("openrouter");
+  });
+
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeRuntimeEvent({
       type: "session.started",

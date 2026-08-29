@@ -336,6 +336,7 @@ function taskLinkageActivityFields(payload: Record<string, unknown>): Record<str
     "agentId",
     "title",
     "role",
+    "modelProvider",
     "model",
     "effort",
     "toolUseId",

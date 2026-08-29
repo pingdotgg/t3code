@@ -34,6 +34,31 @@ const decodeConsumeRateLimitResetCreditResponse = Schema.decodeUnknownEffect(
 );
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
+  it.effect("removes an interrupted request from the pending map", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio });
+      const requestFiber = yield* transport
+        .request("thread/resume", { threadId: "child-1" })
+        .pipe(Effect.forkScoped);
+
+      assert.deepEqual(yield* decodeJson(yield* Queue.take(output)), {
+        id: 1,
+        method: "thread/resume",
+        params: { threadId: "child-1" },
+      });
+      assert.equal(yield* transport.pendingRequestCount, 1);
+
+      yield* Fiber.interrupt(requestFiber);
+      assert.equal(yield* transport.pendingRequestCount, 0);
+
+      // A late peer response to the cancelled id stays a no-op.
+      yield* Queue.offer(input, encodeJsonl({ id: 1, result: { thread: { id: "child-1" } } }));
+      yield* Effect.yieldNow;
+      assert.equal(yield* transport.pendingRequestCount, 0);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("maps account usage responses to the upstream token usage schema", () =>
     Effect.gen(function* () {
       assert.strictEqual(

@@ -205,6 +205,47 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     );
   });
 
+  it("hydrates ordinary namespaced Codex models but isolates the native GLM cache", () => {
+    const namespacedModel = {
+      slug: "z-ai/glm-5.3-flash",
+      name: "GLM-5.3-Flash",
+      isCustom: false,
+      capabilities: emptyCapabilities,
+    } as const;
+    const cachedCodex = makeProvider(CODEX_DRIVER, { models: [namespacedModel] });
+    const fallbackCodex = makeProvider(CODEX_DRIVER);
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({ cachedProvider: cachedCodex, fallbackProvider: fallbackCodex })
+        .models,
+      [namespacedModel],
+    );
+
+    const glmInstanceId = ProviderInstanceId.make("codex_glm53");
+    const cachedGlm = makeProvider(CODEX_DRIVER, {
+      instanceId: glmInstanceId,
+      models: [namespacedModel],
+    });
+    const fallbackGlm = makeProvider(CODEX_DRIVER, { instanceId: glmInstanceId });
+    assert.deepStrictEqual(
+      hydrateCachedProvider({ cachedProvider: cachedGlm, fallbackProvider: fallbackGlm }).models,
+      [],
+    );
+
+    const declaredModel = { ...namespacedModel, isCustom: true } as const;
+    const declaredFallback = makeProvider(CODEX_DRIVER, {
+      instanceId: glmInstanceId,
+      models: [declaredModel],
+    });
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedGlm,
+        fallbackProvider: declaredFallback,
+      }).models,
+      [declaredModel],
+    );
+  });
+
   it("rejects cached snapshots that are not correlated to the fallback instance", () => {
     const fallbackCodex = makeProvider(CODEX_DRIVER, {
       models: [

@@ -61,6 +61,7 @@ export interface RuntimeSubagent {
   readonly kind: "subagent" | "workflow" | "workflow_agent";
   readonly title: string;
   readonly role: string | null;
+  readonly modelProvider: string | null;
   readonly model: string | null;
   readonly effort: string | null;
   readonly status: RuntimeSubagentStatus;
@@ -230,6 +231,7 @@ interface MutableAgent {
   kind: RuntimeSubagent["kind"];
   title: string;
   role: string | null;
+  modelProvider: string | null;
   model: string | null;
   effort: string | null;
   status: RuntimeSubagentStatus;
@@ -284,6 +286,7 @@ function getOrCreate(
     kind: kindFromPayload(payload, id),
     title: asString(payload.title) ?? asString(payload.detail) ?? id,
     role: asString(payload.role) ?? null,
+    modelProvider: asString(payload.modelProvider) ?? null,
     model: asString(payload.model) ?? null,
     effort: asString(payload.effort) ?? null,
     status: "pending",
@@ -318,6 +321,8 @@ function fillMetadata(agent: MutableAgent, payload: Record<string, unknown>): vo
   if (title) agent.title = title;
   const role = asString(payload.role);
   if (role) agent.role = role;
+  const modelProvider = asString(payload.modelProvider);
+  if (modelProvider) agent.modelProvider = modelProvider;
   const model = asString(payload.model);
   if (model) agent.model = model;
   const effort = asString(payload.effort);

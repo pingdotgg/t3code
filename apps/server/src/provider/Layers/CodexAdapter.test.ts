@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -37,6 +38,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -47,6 +49,12 @@ import {
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
 import { makeCodexAdapter } from "./CodexAdapter.ts";
+import {
+  CODEX_GLM53_INSTANCE_ID,
+  CODEX_GLM53_MODEL,
+  CODEX_GLM53_NATIVE_PROFILE,
+  codexNativeProfileLaunchArgs,
+} from "./CodexNativeProfile.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
@@ -271,6 +279,27 @@ validationLayer("CodexAdapterLive validation", (it) => {
       NodeAssert.equal(validationRuntimeFactory.factory.mock.calls.length, 0);
     }),
   );
+  it.effect("preserves catalog-discovered provider-namespaced models on ordinary Codex", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-namespaced-model"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("codex"),
+          "z-ai/glm-5.3-flash",
+        ),
+        runtimeMode: "full-access",
+      });
+
+      NodeAssert.equal(validationRuntimeFactory.factory.mock.calls.length, 1);
+      NodeAssert.equal(
+        validationRuntimeFactory.factory.mock.calls[0]?.[0].model,
+        "z-ai/glm-5.3-flash",
+      );
+    }),
+  );
   it.effect("maps codex model options before starting a session", () =>
     Effect.gen(function* () {
       validationRuntimeFactory.factory.mockClear();
@@ -296,6 +325,173 @@ validationLayer("CodexAdapterLive validation", (it) => {
         runtimeMode: "full-access",
       });
     }),
+  );
+});
+
+const GLM_TEST_HOME = "/srv/codex/glm53";
+const glmRuntimeFactory = makeRuntimeFactory();
+const glmLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({
+        customModels: [CODEX_GLM53_MODEL],
+        homePath: GLM_TEST_HOME,
+      });
+      return yield* makeCodexAdapter(codexConfig, {
+        instanceId: CODEX_GLM53_INSTANCE_ID,
+        makeRuntime: glmRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+const invalidGlmHomeRuntimeFactory = makeRuntimeFactory();
+const invalidGlmHomeLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({
+        customModels: [CODEX_GLM53_MODEL],
+        homePath: "/",
+      });
+      return yield* makeCodexAdapter(codexConfig, {
+        instanceId: CODEX_GLM53_INSTANCE_ID,
+        makeRuntime: invalidGlmHomeRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+invalidGlmHomeLayer("CodexAdapterLive invalid GLM home", (it) => {
+  it.effect("returns a typed validation error instead of throwing a launch defect", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const result = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-glm-invalid-home"),
+          modelSelection: createModelSelection(CODEX_GLM53_INSTANCE_ID, CODEX_GLM53_MODEL),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        NodeAssert.equal(result.failure._tag, "ProviderAdapterValidationError");
+        NodeAssert.match(result.failure.issue, /cannot use a filesystem root/);
+      }
+      NodeAssert.equal(invalidGlmHomeRuntimeFactory.factory.mock.calls.length, 0);
+    }),
+  );
+});
+
+glmLayer("CodexAdapterLive GLM native profile", (it) => {
+  it.effect("pins launch capacity and the effective profile before starting the parent", () =>
+    Effect.gen(function* () {
+      glmRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-glm-parent");
+      const selection = createModelSelection(CODEX_GLM53_INSTANCE_ID, CODEX_GLM53_MODEL);
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        modelSelection: selection,
+        runtimeMode: "full-access",
+      });
+      NodeAssert.deepStrictEqual(glmRuntimeFactory.factory.mock.calls[0]?.[0], {
+        binaryPath: "codex",
+        cwd: process.cwd(),
+        launchArgs: yield* codexNativeProfileLaunchArgs(
+          CODEX_GLM53_NATIVE_PROFILE,
+          "",
+          GLM_TEST_HOME,
+        ),
+        homePath: GLM_TEST_HOME,
+        model: CODEX_GLM53_MODEL,
+        providerInstanceId: CODEX_GLM53_INSTANCE_ID,
+        expectedProfile: CODEX_GLM53_NATIVE_PROFILE.effectiveProfile,
+        expectedChildProfile: CODEX_GLM53_NATIVE_PROFILE.authorizedChildProfile,
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "use native children",
+        attachments: [],
+        modelSelection: selection,
+      });
+      NodeAssert.deepStrictEqual(glmRuntimeFactory.lastRuntime?.sendTurnImpl.mock.calls[0]?.[0], {
+        input: "use native children",
+        model: CODEX_GLM53_MODEL,
+        effort: "max",
+      });
+
+      const highSelection = createModelSelection(CODEX_GLM53_INSTANCE_ID, CODEX_GLM53_MODEL, [
+        { id: "reasoningEffort", value: "high" },
+      ]);
+      const highThreadId = asThreadId("thread-glm-parent-high");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: highThreadId,
+        modelSelection: highSelection,
+        runtimeMode: "full-access",
+      });
+      NodeAssert.equal(
+        glmRuntimeFactory.factory.mock.calls[1]?.[0].expectedProfile?.reasoningEffort,
+        "high",
+      );
+      yield* adapter.sendTurn({
+        threadId: highThreadId,
+        input: "use a high-effort native child",
+        attachments: [],
+        modelSelection: highSelection,
+      });
+      NodeAssert.equal(
+        glmRuntimeFactory.lastRuntime?.sendTurnImpl.mock.calls[0]?.[0].effort,
+        "high",
+      );
+    }),
+  );
+
+  it.effect("does not inject or advertise T3 MCP credentials for the GLM profile", () =>
+    Effect.gen(function* () {
+      glmRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-glm-no-mcp");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("local"),
+        threadId,
+        providerSessionId: "provider-session",
+        providerInstanceId: CODEX_GLM53_INSTANCE_ID,
+        endpoint: "http://127.0.0.1:12345/mcp",
+        authorizationHeader: "Bearer test-only-token",
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        modelSelection: createModelSelection(CODEX_GLM53_INSTANCE_ID, CODEX_GLM53_MODEL),
+        runtimeMode: "full-access",
+      });
+      const options = glmRuntimeFactory.factory.mock.calls[0]?.[0];
+      NodeAssert.equal(options?.appServerArgs, undefined);
+      NodeAssert.equal(options?.environment, undefined);
+    }).pipe(Effect.scoped),
   );
 });
 
@@ -557,7 +753,47 @@ function startLifecycleRuntime() {
 }
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
-  it.effect("carries child model metadata through every task event", () =>
+  it.effect("maps a typed child profile-proof failure without dropping its provider", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 1)).pipe(
+        Effect.forkChild,
+      );
+      yield* runtime.emit({
+        id: asEventId("evt-child-proof-failed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "collabAgent/profileProofFailed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          agentThreadId: "native-glm-child-thread",
+          nickname: "glm_research",
+          modelProvider: "openrouter",
+          model: "z-ai/glm-5.3-flash",
+          effort: "max",
+          error: "Codex native child profile proof failed",
+          errorTag: "TimeoutException",
+        },
+      });
+
+      const [event] = Array.from(yield* Fiber.join(eventFiber));
+      NodeAssert.deepStrictEqual(event?.payload, {
+        taskId: "native-glm-child-thread",
+        status: "failed",
+        error: "Codex native child profile proof failed",
+        role: "general-purpose",
+        title: "glm_research",
+        model: "z-ai/glm-5.3-flash",
+        effort: "max",
+        modelProvider: "openrouter",
+        timelineBypass: true,
+      });
+    }),
+  );
+
+  it.effect("carries GLM child metadata and lifecycle through every task event", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
       const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 10)).pipe(
@@ -567,13 +803,16 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       const cases = [
         ["collabAgent/started", {}],
         ["collabAgent/activity", { activityKind: "started" }],
+        ["collabAgent/metadataUpdated", {}],
         ["collabAgent/turnStarted", {}],
+        [
+          "collabAgent/statusChanged",
+          { status: { type: "active", activeFlags: ["waitingOnUserInput"] } },
+        ],
         ["collabAgent/turnCompleted", { turn: { status: "completed" } }],
-        ["collabAgent/statusChanged", { status: { type: "active", activeFlags: [] } }],
         ["collabAgent/tokenUsage", { tokenUsage: { total: { totalTokens: 42 } } }],
         ["collabAgent/item", { item: { type: "commandExecution", command: "pwd" } }],
         ["collabAgent/closed", {}],
-        ["collabAgent/metadataUpdated", {}],
       ] as const;
 
       for (const [index, [method, extra]] of cases.entries()) {
@@ -586,10 +825,12 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           threadId: asThreadId("thread-1"),
           turnId: asTurnId("turn-1"),
           payload: {
-            agentThreadId: "child-model",
-            agentPath: "/root/model-check",
-            model: " gpt-5.6-sol ",
-            effort: " high ",
+            agentThreadId: "native-glm-child-thread",
+            nickname: "glm_research",
+            agentPath: "/root/glm_research",
+            modelProvider: " openrouter ",
+            model: " z-ai/glm-5.3-flash ",
+            effort: " max ",
             ...extra,
           },
         });
@@ -603,7 +844,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         threadId: asThreadId("thread-1"),
         turnId: asTurnId("turn-1"),
         payload: {
-          agentThreadId: "child-model",
+          agentThreadId: "native-glm-child-thread",
           model: "  ",
           effort: "",
         },
@@ -618,20 +859,30 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           "task.updated",
           "task.updated",
           "task.updated",
-          "task.progress",
-          "task.progress",
           "task.updated",
+          "task.progress",
+          "task.progress",
           "task.updated",
           "task.updated",
         ],
       );
       for (const event of events.slice(0, -1)) {
         const payload = event.payload as Record<string, unknown>;
-        NodeAssert.equal(payload.model, "gpt-5.6-sol");
-        NodeAssert.equal(payload.effort, "high");
+        NodeAssert.equal(payload.taskId, "native-glm-child-thread");
+        NodeAssert.equal(payload.modelProvider, "openrouter");
+        NodeAssert.equal(payload.model, "z-ai/glm-5.3-flash");
+        NodeAssert.equal(payload.effort, "max");
+        NodeAssert.equal(payload.timelineBypass, true);
       }
 
-      const metadataPayload = events[8]?.payload as Record<string, unknown>;
+      NodeAssert.deepStrictEqual(
+        events
+          .filter((event) => event.type === "task.updated" && "status" in event.payload)
+          .map((event) => (event.payload as { readonly status: string }).status),
+        ["running", "waiting", "idle", "interrupted"],
+      );
+
+      const metadataPayload = events[2]?.payload as Record<string, unknown>;
       NodeAssert.equal("status" in metadataPayload, false);
       const blankMetadataPayload = events[9]?.payload as Record<string, unknown>;
       NodeAssert.equal("status" in blankMetadataPayload, false);

@@ -29,6 +29,7 @@ export interface CodexAppServerClientOptions {
 interface CodexAppServerClientRaw {
   readonly notifications: CodexProtocol.CodexAppServerPatchedProtocol["incomingNotifications"];
   readonly requests: CodexProtocol.CodexAppServerPatchedProtocol["incomingRequests"];
+  readonly pendingRequestCount: CodexProtocol.CodexAppServerPatchedProtocol["pendingRequestCount"];
   readonly request: CodexProtocol.CodexAppServerPatchedProtocol["request"];
   readonly notify: CodexProtocol.CodexAppServerPatchedProtocol["notify"];
   readonly respond: CodexProtocol.CodexAppServerPatchedProtocol["respond"];
@@ -222,6 +223,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
     raw: {
       notifications: transport.incomingNotifications,
       requests: transport.incomingRequests,
+      pendingRequestCount: transport.pendingRequestCount,
       request: transport.request,
       notify: transport.notify,
       respond: transport.respond,

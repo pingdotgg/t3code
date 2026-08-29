@@ -141,7 +141,12 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
 function AgentRow({ agent }: { agent: RuntimeSubagent }) {
   const visuals = STATUS_VISUALS[agent.status];
   const activity = agentActivityText(agent);
-  const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
+  const formattedModel = formatSubagentModelLabel(agent.model, agent.effort);
+  const modelLabel = formattedModel
+    ? [agent.modelProvider, formattedModel]
+        .filter((value): value is string => value !== null)
+        .join(" · ")
+    : null;
   const role =
     agent.role?.trim().toLocaleLowerCase() === agent.title.trim().toLocaleLowerCase()
       ? null

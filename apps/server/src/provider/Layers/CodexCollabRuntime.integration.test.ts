@@ -13,7 +13,12 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { type ProviderApprovalDecision, type ProviderEvent, ThreadId } from "@t3tools/contracts";
+import {
+  type ProviderApprovalDecision,
+  type ProviderEvent,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -27,6 +32,16 @@ import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
 const MEMORY = "memory-consolidation-thread";
+const GLM_PROFILE = {
+  modelProvider: "openrouter",
+  model: "z-ai/glm-5.3-flash",
+  reasoningEffort: "max",
+} as const;
+const GLM_CHILD_PROFILE = {
+  modelProvider: GLM_PROFILE.modelProvider,
+  model: GLM_PROFILE.model,
+  reasoningEfforts: ["high", "max"],
+} as const;
 const decodeMcpElicitationResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -129,7 +144,32 @@ function capturedSpawnedThread(childId = CHILD_A) {
   };
 }
 
-function childSettings(threadId: string, model: string, effort: string) {
+function capturedTurnStarted(childId = CHILD_A) {
+  const captured = wireFixture.notifications.find(
+    (entry) =>
+      entry.method === "turn/started" &&
+      (entry.params as { threadId?: string }).threadId === CHILD_A,
+  );
+  assert.isDefined(captured);
+  return {
+    ...captured,
+    params: {
+      ...captured.params,
+      threadId: childId,
+      turn: {
+        ...captured.params.turn,
+        id: `${childId}-turn-profile-proof`,
+      },
+    },
+  };
+}
+
+function childSettings(
+  threadId: string,
+  model: string,
+  effort: string,
+  modelProvider: string | null = "openai",
+) {
   return {
     method: "thread/settings/updated",
     params: {
@@ -141,7 +181,7 @@ function childSettings(threadId: string, model: string, effort: string) {
         cwd: "/workspace/repo",
         effort,
         model,
-        modelProvider: "openai",
+        ...(modelProvider ? { modelProvider } : {}),
         sandboxPolicy: { type: "dangerFullAccess" },
       },
     },
@@ -156,6 +196,26 @@ function readRecordedRequests() {
     .map((line) => JSON.parse(line) as { method: string; params: Record<string, unknown> });
 }
 
+function readRecordedArchives() {
+  const archivePath = `${scriptPath}.archives`;
+  if (!NodeFS.existsSync(archivePath)) return [];
+  return NodeFS.readFileSync(archivePath, "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as { threadId: string });
+}
+
+function readRecordedSidecar<T>(suffix: string): ReadonlyArray<T> {
+  const sidecarPath = `${scriptPath}.${suffix}`;
+  if (!NodeFS.existsSync(sidecarPath)) return [];
+  return NodeFS.readFileSync(sidecarPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as T);
+}
+
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
 const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
 
@@ -164,7 +224,13 @@ describe("CodexSessionRuntime collab integration", () => {
     Effect.gen(function* () {
       const script = {
         rootThreadId: ROOT,
+        recordArchives: true,
         recordRequests: true,
+        rootProfile: {
+          modelProvider: "openrouter",
+          model: "z-ai/glm-5.3-flash",
+          reasoningEffort: "max",
+        },
         notifications: [
           capturedStartedActivity(),
           capturedStartedActivity(),
@@ -179,24 +245,37 @@ describe("CodexSessionRuntime collab integration", () => {
           capturedSpawnedThread(ROOT),
         ],
         childResumeSnapshots: {
-          [CHILD_A]: { model: "gpt-5.6-luna", reasoningEffort: "low" },
+          [CHILD_A]: {
+            modelProvider: "openrouter",
+            model: "z-ai/glm-5.3-flash",
+            reasoningEffort: "max",
+          },
         },
       };
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.archives`, { force: true });
       NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.archives`, { force: true });
           NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
         }),
       );
 
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-collab-model-activity"),
+        providerInstanceId: ProviderInstanceId.make("codex_glm53"),
         binaryPath: peerPath,
         cwd: "/tmp",
         runtimeMode: "full-access",
+        model: "z-ai/glm-5.3-flash",
+        expectedProfile: {
+          modelProvider: "openrouter",
+          model: "z-ai/glm-5.3-flash",
+          reasoningEffort: "max",
+        },
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
       const metadataFiber = yield* runtime.events.pipe(
@@ -211,14 +290,16 @@ describe("CodexSessionRuntime collab integration", () => {
       );
 
       const session = yield* runtime.start();
-      assert.equal(session.model, "gpt-5.6-sol");
+      assert.equal(session.model, "z-ai/glm-5.3-flash");
       yield* runtime.sendTurn({ input: "start one child" });
       const metadataEvents = Array.from(yield* Fiber.join(metadataFiber));
       assert.deepInclude(metadataEvents[0]?.payload, {
         agentThreadId: CHILD_A,
-        model: "gpt-5.6-luna",
-        effort: "low",
+        modelProvider: "openrouter",
+        model: "z-ai/glm-5.3-flash",
+        effort: "max",
       });
+      assert.equal(metadataEvents[0]?.providerInstanceId, "codex_glm53");
       assert.deepEqual(readRecordedRequests(), [
         {
           method: "thread/resume",
@@ -334,6 +415,526 @@ describe("CodexSessionRuntime collab integration", () => {
       );
       assert.equal(readRecordedRequests().length, 1);
 
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails the parent closed when Codex reports a different effective profile", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        notifications: [],
+        rootProfile: {
+          modelProvider: "openai",
+          model: "gpt-5.6-sol",
+          reasoningEffort: "high",
+        },
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-glm-parent-profile-mismatch"),
+        providerInstanceId: ProviderInstanceId.make("codex_glm53"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        model: GLM_PROFILE.model,
+        expectedProfile: GLM_PROFILE,
+        expectedChildProfile: GLM_CHILD_PROFILE,
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const result = yield* runtime.start().pipe(Effect.result);
+      if (result._tag !== "Failure") {
+        assert.fail("the mismatched parent profile must fail before the session becomes ready");
+      }
+      assert.equal(result.failure._tag, "CodexSessionRuntimeProfileMismatchError");
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("verifies High and Max from authoritative parent turn readback", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        rootProfile: GLM_PROFILE,
+        notifications: [],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-glm-parent-high-max"),
+        providerInstanceId: ProviderInstanceId.make("codex_glm53"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        model: GLM_PROFILE.model,
+        expectedProfile: { ...GLM_PROFILE, reasoningEffort: "high" },
+        expectedChildProfile: GLM_CHILD_PROFILE,
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "high turn", effort: "high" });
+      yield* runtime.sendTurn({ input: "max turn", effort: "max" });
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  for (const [name, firstAttempt] of [
+    ["transient error", { error: "profile readback temporarily unavailable" }],
+    ["malformed response", { malformed: true }],
+    ["timed-out response", { hang: true }],
+  ] as const) {
+    it.live(
+      `retries a ${name} while proving the parent turn profile`,
+      () =>
+        Effect.gen(function* () {
+          const script = {
+            rootThreadId: ROOT,
+            rootProfile: GLM_PROFILE,
+            recordRootReadbacks: true,
+            rootTurnReadbackAttempts: [[firstAttempt, {}]],
+            notifications: [],
+          };
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+          NodeFS.rmSync(`${scriptPath}.root-readbacks`, { force: true });
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              NodeFS.rmSync(scriptPath, { force: true });
+              NodeFS.rmSync(`${scriptPath}.root-readbacks`, { force: true });
+            }),
+          );
+
+          const runtime = yield* makeCodexSessionRuntime({
+            threadId: ThreadId.make(`thread-glm-parent-${name.replaceAll(" ", "-")}`),
+            providerInstanceId: ProviderInstanceId.make("codex_glm53"),
+            binaryPath: peerPath,
+            cwd: "/tmp",
+            runtimeMode: "full-access",
+            model: GLM_PROFILE.model,
+            expectedProfile: GLM_PROFILE,
+            expectedChildProfile: GLM_CHILD_PROFILE,
+            environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+          });
+
+          yield* runtime.start();
+          yield* runtime.sendTurn({ input: `recover from ${name}`, effort: "max" });
+          assert.lengthOf(
+            readRecordedSidecar<{ turnIndex: number; resumeAttempt: number }>("root-readbacks"),
+            2,
+          );
+          yield* runtime.sendTurn({ input: `continue after ${name}`, effort: "max" });
+          assert.lengthOf(
+            readRecordedSidecar<{ turnIndex: number; resumeAttempt: number }>("root-readbacks"),
+            3,
+          );
+          yield* runtime.close;
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      { timeout: 10_000 },
+    );
+  }
+
+  it.live(
+    "fails the parent closed after the bounded profile proof window expires",
+    () =>
+      Effect.gen(function* () {
+        const script = {
+          rootThreadId: ROOT,
+          rootProfile: GLM_PROFILE,
+          recordRootReadbacks: true,
+          rootTurnReadbackAttempts: [[{ hang: true }, { hang: true }, { hang: true }]],
+          notifications: [],
+        };
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+        NodeFS.rmSync(`${scriptPath}.root-readbacks`, { force: true });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            NodeFS.rmSync(scriptPath, { force: true });
+            NodeFS.rmSync(`${scriptPath}.root-readbacks`, { force: true });
+          }),
+        );
+
+        const runtime = yield* makeCodexSessionRuntime({
+          threadId: ThreadId.make("thread-glm-parent-proof-timeout"),
+          providerInstanceId: ProviderInstanceId.make("codex_glm53"),
+          binaryPath: peerPath,
+          cwd: "/tmp",
+          runtimeMode: "full-access",
+          model: GLM_PROFILE.model,
+          expectedProfile: GLM_PROFILE,
+          expectedChildProfile: GLM_CHILD_PROFILE,
+          environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+        });
+
+        yield* runtime.start();
+        const result = yield* runtime
+          .sendTurn({ input: "must not hang without parent proof", effort: "max" })
+          .pipe(Effect.result);
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(result.failure._tag, "CodexSessionRuntimeProfileProofError");
+          if (result.failure._tag === "CodexSessionRuntimeProfileProofError") {
+            assert.equal(result.failure.operation, "thread/resume");
+            assert.match(result.failure.causeTag, /Timeout/);
+            assert.ok(result.failure.cause);
+          }
+        }
+        assert.lengthOf(
+          readRecordedSidecar<{ turnIndex: number; resumeAttempt: number }>("root-readbacks"),
+          3,
+        );
+        yield* runtime.close;
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    { timeout: 10_000 },
+  );
+
+  it.effect("returns a typed proof error for persistently malformed parent readback", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        rootProfile: GLM_PROFILE,
+        rootTurnReadbackAttempts: [[{ malformed: true }, { malformed: true }, { malformed: true }]],
+        notifications: [],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-glm-parent-proof-malformed"),
+        providerInstanceId: ProviderInstanceId.make("codex_glm53"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        model: GLM_PROFILE.model,
+        expectedProfile: GLM_PROFILE,
+        expectedChildProfile: GLM_CHILD_PROFILE,
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      const result = yield* runtime
+        .sendTurn({ input: "reject malformed proof", effort: "max" })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure._tag, "CodexSessionRuntimeProfileProofError");
+        if (result.failure._tag === "CodexSessionRuntimeProfileProofError") {
+          assert.equal(result.failure.operation, "thread/resume");
+          assert.equal(result.failure.causeTag, "SchemaError");
+          assert.ok(result.failure.cause);
+        }
+      }
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  for (const [name, readback] of [
+    ["missing", { ...GLM_PROFILE, omitReasoningEffort: true }],
+    ["wrong", { ...GLM_PROFILE, reasoningEffort: "medium" }],
+  ] as const) {
+    it.effect(`fails a parent turn with ${name} authoritative effort`, () =>
+      Effect.gen(function* () {
+        const script = {
+          rootThreadId: ROOT,
+          rootProfile: GLM_PROFILE,
+          rootTurnReadbacks: [readback],
+          notifications: [],
+        };
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+        );
+
+        const runtime = yield* makeCodexSessionRuntime({
+          threadId: ThreadId.make(`thread-glm-parent-${name}-effort`),
+          providerInstanceId: ProviderInstanceId.make("codex_glm53"),
+          binaryPath: peerPath,
+          cwd: "/tmp",
+          runtimeMode: "full-access",
+          model: GLM_PROFILE.model,
+          expectedProfile: { ...GLM_PROFILE, reasoningEffort: "high" },
+          expectedChildProfile: GLM_CHILD_PROFILE,
+          environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+        });
+
+        yield* runtime.start();
+        const result = yield* runtime
+          .sendTurn({ input: "must verify high", effort: "high" })
+          .pipe(Effect.result);
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(result.failure._tag, "CodexSessionRuntimeProfileMismatchError");
+        }
+        yield* runtime.close;
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
+
+  it.effect("fails and archives only a child with the wrong provider", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        rootProfile: GLM_PROFILE,
+        recordArchives: true,
+        notifications: [capturedStartedActivity()],
+        childResumeSnapshots: {
+          [CHILD_A]: {
+            ...GLM_PROFILE,
+            modelProvider: "openai",
+          },
+        },
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.archives`, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.archives`, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-glm-child-profile-mismatch"),
+        providerInstanceId: ProviderInstanceId.make("codex_glm53"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        model: GLM_PROFILE.model,
+        expectedProfile: GLM_PROFILE,
+        expectedChildProfile: GLM_CHILD_PROFILE,
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const mismatchFiber = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "collabAgent/profileMismatch"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "start one child" });
+      const [mismatch] = Array.from(yield* Fiber.join(mismatchFiber));
+      assert.ok(mismatch);
+      assert.deepInclude(mismatch.payload, {
+        agentThreadId: CHILD_A,
+        modelProvider: "openai",
+        model: "z-ai/glm-5.3-flash",
+        effort: "max",
+      });
+      assert.match(
+        (mismatch.payload as { error?: string }).error ?? "",
+        /expected openrouter\/z-ai\/glm-5\.3-flash\/high\|max/,
+      );
+      assert.deepEqual(readRecordedArchives(), [{ threadId: CHILD_A }]);
+      yield* runtime.sendTurn({ input: "parent remains live", effort: "max" });
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("accepts delayed authoritative child metadata after the former one-second cutoff", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        rootProfile: GLM_PROFILE,
+        notifications: [
+          capturedStartedActivity(),
+          childSettings(CHILD_A, GLM_PROFILE.model, "high", null),
+        ],
+        childResumeSnapshots: {
+          [CHILD_A]: { ...GLM_PROFILE, reasoningEffort: "high", delayMs: 1_200 },
+        },
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-glm-child-settings-race"),
+        providerInstanceId: ProviderInstanceId.make("codex_glm53"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        model: GLM_PROFILE.model,
+        expectedProfile: GLM_PROFILE,
+        expectedChildProfile: GLM_CHILD_PROFILE,
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const firstProfileEventFiber = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.method === "collabAgent/profileMismatch" ||
+            event.method === "collabAgent/metadataUpdated",
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "start one child" });
+      const [firstProfileEvent] = Array.from(yield* Fiber.join(firstProfileEventFiber));
+      assert.equal(
+        firstProfileEvent?.method,
+        "collabAgent/metadataUpdated",
+        JSON.stringify(firstProfileEvent?.payload),
+      );
+      assert.deepInclude(firstProfileEvent?.payload, {
+        agentThreadId: CHILD_A,
+        modelProvider: "openrouter",
+        model: GLM_PROFILE.model,
+        effort: "high",
+      });
+      // A second turn succeeding proves the provisional notification did
+      // not kill the valid app-server while thread/resume was delayed.
+      yield* runtime.sendTurn({ input: "continue after profile verification" });
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("fails, interrupts, and archives only a persistently unverified native child", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        rootProfile: GLM_PROFILE,
+        recordArchives: true,
+        notifications: [capturedTurnStarted(), capturedStartedActivity()],
+        childResumeSnapshots: { [CHILD_A]: { error: "profile unavailable" } },
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.archives`, { force: true });
+      NodeFS.rmSync(`${scriptPath}.interrupts`, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.archives`, { force: true });
+          NodeFS.rmSync(`${scriptPath}.interrupts`, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-glm-child-profile-unavailable"),
+        providerInstanceId: ProviderInstanceId.make("codex_glm53"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        model: GLM_PROFILE.model,
+        expectedProfile: GLM_PROFILE,
+        expectedChildProfile: GLM_CHILD_PROFILE,
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const proofFailureFiber = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "collabAgent/profileProofFailed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "start one child" });
+      const [proofFailure] = Array.from(yield* Fiber.join(proofFailureFiber));
+      assert.ok(proofFailure);
+      assert.match(
+        (proofFailure.payload as { error?: string }).error ?? "",
+        /profile proof failed during thread\/resume after bounded retries/,
+      );
+      assert.match((proofFailure.payload as { errorTag?: string }).errorTag ?? "", /RequestError/);
+      assert.deepEqual(readRecordedArchives(), [{ threadId: CHILD_A }]);
+      assert.deepEqual(readRecordedSidecar<{ threadId: string; turnId: string }>("interrupts"), [
+        { threadId: CHILD_A, turnId: `${CHILD_A}-turn-profile-proof` },
+      ]);
+      yield* runtime.sendTurn({ input: "parent remains live after child proof failure" });
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("emits ten inherited GLM child profiles from native v2 events", () =>
+    Effect.gen(function* () {
+      const childIds = Array.from({ length: 10 }, (_, index) => `glm-child-${index + 1}`);
+      const script = {
+        rootThreadId: ROOT,
+        recordRequests: true,
+        rootProfile: GLM_PROFILE,
+        notifications: childIds.map((childId) => capturedStartedActivity(childId)),
+        childResumeSnapshots: Object.fromEntries(
+          childIds.map((childId, index) => [
+            childId,
+            {
+              ...GLM_PROFILE,
+              reasoningEffort: index % 2 === 0 ? "max" : "high",
+              ...(index === 0 ? { transientErrors: 1 } : {}),
+            },
+          ]),
+        ),
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-glm-ten-children"),
+        providerInstanceId: ProviderInstanceId.make("codex_glm53"),
+        binaryPath: peerPath,
+        cwd: "/tmp",
+        runtimeMode: "full-access",
+        model: GLM_PROFILE.model,
+        expectedProfile: GLM_PROFILE,
+        expectedChildProfile: GLM_CHILD_PROFILE,
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const metadataFiber = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "collabAgent/metadataUpdated"),
+        Stream.take(10),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "start ten children" });
+      const metadataEvents = Array.from(yield* Fiber.join(metadataFiber));
+      assert.equal(metadataEvents.length, 10);
+      assert.deepEqual(
+        metadataEvents
+          .map((event) => (event.payload as { agentThreadId: string }).agentThreadId)
+          .toSorted(),
+        childIds.toSorted(),
+      );
+      for (const event of metadataEvents) {
+        const childId = (event.payload as { agentThreadId: string }).agentThreadId;
+        const childNumber = Number(childId.slice("glm-child-".length));
+        assert.equal(event.providerInstanceId, "codex_glm53");
+        assert.deepInclude(event.payload, {
+          modelProvider: "openrouter",
+          model: "z-ai/glm-5.3-flash",
+          effort: childNumber % 2 === 1 ? "max" : "high",
+        });
+      }
+      assert.equal(readRecordedRequests().length, 11);
+      assert.deepEqual(readRecordedArchives(), []);
+      yield* runtime.sendTurn({ input: "all verified siblings remain live", effort: "max" });
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

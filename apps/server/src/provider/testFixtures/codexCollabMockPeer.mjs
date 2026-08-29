@@ -18,6 +18,9 @@ const script = JSON.parse(NodeFS.readFileSync(process.env.T3_CODEX_COLLAB_SCRIPT
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 let turnStartCount = 0;
 let activeTurn;
+let lastTurnProfile;
+const childResumeAttempts = new Map();
+const rootResumeAttempts = new Map();
 
 const rl = NodeReadline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
@@ -58,18 +61,73 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "thread/start") {
-    write({ id, result: fixture.responses.threadStart });
+    write({
+      id,
+      result: {
+        ...fixture.responses.threadStart,
+        ...script.rootProfile,
+      },
+    });
     return;
   }
   if (method === "thread/resume") {
+    const threadId = message.params?.threadId;
+    const childSnapshot = script.childResumeSnapshots?.[threadId];
+    if (threadId === script.rootThreadId && lastTurnProfile) {
+      const turnIndex = turnStartCount - 1;
+      const resumeAttempt = (rootResumeAttempts.get(turnIndex) ?? 0) + 1;
+      rootResumeAttempts.set(turnIndex, resumeAttempt);
+      if (script.recordRootReadbacks) {
+        NodeFS.appendFileSync(
+          `${process.env.T3_CODEX_COLLAB_SCRIPT}.root-readbacks`,
+          `${JSON.stringify({ turnIndex, resumeAttempt })}\n`,
+        );
+      }
+      const attempt = script.rootTurnReadbackAttempts?.[turnIndex]?.[resumeAttempt - 1];
+      if (attempt?.hang) {
+        return;
+      }
+      if (attempt?.error) {
+        write({ id, error: { code: -32000, message: attempt.error } });
+        return;
+      }
+      if (attempt?.malformed) {
+        write({ id, result: { thread: { id: 42 } } });
+        return;
+      }
+      const scriptedReadback = attempt?.profile ?? script.rootTurnReadbacks?.[turnIndex];
+      const profile = scriptedReadback ?? {
+        ...script.rootProfile,
+        model: lastTurnProfile.model ?? script.rootProfile?.model,
+        reasoningEffort: lastTurnProfile.reasoningEffort ?? script.rootProfile?.reasoningEffort,
+      };
+      const result = {
+        ...fixture.responses.threadStart,
+        ...script.rootProfile,
+        ...profile,
+        thread: {
+          ...fixture.responses.threadStart.thread,
+          id: threadId,
+          sessionId: threadId,
+        },
+      };
+      if (profile.omitReasoningEffort) {
+        delete result.reasoningEffort;
+      }
+      const writeReadback = () => write({ id, result });
+      if (attempt?.delayMs > 0) {
+        setTimeout(writeReadback, attempt.delayMs);
+      } else {
+        writeReadback();
+      }
+      return;
+    }
     if (script.recordRequests) {
       NodeFS.appendFileSync(
         `${process.env.T3_CODEX_COLLAB_SCRIPT}.requests`,
         `${JSON.stringify({ method, params: message.params })}\n`,
       );
     }
-    const threadId = message.params?.threadId;
-    const childSnapshot = script.childResumeSnapshots?.[threadId];
     if (script.resumeRequestMarker) {
       write({
         jsonrpc: "2.0",
@@ -83,26 +141,41 @@ rl.on("line", (line) => {
     if (childSnapshot?.hang) {
       return;
     }
+    const resumeAttempt = (childResumeAttempts.get(threadId) ?? 0) + 1;
+    childResumeAttempts.set(threadId, resumeAttempt);
+    if (resumeAttempt <= (childSnapshot?.transientErrors ?? 0)) {
+      write({ id, error: { code: -32000, message: "transient profile readback failure" } });
+      return;
+    }
     if (childSnapshot?.error) {
       write({ id, error: { code: -32000, message: childSnapshot.error } });
       return;
     }
     if (childSnapshot) {
-      write({
-        id,
-        result: {
-          ...fixture.responses.threadStart,
-          model: childSnapshot.model,
-          reasoningEffort: childSnapshot.reasoningEffort,
-          thread: {
-            ...fixture.responses.threadStart.thread,
-            id: threadId,
-            sessionId: threadId,
+      const writeSnapshot = () => {
+        write({
+          id,
+          result: {
+            ...fixture.responses.threadStart,
+            modelProvider:
+              childSnapshot.modelProvider ?? fixture.responses.threadStart.modelProvider,
+            model: childSnapshot.model,
+            reasoningEffort: childSnapshot.reasoningEffort,
+            thread: {
+              ...fixture.responses.threadStart.thread,
+              id: threadId,
+              sessionId: threadId,
+            },
           },
-        },
-      });
-      for (const notification of childSnapshot.notifications ?? []) {
-        write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
+        });
+        for (const notification of childSnapshot.notifications ?? []) {
+          write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
+        }
+      };
+      if (childSnapshot.delayMs > 0) {
+        setTimeout(writeSnapshot, childSnapshot.delayMs);
+      } else {
+        writeSnapshot();
       }
       return;
     }
@@ -110,6 +183,10 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "turn/start") {
+    lastTurnProfile = {
+      model: message.params?.model,
+      reasoningEffort: message.params?.effort,
+    };
     const turnId = script.turnIds?.[turnStartCount];
     const turn = turnId
       ? { ...fixture.responses.turnStart.turn, id: turnId }
@@ -174,6 +251,16 @@ rl.on("line", (line) => {
       // Never respond: simulates a wedged child whose RPC neither resolves
       // nor rejects. The runtime's bounded deadline must move on.
       return;
+    }
+    write({ id, result: {} });
+    return;
+  }
+  if (method === "thread/archive") {
+    if (script.recordArchives) {
+      NodeFS.appendFileSync(
+        `${process.env.T3_CODEX_COLLAB_SCRIPT}.archives`,
+        `${JSON.stringify({ threadId: message.params?.threadId })}\n`,
+      );
     }
     write({ id, result: {} });
     return;
