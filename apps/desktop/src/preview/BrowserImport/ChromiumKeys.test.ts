@@ -76,6 +76,13 @@ describe("Linux Chromium secrets", () => {
     ),
   );
 
+  it.effect("preserves trailing whitespace in the stored secret", () =>
+    Effect.gen(function* () {
+      const secret = yield* readLinuxSecret("chrome");
+      expect(secret).toBe("linux-secret \t");
+    }).pipe(Effect.provide(secretToolLayer({ stdout: "linux-secret \t\n" }))),
+  );
+
   it.effect("reports a denied unlock prompt as approval needed", () =>
     Effect.gen(function* () {
       const error = yield* readLinuxSecret("brave").pipe(Effect.flip);

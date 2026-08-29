@@ -141,7 +141,14 @@ export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(functio
         handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
         handle.exitCode,
       ]).pipe(Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })));
-      const secret = stdout.trimEnd();
+      // secret-tool terminates successful output with one newline. Remove
+      // only that transport delimiter: spaces and tabs can be part of the
+      // stored passphrase and must survive key derivation unchanged.
+      const secret = stdout.endsWith("\r\n")
+        ? stdout.slice(0, -2)
+        : stdout.endsWith("\n")
+          ? stdout.slice(0, -1)
+          : stdout;
       if (Number(exitCode) !== 0) {
         return yield* new ChromiumKeyError({ reason: secretToolFailure(stderr) });
       }
