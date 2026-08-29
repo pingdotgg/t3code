@@ -937,6 +937,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       return (
                         <MenuSub key={action.label}>
                           <MenuSubTrigger
+                            aria-keyshortcuts={action.shortcut}
                             onClick={() => {
                               setAddSurfaceMenuOpen(false);
                               action.onClick();
@@ -944,6 +945,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           >
                             <Icon />
                             {action.label}
+                            <MenuShortcut>{action.shortcut}</MenuShortcut>
                           </MenuSubTrigger>
                           {/*
                             Capped and truncated: profile names are user-supplied
