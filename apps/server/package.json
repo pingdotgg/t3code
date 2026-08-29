@@ -14,6 +14,14 @@
     "dist"
   ],
   "type": "module",
+  "publishConfig": {
+    "executableFiles": [
+      "dist/resource-monitor/darwin-arm64/t3-resource-monitor",
+      "dist/resource-monitor/darwin-x64/t3-resource-monitor",
+      "dist/resource-monitor/linux-x64/t3-resource-monitor",
+      "dist/resource-monitor/win32-x64/t3-resource-monitor.exe"
+    ]
+  },
   "scripts": {
     "dev": "node --watch src/bin.ts",
     "build:bundle": "vp pack && vp pack src/service-launcher.ts --out-dir dist --no-clean",

@@ -15,7 +15,6 @@ import {
   resolveWebAssetBrandForPackageVersion,
   resolveWebIconOverrides,
 } from "../../../scripts/lib/brand-assets.ts";
-import { resolveCatalogDependencies } from "../../../scripts/lib/resolve-catalog.ts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -28,22 +27,7 @@ import {
   ServerCliPublishIconSourceMissingError,
   ServerCliPublishIconTargetMissingError,
 } from "./cliErrors.ts";
-
-interface PackageJson {
-  name: string;
-  repository: {
-    type: string;
-    url: string;
-    directory: string;
-  };
-  bin: Record<string, string>;
-  type: string;
-  version: string;
-  engines: Record<string, string>;
-  files: string[];
-  dependencies: Record<string, string>;
-  overrides: Record<string, string>;
-}
+import { createServerCliPublishPackageJson } from "./cliManifest.ts";
 
 const PackageJsonPrettyJson = fromJsonStringPretty(Schema.Unknown);
 const encodePackageJson = Schema.encodeEffect(PackageJsonPrettyJson);
@@ -241,25 +225,12 @@ const publishCmd = Command.make(
           const workspaceConfig = yield* readWorkspaceConfig();
           const workspaceCatalog = workspaceConfig.catalog ?? {};
           const workspaceOverrides = workspaceConfig.overrides ?? {};
-          const pkg: PackageJson = {
-            name: serverPackageJson.name,
-            repository: serverPackageJson.repository,
-            bin: serverPackageJson.bin,
-            type: serverPackageJson.type,
+          const pkg = createServerCliPublishPackageJson({
+            source: serverPackageJson,
             version,
-            engines: serverPackageJson.engines,
-            files: serverPackageJson.files,
-            dependencies: resolveCatalogDependencies(
-              serverPackageJson.dependencies,
-              workspaceCatalog,
-              "apps/server",
-            ),
-            overrides: resolveCatalogDependencies(
-              workspaceOverrides,
-              workspaceCatalog,
-              "apps/server",
-            ),
-          };
+            workspaceCatalog,
+            workspaceOverrides,
+          });
 
           return {
             packageJsonString: yield* encodePackageJson(pkg),
