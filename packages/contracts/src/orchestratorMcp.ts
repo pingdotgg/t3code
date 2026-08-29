@@ -243,10 +243,7 @@ export const OrchestratorMcpThreadWorkspaceStrategy = Schema.Union([
     branch: Schema.optional(TrimmedNonEmptyString),
     startFromOrigin: Schema.optional(Schema.Boolean),
   }),
-]).annotate({
-  description:
-    "Workspace for the new thread. Omit to reuse the caller's checkout in the current project, or the target project's root when projectId selects another project.",
-});
+]);
 export type OrchestratorMcpThreadWorkspaceStrategy =
   typeof OrchestratorMcpThreadWorkspaceStrategy.Type;
 
@@ -255,7 +252,10 @@ export const OrchestratorMcpCreateThreadRequest = Schema.Struct({
   title: Schema.optional(OrchestratorMcpTitle),
   target: Schema.optional(OrchestratorMcpTarget),
   projectId: Schema.optional(ProjectId),
-  workspaceStrategy: Schema.optional(OrchestratorMcpThreadWorkspaceStrategy),
+  workspaceStrategy: Schema.optional(OrchestratorMcpThreadWorkspaceStrategy).annotate({
+    description:
+      "Workspace for the new thread. Omit to reuse the caller's checkout in the current project, or the target project's root when projectId selects another project.",
+  }),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
@@ -302,7 +302,10 @@ export const OrchestratorMcpThreadStartInput = Schema.Struct({
   title: Schema.optional(OrchestratorMcpTitle),
   target: Schema.optional(OrchestratorMcpTarget),
   projectId: Schema.optional(ProjectId),
-  workspaceStrategy: Schema.optional(OrchestratorMcpThreadWorkspaceStrategy),
+  workspaceStrategy: Schema.optional(OrchestratorMcpThreadWorkspaceStrategy).annotate({
+    description:
+      "Workspace for the new thread. Omit to reuse the caller's checkout in the current project, or the target project's root when projectId selects another project.",
+  }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
