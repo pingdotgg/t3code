@@ -200,7 +200,11 @@ export const readSafariCookies = Effect.fn("SafariCookies.readSafariCookies")(fu
     try: () => parseBinaryCookies(Buffer.from(contents)),
     catch: (cause) =>
       isSafariCookieReadError(cause)
-        ? cause
+        ? new SafariCookieReadError({
+            reason: cause.reason,
+            cookieDatabasePath: cookiePath,
+            cause,
+          })
         : new SafariCookieReadError({
             reason: "readFailed",
             cookieDatabasePath: cookiePath,

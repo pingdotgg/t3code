@@ -231,6 +231,21 @@ describe("parseBinaryCookies", () => {
 });
 
 describe("readSafariCookies", () => {
+  it.effect("adds the cookie path and parser cause to malformed jar failures", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-safari-" });
+      const jar = `${directory}/Cookies.binarycookies`;
+      yield* fileSystem.writeFileString(jar, "not a cookie jar");
+
+      const error = yield* readSafariCookies(jar).pipe(Effect.flip);
+
+      assert.equal(error.reason, "readFailed");
+      assert.equal(error.cookieDatabasePath, jar);
+      assert.instanceOf(error.cause, SafariCookieReadError);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("reports a TCC denial as a permission the user can grant", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
