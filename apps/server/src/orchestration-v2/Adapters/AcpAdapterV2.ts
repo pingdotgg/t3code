@@ -66,6 +66,10 @@ import { type ProviderContinuationRequest } from "../ProviderContinuationRequest
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
+  isProviderNativeImageAttachment,
+  providerMessageTextWithAttachmentPaths,
+} from "../AttachmentPrompt.ts";
+import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
@@ -5080,20 +5084,27 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
         ) {
           const prompt: Array<EffectAcpSchema.ContentBlock> = [];
           const text = t3OrchestrationPromptForFirstRun({
-            prompt: turnInput.message.text,
+            prompt: providerMessageTextWithAttachmentPaths({
+              text: turnInput.message.text,
+              attachments: turnInput.message.attachments,
+              attachmentsDir: serverConfig.attachmentsDir,
+            }),
             runOrdinal: turnInput.runOrdinal,
             hasT3Mcp: acpMcpServers(turnInput.threadId).length > 0,
           });
           if (text.length > 0) {
             prompt.push({ type: "text", text });
           }
-          if (turnInput.message.attachments.length > 0 && !supportsImagePrompts) {
+          const imageAttachments = turnInput.message.attachments.filter(
+            isProviderNativeImageAttachment,
+          );
+          if (imageAttachments.length > 0 && !supportsImagePrompts) {
             return yield* new ProviderAdapterProtocolError({
               driver,
               detail: "ACP driver did not negotiate image prompt support",
             });
           }
-          for (const attachment of turnInput.message.attachments) {
+          for (const attachment of imageAttachments) {
             const path = resolveAttachmentPath({
               attachmentsDir: serverConfig.attachmentsDir,
               attachment: attachment as ChatAttachment,

@@ -79,6 +79,10 @@ import {
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
+  isProviderNativeImageAttachment,
+  providerMessageTextWithAttachmentPaths,
+} from "../AttachmentPrompt.ts";
+import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
   ProviderAdapterInterruptError,
@@ -2353,14 +2357,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         ) =>
           Effect.gen(function* () {
             const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
-            if (turnInput.message.text.length > 0) {
+            const text = providerMessageTextWithAttachmentPaths({
+              text: turnInput.message.text,
+              attachments: turnInput.message.attachments,
+              attachmentsDir: serverConfig.attachmentsDir,
+            });
+            if (text.length > 0) {
               inputItems.push({
                 type: "text",
-                text: turnInput.message.text,
+                text,
               });
             }
             const attachmentItems = yield* Effect.forEach(
-              turnInput.message.attachments,
+              turnInput.message.attachments.filter(isProviderNativeImageAttachment),
               resolveCodexAttachment,
               { concurrency: 1 },
             );

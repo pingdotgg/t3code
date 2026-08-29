@@ -76,6 +76,7 @@ import {
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
+import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import {
   ProviderAdapterEnsureThreadError,
   ProviderAdapterForkThreadError,
@@ -2386,7 +2387,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         };
 
         const resolvePromptParts = (turnInput: ProviderAdapterV2TurnInput) => {
-          const text = turnInput.message.text.trim();
+          const text = providerMessageTextWithAttachmentPaths({
+            text: turnInput.message.text,
+            attachments: turnInput.message.attachments,
+            attachmentsDir: serverConfig.attachmentsDir,
+          }).trim();
           const files = toOpenCodeFileParts({
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: (attachment) =>
@@ -2672,7 +2677,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   `OpenCode model '${turn.modelSelection.model}' must use provider/model format`,
                 );
               }
-              const text = steerInput.message.text.trim();
+              const text = providerMessageTextWithAttachmentPaths({
+                text: steerInput.message.text,
+                attachments: steerInput.message.attachments,
+                attachmentsDir: serverConfig.attachmentsDir,
+              }).trim();
               const files = toOpenCodeFileParts({
                 attachments: steerInput.message.attachments,
                 resolveAttachmentPath: (attachment) =>
