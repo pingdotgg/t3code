@@ -137,6 +137,67 @@ describe("buildThreadFeed", () => {
     });
   });
 
+  it("anchors feedback before later committed turns and appends true optimistic messages", () => {
+    const laterUser = {
+      ...userMessage("2026-08-29T00:00:05.000Z"),
+      id: TurnItemId.make("item-later-user"),
+      messageId: MessageId.make("message-later-user"),
+      ordinal: 2,
+      text: "Later user turn",
+    };
+    const laterAssistant = {
+      ...assistantMessage("2026-08-29T00:00:04.000Z"),
+      id: TurnItemId.make("item-later-assistant"),
+      messageId: MessageId.make("message-later-assistant"),
+      ordinal: 3,
+      text: "Later assistant turn",
+    };
+    const localMessage = (id: string, role: "user" | "assistant") => ({
+      id: MessageId.make(id),
+      role,
+      text: id,
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-08-29T00:00:03.000Z",
+      updatedAt: "2026-08-29T00:00:03.000Z",
+    });
+    const feed = buildThreadFeed(
+      [
+        projected(userMessage("2026-08-29T00:00:01.000Z"), 0),
+        projected(laterUser, 1),
+        projected(laterAssistant, 2),
+      ],
+      {
+        anchoredMessages: [
+          localMessage("feedback-user", "user"),
+          localMessage("feedback-assistant", "assistant"),
+          localMessage("message-later-user", "user"),
+        ],
+        localMessages: [
+          {
+            ...localMessage("optimistic-user", "user"),
+            createdAt: "2026-08-29T00:00:00.000Z",
+          },
+        ],
+      },
+    );
+    const messages = feed.filter((entry) => entry.type === "message");
+
+    expect(messages.map((entry) => entry.id)).toEqual([
+      "message-user",
+      "feedback-user",
+      "feedback-assistant",
+      "message-later-user",
+      "message-later-assistant",
+      "optimistic-user",
+    ]);
+    expect(
+      messages
+        .filter((entry) => entry.id.startsWith("feedback-"))
+        .every((entry) => entry.message.projectedItem === undefined),
+    ).toBe(true);
+  });
+
   it("keeps prominent activity visible while it is running", () => {
     expect(
       threadFeedActivityIsVisible({ prominent: true, status: "neutral", toolLike: true }),
