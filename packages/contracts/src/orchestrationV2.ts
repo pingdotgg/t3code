@@ -727,6 +727,7 @@ export const OrchestrationV2UserInputQuestion = Schema.Struct({
       description: TrimmedNonEmptyString,
     }),
   ),
+  multiSelect: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
 
