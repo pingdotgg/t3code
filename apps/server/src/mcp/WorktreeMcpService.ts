@@ -474,9 +474,9 @@ const make = Effect.gen(function* () {
             }).pipe(Effect.as({ status: "failed", detail } as const));
           });
 
-        // suspend: build the rollback only if cleanup actually runs. Removing
-        // the worktree must succeed before deleting its freshly created branch;
-        // otherwise the branch may still be checked out there.
+        // Removing the new worktree is safe because this call still owns its
+        // path. Retain the branch: after concurrent Git activity, branch-name
+        // identity alone is not enough to authorize deleting the ref.
         let createdWorktreeRemoved = false;
         const removeCreatedWorktree = Effect.suspend(() =>
           gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
@@ -484,15 +484,6 @@ const make = Effect.gen(function* () {
               Effect.sync(() => {
                 createdWorktreeRemoved = true;
               }),
-            ),
-            Effect.andThen(
-              Effect.suspend(() =>
-                gitWorkflow.deleteLocalBranch({
-                  cwd: projectCwd,
-                  refName: worktree.worktree.refName,
-                  force: true,
-                }),
-              ),
             ),
           ),
         );

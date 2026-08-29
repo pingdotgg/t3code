@@ -125,7 +125,6 @@ interface HarnessOptions {
   readonly resolveRemoteFails?: boolean;
   readonly resolvedCommits?: ReadonlyArray<string>;
   readonly removeWorktreeFails?: boolean;
-  readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
   readonly refs?: ReadonlyArray<{
     readonly name: string;
@@ -404,11 +403,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       ? (Effect.fail("simulated worktree removal failure") as never)
       : Effect.void,
   );
-  const deleteLocalBranch = vi.fn((_: unknown) =>
-    options.deleteLocalBranchFails
-      ? (Effect.fail("simulated local branch deletion failure") as never)
-      : Effect.void,
-  );
+  const deleteLocalBranch = vi.fn((_: unknown) => Effect.void);
   const fetchRemote = vi.fn((_: unknown) =>
     options.fetchRemoteFails ? (Effect.fail("simulated fetch failure") as never) : Effect.void,
   );
@@ -1168,11 +1163,7 @@ describe("t3_worktree_handoff", () => {
         path: "/worktrees/project/feature/raced",
         force: true,
       });
-      expect(harness.deleteLocalBranch).toHaveBeenCalledWith({
-        cwd: workspaceRoot,
-        refName: "feature/raced",
-        force: true,
-      });
+      expect(harness.deleteLocalBranch).not.toHaveBeenCalled();
       expect(harness.dispatch).not.toHaveBeenCalled();
     });
   });
@@ -1263,23 +1254,15 @@ describe("t3_worktree_handoff", () => {
     });
   });
 
-  it.effect("reports a partial failure when rollback branch deletion also fails", () => {
-    const harness = makeHarness({ dispatchFails: true, deleteLocalBranchFails: true });
+  it.effect("retains the created branch after removing a failed handoff worktree", () => {
+    const harness = makeHarness({ dispatchFails: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         runHandoff(harness, { branch: "feature/rollback-branch-fails" }),
       );
-      expectTypedFailure(exit, {
-        _tag: "WorktreeMcpFailure",
-        code: "partial_failure",
-        partial: { rollback: "failed" },
-      });
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
       expect(harness.removeWorktree).toHaveBeenCalledTimes(1);
-      expect(harness.deleteLocalBranch).toHaveBeenCalledWith({
-        cwd: workspaceRoot,
-        refName: "feature/rollback-branch-fails",
-        force: true,
-      });
+      expect(harness.deleteLocalBranch).not.toHaveBeenCalled();
     });
   });
 
