@@ -357,6 +357,7 @@ import {
   resolveFileAttachmentUrl,
   isVideoPreviewRequestCurrent,
   reconcileMountedTerminalThreadIds,
+  resolveEffectiveInteractionMode,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -1766,8 +1767,11 @@ function ChatViewContent(props: ChatViewProps) {
   // the branch mismatch banner.
   const [, setThreadErrorBannerDismissTick] = useState(0);
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-  const interactionMode =
-    composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const interactionMode = resolveEffectiveInteractionMode({
+    planModeEnabled: settings.planModeEnabled,
+    composerInteractionMode,
+    threadInteractionMode: activeThread?.interactionMode,
+  });
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;

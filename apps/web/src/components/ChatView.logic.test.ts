@@ -27,6 +27,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveEffectiveInteractionMode,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   startNewThreadForProject,
@@ -303,6 +304,28 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("resolveEffectiveInteractionMode", () => {
+  it("forces build mode when legacy plan mode is disabled", () => {
+    expect(
+      resolveEffectiveInteractionMode({
+        planModeEnabled: false,
+        composerInteractionMode: "plan",
+        threadInteractionMode: "plan",
+      }),
+    ).toBe("default");
+  });
+
+  it("uses the saved mode while legacy plan mode is enabled", () => {
+    expect(
+      resolveEffectiveInteractionMode({
+        planModeEnabled: true,
+        composerInteractionMode: null,
+        threadInteractionMode: "plan",
+      }),
+    ).toBe("plan");
+  });
+});
 
 describe("resolveThreadMetadataUpdateForNextTurn", () => {
   const modelSelection = {
