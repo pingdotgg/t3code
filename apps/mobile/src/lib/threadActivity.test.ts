@@ -26,6 +26,23 @@ const threadId = ThreadId.make("thread-1");
 const sourceThreadId = ThreadId.make("thread-source");
 const runId = RunId.make("run-1");
 
+it("keeps historical plan detail accessible from its paged turn item", () => {
+  const item = {
+    ...base("historical-plan", "2026-08-29T00:00:00.000Z", 1),
+    type: "proposed_plan",
+    planId: "plan-historical",
+    markdown: "Full historical plan text",
+    streaming: false,
+  } as OrchestrationV2TurnItem;
+
+  const entries = buildThreadFeed([projected(item, 0)]);
+  const activity = entries.flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  )[0];
+  expect(activity?.detail).toBe("Full historical plan text");
+  expect(activity?.getFullDetail()).toContain("Full historical plan text");
+});
+
 function base(id: string, updatedAt: string, ordinal: number) {
   const timestamp = DateTime.makeUnsafe(updatedAt);
   return {
