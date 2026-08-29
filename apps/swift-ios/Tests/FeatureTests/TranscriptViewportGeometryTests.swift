@@ -1,4 +1,5 @@
 import CoreGraphics
+import SwiftUI
 import Testing
 import UIKit
 @testable import T3Code
@@ -50,6 +51,136 @@ struct TranscriptViewportGeometryTests {
         #expect(reveal == TranscriptTimestampRevealModel())
         reveal.refresh(anchorYsByMessageID: ["late-assistant": 24])
         #expect(reveal == TranscriptTimestampRevealModel())
+    }
+
+    @Test
+    func timestampDismissalHoldsAnchorsUntilItSettles() {
+        var reveal = TranscriptTimestampRevealModel()
+
+        reveal.begin(anchorYsByMessageID: ["assistant-1": 140, "user-1": 44])
+        reveal.update(translationX: -60)
+        #expect(reveal.width == 60)
+
+        // Releasing zeroes the width inside the same animation that slides the
+        // sheet back, but the anchors must survive it: they are what keeps each
+        // timestamp vertically in place, and they also keep the reveal active so
+        // the transcript does not re-anchor its scroll position mid-dismissal.
+        reveal.beginDismissal()
+        #expect(reveal.width == 0)
+        #expect(reveal.isActive)
+        #expect(reveal.anchorY(for: "assistant-1") == 140)
+        #expect(reveal.anchorY(for: "user-1") == 44)
+
+        reveal.finish()
+        #expect(reveal == TranscriptTimestampRevealModel())
+    }
+
+    @Test
+    @MainActor
+    func completingAStreamedMessageKeepsItsRenderedMarkdownView() async throws {
+        let source = "Distinctive streamed paragraph that completes mid-reveal."
+        // Seed the cache so the streaming row already renders blocks instead of
+        // falling back to plain text, giving the hosted text view an identity to
+        // compare across the streaming -> complete transition.
+        _ = MarkdownRenderCache.shared.documentImmediately(
+            for: MarkdownContentRevision(source)
+        )
+        let sentAt = Date(timeIntervalSince1970: 1_780_000_000)
+        let message = MessageTransitionHarness.MessageBox(
+            FeatureMessage(
+                id: "assistant-1",
+                role: .assistant,
+                text: source,
+                createdAt: sentAt,
+                state: .streaming
+            )
+        )
+        let reveal = FeatureTimestampRevealState()
+        let controller = UIHostingController(
+            rootView: MessageTransitionHarness(
+                message: message,
+                reveal: reveal
+            )
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 300))
+        window.rootViewController = controller
+        window.isHidden = false
+        defer { window.isHidden = true }
+
+        let streamingTextView = try #require(
+            await awaitedTextView(in: controller.view, containing: "Distinctive streamed")
+        )
+
+        // Control: republishing the same streamed state must be a no-op for
+        // identity, otherwise the harness itself is rebuilding the tree.
+        message.send()
+        let restreamedTextView = try #require(
+            await awaitedTextView(in: controller.view, containing: "Distinctive streamed")
+        )
+        #expect(
+            ObjectIdentifier(streamingTextView) == ObjectIdentifier(restreamedTextView),
+            "Republishing the same streamed state rebuilt the markdown view"
+        )
+
+        message.value.state = .complete
+        #expect(FeatureMessageTimestampMetadata.isEligible(message.value))
+        message.send()
+
+        // Completing the stream flips eligibility, which is what decides whether
+        // the reveal overlay is attached. The message view underneath must keep
+        // its identity so the streamed render and any active selection survive.
+        let completedTextView = try #require(
+            await awaitedTextView(in: controller.view, containing: "Distinctive streamed")
+        )
+        #expect(
+            ObjectIdentifier(streamingTextView) == ObjectIdentifier(completedTextView),
+            "Completing a streamed message rebuilt its markdown view instead of reusing it"
+        )
+    }
+
+    @Test
+    @MainActor
+    func revealReleaseSettlesAndReportsBackToTheTranscript() async throws {
+        let reveal = FeatureTimestampRevealState()
+        reveal.begin(anchorYsByMessageID: ["assistant-1": 140])
+        reveal.update(translationX: -60)
+        #expect(reveal.isActive)
+
+        var settledReduceMotion = 0
+        reveal.release(reduceMotion: true) { settledReduceMotion += 1 }
+        #expect(settledReduceMotion == 1)
+        #expect(!reveal.isActive)
+        #expect(reveal.anchorY(for: "assistant-1") == nil)
+
+        // The animated slide-back must also land: a reveal that never settles
+        // would keep the transcript pinned to the reveal layout forever.
+        reveal.begin(anchorYsByMessageID: ["assistant-2": 72])
+        reveal.update(translationX: -40)
+        var settledAnimated = 0
+        reveal.release(reduceMotion: false) { settledAnimated += 1 }
+        for _ in 0..<200 where settledAnimated == 0 {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(settledAnimated == 1)
+        #expect(!reveal.isActive)
+
+        // A fresh gesture right after a release must find a clean, working reveal.
+        reveal.begin(anchorYsByMessageID: ["user-1": 30])
+        reveal.update(translationX: -40)
+        var settledAgain = 0
+        reveal.release(reduceMotion: false) { settledAgain += 1 }
+        for _ in 0..<200 where settledAgain == 0 {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(settledAgain == 1)
+
+        reveal.begin(anchorYsByMessageID: ["user-2": 60])
+        reveal.update(translationX: -50)
+        #expect(reveal.isActive)
+        #expect(reveal.width == 50)
+        #expect(reveal.anchorY(for: "user-2") == 60)
     }
 
     @Test
@@ -480,5 +611,62 @@ struct TranscriptViewportGeometryTests {
         window.isHidden = true
 
         #expect(ThreadBackSwipeGesture.shouldReceiveTouch(in: host, host: host))
+    }
+}
+
+@MainActor
+private func awaitedTextView(
+    in host: UIView,
+    containing fragment: String
+) async -> UITextView? {
+    for _ in 0..<30 {
+        host.setNeedsLayout()
+        host.layoutIfNeeded()
+        if let match = textViews(in: host).first(where: { $0.text.contains(fragment) }) {
+            return match
+        }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return nil
+}
+
+@MainActor
+private func textViews(in view: UIView) -> [UITextView] {
+    view.subviews.reduce(into: []) { found, subview in
+        if let textView = subview as? UITextView {
+            found.append(textView)
+        }
+        found.append(contentsOf: textViews(in: subview))
+    }
+}
+
+/// Publishes the message the way the transcript does: the same hosted view
+/// position receives a new message value, so identity survives or breaks on the
+/// strength of the view structure alone.
+@MainActor
+private struct MessageTransitionHarness: View {
+    @MainActor
+    final class MessageBox: ObservableObject {
+        @Published var value: FeatureMessage
+
+        init(_ value: FeatureMessage) {
+            self.value = value
+        }
+
+        func send() {
+            let current = value
+            value = current
+        }
+    }
+
+    @ObservedObject var message: MessageBox
+    @ObservedObject var reveal: FeatureTimestampRevealState
+
+    var body: some View {
+        FeatureTimestampRevealMessageView(
+            message: message.value,
+            imageContext: nil,
+            reveal: reveal
+        )
     }
 }

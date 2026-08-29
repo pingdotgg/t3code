@@ -1217,10 +1217,12 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             case .changed:
                 timestampReveal.update(translationX: gesture.translation(in: gesture.view).x)
             case .ended, .cancelled, .failed:
-                timestampReveal.finish(reduceMotion: UIAccessibility.isReduceMotionEnabled)
                 visibleTimestampAnchorYs = nil
-                (collectionView as? BottomAnchoredTranscriptCollectionView)?
-                    .isTimestampRevealActive = false
+                timestampReveal.release(reduceMotion: UIAccessibility.isReduceMotionEnabled) {
+                    [weak self] in
+                    (self?.collectionView as? BottomAnchoredTranscriptCollectionView)?
+                        .isTimestampRevealActive = false
+                }
             default:
                 break
             }
@@ -1368,6 +1370,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             timestampReveal.resetIfNoEligibleMessagesRemain(in: messagesByID)
             if let anchoredCollectionView = collectionView
                 as? BottomAnchoredTranscriptCollectionView {
+                // A reset above can settle the reveal without the dismissal
+                // animation's completion, so mirror the model here rather than
+                // waiting for it.
+                anchoredCollectionView.isTimestampRevealActive = timestampReveal.isActive
                 anchoredCollectionView.maintainsBottomAnchor =
                     TranscriptViewportGeometry.shouldMaintainBottomAnchor(
                         isInitialLoad: isInitialLoad,
@@ -1787,6 +1793,13 @@ struct TranscriptTimestampRevealModel: Equatable {
         self.anchorYsByMessageID = anchorYsByMessageID
     }
 
+    /// Starts the slide back to rest while a reveal is still active, so every
+    /// timestamp holds its anchor while it fades out instead of drifting to
+    /// its row midpoint. `finish()` drops the anchors once the animation lands.
+    mutating func beginDismissal() {
+        width = 0
+    }
+
     mutating func finish() {
         width = 0
         anchorYsByMessageID = [:]
@@ -1826,11 +1839,20 @@ enum FeatureMessageTimestampMetadata {
         case .tool, .system: nil
         }
     }
+
+    /// Empty while the message is still streaming or has no known send time, so
+    /// VoiceOver has nothing to announce for it.
+    static func accessibilityValue(for message: FeatureMessage) -> String {
+        guard isEligible(message) else { return "" }
+        return message.createdAt.formatted(date: .omitted, time: .shortened)
+    }
 }
 
 @MainActor
-private final class FeatureTimestampRevealState: ObservableObject {
+final class FeatureTimestampRevealState: ObservableObject {
     @Published private var model = TranscriptTimestampRevealModel()
+    // A release still animating must not settle the anchors of a newer gesture.
+    private var releaseGeneration = 0
 
     var width: CGFloat {
         model.width
@@ -1845,6 +1867,7 @@ private final class FeatureTimestampRevealState: ObservableObject {
     }
 
     func begin(anchorYsByMessageID: [String: CGFloat]) {
+        releaseGeneration += 1
         updateWithoutAnimation { $0.begin(anchorYsByMessageID: anchorYsByMessageID) }
     }
 
@@ -1856,11 +1879,27 @@ private final class FeatureTimestampRevealState: ObservableObject {
         updateWithoutAnimation { $0.refresh(anchorYsByMessageID: anchorYsByMessageID) }
     }
 
-    func finish(reduceMotion: Bool) {
-        var finished = model
-        finished.finish()
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
-            model = finished
+    /// Animates the sheet back to rest. The anchors outlive the animation so
+    /// timestamps fade out in place, and the reveal stays active for layout,
+    /// until `onSettled` reports the slide-back has landed.
+    func release(reduceMotion: Bool, onSettled: @escaping () -> Void) {
+        guard model.isActive else {
+            onSettled()
+            return
+        }
+        var dismissing = model
+        dismissing.beginDismissal()
+        guard let animation: Animation = reduceMotion ? nil : .easeOut(duration: 0.2) else {
+            updateWithoutAnimation { $0.finish() }
+            onSettled()
+            return
+        }
+        releaseGeneration += 1
+        let generation = releaseGeneration
+        withAnimation(animation) {
+            model = dismissing
+        } completion: {
+            self.settle(generation: generation, onSettled: onSettled)
         }
     }
 
@@ -1874,6 +1913,12 @@ private final class FeatureTimestampRevealState: ObservableObject {
             messagesByID[messageID].map(FeatureMessageTimestampMetadata.isEligible) == true
         }
         if !hasEligibleMessage { reset() }
+    }
+
+    private func settle(generation: Int, onSettled: () -> Void) {
+        guard generation == releaseGeneration else { return }
+        updateWithoutAnimation { $0.finish() }
+        onSettled()
     }
 
     private func updateWithoutAnimation(
@@ -1890,17 +1935,21 @@ private final class FeatureTimestampRevealState: ObservableObject {
     }
 }
 
-private struct FeatureTimestampRevealMessageView: View {
+struct FeatureTimestampRevealMessageView: View {
     let message: FeatureMessage
     let imageContext: MarkdownImageContext?
     @ObservedObject var reveal: FeatureTimestampRevealState
 
     var body: some View {
         let revealWidth = reveal.width
-        if FeatureMessageTimestampMetadata.isEligible(message) {
-            let requestedAnchorY = reveal.anchorY(for: message.id)
-            FeatureMessageView(message: message, imageContext: imageContext)
-                .overlay {
+        // The message view stays at one fixed structural position. Branching it
+        // on eligibility would recreate it when a streamed message completes,
+        // dropping MarkdownMessageView's state and its streaming -> complete
+        // promote path, so only the timestamp overlay is conditional.
+        FeatureMessageView(message: message, imageContext: imageContext)
+            .overlay {
+                if FeatureMessageTimestampMetadata.isEligible(message) {
+                    let requestedAnchorY = reveal.anchorY(for: message.id)
                     GeometryReader { geometry in
                         Text(message.createdAt, format: .dateTime.hour().minute())
                             .font(T3Typography.supporting.monospacedDigit())
@@ -1925,11 +1974,8 @@ private struct FeatureTimestampRevealMessageView: View {
                     }
                     .allowsHitTesting(false)
                 }
-                .offset(x: -revealWidth)
-        } else {
-            FeatureMessageView(message: message, imageContext: imageContext)
-                .offset(x: -revealWidth)
-        }
+            }
+            .offset(x: -revealWidth)
     }
 }
 
@@ -2641,13 +2687,18 @@ private struct FeatureWorkLogView: View {
 private struct FeatureMessageTimestampAccessibilityModifier: ViewModifier {
     let message: FeatureMessage
 
+    // The branch depends only on the role, which never changes for a message.
+    // Branching on eligibility instead would move the content between the two
+    // conditional branches when a stream completes, rebuilding the message
+    // subtree and discarding the markdown state its streaming -> complete
+    // promote path relies on. Eligibility only decides whether there is a
+    // value worth announcing.
     @ViewBuilder
     func body(content: Content) -> some View {
-        if FeatureMessageTimestampMetadata.isEligible(message),
-           let label = FeatureMessageTimestampMetadata.accessibilityLabel(for: message.role) {
+        if let label = FeatureMessageTimestampMetadata.accessibilityLabel(for: message.role) {
             content.accessibilityCustomContent(
                 Text(label),
-                Text(message.createdAt.formatted(date: .omitted, time: .shortened)),
+                Text(FeatureMessageTimestampMetadata.accessibilityValue(for: message)),
                 importance: .high
             )
         } else {
