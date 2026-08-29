@@ -66,8 +66,8 @@ import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
 
 // macOS can emit the cold-start open-url before the layer stack is built;
-// stash raw URLs now and let DesktopDeepLink.configure drain them.
-DesktopDeepLink.captureEarlyOpenUrls(Electron.app);
+// stash raw URLs now and hand the capture to the deep-link layer below.
+const earlyOpenUrlCapture = DesktopDeepLink.captureEarlyOpenUrls(Electron.app);
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -187,10 +187,14 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
   Layer.provideMerge(desktopBackendLayer),
 );
 
+const desktopDeepLinkLayer = DesktopDeepLink.layer.pipe(
+  Layer.provide(Layer.succeed(DesktopDeepLink.EarlyOpenUrlCapture, earlyOpenUrlCapture)),
+);
+
 const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   DesktopApplicationMenu.layer,
-  DesktopDeepLink.layer,
+  desktopDeepLinkLayer,
   DesktopLinuxUrlHandler.layer,
   DesktopShellEnvironment.layer,
   desktopSshLayer,

@@ -218,9 +218,12 @@ const makeServices = (harness: TestHarness) => {
 
 const configureWith = (
   services: ReturnType<typeof makeServices>,
-  overrides?: { readonly processArguments?: ReadonlyArray<string> },
+  overrides?: {
+    readonly processArguments?: ReadonlyArray<string>;
+    readonly earlyCapture?: DesktopDeepLink.EarlyOpenUrlCapture;
+  },
 ) => {
-  const program = Effect.gen(function* () {
+  let program = Effect.gen(function* () {
     const deepLink = yield* DesktopDeepLink.DesktopDeepLink;
     yield* Effect.scoped(deepLink.configure);
   }).pipe(
@@ -229,10 +232,15 @@ const configureWith = (
     Effect.provideService(ElectronWindow.ElectronWindow, services.electronWindow),
     Effect.provideService(DesktopIpc.DesktopIpc, services.desktopIpc),
   );
-  const processArguments = overrides?.processArguments;
-  return processArguments === undefined
-    ? program
-    : program.pipe(Effect.provideService(HostProcessArguments, processArguments));
+  if (overrides?.processArguments !== undefined) {
+    program = program.pipe(Effect.provideService(HostProcessArguments, overrides.processArguments));
+  }
+  if (overrides?.earlyCapture !== undefined) {
+    program = program.pipe(
+      Effect.provideService(DesktopDeepLink.EarlyOpenUrlCapture, overrides.earlyCapture),
+    );
+  }
+  return program;
 };
 
 const subscribeAs = (harness: TestHarness, fake: FakeSender) =>
@@ -487,13 +495,13 @@ describe("DesktopDeepLink", () => {
     };
 
     return Effect.gen(function* () {
-      DesktopDeepLink.captureEarlyOpenUrls(source);
+      const earlyCapture = DesktopDeepLink.captureEarlyOpenUrls(source);
       assert.isNotNull(captured);
       captured!({}, `t3code://app/${ENVIRONMENT_ID}/${THREAD_ID}`);
       captured!({}, `t3code://app/${ENVIRONMENT_ID}/${OTHER_THREAD_ID}`);
       captured!({}, "t3code://app/oauth/callback?code=abc123");
 
-      yield* configureWith(makeServices(harness));
+      yield* configureWith(makeServices(harness), { earlyCapture });
 
       assert.equal(removeListener.mock.calls.length, 1);
       assert.deepEqual(yield* subscribeAs(harness, renderer), {
@@ -501,5 +509,57 @@ describe("DesktopDeepLink", () => {
         threadId: OTHER_THREAD_ID,
       });
     });
+  });
+
+  it.effect("a drained capture yields no cold-start link to a later service", () => {
+    const harness = makeHarness();
+    const renderer = makeSender(7);
+    let captured: ((event: unknown, url: string) => void) | null = null;
+    const source = {
+      on: (_event: "open-url", listener: (event: unknown, url: string) => void) => {
+        captured = listener;
+      },
+      removeListener: vi.fn(),
+    };
+
+    return Effect.gen(function* () {
+      const earlyCapture = DesktopDeepLink.captureEarlyOpenUrls(source);
+      captured!({}, `t3code://app/${ENVIRONMENT_ID}/${THREAD_ID}`);
+
+      // The first service drains the capture; a later service built against
+      // the same handle must see an empty buffer, not a stale link.
+      yield* configureWith(makeServices(makeHarness()), { earlyCapture });
+      yield* configureWith(makeServices(harness), { earlyCapture });
+
+      assert.isNull(yield* subscribeAs(harness, renderer));
+    });
+  });
+});
+
+describe("captureEarlyOpenUrls", () => {
+  it("captures independently per handle and drains each once", () => {
+    const listeners: Array<(event: unknown, url: string) => void> = [];
+    const removeListener = vi.fn();
+    const source = {
+      on: (_event: "open-url", listener: (event: unknown, url: string) => void) => {
+        listeners.push(listener);
+      },
+      removeListener,
+    };
+
+    const first = DesktopDeepLink.captureEarlyOpenUrls(source);
+    const second = DesktopDeepLink.captureEarlyOpenUrls(source);
+
+    // Both handles hear the same early event...
+    assert.equal(listeners.length, 2);
+    for (const listener of listeners) {
+      listener({}, `t3code://app/${ENVIRONMENT_ID}/${THREAD_ID}`);
+    }
+    // ...and each drains its own buffer exactly once.
+    assert.equal(first.drain().length, 1);
+    assert.deepEqual(first.drain(), []);
+    assert.equal(second.drain().length, 1);
+    assert.deepEqual(second.drain(), []);
+    assert.equal(removeListener.mock.calls.length, 2);
   });
 });

@@ -73,22 +73,36 @@ interface EarlyOpenUrlSource {
   removeListener(event: "open-url", listener: (event: unknown, url: string) => void): unknown;
 }
 
-let earlyCapture: {
-  readonly source: EarlyOpenUrlSource;
-  readonly listener: (event: unknown, url: string) => void;
-  readonly urls: string[];
-} | null = null;
+export interface EarlyOpenUrlCapture {
+  /**
+   * Detach the early listener and return the raw URLs captured so far.
+   * Draining a handle twice returns nothing the second time.
+   */
+  readonly drain: () => ReadonlyArray<string>;
+}
+
+const emptyEarlyOpenUrlCapture: EarlyOpenUrlCapture = { drain: () => [] };
+
+/**
+ * The capture handle created by `main.ts` before the Effect runtime exists
+ * and provided to the deep-link layer. Defaults to an empty capture so
+ * entry points and tests that never early-capture need no setup.
+ */
+export const EarlyOpenUrlCapture = Context.Reference<EarlyOpenUrlCapture>(
+  "@t3tools/desktop/app/DesktopDeepLink/EarlyOpenUrlCapture",
+  { defaultValue: () => emptyEarlyOpenUrlCapture },
+);
 
 /**
  * Must run at the earliest synchronous point of main-process startup: macOS
  * can emit the cold-start open-url before the deep-link service's own
  * listener exists, and an unheard event is simply lost. Capture only — no
  * parsing, no preventDefault — so OAuth callbacks and every other URL keep
- * flowing to their own listeners. `configure` drains the buffer through the
- * normal parse path and detaches this listener.
+ * flowing to their own listeners. The returned handle is an explicit input
+ * to the service; `configure` drains it through the normal parse path,
+ * which also detaches this listener.
  */
-export function captureEarlyOpenUrls(source: EarlyOpenUrlSource): void {
-  if (earlyCapture !== null) return;
+export function captureEarlyOpenUrls(source: EarlyOpenUrlSource): EarlyOpenUrlCapture {
   const urls: string[] = [];
   const listener = (_event: unknown, url: string) => {
     if (typeof url === "string") {
@@ -96,15 +110,15 @@ export function captureEarlyOpenUrls(source: EarlyOpenUrlSource): void {
     }
   };
   source.on("open-url", listener);
-  earlyCapture = { source, listener, urls };
-}
-
-function drainEarlyOpenUrls(): ReadonlyArray<string> {
-  if (earlyCapture === null) return [];
-  earlyCapture.source.removeListener("open-url", earlyCapture.listener);
-  const urls = [...earlyCapture.urls];
-  earlyCapture = null;
-  return urls;
+  let drained = false;
+  return {
+    drain: () => {
+      if (drained) return [];
+      drained = true;
+      source.removeListener("open-url", listener);
+      return [...urls];
+    },
+  };
 }
 
 export class DesktopDeepLink extends Context.Service<
@@ -120,6 +134,7 @@ export class DesktopDeepLink extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const earlyCapture = yield* EarlyOpenUrlCapture;
   const scheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
 
   // Last-wins buffer for links that arrive before any renderer subscribes.
@@ -275,7 +290,7 @@ export const make = Effect.gen(function* () {
       // existed (macOS; latest wins) and the primary instance's own command
       // line (Windows/Linux).
       const processArguments = yield* HostProcessArguments;
-      const earlyUrls = [...drainEarlyOpenUrls()].reverse();
+      const earlyUrls = earlyCapture.drain().toReversed();
       const initial =
         findThreadDeepLinkInArgv(earlyUrls, scheme) ??
         findThreadDeepLinkInArgv(processArguments, scheme);
