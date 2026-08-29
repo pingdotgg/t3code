@@ -33,6 +33,11 @@ settle, archive, or change read state in the current project. T3 Code applies th
 same rules as the sidebar. For example, an agent cannot settle a thread while work
 or a user request is still pending.
 
+An agent can also ask T3 Code to settle or archive its own thread after the current
+run finishes. The server applies the saved request only when that run succeeds and
+no newer, queued, or approval-blocked work remains. A new message or unresolved
+request keeps the thread visible and discards the stale organization request.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

@@ -16,6 +16,7 @@ import {
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadDeleteResult,
+  OrchestratorMcpThreadDeferOrganizationResult,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadOrganizeResult,
@@ -99,6 +100,9 @@ const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
   OrchestratorMcpThreadInterruptResult,
 );
 const decodeThreadDeleteResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadDeleteResult);
+const decodeThreadDeferOrganizationResult = Schema.decodeUnknownEffect(
+  OrchestratorMcpThreadDeferOrganizationResult,
+);
 const decodeThreadListResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadListResult);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const decodeThreadOrganizeResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadOrganizeResult);
@@ -1200,6 +1204,10 @@ describe("orchestrator MCP toolkit", () => {
               ({ tool }) => tool.name === "t3_thread_organize",
             );
             expect(threadOrganizeTool?.tool.annotations?.destructiveHint).toBe(true);
+            const threadDeferOrganizationTool = server.tools.find(
+              ({ tool }) => tool.name === "t3_thread_defer_organization",
+            );
+            expect(threadDeferOrganizationTool?.tool.annotations?.destructiveHint).toBe(true);
             const threadDeleteTool = server.tools.find(
               ({ tool }) => tool.name === "t3_thread_delete",
             );
@@ -1248,6 +1256,30 @@ describe("orchestrator MCP toolkit", () => {
                 }),
               ]),
             });
+
+            const scheduledOrganization = yield* decodeThreadDeferOrganizationResult(
+              (yield* invoke("t3_thread_defer_organization", {
+                operation: "schedule",
+                action: "settle",
+                clientRequestId: "defer-parent-settlement",
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(scheduledOrganization).toMatchObject({
+              threadId: parentThreadId,
+              intent: { runId: parentRun.id, action: "settle", requestedAt: expect.any(String) },
+            });
+            const readOrganization = yield* decodeThreadDeferOrganizationResult(
+              (yield* invoke("t3_thread_defer_organization", { operation: "read" }))
+                .structuredContent,
+            ).pipe(Effect.orDie);
+            expect(readOrganization).toEqual(scheduledOrganization);
+            const cancelledOrganization = yield* decodeThreadDeferOrganizationResult(
+              (yield* invoke("t3_thread_defer_organization", {
+                operation: "cancel",
+                clientRequestId: "cancel-parent-settlement",
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(cancelledOrganization).toEqual({ threadId: parentThreadId, intent: null });
 
             const scheduleTool = server.tools.find(({ tool }) => tool.name === "schedule_task");
             expect(scheduleTool?.tool.annotations?.destructiveHint).toBe(true);

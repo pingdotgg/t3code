@@ -12,6 +12,10 @@ describe("resolveT3McpToolPresentation", () => {
       displayName: "Organize T3 threads",
       logo: "t3-code",
     });
+    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_thread_defer_organization")).toEqual({
+      displayName: "Defer thread organization",
+      logo: "t3-code",
+    });
   });
 
   it("pretty prints Codex T3 MCP tool names", () => {

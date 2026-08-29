@@ -296,6 +296,13 @@ export const OrchestrationV2ProviderCapabilities = Schema.Struct({
 });
 export type OrchestrationV2ProviderCapabilities = typeof OrchestrationV2ProviderCapabilities.Type;
 
+export const OrchestrationV2DeferredOrganization = Schema.Struct({
+  runId: RunId,
+  action: Schema.Literals(["settle", "archive"]),
+  requestedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2DeferredOrganization = typeof OrchestrationV2DeferredOrganization.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -343,6 +350,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  deferredOrganization: Schema.optional(Schema.NullOr(OrchestrationV2DeferredOrganization)),
   /** In-flight title regeneration marker; cleared when a new title lands. */
   titleRegeneration: Schema.optional(
     Schema.NullOr(
@@ -1371,6 +1379,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
    * back to their local visited state when the field is absent.
    */
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  deferredOrganization: Schema.optional(Schema.NullOr(OrchestrationV2DeferredOrganization)),
   /** In-flight title regeneration marker; null/absent when no request is pending. */
   titleRegeneration: Schema.optional(
     Schema.NullOr(
@@ -1458,6 +1467,14 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  deferredOrganization: Schema.optional(
+    Schema.NullOr(
+      OrchestrationV2DeferredOrganization.mapFields((deferredFields) => ({
+        ...deferredFields,
+        requestedAt: Schema.DateTimeUtcFromString,
+      })),
+    ),
   ),
   titleRegeneration: Schema.optional(
     Schema.NullOr(
@@ -1851,6 +1868,14 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  deferredOrganization: Schema.optional(
+    Schema.NullOr(
+      OrchestrationV2DeferredOrganization.mapFields((deferredFields) => ({
+        ...deferredFields,
+        requestedAt: Schema.DateTimeUtcFromString,
+      })),
+    ),
+  ),
   titleRegeneration: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -2130,6 +2155,24 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.mark-unread"),
     commandId: CommandId,
     threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.organization.defer"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    action: Schema.Literals(["settle", "archive"]),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.organization.defer.cancel"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.organization.defer.apply"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.metadata.update"),

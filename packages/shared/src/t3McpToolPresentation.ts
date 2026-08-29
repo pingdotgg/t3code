@@ -49,6 +49,7 @@ const T3_MCP_TOOLS: Record<
   t3_thread_list: { displayName: "List T3 threads", summaryAction: "thread-list" },
   t3_thread_read: { displayName: "Read a T3 thread", summaryAction: "thread-read" },
   t3_thread_organize: { displayName: "Organize T3 threads" },
+  t3_thread_defer_organization: { displayName: "Defer thread organization" },
   t3_thread_delete: { displayName: "Delete a T3 thread" },
   t3_thread_send: { displayName: "Send to a T3 thread", summaryAction: "thread-send" },
   t3_thread_wait: { displayName: "Wait for a T3 thread", summaryAction: "thread-wait" },

@@ -19,6 +19,8 @@ import {
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadDeleteInput,
   OrchestratorMcpThreadDeleteResult,
+  OrchestratorMcpThreadDeferOrganizationInput,
+  OrchestratorMcpThreadDeferOrganizationResult,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadInput,
@@ -206,6 +208,18 @@ export const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   .annotate(Tool.Title, "Organize T3 threads")
   .annotate(Tool.Destructive, true);
 
+export const ThreadDeferOrganizationTool = Tool.make("t3_thread_defer_organization", {
+  description:
+    "Schedule settlement or archival of THIS calling thread after the current run completes safely. The intent is durable and applies only when that run completes successfully with no newer, queued, active, approval-blocked, or title-regeneration work. Otherwise it is discarded. Use operation='read' to inspect the current intent or operation='cancel' to remove it. clientRequestId makes schedule and cancel retries idempotent.",
+  parameters: OrchestratorMcpThreadDeferOrganizationInput,
+  success: OrchestratorMcpThreadDeferOrganizationResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Defer thread organization")
+  .annotate(Tool.Destructive, true);
+
 export const ThreadDeleteTool = Tool.make("t3_thread_delete", {
   description:
     "Permanently delete one T3 thread in the calling project, defaulting to this thread. This cancels its active work and removes it from thread listings. clientRequestId makes retries idempotent.",
@@ -271,6 +285,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadListTool,
   ThreadReadTool,
   ThreadOrganizeTool,
+  ThreadDeferOrganizationTool,
   ThreadDeleteTool,
   ThreadSendTool,
   ThreadWaitTool,

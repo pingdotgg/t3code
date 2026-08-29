@@ -529,6 +529,41 @@ export const OrchestratorMcpThreadOrganizeResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadOrganizeResult = typeof OrchestratorMcpThreadOrganizeResult.Type;
 
+export const OrchestratorMcpDeferredOrganizationIntent = Schema.Struct({
+  runId: RunId,
+  action: Schema.Literals(["settle", "archive"]),
+  requestedAt: IsoDateTime,
+});
+export type OrchestratorMcpDeferredOrganizationIntent =
+  typeof OrchestratorMcpDeferredOrganizationIntent.Type;
+
+export const OrchestratorMcpThreadDeferOrganizationInput = Schema.Union([
+  Schema.Struct({
+    operation: Schema.Literal("read"),
+  }),
+  Schema.Struct({
+    operation: Schema.Literal("schedule"),
+    action: Schema.Literals(["settle", "archive"]).annotate({
+      description:
+        "Organization action to apply only after this calling run completes safely with no newer, queued, or blocked work.",
+    }),
+    clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  }),
+  Schema.Struct({
+    operation: Schema.Literal("cancel"),
+    clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  }),
+]);
+export type OrchestratorMcpThreadDeferOrganizationInput =
+  typeof OrchestratorMcpThreadDeferOrganizationInput.Type;
+
+export const OrchestratorMcpThreadDeferOrganizationResult = Schema.Struct({
+  threadId: ThreadId,
+  intent: Schema.NullOr(OrchestratorMcpDeferredOrganizationIntent),
+});
+export type OrchestratorMcpThreadDeferOrganizationResult =
+  typeof OrchestratorMcpThreadDeferOrganizationResult.Type;
+
 export const OrchestratorMcpThreadDeleteInput = Schema.Struct({
   threadId: Schema.optional(ThreadId),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),

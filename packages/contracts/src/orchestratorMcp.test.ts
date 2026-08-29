@@ -6,6 +6,7 @@ import {
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpThreadInterruptInput,
+  OrchestratorMcpThreadDeferOrganizationInput,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadOrganizeInput,
   OrchestratorMcpThreadReadInput,
@@ -18,6 +19,9 @@ const decodeCreateThreadsInput = Schema.decodeUnknownSync(OrchestratorMcpCreateT
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
 const decodeThreadInterruptInput = Schema.decodeUnknownSync(OrchestratorMcpThreadInterruptInput);
+const decodeThreadDeferOrganizationInput = Schema.decodeUnknownSync(
+  OrchestratorMcpThreadDeferOrganizationInput,
+);
 const decodeThreadListInput = Schema.decodeUnknownSync(OrchestratorMcpThreadListInput);
 const decodeThreadOrganizeInput = Schema.decodeUnknownSync(OrchestratorMcpThreadOrganizeInput);
 const decodeThreadReadInput = Schema.decodeUnknownSync(OrchestratorMcpThreadReadInput);
@@ -213,6 +217,28 @@ describe("orchestrator MCP contracts", () => {
         threadId: "thread-a",
         items: [{ threadId: "thread-b", action: { type: "unpin" } }],
       }),
+    ).toThrow();
+  });
+
+  it("decodes durable after-run organization operations", () => {
+    expect(decodeThreadDeferOrganizationInput({ operation: "read" })).toEqual({
+      operation: "read",
+    });
+    expect(
+      decodeThreadDeferOrganizationInput({
+        operation: "schedule",
+        action: "archive",
+        clientRequestId: "archive-after-run",
+      }),
+    ).toMatchObject({ operation: "schedule", action: "archive" });
+    expect(
+      decodeThreadDeferOrganizationInput({
+        operation: "cancel",
+        clientRequestId: "cancel-after-run",
+      }),
+    ).toMatchObject({ operation: "cancel" });
+    expect(() =>
+      decodeThreadDeferOrganizationInput({ operation: "schedule", action: "delete" }),
     ).toThrow();
   });
 });

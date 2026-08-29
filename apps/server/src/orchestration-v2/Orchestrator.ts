@@ -257,6 +257,9 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.pin.reorder":
     case "thread.visit":
     case "thread.mark-unread":
+    case "thread.organization.defer":
+    case "thread.organization.defer.cancel":
+    case "thread.organization.defer.apply":
     case "thread.metadata.update":
     case "thread.title.regeneration.complete":
     case "thread.runtime-mode.set":
@@ -1965,6 +1968,168 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     }
   });
+
+  const dispatchDeferredOrganization = Effect.fn("orchestrationV2.dispatch.deferredOrganization")(
+    function* (
+      command: Extract<
+        OrchestrationV2Command,
+        {
+          readonly type:
+            | "thread.organization.defer"
+            | "thread.organization.defer.cancel"
+            | "thread.organization.defer.apply";
+        }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projection = yield* projectionStore.getThreadProjection(command.threadId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorProjectionError({
+              threadId: command.threadId,
+              cause,
+            }),
+        ),
+      );
+      const thread = projection.thread;
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is deleted.`,
+        });
+      }
+      const now = yield* DateTime.now;
+      if (command.type === "thread.organization.defer") {
+        if (thread.archivedAt !== null) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} is archived.`,
+          });
+        }
+        const activeRuns = projection.runs
+          .filter((run) => ["preparing", "starting", "running", "waiting"].includes(run.status))
+          .toSorted((left, right) => right.ordinal - left.ordinal);
+        if (activeRuns[0]?.id !== command.runId) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Run ${command.runId} is not the active run for thread ${command.threadId}.`,
+          });
+        }
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            deferredOrganization: {
+              runId: command.runId,
+              action: command.action,
+              requestedAt: now,
+            },
+            updatedAt: now,
+          },
+        });
+        return;
+      }
+
+      if (command.type === "thread.organization.defer.cancel") {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            deferredOrganization: null,
+            updatedAt: thread.deferredOrganization == null ? thread.updatedAt : now,
+          },
+        });
+        return;
+      }
+
+      const intent = thread.deferredOrganization;
+      if (intent == null || intent.runId !== command.runId) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has no deferred organization intent for run ${command.runId}.`,
+        });
+      }
+      const boundRun = projection.runs.find((run) => run.id === command.runId);
+      const hasNewerRun =
+        boundRun !== undefined && projection.runs.some((run) => run.ordinal > boundRun.ordinal);
+      const hasPendingWork =
+        projection.runs.some((run) =>
+          ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+        ) || projection.runtimeRequests.some((request) => request.status === "pending");
+      const canApply =
+        boundRun?.status === "completed" &&
+        !hasNewerRun &&
+        !hasPendingWork &&
+        thread.titleRegeneration == null &&
+        thread.archivedAt === null;
+      if (!canApply) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...thread, deferredOrganization: null, updatedAt: now },
+        });
+        return;
+      }
+      if (intent.action === "settle") {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.settled",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            deferredOrganization: null,
+            settledOverride: "settled",
+            settledAt: now,
+            pinnedAt: null,
+            pinOrderKey: null,
+            updatedAt: now,
+          },
+        });
+        return;
+      }
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.archived",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...thread,
+          deferredOrganization: null,
+          archivedAt: now,
+          titleRegeneration: null,
+          updatedAt: now,
+        },
+      });
+    },
+  );
 
   const dispatchProviderSessionDetach = Effect.fn("orchestrationV2.dispatch.providerSessionDetach")(
     function* (
@@ -6988,6 +7153,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "provider.switch":
         yield* dispatchThreadMutation(command, events, effects);
         break;
+      case "thread.organization.defer":
+      case "thread.organization.defer.cancel":
+      case "thread.organization.defer.apply":
+        yield* dispatchDeferredOrganization(command, events);
+        break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
@@ -7194,6 +7364,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchWithReceipt = (command: OrchestrationV2Command) =>
     threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
 
+  const applyDeferredOrganization = (threadId: ThreadId, runId: RunId) =>
+    Effect.gen(function* () {
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      if (projection.thread.deferredOrganization?.runId !== runId) return;
+      yield* dispatchWithReceiptEffect({
+        type: "thread.organization.defer.apply",
+        commandId: CommandId.make(`command:system:thread-organization-defer:${threadId}:${runId}`),
+        threadId,
+        runId,
+      });
+    });
+
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       const threadId = stored.event.threadId;
@@ -7211,6 +7393,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* threadDispatch.withLock(
           threadId,
           finalizeDelegatedCompletionDelivery(threadId, stored.event.payload.id),
+        );
+        yield* threadDispatch.withLock(
+          threadId,
+          applyDeferredOrganization(threadId, stored.event.payload.id),
         );
       }
       yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
@@ -7246,6 +7432,41 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // The high-water subscription deliberately skips history, so recover the
   // two terminal side effects from current projections instead: one queued
   // run per idle thread, plus any app-owned child result not yet transferred.
+  yield* projectionStore.getShellSnapshot().pipe(
+    Effect.flatMap((shell) =>
+      Effect.forEach(
+        [...shell.threads, ...shell.archivedThreads].filter(
+          (thread) => thread.deferredOrganization != null,
+        ),
+        (thread) =>
+          threadDispatch.withLock(
+            thread.id,
+            Effect.gen(function* () {
+              const projection = yield* projectionStore.getThreadProjection(thread.id);
+              const intent = projection.thread.deferredOrganization;
+              if (intent == null) return;
+              const boundRun = projection.runs.find((run) => run.id === intent.runId);
+              const hasNewerRun =
+                boundRun !== undefined &&
+                projection.runs.some((run) => run.ordinal > boundRun.ordinal);
+              if (
+                boundRun === undefined ||
+                hasNewerRun ||
+                ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(
+                  boundRun.status,
+                )
+              ) {
+                yield* applyDeferredOrganization(thread.id, intent.runId);
+              }
+            }),
+          ),
+        { concurrency: 8, discard: true },
+      ),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Failed to recover deferred thread organization", { cause }),
+    ),
+  );
   yield* resumeQueuedRuns.pipe(
     Effect.tap((resumed) =>
       resumed === 0

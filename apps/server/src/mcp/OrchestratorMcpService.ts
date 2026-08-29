@@ -30,6 +30,8 @@ import {
   type OrchestratorMcpTaskCancelResult,
   type OrchestratorMcpUpdateScheduledTaskInput,
   type OrchestratorMcpThreadDetail,
+  type OrchestratorMcpThreadDeferOrganizationInput,
+  type OrchestratorMcpThreadDeferOrganizationResult,
   type OrchestratorMcpThreadInterruptInput,
   type OrchestratorMcpThreadInterruptResult,
   type OrchestratorMcpThreadDeleteInput,
@@ -158,6 +160,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadOrganizeInput,
   ) => Effect.Effect<OrchestratorMcpThreadOrganizeResult, OrchestratorMcpFailure>;
+  readonly deferThreadOrganization: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpThreadDeferOrganizationInput,
+  ) => Effect.Effect<OrchestratorMcpThreadDeferOrganizationResult, OrchestratorMcpFailure>;
   readonly deleteThread: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadDeleteInput,
@@ -669,6 +675,23 @@ function organizationState(
       lastVisitedAt: projection.thread.lastVisitedAt,
     }),
     lastVisitedAt: iso(projection.thread.lastVisitedAt),
+  };
+}
+
+function deferredOrganizationResult(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestratorMcpThreadDeferOrganizationResult {
+  const intent = projection.thread.deferredOrganization;
+  return {
+    threadId: projection.thread.id,
+    intent:
+      intent == null
+        ? null
+        : {
+            runId: intent.runId,
+            action: intent.action,
+            requestedAt: DateTime.formatIso(intent.requestedAt),
+          },
   };
 }
 
@@ -1824,6 +1847,60 @@ const make = Effect.gen(function* () {
           { concurrency: 1 },
         );
         return { outcomes } satisfies OrchestratorMcpThreadOrganizeResult;
+      }),
+    deferThreadOrganization: (scope, input) =>
+      Effect.gen(function* () {
+        yield* requireCapability(scope);
+        const parent = yield* loadProjection(scope.threadId);
+        if (input.operation === "read") return deferredOrganizationResult(parent);
+
+        const key = yield* requestKey(input.clientRequestId);
+        const command: OrchestrationV2Command =
+          input.operation === "cancel"
+            ? {
+                type: "thread.organization.defer.cancel",
+                commandId: stableCommandId({
+                  scope,
+                  requestKey: key,
+                  operation: "thread-defer-organization-cancel",
+                }),
+                threadId: scope.threadId,
+              }
+            : yield* Effect.gen(function* () {
+                const parentRun = latestActiveRun(parent);
+                if (
+                  parentRun === undefined ||
+                  parentRun.rootNodeId === null ||
+                  parentRun.providerInstanceId !== scope.providerInstanceId
+                ) {
+                  return yield* failure(
+                    "parent_not_active",
+                    "Deferred organization requires an active run owned by this MCP provider session.",
+                  );
+                }
+                return {
+                  type: "thread.organization.defer",
+                  commandId: stableCommandId({
+                    scope,
+                    requestKey: key,
+                    operation: `thread-defer-organization-${input.action}`,
+                  }),
+                  threadId: scope.threadId,
+                  runId: parentRun.id,
+                  action: input.action,
+                } satisfies OrchestrationV2Command;
+              });
+        yield* threadManagement
+          .dispatch(command)
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "orchestration_error",
+                `Unable to ${input.operation} deferred organization for thread ${scope.threadId}: ${errorMessage(error)}`,
+              ),
+            ),
+          );
+        return deferredOrganizationResult(yield* loadProjection(scope.threadId));
       }),
     deleteThread: (scope, input) =>
       Effect.gen(function* () {

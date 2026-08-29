@@ -127,6 +127,9 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.pin.reorder":
     case "thread.visit":
     case "thread.mark-unread":
+    case "thread.organization.defer":
+    case "thread.organization.defer.cancel":
+    case "thread.organization.defer.apply":
     case "thread.metadata.update":
     case "thread.title.regeneration.complete":
     case "thread.runtime-mode.set":

@@ -10,6 +10,7 @@ import {
   NodeId,
   RuntimeRequestId,
   TurnItemId,
+  type OrchestrationV2Run,
   type ModelSelection,
   ProjectId,
   ProviderDriverKind,
@@ -1368,6 +1369,273 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const projection = yield* orchestrator.getThreadProjection(threadId);
       assert.isNull(projection.thread.archivedAt);
       assert.equal(projection.runtimeRequests[0]?.status, "pending");
+    }),
+  );
+
+  it.effect("applies deferred settlement after safe completion and replays its receipt", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const maintenance = yield* ProjectionMaintenanceV2;
+      const threadId = ThreadId.make("runtime-layer-deferred-settle-thread");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-deferred-settle-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-deferred-settle-project"),
+        title: "Deferred settlement",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-deferred-settle",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pin",
+        commandId: CommandId.make("runtime-layer-deferred-settle-pin"),
+        threadId,
+        orderKey: "a0",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-deferred-settle-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-deferred-settle-message"),
+        text: "Settle this thread after completion.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const run = before.runs[0];
+      assert.isDefined(run);
+      yield* orchestrator.dispatch({
+        type: "thread.organization.defer",
+        commandId: CommandId.make("runtime-layer-deferred-settle-schedule"),
+        threadId,
+        runId: run.id,
+        action: "settle",
+      });
+      const scheduledShell = yield* orchestrator.getThreadShell(threadId);
+      assert.isNotNull(scheduledShell);
+      assert.deepEqual(scheduledShell.deferredOrganization, {
+        runId: run.id,
+        action: "settle",
+        requestedAt: (yield* orchestrator.getThreadProjection(threadId)).thread.deferredOrganization
+          ?.requestedAt,
+      });
+
+      const settledEvents = yield* Queue.unbounded<number>();
+      const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.runForEach((stored) =>
+          stored.event.type === "thread.settled"
+            ? Queue.offer(settledEvents, stored.sequence)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      const completedAt = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("runtime-layer-deferred-settle-completed"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: completedAt,
+            payload: { ...run, status: "completed", completedAt },
+          },
+        ],
+      });
+      const settledSequence = yield* Queue.take(settledEvents);
+
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(settled.thread.settledOverride, "settled");
+      assert.isNull(settled.thread.pinnedAt);
+      assert.isNull(settled.thread.deferredOrganization);
+      const applyCommand = {
+        type: "thread.organization.defer.apply" as const,
+        commandId: CommandId.make(`command:system:thread-organization-defer:${threadId}:${run.id}`),
+        threadId,
+        runId: run.id,
+      };
+      const retry = yield* orchestrator.dispatch(applyCommand);
+      assert.equal(retry.sequence, settledSequence);
+      assert.equal(retry.storedEvents[0]?.event.type, "thread.settled");
+
+      const rebuilt = yield* maintenance.rebuild;
+      assert.isTrue(rebuilt.valid);
+      const replayed = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(replayed.thread.settledOverride, "settled");
+      assert.isNull(replayed.thread.deferredOrganization);
+    }),
+  );
+
+  it.effect("archives after safe completion and discards stale or blocked deferred intents", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+
+      const createStartingThread = (suffix: string) =>
+        Effect.gen(function* () {
+          const threadId = ThreadId.make(`runtime-layer-deferred-${suffix}-thread`);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`runtime-layer-deferred-${suffix}-create`),
+            threadId,
+            projectId: ProjectId.make(`runtime-layer-deferred-${suffix}-project`),
+            title: `Deferred ${suffix}`,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: `/tmp/runtime-layer-deferred-${suffix}`,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`runtime-layer-deferred-${suffix}-message`),
+            threadId,
+            messageId: MessageId.make(`runtime-layer-deferred-${suffix}-message`),
+            text: `Finish deferred ${suffix}.`,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0];
+          assert.isDefined(run);
+          return { threadId, run };
+        });
+
+      const completeAndAwait = (input: {
+        readonly suffix: string;
+        readonly threadId: ThreadId;
+        readonly run: OrchestrationV2Run;
+        readonly expectedEvent: "thread.archived" | "thread.metadata-updated";
+      }) =>
+        Effect.gen(function* () {
+          const events = yield* Queue.unbounded<void>();
+          const afterSequence = yield* orchestrator.getThreadEventSequence(input.threadId);
+          yield* eventSink.stream({ threadId: input.threadId, afterSequence }).pipe(
+            Stream.runForEach((stored) =>
+              stored.event.type === input.expectedEvent
+                ? Queue.offer(events, undefined)
+                : Effect.void,
+            ),
+            Effect.forkScoped,
+          );
+          yield* Effect.yieldNow;
+          const completedAt = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`runtime-layer-deferred-${input.suffix}-completed`),
+                type: "run.updated",
+                threadId: input.threadId,
+                runId: input.run.id,
+                ...(input.run.rootNodeId === null ? {} : { nodeId: input.run.rootNodeId }),
+                providerInstanceId: input.run.providerInstanceId,
+                occurredAt: completedAt,
+                payload: { ...input.run, status: "completed", completedAt },
+              },
+            ],
+          });
+          yield* Queue.take(events);
+        });
+
+      const archived = yield* createStartingThread("archive");
+      yield* orchestrator.dispatch({
+        type: "thread.organization.defer",
+        commandId: CommandId.make("runtime-layer-deferred-archive-schedule"),
+        threadId: archived.threadId,
+        runId: archived.run.id,
+        action: "archive",
+      });
+      yield* completeAndAwait({ ...archived, suffix: "archive", expectedEvent: "thread.archived" });
+      const archivedProjection = yield* orchestrator.getThreadProjection(archived.threadId);
+      assert.isNotNull(archivedProjection.thread.archivedAt);
+      assert.isNull(archivedProjection.thread.deferredOrganization);
+
+      const stale = yield* createStartingThread("stale");
+      yield* orchestrator.dispatch({
+        type: "thread.organization.defer",
+        commandId: CommandId.make("runtime-layer-deferred-stale-schedule"),
+        threadId: stale.threadId,
+        runId: stale.run.id,
+        action: "settle",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-deferred-stale-queued"),
+        threadId: stale.threadId,
+        messageId: MessageId.make("runtime-layer-deferred-stale-queued"),
+        text: "Newer queued work makes the intent stale.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* completeAndAwait({
+        ...stale,
+        suffix: "stale",
+        expectedEvent: "thread.metadata-updated",
+      });
+      const staleProjection = yield* orchestrator.getThreadProjection(stale.threadId);
+      assert.isNull(staleProjection.thread.deferredOrganization);
+      assert.isNull(staleProjection.thread.settledOverride);
+
+      const blocked = yield* createStartingThread("blocked");
+      yield* orchestrator.dispatch({
+        type: "thread.organization.defer",
+        commandId: CommandId.make("runtime-layer-deferred-blocked-schedule"),
+        threadId: blocked.threadId,
+        runId: blocked.run.id,
+        action: "settle",
+      });
+      const requestTime = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("runtime-layer-deferred-blocked-request"),
+            type: "runtime-request.updated",
+            threadId: blocked.threadId,
+            occurredAt: requestTime,
+            payload: {
+              id: RuntimeRequestId.make("runtime-layer-deferred-blocked-request"),
+              nodeId: NodeId.make("runtime-layer-deferred-blocked-node"),
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "command",
+              status: "pending",
+              responseCapability: { type: "not_resumable", reason: "test request" },
+              createdAt: requestTime,
+              resolvedAt: null,
+            },
+          },
+        ],
+      });
+      yield* completeAndAwait({
+        ...blocked,
+        suffix: "blocked",
+        expectedEvent: "thread.metadata-updated",
+      });
+      const blockedProjection = yield* orchestrator.getThreadProjection(blocked.threadId);
+      assert.isNull(blockedProjection.thread.deferredOrganization);
+      assert.isNull(blockedProjection.thread.settledOverride);
+      assert.equal(blockedProjection.runtimeRequests[0]?.status, "pending");
     }),
   );
 
