@@ -687,6 +687,10 @@ describe("ClaudeAdapterV2 session permissions", () => {
       ],
     });
 
+    assert.equal(result.behavior, "allow");
+    if (result.behavior !== "allow") {
+      return;
+    }
     assert.deepEqual(result.updatedPermissions, [
       {
         type: "addRules",
@@ -705,6 +709,10 @@ describe("ClaudeAdapterV2 session permissions", () => {
       toolUseID: "tool-2",
     });
 
+    assert.equal(result.behavior, "allow");
+    if (result.behavior !== "allow") {
+      return;
+    }
     assert.deepEqual(result.updatedPermissions, [
       {
         type: "addRules",
@@ -719,7 +727,7 @@ describe("ClaudeAdapterV2 session permissions", () => {
 describe("ClaudeAdapterV2 approval cancellation", () => {
   it.effect("observes an approval signal that was already aborted", () =>
     Effect.gen(function* () {
-      const decision = yield* Deferred.make<"accept">();
+      const decision = yield* Deferred.make<ProviderApprovalDecision>();
       const controller = new AbortController();
       controller.abort();
 
@@ -3004,6 +3012,75 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(finalSubagentNode?.status, "completed");
         assert.equal(finalSubagentNode?.runId, subagentNodeEvents[0]?.node.runId);
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("keeps a subagent snapshot model that arrives before task_started", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const toolUseId = "toolu-early-model";
+        const taskId = "task-early-model";
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-early-model"),
+            text: "Spawn a subagent.",
+            attachments: [],
+            modelSelection: {
+              ...CLAUDE_TEST_MODEL_SELECTION,
+              model: "claude-opus-4-6",
+            },
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            parent_tool_use_id: toolUseId,
+            message: {
+              model: "claude-sonnet-4-6",
+              content: [],
+            },
+            uuid: "00000000-0000-4000-8000-000000000206",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: toolUseId,
+            description: "Early model task",
+            task_type: "local_agent",
+            uuid: "00000000-0000-4000-8000-000000000207",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        const subagentEvents = () =>
+          harness.events.filter(
+            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
+              event.type === "subagent.updated",
+          );
+        yield* awaitUntil(() => subagentEvents().length === 1, "early model subagent");
+
+        assert.equal(subagentEvents()[0]?.subagent.model, "claude-sonnet-4-6");
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000208",
+            result: "Spawned the subagent.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "early model turn terminal");
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
     ),
   );
