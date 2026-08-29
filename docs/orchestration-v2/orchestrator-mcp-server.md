@@ -179,7 +179,8 @@ Returns:
 - the parent runtime and interaction modes;
 - registered provider instances and advertised models;
 - whether each provider can run a child task; and
-- feature flags for polling, cancellation, and batch thread creation.
+- feature flags for polling, cancellation, batch thread creation, project targeting, and the
+  supported thread workspace strategies.
 
 Unavailable providers include model-visible constraints such as missing V2
 adapter support, disabled state, missing executable, or missing authentication.
@@ -271,6 +272,11 @@ type CreateThreadsInput = {
       driverKind?: string;
       model?: string;
     };
+    projectId?: string;
+    workspaceStrategy?:
+      | { type: "root"; branch?: string }
+      | { type: "existing_worktree"; worktreePath: string; branch?: string }
+      | { type: "new_worktree"; baseRef: string; branch?: string; startFromOrigin?: boolean };
     runtimeMode?: "inherit" | "approval-required" | "auto-accept-edits" | "full-access";
     interactionMode?: "inherit" | "plan" | "default";
   }>;
@@ -278,24 +284,44 @@ type CreateThreadsInput = {
 };
 ```
 
-Each entry independently resolves provider, model, and modes. The new threads
-inherit the parent's project, branch, and worktree path, but they have no
-sub-agent lineage. Entries with a prompt immediately dispatch a run; entries
-without a prompt remain idle.
+Each entry independently resolves its project, workspace, provider, model, and modes. With no
+`projectId`, a thread uses the parent's project. With no `workspaceStrategy`, a thread in the
+parent's project reuses the parent's checkout, while a thread in another project uses that
+project's root and never inherits the parent's worktree path. An explicit strategy can use the
+project root, register a known existing worktree for the new thread, or ask `ThreadLaunchService`
+to provision a new worktree. Root and existing-worktree launches inspect the checkout before
+launch. A supplied branch is an expected-branch constraint, not a request to switch branches, and
+the call fails when the checkout is detached or on another branch. Existing-worktree paths are
+canonicalized and must resolve to the physical root of a Git worktree belonging to the selected
+project's repository. A root launch still uses the project's configured workspace root, including
+when that execution directory is a subdirectory of the physical Git worktree.
+
+Project selection does not raise the caller's authority. Provider, model, runtime mode, and
+interaction mode still inherit from the caller, and requested modes cannot exceed its permission
+ceiling. Project model and workspace-mode defaults remain client defaults; the MCP request's
+explicit strategy wins, followed by current-checkout reuse in the current project, then target-root
+fallback for a different project. The new threads have no sub-agent lineage. Entries with a prompt
+use the normal deferred launch path; entries without a prompt remain idle.
+
+The parent timeline records the selected project alongside each created thread. Cross-project
+recording uses a server-owned orchestration entry point that checks the MCP-selected project
+against the durable target-thread projection. The public `thread.created.record` command retains
+its same-project restriction and cannot promote a caller-supplied project ID into authorization.
 
 ### `t3_thread_start`
 
 Creates one ordinary top-level thread and immediately dispatches its first
 prompt. It is the single-thread convenience form of `create_threads` and
 returns the created thread and run IDs. Use `clientRequestId` when a caller may
-retry the request.
+retry the request. It accepts the same optional `projectId` and `workspaceStrategy` fields.
 
 ### `t3_thread_list`
 
-Lists durable thread shells in the calling thread's project, newest first.
+Lists durable thread shells in an explicitly selected project in the same environment, newest
+first. Omitting `projectId` keeps the calling thread's project as the scope.
 Callers can filter by title, run status, and whether app-owned sub-agent threads
 are included. Results are bounded and offset-paginated. Deleted threads and
-threads from other projects are never exposed.
+threads outside the selected project are never exposed.
 
 ### `t3_thread_read`
 
@@ -312,9 +338,14 @@ and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
 Actor and ingress are separate so agent-authored user-role messages remain
 distinguishable from human-authored messages.
 
+`t3_thread_read`, `t3_thread_send`, `t3_thread_wait`, and `t3_thread_interrupt` accept an optional
+`projectId`. The server resolves it through the local `ProjectService`, then verifies that the
+thread belongs to that project. No tool accepts an arbitrary environment ID. Organization remains
+scoped to the current project until its shared resolver is adopted there.
+
 ### `t3_thread_send`
 
-Sends a message to an ordinary or delegated thread in the calling project:
+Sends a message to an ordinary or delegated thread in the selected project:
 
 - `auto` starts an idle thread, steers a fully active turn, or queues behind a
   turn that is not yet steerable;

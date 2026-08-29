@@ -70,6 +70,10 @@ const handlers = {
             prompt: input.prompt,
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.target === undefined ? {} : { target: input.target }),
+            ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+            ...(input.workspaceStrategy === undefined
+              ? {}
+              : { workspaceStrategy: input.workspaceStrategy }),
             ...(input.runtimeMode === undefined ? {} : { runtimeMode: input.runtimeMode }),
             ...(input.interactionMode === undefined
               ? {}
