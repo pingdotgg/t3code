@@ -94,8 +94,10 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       <T3Wordmark />
       <span
         className={cn(
-          "-translate-y-px hidden truncate text-sm font-medium tracking-tight @[15rem]/sidebar-header:inline",
-          onBackdrop ? "text-white/70" : "text-muted-foreground",
+          "-translate-y-px truncate text-sm font-medium tracking-tight",
+          onBackdrop
+            ? "text-white/70"
+            : "hidden text-muted-foreground @[15rem]/sidebar-header:inline",
         )}
       >
         Code
