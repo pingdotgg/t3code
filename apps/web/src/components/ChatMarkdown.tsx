@@ -198,6 +198,8 @@ interface ChatMarkdownProps {
   lineBreaks?: boolean;
   /** Parse sanitized raw HTML instead of displaying its source text. */
   parseRawHtml?: boolean;
+  /** Nest markdown headings below their message without changing visual styles. */
+  headingLevelOffset?: number;
   /** Append a prompt that invokes a newly created artifact-template skill. */
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
@@ -2159,6 +2161,7 @@ function useChatMarkdownState({
   onTaskListChange,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
+  headingLevelOffset = 0,
   onUseArtifactTemplate,
   imageBaseDir,
   onImageExpand,
@@ -2551,6 +2554,7 @@ function useChatMarkdownState({
       environmentId,
       expandMedia,
       fileLinkChip,
+      headingLevelOffset,
       imageBaseDir,
       inlineCodeFileLinkMetaByText,
       isStreaming,
@@ -2578,6 +2582,7 @@ function useChatMarkdownState({
       environmentId,
       expandMedia,
       fileLinkChip,
+      headingLevelOffset,
       imageBaseDir,
       inlineCodeFileLinkMetaByText,
       isStreaming,
@@ -2616,6 +2621,30 @@ const ChatMarkdownRendererContext = React.createContext<
 
 // Keep component types stable when streaming changes the message state.
 const CHAT_MARKDOWN_COMPONENTS = {
+  h1: function MarkdownHeading1({ node: _node, ...props }) {
+    const { headingLevelOffset } = use(ChatMarkdownRendererContext);
+    return <h1 {...props} aria-level={headingLevelOffset ? Math.min(6, 1 + headingLevelOffset) : undefined} />;
+  },
+  h2: function MarkdownHeading2({ node: _node, ...props }) {
+    const { headingLevelOffset } = use(ChatMarkdownRendererContext);
+    return <h2 {...props} aria-level={headingLevelOffset ? Math.min(6, 2 + headingLevelOffset) : undefined} />;
+  },
+  h3: function MarkdownHeading3({ node: _node, ...props }) {
+    const { headingLevelOffset } = use(ChatMarkdownRendererContext);
+    return <h3 {...props} aria-level={headingLevelOffset ? Math.min(6, 3 + headingLevelOffset) : undefined} />;
+  },
+  h4: function MarkdownHeading4({ node: _node, ...props }) {
+    const { headingLevelOffset } = use(ChatMarkdownRendererContext);
+    return <h4 {...props} aria-level={headingLevelOffset ? Math.min(6, 4 + headingLevelOffset) : undefined} />;
+  },
+  h5: function MarkdownHeading5({ node: _node, ...props }) {
+    const { headingLevelOffset } = use(ChatMarkdownRendererContext);
+    return <h5 {...props} aria-level={headingLevelOffset ? Math.min(6, 5 + headingLevelOffset) : undefined} />;
+  },
+  h6: function MarkdownHeading6({ node: _node, ...props }) {
+    const { headingLevelOffset } = use(ChatMarkdownRendererContext);
+    return <h6 {...props} aria-level={headingLevelOffset ? Math.min(6, 6 + headingLevelOffset) : undefined} />;
+  },
   div: function MarkdownDiv({ node, children, ...props }) {
     const { onUseArtifactTemplate } = use(ChatMarkdownRendererContext);
     const artifactTemplate = artifactTemplateFromHastProperties(node?.properties);
