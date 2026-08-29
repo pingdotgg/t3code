@@ -326,6 +326,22 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
+    func fallbackRowContextDoesNotOfferPlaceholderProjectCopy() {
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "missing-project",
+            title: "Unresolved project"
+        )
+
+        let actions = ThreadCopyModel.actions(
+            for: thread,
+            context: HomeThreadRowContext.fallback.copyContext
+        )
+
+        #expect(actions.contains { $0.kind == .project } == false)
+    }
+
+    @Test
     func pullRequestIndicatorsUseTheCurrentThreadBranchAndPreserveTheirState() {
         let thread = FeatureThread(
             id: "thread",

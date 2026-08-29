@@ -842,7 +842,7 @@ struct HomeThreadRowContext: Equatable {
 
     var copyContext: ThreadCopyContext {
         ThreadCopyContext(
-            projectName: projectName,
+            projectName: projectWorkspaceRoot == nil ? nil : projectName,
             projectWorkspaceRoot: projectWorkspaceRoot,
             environmentName: environmentLabel,
             environmentID: projectEnvironmentID
