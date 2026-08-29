@@ -3,7 +3,7 @@
 This demo adds a CopilotKit-powered PR review agent to Git-backed local and bearer-authenticated server threads. It can:
 
 - inspect the current branch range and dirty working tree through T3 Code's existing review API;
-- start a review automatically when its right-panel tab opens;
+- wait for an explicit **Start review** click before reading or sending any diff;
 - render the branch map, diff reads, and review passes as live CopilotKit GenUI;
 - render navigable findings from the final `submit_review` tool call;
 - open referenced files in T3 Code;
@@ -21,7 +21,9 @@ For backwards compatibility, `OPENROUTER_API_KEY` is still used when no saved ke
 `OPENROUTER_BASE_URL` can still override the OpenRouter endpoint. Other provider errors are shown
 in the pane.
 
-Start the normal development environment and open a server thread backed by a Git repository. Open the right panel and choose **CopilotKit Review**. The review starts immediately. Choosing the action again or using the refresh button starts a fresh review of the latest diff.
+Start the normal development environment and open a server thread backed by a Git repository. Open
+the right panel and choose **CopilotKit Review**. The pane stays idle until you choose **Start
+review**. After a completed review, choose **Redo review** to run it again against the latest diff.
 
 The pane deliberately shows which parts come from CopilotKit. `useAgent` owns the review agent,
 `useAgentContext` supplies the active project and branch, and four `useFrontendTool` calls expose the

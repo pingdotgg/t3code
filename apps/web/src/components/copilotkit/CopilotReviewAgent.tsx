@@ -97,7 +97,7 @@ const reviewSubmissionResultSchema = z.object({
   findings: z.number().int().nonnegative(),
 });
 
-type ReviewPhase = "connecting" | "inspecting" | "reviewing" | "complete" | "error";
+type ReviewPhase = "idle" | "connecting" | "inspecting" | "reviewing" | "complete" | "error";
 type ReviewInspection = Pick<ReviewDiffContext, "summary" | "files">;
 
 export interface CopilotReviewAgentProps {
@@ -107,7 +107,6 @@ export interface CopilotReviewAgentProps {
   readonly projectName: string;
   readonly cwd: string;
   readonly branch: string | null;
-  readonly reviewRequestId: number;
   readonly onOpenFile: (relativePath: string) => void;
 }
 
@@ -231,11 +230,13 @@ function ReviewStatus({ phase }: { readonly phase: ReviewPhase }) {
     );
   }
   const label =
-    phase === "connecting"
-      ? "Connecting"
-      : phase === "inspecting"
-        ? "Reading the diff"
-        : "Reviewing changes";
+    phase === "idle"
+      ? "Ready to review"
+      : phase === "connecting"
+        ? "Connecting"
+        : phase === "inspecting"
+          ? "Reading the diff"
+          : "Reviewing changes";
   return (
     <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
       <CircleDotIcon className="size-3.5 text-primary" />
@@ -265,7 +266,10 @@ function ReviewToolStep({
   readonly title: string;
 }) {
   return (
-    <section className="border-b border-border/70 px-3 py-3" data-copilotkit-genui={tool}>
+    <section
+      className="rounded-lg border border-border/70 bg-card px-3 py-3 shadow-xs/5"
+      data-copilotkit-genui={tool}
+    >
       <div className="flex items-start gap-2.5">
         <div className="pt-0.5">
           {active ? (
@@ -303,7 +307,7 @@ function ReviewProgress({
   });
   return (
     <section
-      className="border-b border-border/70 px-3 py-3"
+      className="rounded-lg border border-border/70 bg-card px-3 py-3 shadow-xs/5"
       data-copilotkit-genui="report_review_progress"
     >
       <div className="flex items-start gap-2.5">
@@ -353,7 +357,10 @@ function ReviewFiles({
 }) {
   const visibleFiles = inspection.files.slice(0, 16);
   return (
-    <section className="border-b border-border/70 px-3 py-3" data-copilotkit-genui="inspect_branch">
+    <section
+      className="rounded-lg border border-border/70 bg-card px-3 py-3 shadow-xs/5"
+      data-copilotkit-genui="inspect_branch"
+    >
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <CheckCircle2Icon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -402,7 +409,10 @@ function ReviewResult({
   const presentation = verdictPresentation(result.verdict);
   const VerdictIcon = presentation.icon;
   return (
-    <section data-copilotkit-genui="submit_review">
+    <section
+      className="overflow-hidden rounded-lg border border-border/70 bg-card shadow-xs/5"
+      data-copilotkit-genui="submit_review"
+    >
       <div className="border-b border-border/70 px-3 py-3">
         <div className="mb-2 flex items-center gap-2">
           <SparklesIcon className="size-3.5 text-primary" />
@@ -498,13 +508,12 @@ function ReviewPane(
   });
   const { copilotkit } = useCopilotKit();
   const renderToolCall = useRenderToolCall();
-  const [phase, setPhase] = useState<ReviewPhase>("connecting");
+  const [phase, setPhase] = useState<ReviewPhase>("idle");
   const [runError, setRunError] = useState<string | null>(null);
   const [scopeNotice, setScopeNotice] = useState<string | null>(null);
   const diffContextRef = useRef<ReviewDiffContext | null>(null);
   const readDiffChunkIndicesRef = useRef(new Set<number>());
   const resultSubmittedRef = useRef(false);
-  const automaticRunKeyRef = useRef<string | null>(null);
   const runInFlightRef = useRef(false);
 
   const agentContext = useMemo(
@@ -740,8 +749,6 @@ function ReviewPane(
 
   const runReview = useCallback(async () => {
     if (!isReady) {
-      clearRuntimeError();
-      setPhase("connecting");
       copilotkit.connect();
       return;
     }
@@ -788,21 +795,6 @@ function ReviewPane(
     }
   }, [agent, clearRuntimeError, copilotkit, getRuntimeError, isReady, localAgentId]);
 
-  useEffect(() => {
-    const automaticRunKey = `${props.threadId}:${props.cwd}:${props.branch ?? "detached"}:${props.reviewRequestId}`;
-    if (!isReady || agent.isRunning || automaticRunKeyRef.current === automaticRunKey) return;
-    automaticRunKeyRef.current = automaticRunKey;
-    void runReview();
-  }, [
-    agent.isRunning,
-    isReady,
-    props.branch,
-    props.cwd,
-    props.reviewRequestId,
-    props.threadId,
-    runReview,
-  ]);
-
   const toolMessagesByCallId = new Map(
     agent.messages
       .filter((message) => message.role === "tool")
@@ -812,12 +804,8 @@ function ReviewPane(
     message.role === "assistant" ? (message.toolCalls ?? []) : [],
   );
   const visibleError = props.runtimeError ? readableReviewError(props.runtimeError) : runError;
-  const visiblePhase: ReviewPhase = visibleError === null ? phase : "error";
-  const reviewBusy =
-    agent.isRunning ||
-    visiblePhase === "connecting" ||
-    visiblePhase === "inspecting" ||
-    visiblePhase === "reviewing";
+  const visiblePhase: ReviewPhase =
+    visibleError !== null ? "error" : phase === "idle" && !isReady ? "connecting" : phase;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -831,18 +819,18 @@ function ReviewPane(
             {props.branch ?? "Detached HEAD"}
           </p>
         </div>
-        <Button
-          aria-label="Review the latest diff"
-          className="shrink-0"
-          disabled={reviewBusy}
-          onClick={() => void runReview()}
-          size={visiblePhase === "complete" ? "sm" : "micro"}
-          title={visiblePhase === "complete" ? undefined : "Review again"}
-          variant="outline"
-        >
-          <RefreshCwIcon />
-          {visiblePhase === "complete" ? "Redo review" : null}
-        </Button>
+        {visiblePhase === "complete" ? (
+          <Button
+            aria-label="Review the latest diff again"
+            className="shrink-0"
+            onClick={() => void runReview()}
+            size="sm"
+            variant="outline"
+          >
+            <RefreshCwIcon />
+            Redo review
+          </Button>
+        ) : null}
       </header>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -853,18 +841,29 @@ function ReviewPane(
           ) : null}
         </div>
 
-        <section className="border-b border-border/70 bg-muted/20 px-3 py-3">
-          <div className="flex items-center gap-2">
-            <SparklesIcon className="size-3.5 text-primary" />
-            <p className="text-xs font-medium">CopilotKit GenUI</p>
-            <Badge size="sm" variant="info">
-              Live tool UI
-            </Badge>
-          </div>
-          <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">
-            CopilotKit turns the review agent&apos;s tool calls into the interactive cards below.
-          </p>
-        </section>
+        {phase === "idle" && visibleError === null ? (
+          <section className="px-3 py-5">
+            <div className="rounded-xl border border-border/70 bg-card px-4 py-4 shadow-xs/5">
+              <div className="flex items-center gap-2">
+                <SparklesIcon className="size-4 text-primary" />
+                <p className="text-sm font-medium">Run a CopilotKit review</p>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                Nothing runs until you start it. The agent will render its branch map, code-reading
+                steps, review passes, and findings as custom UI in this pane.
+              </p>
+              <Button
+                className="mt-4"
+                disabled={!isReady}
+                onClick={() => void runReview()}
+                size="sm"
+              >
+                <SearchCodeIcon />
+                {isReady ? "Start review" : "Connecting"}
+              </Button>
+            </div>
+          </section>
+        ) : null}
 
         {visibleError ? (
           <section className="border-b border-border/70 px-3 py-4">
@@ -887,18 +886,34 @@ function ReviewPane(
           </section>
         ) : null}
 
-        <div aria-label="CopilotKit generated review UI">
-          {reviewToolCalls.map((toolCall) => {
-            const toolMessage = toolMessagesByCallId.get(toolCall.id);
-            return (
-              <div key={toolCall.id}>
-                {renderToolCall(
-                  toolMessage === undefined ? { toolCall } : { toolCall, toolMessage },
-                )}
+        {reviewToolCalls.length > 0 ? (
+          <section aria-label="CopilotKit generated review UI">
+            <div className="border-y border-border/70 bg-muted/20 px-3 py-3">
+              <div className="flex items-center gap-2">
+                <SparklesIcon className="size-3.5 text-primary" />
+                <p className="text-xs font-medium">CopilotKit custom UI</p>
+                <Badge size="sm" variant="info">
+                  Generated live
+                </Badge>
               </div>
-            );
-          })}
-        </div>
+              <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">
+                Every card below is the custom renderer for one review-agent tool call.
+              </p>
+            </div>
+            <div className="space-y-2 p-3">
+              {reviewToolCalls.map((toolCall) => {
+                const toolMessage = toolMessagesByCallId.get(toolCall.id);
+                return (
+                  <div key={toolCall.id}>
+                    {renderToolCall(
+                      toolMessage === undefined ? { toolCall } : { toolCall, toolMessage },
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
       </ScrollArea>
     </div>
   );

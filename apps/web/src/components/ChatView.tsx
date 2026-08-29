@@ -1447,7 +1447,6 @@ function ChatViewContent(props: ChatViewProps) {
     useState<Record<string, number>>({});
   const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
-  const [copilotReviewRequestId, setCopilotReviewRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
@@ -3411,7 +3410,6 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef]);
   const addCopilotReviewSurface = useCallback(() => {
     if (!activeThreadRef || !copilotReviewAvailable) return;
-    setCopilotReviewRequestId((requestId) => requestId + 1);
     useRightPanelStore.getState().open(activeThreadRef, "copilot-review");
   }, [activeThreadRef, copilotReviewAvailable]);
   const openFileSurface = useCallback(
@@ -6593,7 +6591,6 @@ function ChatViewContent(props: ChatViewProps) {
           environmentId={activeThread.environmentId}
           onOpenFile={openFileSurface}
           projectName={activeProject.title}
-          reviewRequestId={copilotReviewRequestId}
           threadId={activeThread.id}
           threadTitle={activeThread.title}
         />
