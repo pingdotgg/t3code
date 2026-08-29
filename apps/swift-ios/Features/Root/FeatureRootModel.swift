@@ -1166,6 +1166,7 @@ public final class FeatureRootModel {
         detail.thread.title = shell.title
         detail.thread.isRegeneratingTitle = shell.isRegeneratingTitle
         detail.thread.titleRegenerationRequestID = shell.titleRegenerationRequestID
+        detail.thread.updatedAt = shell.updatedAt
         return detail
     }
 
