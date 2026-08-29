@@ -31,11 +31,12 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
  */
 export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   entries: ReadonlyArray<PromptStashEntry>;
+  stashShortcutLabel: string | null;
   onRestore: (entry: PromptStashEntry) => void;
   onDelete: (entry: PromptStashEntry) => void;
   onClose: () => void;
 }) {
-  const { entries, onRestore, onDelete, onClose } = props;
+  const { entries, stashShortcutLabel, onRestore, onDelete, onClose } = props;
   const drawerRef = useRef<HTMLDivElement>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
 
@@ -128,7 +129,10 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
           <CommandGroup>
             {entries.length === 0 ? (
               <p className="px-3 py-1.5 text-secondary-label text-xs">
-                Nothing stashed yet. Press ⌘S with a prompt in the composer to stash it.
+                Nothing stashed yet.
+                {stashShortcutLabel
+                  ? ` Press ${stashShortcutLabel} with a prompt in the composer to stash it.`
+                  : null}
               </p>
             ) : (
               entries.map((entry) => (

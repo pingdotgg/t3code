@@ -8,6 +8,7 @@ describe("ComposerStashMenu", () => {
     const markup = renderToStaticMarkup(
       <ComposerStashMenu
         entries={[]}
+        stashShortcutLabel="Ctrl+S"
         onRestore={() => {}}
         onDelete={() => {}}
         onClose={() => {}}
@@ -20,6 +21,22 @@ describe("ComposerStashMenu", () => {
     expect(markup).toContain('aria-label="Close stash"');
     expect(markup).not.toContain("dropdown-glass");
     expect(markup).not.toContain("Stashed prompts");
+    expect(markup).toContain("Press Ctrl+S with a prompt in the composer to stash it.");
+  });
+
+  it("does not advertise a shortcut when stash is unbound", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerStashMenu
+        entries={[]}
+        stashShortcutLabel={null}
+        onRestore={() => {}}
+        onDelete={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Nothing stashed yet.");
+    expect(markup).not.toContain("Press");
   });
 
   it("shows saved image thumbnails and incomplete image states", () => {
@@ -53,6 +70,7 @@ describe("ComposerStashMenu", () => {
             pendingImageCount: 1,
           },
         ]}
+        stashShortcutLabel="Ctrl+S"
         onRestore={() => {}}
         onDelete={() => {}}
         onClose={() => {}}
