@@ -11,6 +11,9 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private latestContents = "";
   private latestRevision = 0;
+  // Revision of the last edit confirmed on disk, so `dispose` can tell an
+  // unsaved edit from one the debounce already wrote and only flush the former.
+  private persistedRevision = 0;
   private lastChangeAt = 0;
   private saving = false;
   private disposed = false;
@@ -28,7 +31,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   dispose(): void {
     this.disposed = true;
     this.clearTimer();
-    if (this.latestRevision > 0) void this.persistLatest();
+    if (this.latestRevision > this.persistedRevision) void this.persistLatest();
   }
 
   private schedule(delay: number): void {
@@ -54,6 +57,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     const result = await this.options.persist(contents);
     const succeeded = result._tag === "Success";
     if (succeeded) {
+      this.persistedRevision = revision;
       this.options.onConfirmed(contents);
     }
 
