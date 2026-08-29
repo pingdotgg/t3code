@@ -7,6 +7,7 @@ import {
   type Options as ClaudeQueryOptions,
   type PermissionMode,
   type PermissionResult,
+  type PermissionUpdate,
   type Query as ClaudeQuery,
   type Settings as ClaudeSdkSettings,
   type SDKAssistantMessage,
@@ -1796,7 +1797,8 @@ function parentToolUseIdFromSdkMessage(message: SDKMessage): string | null {
     : null;
 }
 
-function permissionResultFromDecision(input: {
+export function permissionResultFromDecision(input: {
+  readonly toolName: string;
   readonly decision: ProviderApprovalDecision;
   readonly toolInput: Record<string, unknown>;
   readonly toolUseID: string;
@@ -1809,8 +1811,10 @@ function permissionResultFromDecision(input: {
       toolUseID: input.toolUseID,
       decisionClassification:
         input.decision === "acceptForSession" ? "user_permanent" : "user_temporary",
-      ...(input.decision === "acceptForSession" && input.suggestions !== undefined
-        ? { updatedPermissions: input.suggestions }
+      ...(input.decision === "acceptForSession"
+        ? {
+            updatedPermissions: toSessionPermissionUpdates(input.toolName, input.suggestions),
+          }
         : {}),
     };
   }
@@ -1825,6 +1829,26 @@ function permissionResultFromDecision(input: {
     decisionClassification: "user_reject",
     ...(input.decision === "cancel" ? { interrupt: true } : {}),
   };
+}
+
+function toSessionPermissionUpdates(
+  toolName: string,
+  suggestions: ReadonlyArray<PermissionUpdate> | undefined,
+): Array<PermissionUpdate> {
+  const updates = (suggestions ?? []).map(
+    (suggestion): PermissionUpdate => ({ ...suggestion, destination: "session" }),
+  );
+  if (updates.length > 0) {
+    return updates;
+  }
+  return [
+    {
+      type: "addRules",
+      rules: [{ toolName }],
+      behavior: "allow",
+      destination: "session",
+    },
+  ];
 }
 
 /**
@@ -4262,6 +4286,7 @@ export function makeClaudeAdapterV2(
           callbackOptions.signal.removeEventListener("abort", abort);
 
           return permissionResultFromDecision({
+            toolName,
             decision: resolvedDecision,
             toolInput,
             toolUseID: callbackOptions.toolUseID,
