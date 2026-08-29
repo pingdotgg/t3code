@@ -1,6 +1,22 @@
 import SwiftUI
 import UIKit
 
+enum ThreadTitleRegenerationMenuState: Equatable {
+    case hidden
+    case available
+    case regenerating
+
+    static func resolve(
+        thread: FeatureThread,
+        regeneratingThreadIDs: Set<String>
+    ) -> Self {
+        guard thread.supportsTitleRegeneration == true else { return .hidden }
+        return regeneratingThreadIDs.contains(thread.id) || thread.isRegeneratingTitle == true
+            ? .regenerating
+            : .available
+    }
+}
+
 /// A recycled, diffable Home surface. SwiftUI still owns the surrounding shell,
 /// while UIKit keeps row creation and updates proportional to visible threads.
 struct HomeThreadCollectionView: UIViewRepresentable {
@@ -22,6 +38,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
     let onToggleArchive: () -> Void
     let onShowMoreSettled: () -> Void
     let onRename: (FeatureThread) -> Void
+    let regeneratingTitleThreadIDs: Set<String>
     let onRegenerateTitle: (FeatureThread) -> Void
     let onArchive: (FeatureThread, Bool) -> Void
     let onSettle: (FeatureThread, Bool, @escaping (Bool) -> Void) -> Void
@@ -86,6 +103,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         private var itemsByID: [HomeCollectionItem.ID: HomeCollectionItem] = [:]
         private var pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
         private var selectedThreadID: String?
+        private var regeneratingTitleThreadIDs: Set<String>
         private weak var collectionView: UICollectionView?
         private var timer: Timer?
         private var timerTick = 0
@@ -95,6 +113,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         init(parent: HomeThreadCollectionView) {
             self.parent = parent
             selectedThreadID = parent.selectedThreadID
+            regeneratingTitleThreadIDs = parent.regeneratingTitleThreadIDs
         }
 
         func configure(_ collectionView: UICollectionView) {
@@ -123,8 +142,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         func update(parent: HomeThreadCollectionView, collectionView: UICollectionView) {
             let previousItems = itemsByID
             let previousSelection = selectedThreadID
+            let previousRegeneratingTitleThreadIDs = regeneratingTitleThreadIDs
             self.parent = parent
             selectedThreadID = parent.selectedThreadID
+            regeneratingTitleThreadIDs = parent.regeneratingTitleThreadIDs
 
             var seenIdentifiers = Set<HomeCollectionItem.ID>()
             let items = parent.collectionItems.filter { item in
@@ -161,7 +182,11 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     ? [previousSelection, selectedThreadID] : [])
                     .compactMap { $0.map(HomeCollectionItem.ID.thread) }
                     .filter { newIdentifiers.contains($0) }
-                let identifiers = Array(Set(changed + selectionChanged))
+                let regenerationChanged = previousRegeneratingTitleThreadIDs
+                    .symmetricDifference(regeneratingTitleThreadIDs)
+                    .map(HomeCollectionItem.ID.thread)
+                    .filter { newIdentifiers.contains($0) }
+                let identifiers = Array(Set(changed + selectionChanged + regenerationChanged))
                 if !identifiers.isEmpty {
                     var snapshot = dataSource.snapshot()
                     snapshot.reconfigureItems(identifiers)
@@ -357,6 +382,9 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                     item: item,
                     projectFaviconClient: parent.projectFaviconClient,
                     isSelected: identifier.threadID == selectedThreadID,
+                    isRegeneratingTitle: identifier.threadID.map {
+                        regeneratingTitleThreadIDs.contains($0)
+                    } ?? false,
                     now: now,
                     onPullRequestChange: { [weak self, weak cell] pullRequest in
                         guard let self,
@@ -479,6 +507,12 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             ) {
                 values.append("Settled")
             }
+            if ThreadTitleRegenerationMenuState.resolve(
+                thread: thread,
+                regeneratingThreadIDs: parent.regeneratingTitleThreadIDs
+            ) == .regenerating {
+                values.append("Regenerating title")
+            }
             values.append("Provider \(context.providerName)")
             if let environment = context.environmentLabel {
                 values.append("on \(environment)")
@@ -512,7 +546,10 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 coordinator.parent.onRename(thread)
             }]
 
-            if thread.supportsTitleRegeneration == true {
+            if ThreadTitleRegenerationMenuState.resolve(
+                thread: thread,
+                regeneratingThreadIDs: parent.regeneratingTitleThreadIDs
+            ) == .available {
                 actions.append(accessibilityAction("Regenerate title", systemImage: "sparkles") { coordinator in
                     coordinator.parent.onRegenerateTitle(thread)
                 })
@@ -629,7 +666,13 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             }
 
             var titleActions: [UIMenuElement] = [rename]
-            if thread.supportsTitleRegeneration == true {
+            switch ThreadTitleRegenerationMenuState.resolve(
+                thread: thread,
+                regeneratingThreadIDs: parent.regeneratingTitleThreadIDs
+            ) {
+            case .hidden:
+                break
+            case .available:
                 titleActions.append(
                     UIAction(
                         title: "Regenerate title",
@@ -638,6 +681,13 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                         self?.parent.onRegenerateTitle(thread)
                     }
                 )
+            case .regenerating:
+                let action = UIAction(
+                    title: "Regenerating…",
+                    image: UIImage(systemName: "sparkles")
+                ) { _ in }
+                action.attributes = .disabled
+                titleActions.append(action)
             }
 
             var statusActions: [UIMenuElement] = []
@@ -1048,6 +1098,7 @@ private struct HomeCollectionCellContent: View {
     let item: HomeCollectionItem
     let projectFaviconClient: any FeatureClient
     let isSelected: Bool
+    let isRegeneratingTitle: Bool
     let now: Date
     let onPullRequestChange: (HomeThreadPullRequestPresentation?) -> Void
 
@@ -1061,6 +1112,7 @@ private struct HomeCollectionCellContent: View {
                 projectFaviconClient: projectFaviconClient,
                 onPullRequestChange: onPullRequestChange,
                 isSelected: isSelected,
+                isRegeneratingTitle: isRegeneratingTitle,
                 style: style,
                 now: now,
                 allowsMultilineTitle: allowsMultilineTitle

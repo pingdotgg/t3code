@@ -780,6 +780,54 @@ struct HomeThreadSwipeActionTests {
         #expect(selected.first?.accessibilityLabel == second.title)
     }
 
+    @Test
+    func localTitleRegenerationStateShowsProgressAndSuppressesDuplicateAction() throws {
+        let client = SwipeSettlementClientStub()
+        var regeneratable = thread(id: "regenerating")
+        regeneratable.supportsTitleRegeneration = true
+        let initial = threadList(
+            client: client,
+            snapshot: snapshot(threads: [regeneratable])
+        )
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        collectionView.layoutIfNeeded()
+        defer {
+            coordinator.invalidateTimer()
+            coordinator.cancelPendingSwipeActions()
+        }
+
+        let initialCell = try #require(
+            collectionView.cellForItem(at: IndexPath(item: 0, section: 0))
+        )
+        #expect(initialCell.accessibilityValue?.contains("Regenerating title") == false)
+        #expect(initialCell.accessibilityCustomActions?.contains { $0.name == "Regenerate title" } == true)
+
+        let updated = threadList(
+            client: client,
+            snapshot: snapshot(threads: [regeneratable]),
+            regeneratingTitleThreadIDs: [regeneratable.id]
+        )
+        coordinator.update(parent: updated, collectionView: collectionView)
+        collectionView.layoutIfNeeded()
+
+        let updatedCell = try #require(
+            collectionView.cellForItem(at: IndexPath(item: 0, section: 0))
+        )
+        #expect(updatedCell.accessibilityValue?.contains("Regenerating title") == true)
+        #expect(updatedCell.accessibilityCustomActions?.contains { $0.name == "Regenerate title" } == false)
+
+        coordinator.update(parent: initial, collectionView: collectionView)
+        collectionView.layoutIfNeeded()
+
+        let completedCell = try #require(
+            collectionView.cellForItem(at: IndexPath(item: 0, section: 0))
+        )
+        #expect(completedCell.accessibilityValue?.contains("Regenerating title") == false)
+        #expect(completedCell.accessibilityCustomActions?.contains { $0.name == "Regenerate title" } == true)
+    }
+
     private func presentation(for model: FeatureRootModel) -> HomePresentation {
         HomePresentation(
             snapshot: model.snapshot,
@@ -808,6 +856,7 @@ struct HomeThreadSwipeActionTests {
         snapshot: FeatureSnapshot,
         query: String = "",
         selectedThreadID: String? = nil,
+        regeneratingTitleThreadIDs: Set<String> = [],
         settlementResult: Bool = true,
         onSettle: @escaping (FeatureThread, Bool) -> Void = { _, _ in }
     ) -> HomeThreadCollectionView {
@@ -835,6 +884,7 @@ struct HomeThreadSwipeActionTests {
             onToggleArchive: {},
             onShowMoreSettled: {},
             onRename: { _ in },
+            regeneratingTitleThreadIDs: regeneratingTitleThreadIDs,
             onRegenerateTitle: { _ in },
             onArchive: { _, _ in },
             onSettle: { thread, settled, completion in

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 private struct FeatureConnectionUnavailableError: LocalizedError {
     var errorDescription: String? {
@@ -21,6 +22,116 @@ struct FeatureDetailRenderUpdate: Equatable {
 enum FeatureThreadLoadState: Equatable {
     case loading
     case failed(String)
+}
+
+private struct FeatureTitleRegenerationTracker {
+    enum Resolution: Equatable {
+        case completed(title: String)
+        case failed(title: String)
+        case cancelled
+    }
+
+    private struct Pending {
+        let projectID: String
+        let environmentID: String?
+        let originalTitle: String
+        var observedServerRequest = false
+    }
+
+    private var pendingByThreadID: [String: Pending] = [:]
+
+    var threadIDs: Set<String> { Set(pendingByThreadID.keys) }
+    var observedServerRequestThreadIDs: Set<String> {
+        Set(pendingByThreadID.compactMap { $0.value.observedServerRequest ? $0.key : nil })
+    }
+
+    mutating func begin(_ thread: FeatureThread) -> Bool {
+        guard pendingByThreadID[thread.id] == nil, thread.isRegeneratingTitle != true else {
+            return false
+        }
+        pendingByThreadID[thread.id] = Pending(
+            projectID: thread.projectID,
+            environmentID: thread.environmentID,
+            originalTitle: thread.title
+        )
+        return true
+    }
+
+    mutating func cancel(threadID: String) {
+        pendingByThreadID.removeValue(forKey: threadID)
+    }
+
+    mutating func expire(threadID: String) -> Resolution? {
+        guard let pending = pendingByThreadID[threadID], !pending.observedServerRequest else {
+            return nil
+        }
+        pendingByThreadID.removeValue(forKey: threadID)
+        return .failed(title: pending.originalTitle)
+    }
+
+    mutating func finishDispatch(
+        threadID: String,
+        receipt: FeatureTitleRegenerationDispatchReceipt
+    ) -> Resolution? {
+        guard var pending = pendingByThreadID[threadID] else { return nil }
+        switch receipt {
+        case let .completed(title):
+            pendingByThreadID.removeValue(forKey: threadID)
+            return title == pending.originalTitle
+                ? .failed(title: pending.originalTitle)
+                : .completed(title: title)
+        case .failed:
+            pendingByThreadID.removeValue(forKey: threadID)
+            return .failed(title: pending.originalTitle)
+        case .regenerating:
+            pending.observedServerRequest = true
+        case .refreshUnavailable:
+            break
+        }
+        pendingByThreadID[threadID] = pending
+        return nil
+    }
+
+    mutating func reconcile(thread: FeatureThread) -> Resolution? {
+        guard var pending = pendingByThreadID[thread.id] else { return nil }
+        guard thread.projectID == pending.projectID,
+              thread.environmentID == pending.environmentID else {
+            pendingByThreadID.removeValue(forKey: thread.id)
+            return .cancelled
+        }
+        guard thread.title == pending.originalTitle else {
+            pendingByThreadID.removeValue(forKey: thread.id)
+            return .completed(title: thread.title)
+        }
+        if thread.isRegeneratingTitle == true {
+            pending.observedServerRequest = true
+            pendingByThreadID[thread.id] = pending
+            return nil
+        }
+        guard pending.observedServerRequest else {
+            return nil
+        }
+        pendingByThreadID.removeValue(forKey: thread.id)
+        return .failed(title: pending.originalTitle)
+    }
+
+    mutating func reconcile(with threads: [FeatureThread]) -> [Resolution] {
+        let threadsByID = Dictionary(
+            threads.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var resolutions: [Resolution] = []
+        for threadID in Array(pendingByThreadID.keys) {
+            guard let thread = threadsByID[threadID] else {
+                pendingByThreadID.removeValue(forKey: threadID)
+                continue
+            }
+            if let resolution = reconcile(thread: thread) {
+                resolutions.append(resolution)
+            }
+        }
+        return resolutions
+    }
 }
 
 @MainActor
@@ -66,6 +177,14 @@ public final class FeatureRootModel {
     private(set) var isSigningOutT3Connect = false
     public var errorMessage: String?
 
+    var regeneratingTitleThreadIDs: Set<String> {
+        snapshot.threads.reduce(into: titleRegenerationTracker.threadIDs) { ids, thread in
+            if thread.isRegeneratingTitle == true {
+                ids.insert(thread.id)
+            }
+        }
+    }
+
     let client: any FeatureClient
     private let outboxStore: FeatureOutboxStore
     private let draftStore: FeatureComposerDraftStore
@@ -84,15 +203,26 @@ public final class FeatureRootModel {
     private var outboxDrainTask: Task<Void, Never>?
     private var outboxRetryAttempt = 0
     private var outboxGeneration: UInt64 = 0
+    private var titleRegenerationTracker = FeatureTitleRegenerationTracker()
+    private var titleRegenerationRecoveryTasks: [String: Task<Void, Never>] = [:]
+    private let titleRegenerationRefreshTimeout: Duration
+    private let accessibilityAnnouncer: @MainActor (String) -> Void
 
     public init(
         client: any FeatureClient,
         outboxStore: FeatureOutboxStore = .shared,
-        draftStore: FeatureComposerDraftStore = .shared
+        draftStore: FeatureComposerDraftStore = .shared,
+        titleRegenerationRefreshTimeout: Duration = .seconds(60),
+        accessibilityAnnouncer: @escaping @MainActor (String) -> Void = { message in
+            guard UIAccessibility.isVoiceOverRunning else { return }
+            UIAccessibility.post(notification: .announcement, argument: message)
+        }
     ) {
         self.client = client
         self.outboxStore = outboxStore
         self.draftStore = draftStore
+        self.titleRegenerationRefreshTimeout = titleRegenerationRefreshTimeout
+        self.accessibilityAnnouncer = accessibilityAnnouncer
     }
 
     public func start() async {
@@ -408,6 +538,8 @@ public final class FeatureRootModel {
     }
 
     public func renameThread(_ id: String, title: String) async {
+        titleRegenerationTracker.cancel(threadID: id)
+        cancelTitleRegenerationRecovery(threadID: id)
         let environment = currentEnvironmentIdentity
         await perform {
             try await client.renameThread(id: id, title: title)
@@ -417,8 +549,36 @@ public final class FeatureRootModel {
     }
 
     public func regenerateThreadTitle(_ id: String) async {
-        await perform {
-            try await client.regenerateThreadTitle(id: id)
+        guard let thread = snapshot.threads.first(where: { $0.id == id }) else {
+            errorMessage = "This thread is no longer available."
+            return
+        }
+        guard thread.supportsTitleRegeneration == true else {
+            errorMessage = "Title regeneration is not available for this thread."
+            return
+        }
+        guard titleRegenerationTracker.begin(thread) else { return }
+        cancelTitleRegenerationRecovery(threadID: id)
+        accessibilityAnnouncer("Regenerating title for \(thread.title).")
+
+        do {
+            let receipt = try await client.regenerateThreadTitle(id: id)
+            if let resolution = titleRegenerationTracker.finishDispatch(
+                threadID: id,
+                receipt: receipt
+            ) {
+                resolveTitleRegeneration(resolution, threadID: id)
+            } else if receipt == .refreshUnavailable,
+                      titleRegenerationTracker.threadIDs.contains(id) {
+                scheduleTitleRegenerationRecovery(threadID: id)
+                synchronizeTitleRegenerationRecoveryTasks()
+            }
+        } catch {
+            titleRegenerationTracker.cancel(threadID: id)
+            cancelTitleRegenerationRecovery(threadID: id)
+            if !Self.isBenignCancellation(error) {
+                showTitleRegenerationFailure(title: thread.title)
+            }
         }
     }
 
@@ -614,7 +774,7 @@ public final class FeatureRootModel {
             }
             store(detail, invalidatesInFlightLoad: false)
             storedDetailLoadRequestRevisions[id] = loadRequestRevision
-            upsert(detail.thread)
+            upsert(detail.thread, reconcilesTitleRegeneration: false)
             return detail
         } catch {
             if !Self.isBenignCancellation(error),
@@ -905,19 +1065,27 @@ public final class FeatureRootModel {
         case let .detail(value):
             pendingThreadsByID.removeValue(forKey: value.thread.id)
             store(value)
-            upsert(value.thread)
+            upsert(value.thread, reconcilesTitleRegeneration: false)
         case let .detailDelta(value, delta):
             pendingThreadsByID.removeValue(forKey: value.thread.id)
             store(value, delta: delta)
-            upsert(value.thread)
+            upsert(value.thread, reconcilesTitleRegeneration: false)
         case let .failure(message):
             errorMessage = message
         }
     }
 
-    private func upsert(_ thread: FeatureThread) {
+    private func upsert(
+        _ thread: FeatureThread,
+        reconcilesTitleRegeneration: Bool = true
+    ) {
         let thread = retainingPendingSettlement(in: thread)
         discardStalePullRequest(for: thread)
+        if reconcilesTitleRegeneration,
+           let resolution = titleRegenerationTracker.reconcile(thread: thread) {
+            resolveTitleRegeneration(resolution, threadID: thread.id)
+        }
+        synchronizeTitleRegenerationRecoveryTasks()
         var metadataChanged = false
         if let index = snapshot.threads.firstIndex(where: { $0.id == thread.id }) {
             let previous = snapshot.threads[index]
@@ -956,6 +1124,8 @@ public final class FeatureRootModel {
         snapshot.threads.remove(at: index)
         pullRequestsByThreadID.removeValue(forKey: id)
         pullRequestObservationIdentities.removeValue(forKey: id)
+        titleRegenerationTracker.cancel(threadID: id)
+        cancelTitleRegenerationRecovery(threadID: id)
         adjustProjectCount(id: projectID, by: -1)
         threadCollectionRevision &+= 1
         homePresentationRevision &+= 1
@@ -1024,6 +1194,10 @@ public final class FeatureRootModel {
             threadCollectionRevision &+= 1
         }
         snapshot = value
+        for resolution in titleRegenerationTracker.reconcile(with: value.threads) {
+            resolveTitleRegeneration(resolution)
+        }
+        synchronizeTitleRegenerationRecoveryTasks()
         if value.connection.state == .connected
             || value.environments.contains(where: { $0.connectionState == .connected }) {
             scheduleOutboxDrain()
@@ -1062,6 +1236,61 @@ public final class FeatureRootModel {
         }
         if metadataChanged || detailChanged {
             bumpDetailMetadataRevision(id: id)
+        }
+    }
+
+    private func showTitleRegenerationFailure(title: String) {
+        errorMessage = "Couldn’t regenerate “\(title)”. Try again."
+        accessibilityAnnouncer("Couldn’t regenerate title for \(title). Try again.")
+    }
+
+    private func announceTitleRegenerationCompletion(title: String) {
+        accessibilityAnnouncer("Title regeneration completed for \(title).")
+    }
+
+    private func resolveTitleRegeneration(
+        _ resolution: FeatureTitleRegenerationTracker.Resolution,
+        threadID: String? = nil
+    ) {
+        if let threadID {
+            cancelTitleRegenerationRecovery(threadID: threadID)
+        }
+        switch resolution {
+        case let .completed(title):
+            if let threadID {
+                mutateThread(id: threadID) { $0.title = title }
+            }
+            announceTitleRegenerationCompletion(title: title)
+        case let .failed(title):
+            showTitleRegenerationFailure(title: title)
+        case .cancelled:
+            break
+        }
+    }
+
+    private func scheduleTitleRegenerationRecovery(threadID: String) {
+        cancelTitleRegenerationRecovery(threadID: threadID)
+        let timeout = titleRegenerationRefreshTimeout
+        titleRegenerationRecoveryTasks[threadID] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled, let self else { return }
+            self.titleRegenerationRecoveryTasks.removeValue(forKey: threadID)
+            if let resolution = self.titleRegenerationTracker.expire(threadID: threadID) {
+                self.resolveTitleRegeneration(resolution, threadID: threadID)
+            }
+        }
+    }
+
+    private func cancelTitleRegenerationRecovery(threadID: String) {
+        titleRegenerationRecoveryTasks.removeValue(forKey: threadID)?.cancel()
+    }
+
+    private func synchronizeTitleRegenerationRecoveryTasks() {
+        let pendingThreadIDs = titleRegenerationTracker.threadIDs
+        let observedThreadIDs = titleRegenerationTracker.observedServerRequestThreadIDs
+        for threadID in Array(titleRegenerationRecoveryTasks.keys)
+            where !pendingThreadIDs.contains(threadID) || observedThreadIDs.contains(threadID) {
+            cancelTitleRegenerationRecovery(threadID: threadID)
         }
     }
 

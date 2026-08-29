@@ -286,7 +286,11 @@ public struct ThreadDetailView: View {
     }
 
     private var threadActionsMenu: some View {
-        Menu {
+        let titleRegenerationMenuState = ThreadTitleRegenerationMenuState.resolve(
+            thread: currentThread,
+            regeneratingThreadIDs: model.regeneratingTitleThreadIDs
+        )
+        return Menu {
             Section("Thread") {
                 if let pullRequest = currentPullRequest {
                     Button {
@@ -295,12 +299,20 @@ public struct ThreadDetailView: View {
                         Label("Open pull request #\(pullRequest.number)", systemImage: "arrow.triangle.pull")
                     }
                 }
-                if currentThread.supportsTitleRegeneration == true {
+                switch titleRegenerationMenuState {
+                case .hidden:
+                    EmptyView()
+                case .available, .regenerating:
+                    let isRegenerating = titleRegenerationMenuState == .regenerating
                     Button {
                         Task { await model.regenerateThreadTitle(thread.id) }
                     } label: {
-                        Label("Regenerate title", systemImage: "sparkles")
+                        Label(
+                            isRegenerating ? "Regenerating…" : "Regenerate title",
+                            systemImage: "sparkles"
+                        )
                     }
+                    .disabled(isRegenerating)
                 }
                 if currentThread.canTogglePin, !currentThread.isArchived {
                     Button {
