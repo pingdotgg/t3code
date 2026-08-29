@@ -21,6 +21,10 @@ import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import {
+  CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
+  formatClaudeResumeCompactionQuestion,
+} from "@t3tools/shared/claudeCompaction";
+import {
   type ChatAttachment,
   ClaudeSettings,
   defaultInstanceIdForDriver,
@@ -697,6 +701,8 @@ export function makeClaudeQueryOptions(input: {
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly permissionMode?: PermissionMode;
   readonly canUseTool?: CanUseTool;
+  readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
+  readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
@@ -716,6 +722,13 @@ export function makeClaudeQueryOptions(input: {
       : typeof input.sdkSettings === "object" && input.sdkSettings !== null
         ? ({ ...input.sdkSettings, ...selectionSettings } as ClaudeSdkSettings)
         : selectionSettings;
+  const effectiveQuerySettings =
+    input.settings?.autoCompactWindow === undefined || input.settings.autoCompactWindow.length === 0
+      ? querySettings
+      : ({
+          ...(typeof querySettings === "object" && querySettings !== null ? querySettings : {}),
+          autoCompactWindow: Number(input.settings.autoCompactWindow),
+        } as ClaudeSdkSettings);
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
@@ -734,7 +747,11 @@ export function makeClaudeQueryOptions(input: {
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
       : {}),
-    ...(querySettings === undefined ? {} : { settings: querySettings }),
+    ...(effectiveQuerySettings === undefined ? {} : { settings: effectiveQuerySettings }),
+    ...(input.onUserDialog === undefined ? {} : { onUserDialog: input.onUserDialog }),
+    ...(input.supportedDialogKinds === undefined
+      ? {}
+      : { supportedDialogKinds: input.supportedDialogKinds }),
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
@@ -4741,6 +4758,81 @@ export function makeClaudeAdapterV2(
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
           runPromise(canUseToolEffect(toolName, toolInput, callbackOptions));
 
+        const onUserDialog: NonNullable<ClaudeQueryOptions["onUserDialog"]> = (
+          request,
+          callbackOptions,
+        ) =>
+          runPromise(
+            Effect.gen(function* () {
+              if (request.dialogKind !== "resume_return") {
+                return { behavior: "cancelled" as const };
+              }
+              const ageMinutes =
+                typeof request.payload.sessionAgeMinutes === "number" &&
+                Number.isFinite(request.payload.sessionAgeMinutes)
+                  ? Math.max(0, Math.floor(request.payload.sessionAgeMinutes))
+                  : 0;
+              const estimatedTokens =
+                typeof request.payload.estimatedTokens === "number" &&
+                Number.isFinite(request.payload.estimatedTokens)
+                  ? Math.max(0, Math.floor(request.payload.estimatedTokens))
+                  : 0;
+              const question = formatClaudeResumeCompactionQuestion({
+                ageMinutes,
+                estimatedTokens,
+              });
+              const result = yield* canUseToolEffect(
+                "AskUserQuestion",
+                {
+                  questions: [
+                    {
+                      header: "Resume session",
+                      question,
+                      options: [
+                        {
+                          label: "Compact and continue",
+                          description: "Resume with a summary and use fewer tokens.",
+                        },
+                        {
+                          label: "Keep full history",
+                          description: "Resume without changing the conversation.",
+                        },
+                        {
+                          label: CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
+                          description: "Keep full history and skip future resume prompts.",
+                        },
+                      ],
+                      multiSelect: false,
+                    },
+                  ],
+                },
+                {
+                  signal: callbackOptions.signal,
+                  requestId: callbackOptions.requestId,
+                  toolUseID: request.toolUseID ?? callbackOptions.requestId,
+                },
+              );
+              if (result.behavior !== "allow") return { behavior: "cancelled" as const };
+              const answers =
+                result.updatedInput === undefined
+                  ? undefined
+                  : Reflect.get(result.updatedInput, "answers");
+              const selection =
+                typeof answers === "object" && answers !== null
+                  ? Reflect.get(answers, question)
+                  : undefined;
+              return {
+                behavior: "completed" as const,
+                result:
+                  selection === "Compact and continue"
+                    ? ("compact" as const)
+                    : selection === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER
+                      ? ("never" as const)
+                      : ("continue" as const),
+              };
+            }),
+          );
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapterV2TurnInput,
           nativeThreadId: string,
@@ -4814,6 +4906,8 @@ export function makeClaudeAdapterV2(
                       allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
                     }),
                 canUseTool,
+                onUserDialog,
+                supportedDialogKinds: ["resume_return"],
               }),
             })
             .pipe(
