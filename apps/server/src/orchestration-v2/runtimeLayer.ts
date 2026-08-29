@@ -255,7 +255,7 @@ export const OrchestrationV2LayerLive = Layer.mergeAll(
 
 export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   OrchestrationLayerLive,
-  OrchestrationV2LayerLive,
+  OrchestrationV2LayerLive.pipe(Layer.provide(ProjectServiceLayerLive)),
   ProjectServiceLayerLive,
   threadLaunchProvided,
   threadLifecycleProvided,
