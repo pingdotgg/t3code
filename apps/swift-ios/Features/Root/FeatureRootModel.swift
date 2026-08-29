@@ -1153,11 +1153,11 @@ public final class FeatureRootModel {
     /// shell stream is the authority for it. A frame fetched before a title
     /// regeneration or rename landed can arrive after the shell already
     /// published the newer title; applying it wholesale would revert the row.
-    /// Keep the shell's title and regeneration state whenever it is at least
-    /// as recent as the frame's.
+    /// Keep the shell's title and regeneration state only when it is newer
+    /// than the frame's. Equal timestamps do not prove that the shell wins.
     private func deferringToShellMetadata(_ detail: FeatureThreadDetail) -> FeatureThreadDetail {
         guard let shell = snapshot.threads.first(where: { $0.id == detail.thread.id }),
-              shell.updatedAt >= detail.thread.updatedAt,
+              shell.updatedAt > detail.thread.updatedAt,
               shell.title != detail.thread.title
               || shell.isRegeneratingTitle != detail.thread.isRegeneratingTitle
               || shell.titleRegenerationRequestID != detail.thread.titleRegenerationRequestID
