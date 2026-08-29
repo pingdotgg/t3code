@@ -363,8 +363,9 @@ can interrupt the MCP call. The next provider session derives its working direct
 thread projection. Same-path branch changes do not detach the session.
 
 `t3_worktree_handoff` remains the direct convenience tool for creating a new worktree and uses the
-same binding, continuation, race, and rollback rules. Neither tool removes the source or target
-worktree.
+same binding, continuation, race, and rollback rules. Neither tool removes an existing source or
+target worktree. A failed new-worktree transition attempts to remove only the checkout it just
+created when the binding did not commit.
 
 ## Delegated Task Lifecycle
 

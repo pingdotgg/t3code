@@ -85,7 +85,8 @@ switch a shared root while another thread is bound there.
 Moving between workspace paths restarts the agent session in the selected checkout. The agent can
 queue a continuation before that restart, so longer work resumes without needing the browser to
 stay open. These controls apply only to the calling thread and its current project. They do not
-remove, prune, or revive worktrees.
+remove, prune, or revive existing worktrees. If creating a new worktree fails before its durable
+thread binding commits, T3 Code attempts to remove only that newly created checkout as rollback.
 
 ## Review and merge
 
