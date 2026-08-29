@@ -9,18 +9,15 @@ import { ConnectionBlockedError } from "./model.ts";
 export function orchestrationProtocolCompatibilityError(
   descriptor: ExecutionEnvironmentDescriptor,
 ): ConnectionBlockedError | null {
-  // Servers shipped before negotiation use the original wire protocol.
-  const serverProtocolVersion = descriptor.orchestrationProtocolVersion ?? 1;
-  if (serverProtocolVersion === ORCHESTRATION_PROTOCOL_VERSION) {
+  if (descriptor.orchestrationProtocolVersion === ORCHESTRATION_PROTOCOL_VERSION) {
     return null;
   }
-  return new ConnectionBlockedError({
-    reason: "unsupported",
-    detail:
-      serverProtocolVersion > ORCHESTRATION_PROTOCOL_VERSION
-        ? `This client is not supported by this server. Update your app or use a compatible release to connect to ${descriptor.label}.`
-        : `This client requires a newer server. Update T3 Code on ${descriptor.label} to connect.`,
-  });
+  const hostProtocol = descriptor.orchestrationProtocolVersion;
+  const detail =
+    hostProtocol === undefined
+      ? `Update T3 Code on ${descriptor.label} before reconnecting. This host predates orchestration protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`
+      : `Update T3 Code on ${descriptor.label} and this client before reconnecting. The host uses orchestration protocol ${hostProtocol}, while this client requires ${ORCHESTRATION_PROTOCOL_VERSION}.`;
+  return new ConnectionBlockedError({ reason: "unsupported", detail });
 }
 
 export function appendOrchestrationProtocol(socketUrl: string): string {
