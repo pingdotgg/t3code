@@ -434,8 +434,24 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getThreadSnapshotWindow(threadId, options)),
     );
 
-  const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-    ensureCommandTranscripts(command).pipe(Effect.andThen(orchestrator.dispatch(command)));
+  const dispatch: ThreadManagementServiceShape["dispatch"] = (command) => {
+    const admissionThreadId =
+      command.type === "thread.fork"
+        ? command.sourceThreadId
+        : command.type === "delegated_task.request"
+          ? command.parentThreadId
+          : undefined;
+    const dispatchCommand = orchestrator.dispatch(command);
+    if (admissionThreadId === undefined) {
+      return ensureCommandTranscripts(command).pipe(Effect.andThen(dispatchCommand));
+    }
+    return ensureCommandTranscripts(command).pipe(
+      Effect.andThen(orchestrator.getThreadProjection(admissionThreadId)),
+      Effect.flatMap((projection) =>
+        projectMutations.withLock(projection.thread.projectId, dispatchCommand),
+      ),
+    );
+  };
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
     getThreadProjection(input.threadId).pipe(
