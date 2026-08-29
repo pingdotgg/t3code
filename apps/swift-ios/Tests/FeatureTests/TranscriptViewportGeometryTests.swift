@@ -3,8 +3,249 @@ import Testing
 import UIKit
 @testable import T3Code
 
-@Suite("Transcript viewport anchoring")
+@Suite("Transcript viewport and timestamp gestures")
 struct TranscriptViewportGeometryTests {
+    @Test
+    func timestampRevealMovesTheVisibleTranscriptAsOneSheetAndResetsOnRelease() {
+        var reveal = TranscriptTimestampRevealModel()
+
+        reveal.begin(anchorYsByMessageID: [:])
+        #expect(!reveal.isActive)
+        reveal.update(translationX: -32)
+        #expect(reveal == TranscriptTimestampRevealModel())
+
+        reveal.begin(
+            anchorYsByMessageID: [
+                "assistant-1": 140,
+                "assistant-2": 72,
+                "user-1": 44,
+            ]
+        )
+        reveal.update(translationX: -32)
+        #expect(reveal.isActive)
+        #expect(reveal.width == 32)
+        #expect(reveal.anchorY(for: "assistant-1") == 140)
+        #expect(reveal.anchorY(for: "assistant-2") == 72)
+        #expect(reveal.anchorY(for: "user-1") == 44)
+        #expect(reveal.anchorY(for: "offscreen-assistant") == nil)
+
+        reveal.refresh(
+            anchorYsByMessageID: [
+                "assistant-2": 80,
+                "newly-completed-assistant": 12,
+            ]
+        )
+        #expect(reveal.width == 32)
+        #expect(reveal.anchorY(for: "assistant-1") == nil)
+        #expect(reveal.anchorY(for: "assistant-2") == 80)
+        #expect(reveal.anchorY(for: "newly-completed-assistant") == 12)
+
+        reveal.refresh(anchorYsByMessageID: [:])
+        #expect(reveal.isActive)
+        #expect(reveal.anchorY(for: "assistant-2") == 80)
+        #expect(reveal.hasAnchor { $0 == "assistant-2" })
+        #expect(!reveal.hasAnchor { $0 == "removed-message" })
+
+        reveal.finish()
+        #expect(reveal == TranscriptTimestampRevealModel())
+        reveal.refresh(anchorYsByMessageID: ["late-assistant": 24])
+        #expect(reveal == TranscriptTimestampRevealModel())
+    }
+
+    @Test
+    func timestampAnchorClampsInsideItsMessageRow() {
+        #expect(
+            TranscriptTimestampRevealGeometry.anchorCenterY(
+                requestedY: 1_240,
+                rowHeight: 4_000
+            ) == 1_240
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.anchorCenterY(
+                requestedY: -20,
+                rowHeight: 4_000
+            ) == TranscriptTimestampRevealGeometry.minimumAnchorInset
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.anchorCenterY(
+                requestedY: 4_020,
+                rowHeight: 4_000
+            ) == 4_000 - TranscriptTimestampRevealGeometry.minimumAnchorInset
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.anchorCenterY(
+                requestedY: 12,
+                rowHeight: 24
+            ) == 12
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.resolvedAnchorCenterY(
+                requestedY: 5,
+                rowHeight: 200
+            ) == 5
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.resolvedAnchorCenterY(
+                requestedY: 887,
+                rowHeight: 905
+            ) == 887
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.resolvedAnchorCenterY(
+                requestedY: nil,
+                rowHeight: 200
+            ) == 100
+        )
+    }
+
+    @Test
+    func timestampAnchorsEveryVisibleRowInsideItsVisibleViewportSlice() {
+        let viewport = CGRect(x: 0, y: 1_000, width: 440, height: 700)
+
+        #expect(
+            TranscriptTimestampRevealGeometry.visibleAnchorCenterY(
+                rowFrame: CGRect(x: 18, y: 900, width: 404, height: 400),
+                viewportBounds: viewport
+            ) == 250
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.visibleAnchorCenterY(
+                rowFrame: CGRect(x: 18, y: 1_340, width: 404, height: 100),
+                viewportBounds: viewport
+            ) == 50
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.visibleAnchorCenterY(
+                rowFrame: CGRect(x: 18, y: 800, width: 404, height: 1_100),
+                viewportBounds: viewport
+            ) == 550
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.visibleAnchorCenterY(
+                rowFrame: CGRect(x: 18, y: 1_690, width: 404, height: 200),
+                viewportBounds: viewport
+            ) == 5
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.visibleAnchorCenterY(
+                rowFrame: CGRect(x: 18, y: 1_700, width: 404, height: 100),
+                viewportBounds: viewport
+            ) == nil
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.visibleAnchorCenterY(
+                rowFrame: CGRect(x: 18, y: 1_800, width: 404, height: 100),
+                viewportBounds: viewport
+            ) == nil
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.visibleAnchorCenterY(
+                rowFrame: CGRect(x: 18, y: 800, width: 404, height: 100),
+                viewportBounds: viewport
+            ) == nil
+        )
+    }
+
+    @Test
+    func timestampRevealClampsAndClaimsOnlyDeliberateLeftwardHorizontalPans() {
+        #expect(TranscriptTimestampRevealGeometry.width(translationX: 24) == 0)
+        #expect(
+            TranscriptTimestampRevealGeometry.width(translationX: -200)
+                == TranscriptTimestampRevealGeometry.maximumWidth
+        )
+        #expect(
+            TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -24, velocityY: 4)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -4, velocityY: 24)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: 24, velocityY: 4)
+        )
+        #expect(
+            !TranscriptTimestampRevealGeometry.shouldBegin(velocityX: -10, velocityY: 9)
+        )
+    }
+
+    @Test
+    func timestampEligibilityRequiresCompletedUserOrAssistantWithRealDate() {
+        let timestamp = Date(timeIntervalSince1970: 1_780_000_000)
+
+        #expect(
+            FeatureMessageTimestampMetadata.isEligible(
+                role: .user,
+                state: .complete,
+                createdAt: timestamp
+            )
+        )
+        #expect(
+            FeatureMessageTimestampMetadata.isEligible(
+                role: .assistant,
+                state: .complete,
+                createdAt: timestamp
+            )
+        )
+        for state in [FeatureMessageState.queued, .streaming, .failed] {
+            #expect(
+                !FeatureMessageTimestampMetadata.isEligible(
+                    role: .assistant,
+                    state: state,
+                    createdAt: timestamp
+                )
+            )
+        }
+        for role in [FeatureMessageRole.tool, .system] {
+            #expect(
+                !FeatureMessageTimestampMetadata.isEligible(
+                    role: role,
+                    state: .complete,
+                    createdAt: timestamp
+                )
+            )
+        }
+        #expect(
+            !FeatureMessageTimestampMetadata.isEligible(
+                role: .user,
+                state: .complete,
+                createdAt: .distantPast
+            )
+        )
+    }
+
+    @Test
+    func timestampAccessibilityLabelsOnlyEligibleConversationRoles() {
+        #expect(FeatureMessageTimestampMetadata.accessibilityLabel(for: .user) == "Sent")
+        #expect(FeatureMessageTimestampMetadata.accessibilityLabel(for: .assistant) == "Received")
+        #expect(FeatureMessageTimestampMetadata.accessibilityLabel(for: .tool) == nil)
+        #expect(FeatureMessageTimestampMetadata.accessibilityLabel(for: .system) == nil)
+    }
+
+    @Test
+    @MainActor
+    func selectableMarkdownDoesNotStealTimestampSwipeButHorizontalContentDoes() {
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 240, height: 240))
+        let textView = UITextView(frame: CGRect(x: 0, y: 0, width: 120, height: 120))
+        textView.contentSize = CGSize(width: 480, height: 120)
+        host.addSubview(textView)
+
+        #expect(
+            !TranscriptTimestampGestureOwnership.descendantOwnsHorizontalInteraction(
+                from: textView,
+                host: host
+            )
+        )
+
+        let codeScroller = UIScrollView(frame: CGRect(x: 0, y: 120, width: 120, height: 120))
+        codeScroller.contentSize = CGSize(width: 480, height: 120)
+        host.addSubview(codeScroller)
+        #expect(
+            TranscriptTimestampGestureOwnership.descendantOwnsHorizontalInteraction(
+                from: codeScroller,
+                host: host
+            )
+        )
+    }
+
     @Test
     func firstLoadedTranscriptAnchorsToLatestMessage() {
         let empty = TranscriptViewportGeometry(
@@ -98,6 +339,22 @@ struct TranscriptViewportGeometryTests {
                 maintainsBottomAnchor: true,
                 isInteracting: true
             ) == nil
+        )
+        #expect(
+            TranscriptViewportGeometry.shouldMaintainBottomAnchor(
+                isInitialLoad: false,
+                wasNearBottom: false,
+                isTimestampRevealActive: true,
+                wasMaintainingBottomAnchor: true
+            )
+        )
+        #expect(
+            !TranscriptViewportGeometry.shouldMaintainBottomAnchor(
+                isInitialLoad: false,
+                wasNearBottom: false,
+                isTimestampRevealActive: false,
+                wasMaintainingBottomAnchor: true
+            )
         )
     }
 
