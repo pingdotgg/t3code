@@ -5421,6 +5421,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       const now = yield* DateTime.now;
       const emitEvent = emit(events, command);
+      const editedAttachments =
+        command.attachments === undefined ? {} : { attachments: command.attachments };
       yield* emitEvent({
         type: "message.updated",
         threadId: command.threadId,
@@ -5431,6 +5433,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: {
           ...queuedMessage,
           text: command.text,
+          ...editedAttachments,
           updatedAt: now,
         },
       });
@@ -5445,6 +5448,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: {
             ...queuedTurnItem,
             text: command.text,
+            ...editedAttachments,
             updatedAt: now,
           },
         });
