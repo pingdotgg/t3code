@@ -208,7 +208,7 @@ export const ThreadUpdateTool = Tool.make("t3_thread_update", {
 })
   .annotate(Tool.Title, "Update T3 thread metadata")
   .annotate(Tool.Destructive, true)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, false);
 
 export const ThreadSendTool = Tool.make("t3_thread_send", {
   description:

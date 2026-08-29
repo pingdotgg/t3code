@@ -20,16 +20,14 @@ import {
 } from "../orchestration-v2/ThreadManagementService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
-export interface ThreadMetadataMcpServiceShape {
-  readonly update: (
-    scope: McpInvocationScope,
-    input: ThreadMetadataMcpUpdateInput,
-  ) => Effect.Effect<ThreadMetadataMcpUpdateResult, OrchestratorMcpFailure>;
-}
-
 export class ThreadMetadataMcpService extends Context.Service<
   ThreadMetadataMcpService,
-  ThreadMetadataMcpServiceShape
+  {
+    readonly update: (
+      scope: McpInvocationScope,
+      input: ThreadMetadataMcpUpdateInput,
+    ) => Effect.Effect<ThreadMetadataMcpUpdateResult, OrchestratorMcpFailure>;
+  }
 >()("t3/mcp/ThreadMetadataMcpService") {}
 
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {

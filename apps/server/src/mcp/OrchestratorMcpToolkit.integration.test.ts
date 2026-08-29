@@ -1197,7 +1197,7 @@ describe("orchestrator MCP toolkit", () => {
               ({ tool }) => tool.name === "t3_thread_update",
             );
             expect(threadUpdateTool?.tool.annotations?.destructiveHint).toBe(true);
-            expect(threadUpdateTool?.tool.annotations?.idempotentHint).toBe(true);
+            expect(threadUpdateTool?.tool.annotations?.idempotentHint).toBe(false);
             expect(threadUpdateTool?.tool.inputSchema).toMatchObject({
               type: "object",
               properties: {
