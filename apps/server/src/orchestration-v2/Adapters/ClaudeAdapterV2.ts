@@ -2334,6 +2334,10 @@ export function makeClaudeAdapterV2(
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const itemOrdinals = yield* Ref.make(new Map<string, number>());
         const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
+        const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
+        const planIdsByNativeItem = yield* Ref.make(
+          new Map<string, OrchestrationV2PlanArtifact["id"]>(),
+        );
         const providerRetries = yield* Ref.make(
           new Map<OrchestrationV2ProviderTurn["id"], ActiveClaudeProviderRetry>(),
         );
@@ -3389,21 +3393,37 @@ export function makeClaudeAdapterV2(
           readonly markdown?: string;
         }) {
           const updatedAt = yield* DateTime.now;
-          const planId = yield* idAllocator.allocate.plan({
-            threadId: input.context.input.threadId,
-            runId: input.context.input.runId,
-            driver: CLAUDE_PROVIDER,
-          });
+          const projectionNativeItemId = `${input.kind}:${input.nativeItemId}`;
+          const planKey = `${input.context.input.threadId}:${projectionNativeItemId}`;
+          const existingPlanId = (yield* Ref.get(planIdsByNativeItem)).get(planKey);
+          const planId =
+            existingPlanId ??
+            (yield* idAllocator.allocate.plan({
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              driver: CLAUDE_PROVIDER,
+            }));
+          if (existingPlanId === undefined) {
+            yield* Ref.update(planIdsByNativeItem, (current) => {
+              const updated = new Map(current);
+              updated.set(planKey, planId);
+              return updated;
+            });
+          }
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: CLAUDE_PROVIDER,
-            nativeItemId: input.nativeItemId,
+            nativeItemId: projectionNativeItemId,
           });
           const nativeItemRef = {
             driver: CLAUDE_PROVIDER,
             nativeId: input.nativeItemId,
             strength: "strong" as const,
           };
-          const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
+          const ordinal = yield* resolveItemOrdinal(input.context, projectionNativeItemId);
+          const steps = [...(input.steps ?? [])];
+          const todoStatus = steps.every((step) => step.status === "completed")
+            ? "completed"
+            : "active";
           const plan: OrchestrationV2PlanArtifact =
             input.kind === "todo_list"
               ? {
@@ -3412,8 +3432,8 @@ export function makeClaudeAdapterV2(
                   runId: input.context.input.runId,
                   nodeId,
                   kind: "todo_list",
-                  status: "active",
-                  steps: [...(input.steps ?? [])],
+                  status: todoStatus,
+                  steps,
                 }
               : {
                   id: planId,
@@ -3421,7 +3441,7 @@ export function makeClaudeAdapterV2(
                   runId: input.context.input.runId,
                   nodeId,
                   kind: "proposed_plan",
-                  status: "draft",
+                  status: "active",
                   markdown: input.markdown ?? "",
                 };
           const node: OrchestrationV2ExecutionNode = {
@@ -3444,7 +3464,7 @@ export function makeClaudeAdapterV2(
           const common = {
             id: idAllocator.derive.turnItemFromProviderItem({
               driver: CLAUDE_PROVIDER,
-              nativeItemId: input.nativeItemId,
+              nativeItemId: projectionNativeItemId,
             }),
             threadId: input.context.input.threadId,
             runId: input.context.input.runId,
@@ -3462,7 +3482,7 @@ export function makeClaudeAdapterV2(
           };
           const turnItem: OrchestrationV2TurnItem =
             input.kind === "todo_list"
-              ? { ...common, type: "todo_list", planId, steps: [...(input.steps ?? [])] }
+              ? { ...common, type: "todo_list", planId, steps }
               : {
                   ...common,
                   type: "proposed_plan",
@@ -3470,14 +3490,32 @@ export function makeClaudeAdapterV2(
                   markdown: input.markdown ?? "",
                   streaming: false,
                 };
+          const latestPlanKey = `${input.context.input.threadId}:${input.kind}`;
+          const previousPlan = (yield* Ref.get(latestPlanByKind)).get(latestPlanKey);
           yield* Effect.all(
             [
+              ...(previousPlan === undefined ||
+              previousPlan.id === plan.id ||
+              previousPlan.status === "completed"
+                ? []
+                : [
+                    emitProviderEvent({
+                      type: "plan.updated" as const,
+                      driver: CLAUDE_PROVIDER,
+                      plan: { ...previousPlan, status: "superseded" as const },
+                    }),
+                  ]),
               emitProviderEvent({ type: "node.updated", driver: CLAUDE_PROVIDER, node }),
               emitProviderEvent({ type: "plan.updated", driver: CLAUDE_PROVIDER, plan }),
               emitProviderEvent({ type: "turn_item.updated", driver: CLAUDE_PROVIDER, turnItem }),
             ],
             { concurrency: 1 },
           );
+          yield* Ref.update(latestPlanByKind, (current) => {
+            const updated = new Map(current);
+            updated.set(latestPlanKey, plan);
+            return updated;
+          });
         });
 
         const ensureToolCallStarted = Effect.fnUntraced(function* (input: {
@@ -4394,7 +4432,7 @@ export function makeClaudeAdapterV2(
               continue;
             }
             const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);
-            if (toolUse.name === "TodoWrite") {
+            if (toolUse.name === "TodoWrite" && parentToolUseIdFromSdkMessage(message) === null) {
               yield* emitClaudePlanProjection({
                 context,
                 nativeItemId: toolUse.id,
