@@ -51,6 +51,9 @@ const CONFIG = {
   observability: null,
   providers: [],
   settings: {},
+  // Capabilities drive version-skew behaviour in the projection, so the
+  // fixture carries them rather than leaving the field absent.
+  environment: { capabilities: { environmentThemes: true } },
 } as unknown as ServerConfig;
 
 const snapshotEvent = (config: ServerConfig): ServerConfigStreamEvent => ({
@@ -304,6 +307,78 @@ describe("server state projection", () => {
     const result = Option.getOrThrow(projected);
     expect(result.config.settings).toBe(settings);
     expect(result.latestEvent.type).toBe("settingsUpdated");
+  });
+
+  it("carries published environment themes in and out of the projected snapshot", () => {
+    const snapshot = applyServerConfigProjection(Option.none(), {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    const themes = [
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+      },
+    ] as const;
+
+    const published = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "environmentThemesUpdated",
+      payload: { themes },
+    });
+    expect(Option.getOrThrow(published).config.environmentThemes).toEqual(themes);
+
+    // A machine that stops publishing has to clear the palettes, not freeze
+    // clients on the last set it sent.
+    const unpublished = applyServerConfigProjection(published, {
+      version: 1,
+      type: "environmentThemesUpdated",
+      payload: { themes: [] },
+    });
+    expect(Option.getOrThrow(unpublished).config.environmentThemes).toBeUndefined();
+  });
+
+  // A snapshot never carries published themes, so taking it wholesale would
+  // clear them on every reconnect and repaint anyone wearing one.
+  it("keeps published themes across a reconnect snapshot", () => {
+    const themes = [
+      {
+        id: "nightfall",
+        name: "Nightfall",
+        appearance: "dark",
+        canvas: "#1a1b26",
+        accent: "#7aa2f7",
+      },
+    ] as const;
+
+    const withThemes = applyServerConfigProjection(
+      applyServerConfigProjection(Option.none(), { version: 1, type: "snapshot", config: CONFIG }),
+      { version: 1, type: "environmentThemesUpdated", payload: { themes } },
+    );
+    expect(Option.getOrThrow(withThemes).config.environmentThemes).toEqual(themes);
+
+    const afterReconnect = applyServerConfigProjection(withThemes, {
+      version: 1,
+      type: "snapshot",
+      config: CONFIG,
+    });
+    expect(Option.getOrThrow(afterReconnect).config.environmentThemes).toEqual(themes);
+
+    // A server that predates the feature never sends another theme event, so
+    // carrying the set forward would leave a palette nothing can update.
+    const downgraded = applyServerConfigProjection(withThemes, {
+      version: 1,
+      type: "snapshot",
+      config: {
+        ...CONFIG,
+        environment: { capabilities: {} },
+      } as unknown as ServerConfig,
+    });
+    expect(Option.getOrThrow(downgraded).config.environmentThemes).toBeUndefined();
   });
 
   it("retains welcome when a ready event follows in the same stream chunk", () => {

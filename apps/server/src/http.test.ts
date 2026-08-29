@@ -1,7 +1,12 @@
 import { expect, it } from "@effect/vitest";
 import { describe } from "vite-plus/test";
 
-import { assetResponseHeaders, isLoopbackHostname, resolveDevRedirectUrl } from "./http.ts";
+import {
+  assetResponseHeaders,
+  downloadContentDisposition,
+  isLoopbackHostname,
+  resolveDevRedirectUrl,
+} from "./http.ts";
 
 describe("http dev routing", () => {
   it("treats localhost and loopback addresses as local", () => {
@@ -53,6 +58,81 @@ describe("assetResponseHeaders", () => {
     expect(assetResponseHeaders("/workspace/PAGE.HTM")).toHaveProperty(
       "Content-Type",
       "text/html; charset=utf-8",
+    );
+  });
+
+  it("downloads uploaded documents without executing their content", () => {
+    expect(assetResponseHeaders("/attachments/upload.html", { download: true })).toMatchObject({
+      "Content-Disposition": "attachment",
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "Content-Type": "application/octet-stream",
+    });
+  });
+
+  it("serves the real filename and mime type when the claims carry them", () => {
+    expect(
+      assetResponseHeaders("/attachments/thread-1-abc-pdf.pdf", {
+        download: true,
+        fileName: "Q3 report.pdf",
+        mimeType: "application/pdf",
+      }),
+    ).toMatchObject({
+      "Content-Disposition": 'attachment; filename="Q3 report.pdf"',
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "Content-Type": "application/pdf",
+    });
+  });
+
+  it("keeps renderable mime types as octet-stream downloads", () => {
+    for (const mimeType of [
+      "text/html",
+      "text/xml",
+      "image/svg+xml",
+      "application/xhtml+xml",
+      "application/rss+xml",
+      "APPLICATION/XML",
+      "IMAGE/SVG+XML",
+      "application/xml-dtd",
+      "application/xml-external-parsed-entity",
+      "not a mime",
+    ]) {
+      expect(
+        assetResponseHeaders("/attachments/upload.bin", { download: true, mimeType }),
+      ).toHaveProperty("Content-Type", "application/octet-stream");
+    }
+  });
+
+  it("preserves official Office Open XML mime types", () => {
+    for (const mimeType of [
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ]) {
+      expect(
+        assetResponseHeaders("/attachments/upload.bin", { download: true, mimeType }),
+      ).toHaveProperty("Content-Type", mimeType);
+    }
+  });
+});
+
+describe("downloadContentDisposition", () => {
+  it("quotes plain names and strips quotes and control characters", () => {
+    expect(downloadContentDisposition("report.pdf")).toBe('attachment; filename="report.pdf"');
+    expect(downloadContentDisposition('we"ird\n.pdf')).toBe('attachment; filename="we_ird_.pdf"');
+  });
+
+  it("adds an RFC 5987 encoded name for non-ASCII filenames", () => {
+    expect(downloadContentDisposition("répört.pdf")).toBe(
+      `attachment; filename="r_p_rt.pdf"; filename*=UTF-8''r%C3%A9p%C3%B6rt.pdf`,
+    );
+    expect(downloadContentDisposition("résumé'(*).pdf")).toBe(
+      `attachment; filename="r_sum_'(*).pdf"; filename*=UTF-8''r%C3%A9sum%C3%A9%27%28%2A%29.pdf`,
+    );
+  });
+
+  it("does not throw on unpaired surrogates in the filename", () => {
+    expect(downloadContentDisposition("bad\ud800name.pdf")).toBe(
+      `attachment; filename="bad_name.pdf"; filename*=UTF-8''bad%EF%BF%BDname.pdf`,
     );
   });
 });
