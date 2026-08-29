@@ -224,6 +224,27 @@ describe("isSourceInstalled", () => {
       }),
     ),
   );
+
+  it.effect("follows cookie database symlinks when detecting profiles", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const context = yield* withSourceHome();
+        const root = userDataDirectory(context);
+        yield* fileSystem.makeDirectory(`${root}/Default`, { recursive: true });
+        yield* fileSystem.symlink("missing-cookies", `${root}/Default/Cookies`);
+
+        assert.deepEqual(yield* listSourceProfiles(helium, context), []);
+        assert.isFalse(yield* isSourceInstalled(helium, context));
+
+        yield* fileSystem.writeFileString(`${root}/Default/missing-cookies`, "db");
+        assert.deepEqual(yield* listSourceProfiles(helium, context), [
+          { directory: "Default", name: "Default" },
+        ]);
+        assert.isTrue(yield* isSourceInstalled(helium, context));
+      }),
+    ),
+  );
 });
 
 describe("listSourceProfiles", () => {

@@ -405,7 +405,7 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
       const database = cookieDatabasePath(definition, context, directory);
       return database === undefined
         ? Effect.succeed(undefined)
-        : entryExists(database).pipe(
+        : databaseFileExists(database).pipe(
             Effect.map((exists) => (exists ? { directory, name: entry } : undefined)),
           );
     });
