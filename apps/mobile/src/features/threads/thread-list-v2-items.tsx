@@ -411,7 +411,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const statusLabel =
     STATUS_LABEL_BY_STATUS[status] ??
-    (isUnread ? { label: "Done", className: "text-emerald-700 dark:text-emerald-300" } : undefined);
+    (isUnread ? { label: "Done", className: "text-adaptive-emerald-700-300" } : undefined);
   const timeLabel = threadTimeLabel(thread);
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);

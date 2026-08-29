@@ -163,7 +163,7 @@ export function ThreadRelationshipsBanner(props: {
           void Haptics.selectionAsync();
           setVisible(true);
         }}
-        className="mb-4 min-h-11 flex-row items-center gap-2 rounded-xl border border-neutral-300/60 bg-card px-3 py-2.5 dark:border-white/[0.1]"
+        className="mb-4 min-h-11 flex-row items-center gap-2 rounded-xl border border-adaptive-neutral-300-a60-white-a12 bg-card px-3 py-2.5"
       >
         <SymbolView
           name={primaryParent ? relationshipSymbol(primaryParent.edge) : "link"}
@@ -210,7 +210,7 @@ export function ThreadRelationshipsBanner(props: {
                 accessibilityRole="button"
                 accessibilityLabel="Close thread lineage"
                 onPress={() => setVisible(false)}
-                className="h-10 w-10 items-center justify-center rounded-full bg-neutral-200/70 dark:bg-white/[0.07]"
+                className="h-10 w-10 items-center justify-center rounded-full bg-adaptive-neutral-200-a70-white-a8"
               >
                 <SymbolView name="xmark" size={14} tintColor={iconColor} type="monochrome" />
               </Pressable>
@@ -232,9 +232,9 @@ export function ThreadRelationshipsBanner(props: {
                     accessibilityState={{ disabled }}
                     disabled={disabled}
                     onPress={() => openThread(threadId, archivedThread)}
-                    className="min-h-14 flex-row items-center gap-3 rounded-2xl border border-neutral-300/50 bg-card px-3 py-2.5 dark:border-white/[0.08]"
+                    className="min-h-14 flex-row items-center gap-3 rounded-2xl border border-adaptive-neutral-300-a60-white-a12 bg-card px-3 py-2.5"
                   >
-                    <View className="h-8 w-8 items-center justify-center rounded-full bg-neutral-200/60 dark:bg-white/[0.06]">
+                    <View className="h-8 w-8 items-center justify-center rounded-full bg-adaptive-neutral-200-a70-white-a8">
                       <SymbolView
                         name={relationshipSymbol(edge)}
                         size={14}
@@ -266,7 +266,7 @@ export function ThreadRelationshipsBanner(props: {
             </ScrollView>
 
             {canMerge || canDetach ? (
-              <View className="mt-4 gap-2 border-t border-neutral-300/50 pt-4 dark:border-white/[0.08]">
+              <View className="mt-4 gap-2 border-t border-adaptive-neutral-300-a60-white-a12 pt-4">
                 {canMerge ? (
                   <Pressable
                     accessibilityRole="button"
@@ -289,7 +289,7 @@ export function ThreadRelationshipsBanner(props: {
                     accessibilityRole="button"
                     disabled={busyAction !== null}
                     onPress={() => void detach()}
-                    className="min-h-11 flex-row items-center justify-center gap-2 rounded-xl border border-neutral-300/60 px-3 dark:border-white/[0.1]"
+                    className="min-h-11 flex-row items-center justify-center gap-2 rounded-xl border border-adaptive-neutral-300-a60-white-a12 px-3"
                   >
                     {busyAction === "detach" ? <ActivityIndicator /> : null}
                     <Text className="font-t3-medium text-sm text-foreground">

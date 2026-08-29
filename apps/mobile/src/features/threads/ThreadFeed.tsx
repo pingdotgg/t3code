@@ -1374,16 +1374,16 @@ function renderFeedEntry(
                 className={cn(
                   "rounded-full border px-1.5 py-0.5",
                   intentBadge.tone === "queued"
-                    ? "border-amber-500/25 bg-amber-500/10 dark:border-amber-400/25 dark:bg-amber-400/10"
-                    : "border-sky-500/25 bg-sky-500/10 dark:border-sky-400/25 dark:bg-sky-400/10",
+                    ? "border-adaptive-amber-500-a25-400-a25 bg-adaptive-amber-500-a10-400-a10"
+                    : "border-adaptive-sky-500-a25-400-a25 bg-adaptive-sky-500-a10-400-a10",
                 )}
               >
                 <Text
                   className={cn(
                     "font-t3-medium text-2xs tracking-wide",
                     intentBadge.tone === "queued"
-                      ? "text-amber-700 dark:text-amber-300"
-                      : "text-sky-700 dark:text-sky-300",
+                      ? "text-adaptive-amber-700-300"
+                      : "text-adaptive-sky-700-300",
                   )}
                 >
                   {intentBadge.label}
