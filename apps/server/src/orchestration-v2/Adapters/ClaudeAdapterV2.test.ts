@@ -64,6 +64,7 @@ import {
   claudeMcpQueryOverrides,
   claudeQueryMessages,
   claudeRuntimeQueryPolicyForRuntimePolicy,
+  claudeUserInputQuestions,
   awaitClaudeApprovalDecision,
   loggedClaudeQueryOptions,
   makeClaudeAdapterV2,
@@ -156,6 +157,31 @@ function makeClaudeTestTurnInput(input: {
 }
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
+  it("projects AskUserQuestion input with question text as the answer key", () => {
+    assert.deepEqual(
+      claudeUserInputQuestions({
+        questions: [
+          {
+            header: "Approach",
+            question: "Which approach?",
+            options: [{ label: "Simple", description: "Use fewer moving parts" }],
+            multiSelect: true,
+          },
+        ],
+      }),
+      [
+        {
+          id: "Which approach?",
+          header: "Approach",
+          question: "Which approach?",
+          options: [{ label: "Simple", description: "Use fewer moving parts" }],
+          multiSelect: true,
+        },
+      ],
+    );
+    assert.isTrue(ClaudeProviderCapabilitiesV2.planning.supportsStructuredQuestions);
+  });
+
   it("maps canonical read-only never policy to Claude dontAsk with read-only tools", () => {
     const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(
       ProviderAdapterV2RuntimePolicy.make({
