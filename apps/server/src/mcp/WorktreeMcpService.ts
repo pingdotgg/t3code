@@ -509,28 +509,41 @@ const make = Effect.gen(function* () {
       const project = yield* loadProject(scope, projection.thread.projectId);
       const projectWorkspaceRoot = yield* canonicalizePath(project.workspaceRoot);
       const workspacePath = normalizePath(projection.thread.worktreePath ?? projectWorkspaceRoot);
-      const [defaultStartFromOrigin, actual, projectInventory, workspaceInventory] =
-        yield* Effect.all(
-          [
-            readDefaultStartFromOrigin,
-            readWorkspaceStatus(workspacePath),
-            loadWorktrees(projectWorkspaceRoot),
-            loadWorktrees(workspacePath),
-          ],
-          { concurrency: 4 },
-        );
+      const [
+        defaultStartFromOrigin,
+        actual,
+        projectInventory,
+        workspaceInventory,
+        workspaceExists,
+      ] = yield* Effect.all(
+        [
+          readDefaultStartFromOrigin,
+          readWorkspaceStatus(workspacePath),
+          loadWorktrees(projectWorkspaceRoot),
+          Effect.option(loadWorktrees(workspacePath)),
+          fileSystem.exists(workspacePath).pipe(Effect.orElseSucceed(() => false)),
+        ],
+        { concurrency: 5 },
+      );
       const canonicalWorkspacePath = yield* canonicalizePath(workspacePath);
-      const physicalWorkspacePath = workspaceInventory.currentWorktreeRoot;
+      const physicalWorkspacePath = Option.isSome(workspaceInventory)
+        ? workspaceInventory.value.currentWorktreeRoot
+        : null;
       const agreement =
-        workspaceInventory.repositoryCommonDir !== projectInventory.repositoryCommonDir ||
-        physicalWorkspacePath === null ||
-        !projectInventory.worktrees.some((worktree) => worktree.path === physicalWorkspacePath)
+        !actual.isRepo && !workspaceExists
           ? "workspace_missing"
-          : !actual.isRepo
+          : !actual.isRepo || Option.isNone(workspaceInventory)
             ? "not_repository"
-            : actual.refName !== projection.thread.branch
-              ? "branch_mismatch"
-              : "in_sync";
+            : workspaceInventory.value.repositoryCommonDir !==
+                  projectInventory.repositoryCommonDir ||
+                physicalWorkspacePath === null ||
+                !projectInventory.worktrees.some(
+                  (worktree) => worktree.path === physicalWorkspacePath,
+                )
+              ? "workspace_missing"
+              : actual.refName !== projection.thread.branch
+                ? "branch_mismatch"
+                : "in_sync";
 
       const result: WorktreeMcpStatusResult = {
         attached: projection.thread.worktreePath !== null,
@@ -632,6 +645,23 @@ const make = Effect.gen(function* () {
             } as const;
           }
           const actual = statusExit.value;
+          if (!actual.isRepo) {
+            const exists = yield* fileSystem
+              .exists(workspacePath)
+              .pipe(Effect.orElseSucceed(() => false));
+            return {
+              path: workspacePath,
+              branch,
+              actualBranch: actual.refName,
+              isRepo: false,
+              isProjectRoot: workspacePath === projectWorktreeRoot,
+              hasWorkingTreeChanges: actual.hasWorkingTreeChanges,
+              availability: exists ? "unreadable" : "missing",
+              statusError: exists ? "Path is not a Git worktree." : "Worktree path does not exist.",
+              bindings: bindings.slice(0, bindingLimit),
+              bindingCount: bindings.length,
+            } as const;
+          }
           return {
             path: workspacePath,
             branch,

@@ -122,7 +122,10 @@ interface HarnessOptions {
     readonly refName: string | null;
   }>;
   readonly projectWorktreeRoot?: string;
-  readonly workspaceStatuses?: Readonly<Record<string, { branch: string | null; dirty?: boolean }>>;
+  readonly workspaceStatuses?: Readonly<
+    Record<string, { branch: string | null; dirty?: boolean; isRepo?: boolean }>
+  >;
+  readonly worktreeInventoryFailsFor?: ReadonlySet<string>;
   readonly localStatusFailsOnCall?: number;
   readonly projectThreads?: ReadonlyArray<{
     readonly id: ThreadId;
@@ -318,12 +321,14 @@ const makeHarness = (options: HarnessOptions = {}) => {
         ...configuredWorktrees,
       ];
   const listWorktrees = vi.fn((cwd: string) =>
-    Effect.succeed({
-      repositoryCommonDir: "/repo/.git",
-      currentWorktreeRoot:
-        listedWorktrees.find((worktree) => worktree.path === cwd)?.path ?? projectWorktreeRoot,
-      worktrees: listedWorktrees,
-    }),
+    options.worktreeInventoryFailsFor?.has(cwd) === true
+      ? (Effect.fail("simulated worktree inventory failure") as never)
+      : Effect.succeed({
+          repositoryCommonDir: "/repo/.git",
+          currentWorktreeRoot:
+            listedWorktrees.find((worktree) => worktree.path === cwd)?.path ?? projectWorktreeRoot,
+          worktrees: listedWorktrees,
+        }),
   );
   const workspaceStatuses = new Map(
     Object.entries(
@@ -342,7 +347,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     }
     const current = workspaceStatuses.get(input.cwd);
     return Effect.succeed({
-      isRepo: options.notARepo !== true,
+      isRepo: current?.isRepo ?? options.notARepo !== true,
       hasPrimaryRemote: true,
       isDefaultRef: false,
       refName:
@@ -1133,6 +1138,32 @@ describe("t3_worktree_status", () => {
     });
   });
 
+  it.effect("reports a missing saved worktree even when inventory discovery fails", () => {
+    const missingPath = "/worktrees/project/deleted";
+    const harness = makeHarness({
+      thread: { worktreePath: missingPath, branch: "feature/deleted" },
+      workspaceStatuses: {
+        [workspaceRoot]: { branch: "dev" },
+        [missingPath]: { branch: null, isRepo: false },
+      },
+      worktreeInventoryFailsFor: new Set([missingPath]),
+    });
+    return Effect.gen(function* () {
+      const result = yield* runStatus(harness);
+      expect(result).toMatchObject({
+        attached: true,
+        worktreePath: missingPath,
+        branch: "feature/deleted",
+        actualWorkspace: {
+          workspacePath: missingPath,
+          branch: null,
+          isRepo: false,
+        },
+        agreement: "workspace_missing",
+      });
+    });
+  });
+
   it.effect("fails when the worktree capability is missing", () => {
     const harness = makeHarness({ capabilities: new Set(["preview"]) });
     return Effect.gen(function* () {
@@ -1296,6 +1327,32 @@ describe("t3_worktree_list", () => {
         }),
       ]);
       expect(harness.localStatus).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it.effect("marks a stale checkout missing when status reports a non-repository path", () => {
+    const stalePath = "/worktrees/project/stale";
+    const harness = makeHarness({
+      worktrees: [
+        { path: workspaceRoot, refName: "dev" },
+        { path: stalePath, refName: "feature/stale" },
+      ],
+      workspaceStatuses: {
+        [workspaceRoot]: { branch: "dev" },
+        [stalePath]: { branch: null, isRepo: false },
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness);
+      expect(result.worktrees).toContainEqual(
+        expect.objectContaining({
+          path: stalePath,
+          availability: "missing",
+          statusError: "Worktree path does not exist.",
+          actualBranch: null,
+          isRepo: false,
+        }),
+      );
     });
   });
 
