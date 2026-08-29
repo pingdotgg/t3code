@@ -640,6 +640,11 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const activeProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(activeProjection.thread.settledOverride, "active");
       assert.isNull(activeProjection.thread.settledAt);
+      assert.isNotNull(activeProjection.thread.unsettledAt);
+      const activeShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      );
+      assert.deepEqual(activeShell?.unsettledAt, activeProjection.thread.unsettledAt);
 
       const archive = yield* orchestrator.dispatch({
         type: "thread.archive",
@@ -786,6 +791,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(projection.runs[0]?.status, "starting");
       assert.isNull(projection.thread.settledOverride);
       assert.isNull(projection.thread.settledAt);
+      assert.isNotNull(projection.thread.unsettledAt);
     }),
   );
 
