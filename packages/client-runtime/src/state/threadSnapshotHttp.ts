@@ -10,8 +10,16 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
-import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import {
+  executeEnvironmentHttpRequest,
+  makeEnvironmentHttpApiClient,
+  type RemoteEnvironmentRequestError,
+} from "../rpc/http.ts";
+import {
+  buildEnvironmentAuthHeaders,
+  withEnvironmentCredentials,
+  withOrchestrationProtocolHeader,
+} from "./environmentHttpAuth.ts";
 
 // Bounded so a pathologically slow endpoint cannot block the (cheaper) socket
 // fallback for long. The cached thread renders while this runs, so the wait only
@@ -66,7 +74,7 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
     request: ({ client, headers }) =>
       client.threadSnapshot({
         params: { threadId: input.threadId },
-        headers,
+        headers: withOrchestrationProtocolHeader(headers),
       }),
   });
 });
