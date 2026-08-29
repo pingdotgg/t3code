@@ -187,6 +187,17 @@ export interface OrchestratorV2Shape {
     },
     OrchestratorV2Error
   >;
+  readonly getThreadSnapshotWindow: (
+    threadId: ThreadId,
+    options: Parameters<ProjectionStoreV2["Service"]["getThreadSnapshotWindow"]>[1],
+  ) => Effect.Effect<
+    {
+      readonly schemaVersion: number;
+      readonly snapshotSequence: number;
+      readonly projection: OrchestrationV2ThreadProjection;
+    },
+    OrchestratorV2Error
+  >;
   readonly getShellSnapshot: (options?: {
     readonly location?: "active" | "archive";
   }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
@@ -7157,6 +7168,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projectionStore
         .getThreadSnapshot(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    getThreadSnapshotWindow: (threadId, options) =>
+      projectionStore
+        .getThreadSnapshotWindow(threadId, options)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getShellSnapshot: (options) =>
       projectionStore.getShellSnapshot(options).pipe(
         Effect.mapError(
@@ -7255,6 +7270,13 @@ export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
         }),
       ),
     getThreadSnapshot: (threadId) =>
+      Effect.fail(
+        new OrchestratorProjectionError({
+          threadId,
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    getThreadSnapshotWindow: (threadId) =>
       Effect.fail(
         new OrchestratorProjectionError({
           threadId,
