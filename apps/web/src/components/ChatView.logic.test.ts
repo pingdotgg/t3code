@@ -32,6 +32,7 @@ import {
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
   shouldShowComposerContextStrip,
+  shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
   toolGroupConsumesUpwardNavigation,
 } from "./ChatView.logic";
