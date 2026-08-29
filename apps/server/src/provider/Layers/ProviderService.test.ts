@@ -51,7 +51,7 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
-import { makeProviderServiceLive } from "./ProviderService.ts";
+import { makeProviderServiceLive, makeThreadLockManager } from "./ProviderService.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -334,6 +334,150 @@ function makeProviderServiceLayer() {
     layer,
   };
 }
+
+it.effect("serializes queued and late operations for the same thread", () =>
+  Effect.gen(function* () {
+    const locks = yield* makeThreadLockManager();
+    const threadId = asThreadId("thread-lock-serialized");
+    const firstEntered = yield* Deferred.make<void>();
+    const releaseFirst = yield* Deferred.make<void>();
+    const secondEntered = yield* Deferred.make<void>();
+    const releaseSecond = yield* Deferred.make<void>();
+    const thirdEntered = yield* Deferred.make<void>();
+
+    const firstFiber = yield* Effect.forkChild(
+      locks.withLock(
+        threadId,
+        Deferred.succeed(firstEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseFirst)),
+        ),
+      ),
+    );
+    yield* Deferred.await(firstEntered);
+
+    const secondFiber = yield* Effect.forkChild(
+      locks.withLock(
+        threadId,
+        Deferred.succeed(secondEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseSecond)),
+        ),
+      ),
+    );
+    yield* Effect.yieldNow;
+    assert.equal(yield* locks.userCount(threadId), 2);
+    assert.isFalse(yield* Deferred.isDone(secondEntered));
+
+    yield* Deferred.succeed(releaseFirst, undefined);
+    yield* Fiber.join(firstFiber);
+    yield* Deferred.await(secondEntered);
+
+    const thirdFiber = yield* Effect.forkChild(
+      locks.withLock(threadId, Deferred.succeed(thirdEntered, undefined)),
+    );
+    yield* Effect.yieldNow;
+    assert.equal(yield* locks.userCount(threadId), 2);
+    assert.isFalse(yield* Deferred.isDone(thirdEntered));
+
+    yield* Deferred.succeed(releaseSecond, undefined);
+    yield* Fiber.join(secondFiber);
+    yield* Fiber.join(thirdFiber);
+
+    assert.isTrue(yield* Deferred.isDone(thirdEntered));
+    assert.equal(yield* locks.userCount(threadId), 0);
+    assert.equal(yield* locks.lockCount, 0);
+  }),
+);
+
+it.effect("allows operations for different threads to run concurrently", () =>
+  Effect.gen(function* () {
+    const locks = yield* makeThreadLockManager();
+    const firstThreadId = asThreadId("thread-lock-concurrent-first");
+    const secondThreadId = asThreadId("thread-lock-concurrent-second");
+    const firstEntered = yield* Deferred.make<void>();
+    const releaseFirst = yield* Deferred.make<void>();
+    const secondEntered = yield* Deferred.make<void>();
+    const releaseSecond = yield* Deferred.make<void>();
+
+    const firstFiber = yield* Effect.forkChild(
+      locks.withLock(
+        firstThreadId,
+        Deferred.succeed(firstEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseFirst)),
+        ),
+      ),
+    );
+    yield* Deferred.await(firstEntered);
+
+    const secondFiber = yield* Effect.forkChild(
+      locks.withLock(
+        secondThreadId,
+        Deferred.succeed(secondEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseSecond)),
+        ),
+      ),
+    );
+    yield* Deferred.await(secondEntered);
+
+    assert.equal(yield* locks.lockCount, 2);
+    assert.equal(yield* locks.userCount(firstThreadId), 1);
+    assert.equal(yield* locks.userCount(secondThreadId), 1);
+
+    yield* Deferred.succeed(releaseFirst, undefined);
+    yield* Deferred.succeed(releaseSecond, undefined);
+    yield* Fiber.join(firstFiber);
+    yield* Fiber.join(secondFiber);
+
+    assert.equal(yield* locks.lockCount, 0);
+  }),
+);
+
+it.effect("cleans up a thread lock after the operation fails", () =>
+  Effect.gen(function* () {
+    const locks = yield* makeThreadLockManager();
+    const threadId = asThreadId("thread-lock-failure");
+    const exit = yield* Effect.exit(locks.withLock(threadId, Effect.fail("injected failure")));
+
+    assert.isTrue(Exit.isFailure(exit));
+    assert.equal(yield* locks.userCount(threadId), 0);
+    assert.equal(yield* locks.lockCount, 0);
+  }),
+);
+
+it.effect("cleans up active and queued thread locks after interruption", () =>
+  Effect.gen(function* () {
+    const locks = yield* makeThreadLockManager();
+    const threadId = asThreadId("thread-lock-interruption");
+    const firstEntered = yield* Deferred.make<void>();
+    const secondEntered = yield* Deferred.make<void>();
+
+    const firstFiber = yield* Effect.forkChild(
+      locks.withLock(
+        threadId,
+        Deferred.succeed(firstEntered, undefined).pipe(Effect.andThen(Effect.never)),
+      ),
+    );
+    yield* Deferred.await(firstEntered);
+
+    const secondFiber = yield* Effect.forkChild(
+      locks.withLock(
+        threadId,
+        Deferred.succeed(secondEntered, undefined).pipe(Effect.andThen(Effect.never)),
+      ),
+    );
+    yield* Effect.yieldNow;
+    assert.equal(yield* locks.userCount(threadId), 2);
+    assert.isFalse(yield* Deferred.isDone(secondEntered));
+
+    yield* Fiber.interrupt(secondFiber);
+    assert.equal(yield* locks.userCount(threadId), 1);
+    assert.equal(yield* locks.lockCount, 1);
+    assert.isFalse(yield* Deferred.isDone(secondEntered));
+
+    yield* Fiber.interrupt(firstFiber);
+    assert.equal(yield* locks.userCount(threadId), 0);
+    assert.equal(yield* locks.lockCount, 0);
+  }),
+);
 
 function makeCompatibleCodexSwitchHarness(options?: { readonly targetContinuationKey?: string }) {
   const source = makeFakeCodexAdapter();

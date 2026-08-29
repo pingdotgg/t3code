@@ -85,6 +85,67 @@ export interface ProviderServiceLiveOptions {
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
   ProviderService.ProviderService["Service"][Name];
 
+type ThreadLockEntry = {
+  readonly semaphore: Semaphore.Semaphore;
+  readonly users: number;
+};
+
+/** @internal */
+export const makeThreadLockManager = Effect.fn("makeThreadLockManager")(function* () {
+  const threadLocks = yield* SynchronizedRef.make(new Map<ThreadId, ThreadLockEntry>());
+
+  // Count callers before they wait for a permit so the entry stays registered
+  // until every active or queued caller has released its reference.
+  const acquire = (threadId: ThreadId) =>
+    SynchronizedRef.modifyEffect(threadLocks, (current) => {
+      const existing = current.get(threadId);
+      if (existing !== undefined) {
+        const next = new Map(current);
+        next.set(threadId, { ...existing, users: existing.users + 1 });
+        return Effect.succeed([existing.semaphore, next] as const);
+      }
+      return Semaphore.make(1).pipe(
+        Effect.map((semaphore) => {
+          const next = new Map(current);
+          next.set(threadId, { semaphore, users: 1 });
+          return [semaphore, next] as const;
+        }),
+      );
+    });
+
+  const release = (threadId: ThreadId, semaphore: Semaphore.Semaphore) =>
+    SynchronizedRef.updateEffect(threadLocks, (current) => {
+      const existing = current.get(threadId);
+      if (existing === undefined || existing.semaphore !== semaphore) {
+        return Effect.succeed(current);
+      }
+      const next = new Map(current);
+      if (existing.users === 1) {
+        next.delete(threadId);
+      } else {
+        next.set(threadId, { ...existing, users: existing.users - 1 });
+      }
+      return Effect.succeed(next);
+    });
+
+  const withLock = <A, E, R>(
+    threadId: ThreadId,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> =>
+    Effect.acquireUseRelease(
+      acquire(threadId),
+      (semaphore) => semaphore.withPermit(effect),
+      (semaphore) => release(threadId, semaphore),
+    );
+
+  return {
+    withLock,
+    lockCount: Effect.map(SynchronizedRef.get(threadLocks), (current) => current.size),
+    userCount: (threadId: ThreadId) =>
+      Effect.map(SynchronizedRef.get(threadLocks), (current) => current.get(threadId)?.users ?? 0),
+  } as const;
+});
+
 const ProviderRollbackConversationInput = Schema.Struct({
   threadId: ThreadId,
   numTurns: NonNegativeInt,
@@ -254,29 +315,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const revokeMcpCredential =
     options?.revokeMcpCredential ?? McpSessionRegistry.revokeActiveMcpThread;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
-  const threadLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
+  const threadLockManager = yield* makeThreadLockManager();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-
-  const getThreadLock = (threadId: ThreadId) =>
-    SynchronizedRef.modifyEffect(threadLocks, (current) => {
-      const existing = current.get(threadId);
-      if (existing !== undefined) {
-        return Effect.succeed([existing, current] as const);
-      }
-      return Semaphore.make(1).pipe(
-        Effect.map((semaphore) => {
-          const next = new Map(current);
-          next.set(threadId, semaphore);
-          return [semaphore, next] as const;
-        }),
-      );
-    });
-
-  const withThreadLock = <A, E, R>(
-    threadId: ThreadId,
-    effect: Effect.Effect<A, E, R>,
-  ): Effect.Effect<A, E, R> =>
-    Effect.flatMap(getThreadLock(threadId), (semaphore) => semaphore.withPermit(effect));
+  const withThreadLock = threadLockManager.withLock;
   /**
    * Attach the `t3-code` MCP server to the session that is about to start.
    *
