@@ -24,6 +24,7 @@ import {
   THREAD_HISTORY_CURSOR_MAX_LENGTH,
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
+import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 const NOW = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 const THREAD = ThreadId.make("thread-1");
@@ -292,6 +293,40 @@ describe("threadHistoryPaging", () => {
     expect(computeLatestLocalTurnOrdinal(full.turnItems)).toBe(40);
   });
 
+  it("preserves linked control rows as one coherent graph", () => {
+    const base = makeProjection(Array.from({ length: 40 }, (_, index) => makeRow(index)));
+    const linked = {
+      ...base,
+      runs: [{ id: "run-linked", threadId: THREAD }],
+      attempts: [{ id: "attempt-linked", runId: "run-linked" }],
+      nodes: [{ id: "node-linked", runId: "run-linked", attemptId: "attempt-linked" }],
+      providerThreads: [{ id: "provider-thread-linked", runId: "run-linked" }],
+      providerTurns: [
+        {
+          id: "provider-turn-linked",
+          providerThreadId: "provider-thread-linked",
+          nodeId: "node-linked",
+        },
+      ],
+      checkpointScopes: [{ id: "scope-linked", runId: "run-linked" }],
+      checkpoints: [{ id: "checkpoint-linked", scopeId: "scope-linked" }],
+    } as unknown as typeof base;
+
+    const bounded = buildBoundedThreadProjection({
+      projection: linked,
+      snapshotSequence: 7,
+      policy: { maxItems: 5, maxEncodedBytes: 10_000_000 },
+    });
+
+    expect(bounded.projection.runs).toEqual(linked.runs);
+    expect(bounded.projection.attempts).toEqual(linked.attempts);
+    expect(bounded.projection.nodes).toEqual(linked.nodes);
+    expect(bounded.projection.providerThreads).toEqual(linked.providerThreads);
+    expect(bounded.projection.providerTurns).toEqual(linked.providerTurns);
+    expect(bounded.projection.checkpointScopes).toEqual(linked.checkpointScopes);
+    expect(bounded.projection.checkpoints).toEqual(linked.checkpoints);
+  });
+
   it("carries a full-projection watermark when the bounded window is inherited-only", () => {
     const localOlder = makeRow(0);
     const localMid = makeRow(1);
@@ -469,5 +504,118 @@ describe("threadHistoryPaging", () => {
     expect(Buffer.byteLength(JSON.stringify(bounded.projection), "utf8")).toBeLessThan(
       THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes + 100_000,
     );
+  });
+
+  it("omits historical control details that remain available from history items", () => {
+    const projection = makeProjection(Array.from({ length: 200 }, (_, index) => makeRow(index)));
+    const populated = {
+      ...projection,
+      plans: Array.from({ length: 120 }, (_, index) => ({
+        id: `plan-${index}`,
+        threadId: THREAD,
+        runId: null,
+        nodeId: `node-${index}`,
+        status: "completed",
+        kind: "proposed_plan",
+        markdown: "p".repeat(2_097_152),
+      })),
+      contextHandoffs: Array.from({ length: 120 }, (_, index) => ({
+        id: `handoff-${index}`,
+        threadId: THREAD,
+        targetRunId: "run-1",
+        fromProviderThreadIds: [],
+        toProviderThreadId: "provider-thread-1",
+        coveredRunOrdinals: { from: 1, to: 1 },
+        strategy: "manual_context",
+        status: "superseded",
+        summaryMessageId: null,
+        summaryText: "h".repeat(2_097_152),
+        createdByProviderInstanceId: null,
+        createdAt: NOW,
+        updatedAt: NOW,
+      })),
+    } as unknown as typeof projection;
+
+    const bounded = buildBoundedThreadProjection({
+      projection: projectThreadProjectionForWire(populated),
+      snapshotSequence: 9,
+    });
+    const serializedBytes = Buffer.byteLength(JSON.stringify(bounded.projection), "utf8");
+
+    expect(serializedBytes).toBeLessThanOrEqual(THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes);
+    expect(bounded.payloadBudgetExceeded).toBe(false);
+    expect(bounded.projection.plans).toEqual([]);
+    expect(bounded.projection.contextHandoffs).toEqual([]);
+    expect(populated.plans).toHaveLength(120);
+    expect(
+      populated.plans[0]?.kind === "proposed_plan" ? populated.plans[0].markdown.length : 0,
+    ).toBe(2_097_152);
+  });
+
+  it("preserves oversized actionable state and reports the budget exception", () => {
+    const projection = makeProjection([]);
+    const actionable = {
+      ...projection,
+      plans: [
+        {
+          id: "plan-actionable",
+          threadId: THREAD,
+          runId: null,
+          nodeId: "node-actionable",
+          status: "active",
+          kind: "proposed_plan",
+          markdown: "a".repeat(2_097_152),
+        },
+      ],
+    } as unknown as typeof projection;
+
+    const bounded = buildBoundedThreadProjection({ projection: actionable, snapshotSequence: 9 });
+
+    expect(bounded.payloadBudgetExceeded).toBe(true);
+    expect(bounded.projection.plans[0]).toEqual(actionable.plans[0]);
+  });
+
+  it("keeps paged historical plan detail in the turn item and only status in its artifact", () => {
+    const detail = "Implement the historical plan exactly.\n".repeat(1_000);
+    const item = {
+      ...makeRow(0).item,
+      type: "proposed_plan",
+      planId: "plan-historical-visible",
+      markdown: detail,
+      streaming: false,
+    } as OrchestrationV2TurnItem;
+    const row = {
+      ...makeRow(0),
+      sourceItemId: item.id,
+      item,
+    } as OrchestrationV2ProjectedTurnItem;
+    const base = makeProjection([row]);
+    const projection = {
+      ...base,
+      plans: [
+        {
+          id: "plan-historical-visible",
+          threadId: THREAD,
+          runId: null,
+          nodeId: "node-historical-visible",
+          status: "completed",
+          kind: "proposed_plan",
+          markdown: detail,
+        },
+      ],
+    } as unknown as typeof base;
+
+    const bounded = buildBoundedThreadProjection({ projection, snapshotSequence: 9 });
+
+    expect(bounded.projection.visibleTurnItems[0]?.item).toMatchObject({
+      type: "proposed_plan",
+      markdown: detail,
+    });
+    expect(bounded.projection.plans[0]).toMatchObject({
+      status: "completed",
+      markdown: "",
+      detailInTurnItem: true,
+    });
+    expect(bounded.payloadBudgetExceeded).toBe(false);
   });
 });
