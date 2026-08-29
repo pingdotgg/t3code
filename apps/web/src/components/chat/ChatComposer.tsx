@@ -79,6 +79,7 @@ import {
 import { ComposerActivityRow, type ComposerActivityStatus } from "./ComposerActivityStatus";
 import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
+import { ComposerSurface } from "./ComposerSurface";
 import {
   ComposerBannerStack,
   type ComposerBannerStackContent,
@@ -3549,7 +3550,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       {hasShoulderTab ? (
         <ComposerBanner.Dock>
           {standaloneActivityStatus ? (
-            <ComposerBanner.Root width="content" className="chat-composer-shoulder-tab">
+            <ComposerBanner.Root width="content" data-composer-shoulder-tab>
               <ComposerActivityRow status={standaloneActivityStatus} />
             </ComposerBanner.Root>
           ) : null}
@@ -3574,13 +3575,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         </ComposerBanner.Dock>
       ) : null}
       <div className="relative">
-        <div
-          data-chat-composer-main-surface="true"
-          className={cn(
-            "group relative z-10 rounded-[22px] p-px transition-colors duration-200",
-            composerProviderState.composerFrameClassName,
-          )}
-        >
+        <ComposerSurface.Main className={composerProviderState.composerFrameClassName}>
           <div
             ref={composerSurfaceRef}
             data-chat-composer-surface="true"
@@ -4167,7 +4162,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </div>
             )}
           </div>
-        </div>
+        </ComposerSurface.Main>
       </div>
     </form>
   );

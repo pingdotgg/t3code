@@ -146,9 +146,7 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   return placement === "inline" ? (
     row
   ) : (
-    <ComposerBanner.Root className="chat-composer-shoulder-tab chat-composer-tasks-tab">
-      {row}
-    </ComposerBanner.Root>
+    <ComposerBanner.Root data-composer-shoulder-tab>{row}</ComposerBanner.Root>
   );
 });
 

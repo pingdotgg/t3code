@@ -1,35 +1,10 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 
+// Match the duration-220 exit transition before removing a dismissed notice.
 const DISMISS_TRANSITION_MS = 220;
-const frontExitStyle = {
-  opacity: 0,
-  transform: "translate3d(0, 4rem, 0)",
-} satisfies CSSProperties;
-const stackedExitStyle = {
-  opacity: 0,
-  transform: "translate3d(0, 7rem, 0)",
-} satisfies CSSProperties;
-const restingStyle = {
-  opacity: 1,
-  transform: "none",
-} satisfies CSSProperties;
-const exitTransitionStyle = {
-  transition: `transform ${DISMISS_TRANSITION_MS}ms ease-in, opacity ${DISMISS_TRANSITION_MS}ms ease-in`,
-} satisfies CSSProperties;
-
-// The collapsed cap peeking above the front banner is the only hint that more
-// banners are stacked behind it, so its border must match the severity of the
-// first hidden banner — a neutral banner must not masquerade as a warning.
-const stackCapBorderClass: Record<ComposerBannerStackItem["variant"], string> = {
-  default: "border-[var(--chat-composer-attached-outline)]",
-  error: "border-destructive/24",
-  info: "border-info/24",
-  success: "border-success/24",
-  warning: "border-warning/24",
-};
 
 export interface ComposerBannerStackItem {
   readonly id: string;
@@ -127,13 +102,11 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
       <div className={cn("relative flex flex-col-reverse", hasStack && stackExpanded && "z-50")}>
         <div
           className={cn(
-            "relative z-10",
-            exitingItemId === frontItem.id ? "pointer-events-none" : null,
+            "relative z-10 transition-[translate,opacity] duration-220 ease-in",
+            exitingItemId === frontItem.id
+              ? "pointer-events-none translate-y-16 opacity-0"
+              : "opacity-100",
           )}
-          style={{
-            ...exitTransitionStyle,
-            ...(exitingItemId === frontItem.id ? frontExitStyle : restingStyle),
-          }}
           onPointerDownCapture={() => {
             setStackExpanded(false);
             const activeElement = document.activeElement;
@@ -179,9 +152,9 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
             }}
           >
             {showCollapsedStackCap && firstStackedItem ? (
-              <button
+              <ComposerBanner.Peek
                 ref={peekRef}
-                type="button"
+                variant={firstStackedItem.variant}
                 aria-label="Show other notices"
                 aria-expanded={stackExpanded}
                 aria-controls={expandedItemsId}
@@ -189,13 +162,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
                   event.currentTarget.focus({ preventScroll: true });
                   setStackExpanded(true);
                 }}
-                className={cn(
-                  "absolute inset-x-0 bottom-0 z-0 mx-auto h-3 w-[96%] cursor-pointer rounded-t-2xl",
-                  "chat-composer-banner-stack-cap border border-b-0 shadow-[0_6px_18px_rgba(0,0,0,0.06)]",
-                  stackCapBorderClass[firstStackedItem.variant],
-                  "transition-opacity duration-150 ease-out focus-visible:outline-2 focus-visible:outline-ring",
-                  stackExpanded && "opacity-0",
-                )}
+                className={cn(stackExpanded && "opacity-0")}
               />
             ) : null}
             <div
@@ -209,20 +176,21 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
               <div className="min-h-0 overflow-hidden">
                 <div
                   className={cn(
-                    "space-y-2 pb-2 transform-gpu transition-[opacity,transform] duration-150 ease-out will-change-[opacity,transform]",
+                    "transform-gpu space-y-2 pb-2 transition-[opacity,transform] duration-150 ease-out will-change-[opacity,transform]",
                     stackExpanded
-                      ? "visible pointer-events-auto translate-y-0 opacity-100"
-                      : "invisible pointer-events-none translate-y-1 opacity-0",
+                      ? "pointer-events-auto visible translate-y-0 opacity-100"
+                      : "pointer-events-none invisible translate-y-1 opacity-0",
                   )}
                 >
                   {stackedItems.map((item) => (
                     <div
                       key={item.id}
-                      className={cn(exitingItemId === item.id ? "pointer-events-none" : null)}
-                      style={{
-                        ...exitTransitionStyle,
-                        ...(exitingItemId === item.id ? stackedExitStyle : restingStyle),
-                      }}
+                      className={cn(
+                        "transition-[translate,opacity] duration-220 ease-in",
+                        exitingItemId === item.id
+                          ? "pointer-events-none translate-y-28 opacity-0"
+                          : "opacity-100",
+                      )}
                     >
                       <ComposerBannerStackAlert
                         item={item}
