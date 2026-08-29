@@ -130,7 +130,7 @@ const makeOpenCodeMessageId = Effect.fnUntraced(function* () {
     .padStart(12, "0");
   const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
   const random = (yield* Effect.forEach(Array.from({ length: 28 }), () =>
-    Random.nextIntBetween(0, alphabet.length),
+    Random.nextIntBetween(0, alphabet.length - 1),
   ))
     .map((index) => alphabet[index])
     .join("");
@@ -270,6 +270,7 @@ interface ActiveOpenCodeTurn {
   admissionMessageObserved: boolean;
   idleDuringAdmission: boolean;
   admissionSettled: Deferred.Deferred<void>;
+  admissionAbortController: AbortController | null;
 }
 
 type OpenCodeAdmissionSignal = "accepted" | "busy" | "idle" | "user-message";
@@ -958,7 +959,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         const sdkCall = <A>(
           method: string,
           payload: unknown,
-          call: () => Promise<A>,
+          call: (signal: AbortSignal) => Promise<A>,
         ): Effect.Effect<A, OpenCodeRuntimeError> =>
           logProtocolEvent({
             direction: "outgoing",
@@ -2093,6 +2094,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             admissionMessageObserved: true,
             idleDuringAdmission: false,
             admissionSettled: Deferred.makeUnsafe<void>(),
+            admissionAbortController: null,
           };
           state.activeTurn = turn;
           state.providerTurns.set(String(providerTurnId), providerTurn);
@@ -2739,7 +2741,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 admissionMessageObserved: false,
                 idleDuringAdmission: false,
                 admissionSettled: Deferred.makeUnsafe<void>(),
+                admissionAbortController: new AbortController(),
               };
+              const admissionSettled = turn.admissionSettled;
+              const admissionAbortController = turn.admissionAbortController;
               state.appThread = turnInput.appThread;
               state.activeTurn = turn;
               state.providerTurns.set(String(providerTurnId), providerTurn);
@@ -2770,29 +2775,44 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                     : { system: orchestrationSystemPrompt }),
                   parts,
                 },
-                () =>
-                  client.session.promptAsync({
-                    sessionID: sessionId,
-                    messageID: turn.admissionMessageId!,
-                    model: parsedModel,
-                    ...(agent === undefined ? {} : { agent }),
-                    ...(variant === undefined ? {} : { variant }),
-                    ...(orchestrationSystemPrompt === undefined
-                      ? {}
-                      : { system: orchestrationSystemPrompt }),
-                    parts,
-                  }),
+                (signal) =>
+                  client.session.promptAsync(
+                    {
+                      sessionID: sessionId,
+                      messageID: turn.admissionMessageId!,
+                      model: parsedModel,
+                      ...(agent === undefined ? {} : { agent }),
+                      ...(variant === undefined ? {} : { variant }),
+                      ...(orchestrationSystemPrompt === undefined
+                        ? {}
+                        : { system: orchestrationSystemPrompt }),
+                      parts,
+                    },
+                    { signal: AbortSignal.any([signal, admissionAbortController!.signal]) },
+                  ),
               ).pipe(
                 Effect.tapError((cause) =>
-                  finalizeTurn(state, turn, "failed", {
-                    failure: makeProviderFailure({ cause, class: "provider_error" }),
-                  }),
+                  admissionAbortController!.signal.aborted
+                    ? Effect.void
+                    : finalizeTurn(state, turn, "failed", {
+                        failure: makeProviderFailure({ cause, class: "provider_error" }),
+                      }),
+                ),
+                Effect.catch((cause) =>
+                  admissionAbortController!.signal.aborted ? Effect.void : Effect.fail(cause),
                 ),
                 Effect.ensuring(
-                  Deferred.succeed(turn.admissionSettled, undefined).pipe(Effect.ignore),
+                  Effect.all([
+                    Deferred.succeed(admissionSettled, undefined).pipe(Effect.ignore),
+                    Effect.sync(() => {
+                      if (turn.admissionAbortController === admissionAbortController) {
+                        turn.admissionAbortController = null;
+                      }
+                    }),
+                  ]).pipe(Effect.asVoid),
                 ),
               );
-              if (state.activeTurn === turn && !turn.finalized) {
+              if (state.activeTurn === turn && !turn.finalized && !turn.interrupted) {
                 const admissionAction = advanceOpenCodePromptAdmission(turn, "accepted");
                 if (admissionAction === "reconcile-idle") {
                   yield* reconcilePromptAdmission(state, turn);
@@ -2859,6 +2879,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               turn.admissionMessageObserved = false;
               turn.idleDuringAdmission = false;
               turn.admissionSettled = Deferred.makeUnsafe<void>();
+              turn.admissionAbortController = new AbortController();
+              const admissionSettled = turn.admissionSettled;
+              const admissionAbortController = turn.admissionAbortController;
               yield* sdkCall(
                 "session.promptAsync",
                 {
@@ -2867,16 +2890,26 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   model: parsedModel,
                   parts,
                 },
-                () =>
-                  client.session.promptAsync({
-                    sessionID: sessionId,
-                    messageID: turn.admissionMessageId!,
-                    model: parsedModel,
-                    parts,
-                  }),
+                (signal) =>
+                  client.session.promptAsync(
+                    {
+                      sessionID: sessionId,
+                      messageID: turn.admissionMessageId!,
+                      model: parsedModel,
+                      parts,
+                    },
+                    { signal: AbortSignal.any([signal, admissionAbortController.signal]) },
+                  ),
               ).pipe(
                 Effect.ensuring(
-                  Deferred.succeed(turn.admissionSettled, undefined).pipe(Effect.ignore),
+                  Effect.all([
+                    Deferred.succeed(admissionSettled, undefined).pipe(Effect.ignore),
+                    Effect.sync(() => {
+                      if (turn.admissionAbortController === admissionAbortController) {
+                        turn.admissionAbortController = null;
+                      }
+                    }),
+                  ]).pipe(Effect.asVoid),
                 ),
               );
               if (state.activeTurn === turn && !turn.finalized) {
@@ -2913,11 +2946,15 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               turn.interrupted = true;
               const admissionWasPending = turn.admissionPending;
               cancelOpenCodePromptAdmission(turn, state!.nextAdmissionGeneration++);
+              turn.admissionAbortController?.abort();
               if (admissionWasPending) {
-                // OpenCode's v2 prompt call does not expose an AbortSignal. Wait
-                // for admission to settle before aborting so a prompt cannot be
-                // accepted after the stop already reached an idle session.
-                yield* Deferred.await(turn.admissionSettled).pipe(Effect.timeout("10 seconds"));
+                // Settle the cancelled request before sending the session abort.
+                // A timed-out local request must not prevent the definitive
+                // server-side abort below from running.
+                yield* Deferred.await(turn.admissionSettled).pipe(
+                  Effect.timeout("10 seconds"),
+                  Effect.ignore,
+                );
               }
               yield* sdkCall("session.abort", { sessionID: sessionId }, () =>
                 client.session.abort({ sessionID: sessionId }),
