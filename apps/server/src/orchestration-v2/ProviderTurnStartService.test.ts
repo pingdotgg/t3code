@@ -8,11 +8,16 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  ProjectId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -38,7 +43,12 @@ it("does not commit running state when inherited background routing cannot be re
     "checkpoint_scope_provider_turn_start_projection_failure",
   );
   const projection = {
-    thread: { id: threadId },
+    thread: {
+      id: threadId,
+      projectId: ProjectId.make("project_provider_turn_start_projection_failure"),
+      branch: "feature/restore",
+      worktreePath: "/tmp/missing-provider-turn-start-worktree",
+    },
     runs: [
       {
         id: runId,
@@ -64,12 +74,22 @@ it("does not commit running state when inherited background routing cannot be re
     Effect.succeed({ committed: true, storedEvents: [] } as never),
   );
   const startRootRun = vi.fn(() => Effect.void);
+  const pruneWorktrees = vi.fn(() => Effect.void);
+  const createWorktree = vi.fn(() => Effect.succeed({} as never));
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
+        Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
+        Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              Option.some({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
+            ),
+        }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadProjection: () => {
             projectionReadCount += 1;
@@ -97,6 +117,12 @@ it("does not commit running state when inherited background routing cannot be re
 
     expect(error._tag).toBe("ProviderTurnStartError");
     expect(projectionReadCount).toBe(2);
+    expect(pruneWorktrees).toHaveBeenCalledWith({ cwd: "/tmp/provider-turn-start-project" });
+    expect(createWorktree).toHaveBeenCalledWith({
+      cwd: "/tmp/provider-turn-start-project",
+      refName: "feature/restore",
+      path: "/tmp/missing-provider-turn-start-worktree",
+    });
     expect(writeIfRunCurrent).not.toHaveBeenCalled();
     expect(startRootRun).not.toHaveBeenCalled();
   }).pipe(Effect.provide(layer), Effect.runPromise);
