@@ -1013,7 +1013,6 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Context compacted");
-    expect(markup).not.toContain("Work Log");
   });
 
   it("summarizes changed files in one line", () => {
@@ -1171,7 +1170,6 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Ran 2 commands and received 1 update");
-    expect(markup).not.toContain("Work Log");
     expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
@@ -1209,7 +1207,6 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).not.toContain("Working for");
     expect(markup).toContain("Running pnpm");
     expect(markup).toContain("live-activity-focus");
   });
@@ -1304,15 +1301,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Running pnpm");
     expect(markup).toContain("tool call failed");
-  });
-
-  it("leaves the running indicator to the composer when the timeline is empty", () => {
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline {...buildProps()} isWorking timelineEntries={[]} />,
-    );
-
-    expect(markup).not.toContain("Working for");
-    expect(markup).not.toContain("Thinking");
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", () => {

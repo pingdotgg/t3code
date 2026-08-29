@@ -6,6 +6,8 @@ for content attached above the composer. Native mobile has a separate UI.
 The parent owns placement, padding, icon and action columns, and the seam against the
 composer. Consumers provide content and behavior; they should not add offsets or
 padding to reproduce that layout.
+Layout uses Tailwind utilities on these components, including the shared row slots
+and container variants.
 
 ```tsx
 <ComposerBanner.Attachment>
