@@ -28,10 +28,13 @@ export type ComposerBannerStackContent = Pick<
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
 
 function bannerPriority(item: ComposerBannerStackEntry) {
-  if (item.priority === "urgent" || item.variant === "error" || item.variant === "warning") {
+  if (item.priority === "activity") {
     return 0;
   }
-  return item.priority === "activity" ? 1 : 2;
+  if (item.priority === "urgent" || item.variant === "error" || item.variant === "warning") {
+    return 1;
+  }
+  return 2;
 }
 
 interface ComposerBannerStackProps {
@@ -67,8 +70,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
     return null;
   }
 
-  // Stable ordering keeps live activity ahead of passive notices while errors
-  // and in-progress operations retain their existing priority.
+  // Activity stays attached. Urgency and severity only order the notices behind it.
   const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
   const frontItem = orderedItems[0];
   if (!frontItem) {
