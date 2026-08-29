@@ -253,7 +253,6 @@ export function scopeCodexModelsToInstance(
     seen.add(model.slug);
   }
 
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
   for (const slug of customSlugs) {
     if (seen.has(slug)) {
       continue;
@@ -263,7 +262,7 @@ export function scopeCodexModelsToInstance(
       slug,
       name: slug,
       isCustom: true,
-      capabilities: fallbackCapabilities,
+      capabilities: null,
     });
   }
   return scopedModels;

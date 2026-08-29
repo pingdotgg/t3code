@@ -178,6 +178,34 @@ it("requires provider-namespaced catalog models to be declared on the instance",
   ]);
 });
 
+it("does not infer capabilities for custom models absent from the catalog", () => {
+  const catalogModel: ServerProviderModel = {
+    slug: "gpt-5.6-sol",
+    name: "GPT-5.6-Sol",
+    isCustom: false,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          options: [{ id: "xhigh", label: "xhigh" }],
+        },
+      ],
+    },
+  };
+
+  assert.deepStrictEqual(scopeCodexModelsToInstance([catalogModel], ["z-ai/glm-5.3-flash"]), [
+    catalogModel,
+    {
+      slug: "z-ai/glm-5.3-flash",
+      name: "z-ai/glm-5.3-flash",
+      isCustom: true,
+      capabilities: null,
+    },
+  ]);
+});
+
 it("preserves first-party catalog metadata when a custom slug shadows it", () => {
   const firstPartyModel: ServerProviderModel = {
     slug: "gpt-5.6-sol",
