@@ -33,12 +33,14 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { Tool } from "effect/unstable/ai";
+import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -79,6 +81,9 @@ import {
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
+const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  autoCompactWindow: "300000",
+});
 const CLAUDE_TEST_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make(CLAUDE_PROVIDER),
   model: "claude-sonnet-4-6",
@@ -159,6 +164,26 @@ function makeClaudeTestTurnInput(input: {
 }
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
+  it("passes automatic compaction and resume-dialog controls to the SDK", () => {
+    const onUserDialog = async () => ({
+      behavior: "completed" as const,
+      result: "continue" as const,
+    });
+    const options = makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-thread-auto-compact",
+      resume: true,
+      cwd: "/workspace",
+      settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+      onUserDialog,
+      supportedDialogKinds: ["resume_return"],
+    });
+
+    assert.equal((options.settings as { autoCompactWindow?: number }).autoCompactWindow, 300_000);
+    assert.equal(options.onUserDialog, onUserDialog);
+    assert.deepEqual(options.supportedDialogKinds, ["resume_return"]);
+  });
+
   it("projects AskUserQuestion input with question text as the answer key", () => {
     assert.deepEqual(
       claudeUserInputQuestions({
@@ -830,6 +855,221 @@ describe("ClaudeAdapterV2 approval cancellation", () => {
       assert.equal(result, "accept");
       assert.equal(removes, 1);
     }),
+  );
+});
+
+describe("ClaudeAdapterV2 resume compaction", () => {
+  it.effect("resolves and cancels the SDK resume dialog through structured runtime input", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-resume-",
+        });
+        let openedOptions: ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = makeClaudeAdapterV2({
+          instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-resume"),
+            open: (input) =>
+              Effect.sync(() => {
+                openedOptions = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-resume");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-resume"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-resume"),
+            text: "continue",
+            attachments: [],
+          }),
+        );
+        const callback = openedOptions?.onUserDialog;
+        assert.isFunction(callback);
+        const canUseTool = openedOptions?.canUseTool;
+        assert.isFunction(canUseTool);
+        const ordinaryToolResult = yield* Effect.promise(() =>
+          canUseTool!(
+            "Bash",
+            { command: "pwd" },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "tool-bash-full-access",
+              requestId: "request-bash-full-access",
+            },
+          ),
+        );
+        assert.deepEqual(ordinaryToolResult, {
+          behavior: "allow",
+          updatedInput: { command: "pwd" },
+          toolUseID: "tool-bash-full-access",
+        });
+        const longQuestion = `Choose a deployment target: ${"region ".repeat(80)}`;
+        const questionRequestEvent = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "runtime_request.updated"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        const questionResult = yield* Effect.promise(() =>
+          canUseTool!(
+            "AskUserQuestion",
+            {
+              questions: [
+                {
+                  header: "Target",
+                  question: longQuestion,
+                  options: [
+                    { label: "Production", description: "Deploy to production." },
+                    { label: "Staging", description: "Deploy to staging." },
+                  ],
+                  multiSelect: true,
+                },
+              ],
+            },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "tool-question-full-access",
+              requestId: "request-question-full-access",
+            },
+          ),
+        ).pipe(Effect.forkScoped);
+        const questionEvent = yield* Fiber.join(questionRequestEvent);
+        assert.isTrue(Option.isSome(questionEvent));
+        if (
+          Option.isNone(questionEvent) ||
+          questionEvent.value.type !== "runtime_request.updated"
+        ) {
+          return;
+        }
+        yield* runtime.respondToRuntimeRequest({
+          requestId: questionEvent.value.runtimeRequest.id,
+          answers: { [longQuestion]: ["Production", "Staging"] },
+        });
+        assert.deepEqual(yield* Fiber.join(questionResult), {
+          behavior: "allow",
+          updatedInput: {
+            questions: [
+              {
+                header: "Target",
+                question: longQuestion,
+                options: [
+                  { label: "Production", description: "Deploy to production." },
+                  { label: "Staging", description: "Deploy to staging." },
+                ],
+                multiSelect: true,
+              },
+            ],
+            answers: { [longQuestion]: ["Production", "Staging"] },
+          },
+          toolUseID: "tool-question-full-access",
+        });
+        const longPlan = `# Deployment plan\n\n${"Validate every region before promotion.\n".repeat(120)}`;
+        const proposedPlanEvent = yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "plan.updated"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        const exitPlanResult = yield* Effect.promise(() =>
+          canUseTool!(
+            "ExitPlanMode",
+            { plan: longPlan },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "tool-exit-plan-full-access",
+              requestId: "request-exit-plan-full-access",
+            },
+          ),
+        );
+        assert.deepEqual(exitPlanResult, {
+          behavior: "deny",
+          message:
+            "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+          toolUseID: "tool-exit-plan-full-access",
+        });
+        const planEvent = yield* Fiber.join(proposedPlanEvent);
+        assert.isTrue(Option.isSome(planEvent));
+        if (Option.isSome(planEvent) && planEvent.value.type === "plan.updated") {
+          assert.equal(planEvent.value.plan.kind, "proposed_plan");
+          if (planEvent.value.plan.kind === "proposed_plan") {
+            assert.equal(planEvent.value.plan.markdown, longPlan.trim());
+          }
+        }
+        const requestEvent = yield* runtime.events
+          .pipe(
+            Stream.filter((event) => event.type === "runtime_request.updated"),
+            Stream.runHead,
+          )
+          .pipe(Effect.forkScoped);
+        const controller = new AbortController();
+        const dialog = yield* Effect.promise(() =>
+          callback!(
+            {
+              dialogKind: "resume_return",
+              payload: { sessionAgeMinutes: 90, estimatedTokens: 120000 },
+            },
+            { signal: controller.signal, requestId: "dialog-resume-1" },
+          ),
+        ).pipe(Effect.forkScoped);
+        const event = yield* Fiber.join(requestEvent);
+        assert.isTrue(Option.isSome(event));
+        if (Option.isNone(event) || event.value.type !== "runtime_request.updated") return;
+        const question = formatClaudeResumeCompactionQuestion({
+          ageMinutes: 90,
+          estimatedTokens: 120000,
+        });
+        yield* runtime.respondToRuntimeRequest({
+          requestId: event.value.runtimeRequest.id,
+          answers: { [question]: "Compact and continue" },
+        });
+        assert.deepEqual(yield* Fiber.join(dialog), { behavior: "completed", result: "compact" });
+
+        const cancelledController = new AbortController();
+        cancelledController.abort();
+        assert.deepEqual(
+          yield* Effect.promise(() =>
+            callback!(
+              {
+                dialogKind: "resume_return",
+                payload: { sessionAgeMinutes: 90, estimatedTokens: 120000 },
+              },
+              { signal: cancelledController.signal, requestId: "dialog-resume-2" },
+            ),
+          ),
+          { behavior: "cancelled" },
+        );
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
   );
 });
 
