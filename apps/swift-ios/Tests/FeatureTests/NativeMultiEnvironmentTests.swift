@@ -1,4 +1,5 @@
 import Foundation
+import Testing
 import XCTest
 @testable import T3Code
 
@@ -77,7 +78,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testSnapshotMergesEnvironmentsAndRoutesThreadWorkToItsOwner() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let snapshot = try await fixture.client.initialSnapshot()
@@ -114,7 +115,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testPassiveProviderRefreshKeepsActiveThreadsAndAcceptsTheirNextSequence() async throws {
         let server = MultiEnvironmentConfigurationServer()
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             passiveSequence: 5_000,
             webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
             rpcConnectionWaitTimeout: .seconds(1),
@@ -166,7 +167,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testPassiveEnvironmentSettingsDoNotReplaceActiveThreads() async throws {
         let server = MultiEnvironmentConfigurationServer()
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             passiveSequence: 5_000,
             webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
             rpcConnectionWaitTimeout: .seconds(1),
@@ -196,7 +197,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testSharedSettingsFanOutDoesNotReplaceActiveThreads() async throws {
         let server = MultiEnvironmentConfigurationServer()
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             passiveSequence: 5_000,
             webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
             rpcConnectionWaitTimeout: .seconds(1),
@@ -226,7 +227,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testRestartPreferenceOnlyReachesComputersThatSupportIt() async throws {
         let server = MultiEnvironmentConfigurationServer(restartSupportHosts: ["one.example"])
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
             rpcConnectionWaitTimeout: .seconds(1),
             fallbackPollingInitialDelay: .seconds(60),
@@ -266,7 +267,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testBackgroundLivenessKeepsASettledThreadWorking() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         await fixture.transport.setShell(
             multiEnvironmentShell(
@@ -291,7 +292,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testNewerDetailSettlementBeatsOlderShellForNonActiveEnvironment() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         await fixture.transport.setShell(
             multiEnvironmentShell(
@@ -323,7 +324,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testNewerShellSettlementBeatsStaleDetailForNonActiveEnvironment() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         await fixture.transport.setShell(
             multiEnvironmentShell(
@@ -380,7 +381,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             owner: "t3",
             name: "example"
         )
-        let fixture = try await makeFixture(repositoryIdentity: identity)
+        let fixture = try await Self.makeFixture(repositoryIdentity: identity)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let snapshot = try await fixture.client.initialSnapshot()
@@ -395,7 +396,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testFailedEnvironmentKeepsItsLastKnownRowsWithoutHidingHealthyDevices() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         _ = try await fixture.client.initialSnapshot()
@@ -430,7 +431,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testCachedShellRowsApplySettlementAndRemoveDeletedRoutes() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let initial = try await fixture.client.initialSnapshot()
         let original = try XCTUnwrap(initial.threads.first { $0.environmentID == "two" })
@@ -468,7 +469,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testOlderHTTPSnapshotCannotReplaceNewerEnvironmentState() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         _ = try await fixture.client.initialSnapshot()
 
@@ -513,7 +514,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testThreadCreationCannotReplaceNewerEnvironmentStateWithAnOlderShell() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         _ = try await fixture.client.initialSnapshot()
 
@@ -567,7 +568,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testPullRequestPagesPreserveCursorsAndTargetOnlyTheRequestedEnvironment() async throws {
         let recorder = PullRequestPageRecorder()
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             pullRequestsAvailable: true,
             webSocketConnector: PullRequestPageWebSocketConnector(recorder: recorder),
             rpcConnectionWaitTimeout: .seconds(2)
@@ -601,7 +602,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testBackgroundSnapshotDoesNotStartAggregateRefreshLoops() async throws {
         let loader = CountingAggregateEnvironmentLoader()
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             aggregateEnvironmentLoader: { runtime in
                 await loader.recordLoad()
                 return try await runtime.environments()
@@ -619,8 +620,9 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testAggregateRefreshRetriesTransientEnvironmentLoadFailures() async throws {
         let loader = FailOnceAggregateEnvironmentLoader()
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             aggregateRefreshInterval: .milliseconds(5),
+            aggregateFailureRefreshInterval: .milliseconds(5),
             aggregateEnvironmentLoader: { runtime in
                 try await loader.load(from: runtime)
             }
@@ -637,7 +639,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
 
     func testSameClientSnapshotRestartsAggregateRefresh() async throws {
         let loader = BlockingFirstAggregateEnvironmentLoader()
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             aggregateRefreshInterval: .milliseconds(5),
             aggregateEnvironmentLoader: { runtime in
                 try await loader.load(from: runtime)
@@ -658,7 +660,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testDuplicateWireIDsRemainDistinctAndRouteByEnvironment() async throws {
-        let fixture = try await makeFixture(duplicateIDs: true)
+        let fixture = try await Self.makeFixture(duplicateIDs: true)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let snapshot = try await fixture.client.initialSnapshot()
@@ -681,7 +683,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testPassiveCreateUsesOwningProjectDefaultAndFallbackRemainsRoutable() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let snapshot = try await fixture.client.initialSnapshot()
@@ -715,7 +717,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testPassiveCreateRecoversACommittedThreadAfterItsReplyIsLost() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let snapshot = try await fixture.client.initialSnapshot()
         let project = try XCTUnwrap(
@@ -740,7 +742,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testUnarchiveImmediatelyRestoresLiveThreadWhenRefreshIsUnavailable() async throws {
-        let fixture = try await makeFixture()
+        let fixture = try await Self.makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let initial = try await fixture.client.initialSnapshot()
         let thread = try XCTUnwrap(
@@ -775,7 +777,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 
     func testHTTPFallbackKeepsLiveConnectionReconnecting() async throws {
-        let fixture = try await makeFixture(
+        let fixture = try await Self.makeFixture(
             fallbackPollingInitialDelay: .milliseconds(40),
             fallbackPollingInterval: .seconds(2)
         )
@@ -821,23 +823,29 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
-    private func makeFixture(
+    fileprivate static func makeFixture(
         duplicateIDs: Bool = false,
         passiveSequence: Int = 1,
+        includeThirdEnvironment: Bool = false,
         repositoryIdentity: RepositoryIdentity? = nil,
         pullRequestsAvailable: Bool = false,
         webSocketConnector: any WebSocketConnecting = UnavailableMultiEnvironmentWebSocketConnector(),
         rpcConnectionWaitTimeout: Duration = .milliseconds(5),
         fallbackPollingInitialDelay: Duration = .seconds(3),
         fallbackPollingInterval: Duration = .seconds(2),
-        aggregateRefreshInterval: Duration = .seconds(20),
+        aggregateRefreshInterval: Duration = NativeFeatureClient.defaultAggregateRefreshInterval,
+        aggregateIdleRefreshInterval: Duration = NativeFeatureClient.defaultAggregateIdleRefreshInterval,
+        aggregateFailureRefreshInterval: Duration = NativeFeatureClient.defaultAggregateFailureRefreshInterval,
+        aggregateRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        },
         aggregateEnvironmentLoader: @escaping @Sendable (EnvironmentRuntime) async throws -> [Environment] = {
             try await $0.environments()
         }
     ) async throws -> MultiEnvironmentFixture {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-native-multi-\(UUID().uuidString)", isDirectory: true)
-        let environments = [
+        var environments = [
             Environment(
                 id: "one",
                 label: "Left Book",
@@ -861,38 +869,63 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 )
             ),
         ]
+        if includeThirdEnvironment {
+            environments.append(
+                Environment(
+                    id: "three",
+                    label: "Third Box",
+                    httpBaseURL: URL(string: "https://three.example")!,
+                    webSocketBaseURL: URL(string: "wss://three.example")!,
+                    descriptor: try multiEnvironmentDescriptor(
+                        environmentID: "three",
+                        label: "Third Box",
+                        pullRequestsAvailable: pullRequestsAvailable
+                    )
+                )
+            )
+        }
         let store = EnvironmentStore(
             fileURL: directory.appendingPathComponent("environments.json")
         )
         try await store.save(environments)
         try await store.setActiveEnvironment(id: "one")
-        let transport = MultiEnvironmentHTTPTransport(
-            shells: [
-                "one.example": multiEnvironmentShell(
-                    projectID: duplicateIDs ? "project-shared" : "project-one",
-                    threadID: duplicateIDs ? "thread-shared" : "thread-one",
-                    title: "Local work",
-                    repositoryIdentity: repositoryIdentity
-                ),
-                "two.example": multiEnvironmentShell(
-                    projectID: duplicateIDs ? "project-shared" : "project-two",
-                    threadID: duplicateIDs ? "thread-shared" : "thread-two",
-                    title: "Remote work",
-                    providerID: "claudeAgent",
-                    modelID: "claude-opus-4-1",
-                    repositoryIdentity: repositoryIdentity,
-                    snapshotSequence: passiveSequence
-                ),
-            ]
-        )
+        var shells = [
+            "one.example": multiEnvironmentShell(
+                projectID: duplicateIDs ? "project-shared" : "project-one",
+                threadID: duplicateIDs ? "thread-shared" : "thread-one",
+                title: "Local work",
+                repositoryIdentity: repositoryIdentity
+            ),
+            "two.example": multiEnvironmentShell(
+                projectID: duplicateIDs ? "project-shared" : "project-two",
+                threadID: duplicateIDs ? "thread-shared" : "thread-two",
+                title: "Remote work",
+                providerID: "claudeAgent",
+                modelID: "claude-opus-4-1",
+                repositoryIdentity: repositoryIdentity,
+                snapshotSequence: passiveSequence
+            ),
+        ]
+        if includeThirdEnvironment {
+            shells["three.example"] = multiEnvironmentShell(
+                projectID: "project-three",
+                threadID: "thread-three",
+                title: "Third work",
+                providerID: "codex",
+                modelID: "gpt-5.6-sol"
+            )
+        }
+        let transport = MultiEnvironmentHTTPTransport(shells: shells)
+        var environmentCredentials = [
+            "one": EnvironmentCredential(accessToken: "one-token"),
+            "two": EnvironmentCredential(accessToken: "two-token"),
+        ]
+        if includeThirdEnvironment {
+            environmentCredentials["three"] = EnvironmentCredential(accessToken: "three-token")
+        }
         let runtime = EnvironmentRuntime(
             environmentStore: store,
-            credentialStore: InMemoryCredentialStore(
-                credentials: [
-                    "one": EnvironmentCredential(accessToken: "one-token"),
-                    "two": EnvironmentCredential(accessToken: "two-token"),
-                ]
-            ),
+            credentialStore: InMemoryCredentialStore(credentials: environmentCredentials),
             httpTransport: transport,
             webSocketConnector: webSocketConnector,
             rpcConnectionWaitTimeout: rpcConnectionWaitTimeout
@@ -909,9 +942,127 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 fallbackPollingInitialDelay: fallbackPollingInitialDelay,
                 fallbackPollingInterval: fallbackPollingInterval,
                 aggregateRefreshInterval: aggregateRefreshInterval,
+                aggregateIdleRefreshInterval: aggregateIdleRefreshInterval,
+                aggregateFailureRefreshInterval: aggregateFailureRefreshInterval,
+                aggregateRefreshSleep: aggregateRefreshSleep,
                 aggregateEnvironmentLoader: aggregateEnvironmentLoader
             )
         )
+    }
+}
+
+@Suite("Native passive thread refresh")
+@MainActor
+struct NativePassiveThreadRefreshTests {
+    @Test(
+        "Passive thread events arrive within five seconds and stay fast after changes",
+        .timeLimit(.minutes(1))
+    )
+    func passiveThreadEventsArriveWithinFiveSecondsAndStayFastAfterChanges() async throws {
+        let refreshSleep = ControllableAggregateRefreshSleep()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            aggregateRefreshSleep: {
+                try await refreshSleep.sleep(for: $0)
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let initial = try await fixture.client.initialSnapshot()
+        let thread = try #require(
+            initial.threads.first(where: { $0.environmentID == "two" })
+        )
+        let updatedTitle = "Passive work updated automatically"
+        let eventProbe = ThreadTitleEventProbe(
+            events: fixture.client.events(),
+            threadID: thread.id,
+            title: updatedTitle
+        )
+        eventProbe.start()
+
+        let firstCadence = await refreshSleep.waitUntilRequested(count: 1)
+        #expect(firstCadence == .seconds(5))
+        await fixture.transport.setShell(
+            multiEnvironmentShell(
+                projectID: "project-two",
+                threadID: "thread-two",
+                title: updatedTitle,
+                providerID: "claudeAgent",
+                modelID: "claude-opus-4-1"
+            ),
+            host: "two.example"
+        )
+        await refreshSleep.resume()
+
+        await eventProbe.waitUntilObserved()
+        #expect(eventProbe.didObserveTitle())
+        let changedCadence = await refreshSleep.waitUntilRequested(count: 2)
+        #expect(changedCadence == .seconds(5))
+        await fixture.client.disconnect()
+    }
+
+    @Test("Passive refresh uses ten seconds when work is unchanged")
+    func passiveRefreshUsesTenSecondsWhenWorkIsUnchanged() async throws {
+        let refreshSleep = ControllableAggregateRefreshSleep()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            aggregateRefreshSleep: {
+                try await refreshSleep.sleep(for: $0)
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.initialSnapshot()
+
+        let firstCadence = await refreshSleep.waitUntilRequested(count: 1)
+        #expect(firstCadence == .seconds(5))
+        await refreshSleep.resume()
+        let idleCadence = await refreshSleep.waitUntilRequested(count: 2)
+        #expect(idleCadence == .seconds(10))
+        await fixture.client.disconnect()
+    }
+
+    @Test("A failed passive environment backs off without slowing an active peer")
+    func failedPassiveEnvironmentBacksOffWithoutSlowingActivePeer() async throws {
+        let refreshSleep = ControllableAggregateRefreshSleep()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            includeThirdEnvironment: true,
+            aggregateRefreshSleep: {
+                try await refreshSleep.sleep(for: $0)
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.initialSnapshot()
+        await fixture.transport.setShell(
+            multiEnvironmentShell(
+                projectID: "project-two",
+                threadID: "thread-two",
+                title: "Remote work",
+                providerID: "claudeAgent",
+                modelID: "claude-opus-4-1",
+                backgroundLiveness: .working
+            ),
+            host: "two.example"
+        )
+        await fixture.transport.setReachable(false, host: "three.example")
+
+        let firstCadence = await refreshSleep.waitUntilRequested(count: 1)
+        #expect(firstCadence == .seconds(5))
+        await refreshSleep.resume()
+        let secondCadence = await refreshSleep.waitUntilRequested(count: 2)
+        #expect(secondCadence == .seconds(5))
+        let initialFailedReadCount = await fixture.transport.shellReadCount(host: "three.example")
+        #expect(initialFailedReadCount == 2)
+
+        for requestCount in 2...4 {
+            await refreshSleep.resume()
+            let cadence = await refreshSleep.waitUntilRequested(count: requestCount + 1)
+            #expect(cadence == .seconds(5))
+            let failedReadCount = await fixture.transport.shellReadCount(host: "three.example")
+            #expect(failedReadCount == 2)
+        }
+
+        await refreshSleep.resume()
+        _ = await refreshSleep.waitUntilRequested(count: 6)
+        let retriedReadCount = await fixture.transport.shellReadCount(host: "three.example")
+        #expect(retriedReadCount == 3)
+        await fixture.client.disconnect()
     }
 }
 
@@ -1091,6 +1242,102 @@ private actor RuntimeReplacementHTTPTransport: HTTPTransport {
     }
 }
 
+@MainActor
+private final class ThreadTitleEventProbe {
+    private let events: AsyncStream<FeatureEvent>
+    private let threadID: String
+    private let title: String
+    private var observed = false
+    private var observedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var task: Task<Void, Never>?
+
+    init(events: AsyncStream<FeatureEvent>, threadID: String, title: String) {
+        self.events = events
+        self.threadID = threadID
+        self.title = title
+    }
+
+    func start() {
+        task = Task { [weak self] in
+            guard let self else { return }
+            for await event in events {
+                switch event {
+                case let .thread(thread):
+                    observed = thread.id == threadID && thread.title == title
+                case let .snapshot(snapshot):
+                    observed = snapshot.threads.contains {
+                        $0.id == self.threadID && $0.title == self.title
+                    }
+                case .connection, .threadRemoved, .detail, .detailDelta, .threadSync, .failure:
+                    observed = false
+                }
+                if observed {
+                    observedWaiters.forEach { $0.resume() }
+                    observedWaiters.removeAll()
+                    return
+                }
+            }
+        }
+    }
+
+    func didObserveTitle() -> Bool {
+        observed
+    }
+
+    func waitUntilObserved() async {
+        guard observed == false else { return }
+        await withCheckedContinuation { continuation in
+            observedWaiters.append(continuation)
+        }
+    }
+
+    deinit {
+        task?.cancel()
+    }
+}
+
+private actor ControllableAggregateRefreshSleep {
+    private var requestedCadences: [Duration] = []
+    private var requestWaiters: [(
+        count: Int,
+        continuation: CheckedContinuation<Duration, Never>
+    )] = []
+    private var sleepContinuation: CheckedContinuation<Void, Never>?
+
+    func sleep(for cadence: Duration) async throws {
+        requestedCadences.append(cadence)
+        let satisfied = requestWaiters.filter { requestedCadences.count >= $0.count }
+        requestWaiters.removeAll { requestedCadences.count >= $0.count }
+        satisfied.forEach {
+            $0.continuation.resume(returning: requestedCadences[$0.count - 1])
+        }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume()
+                } else {
+                    sleepContinuation = continuation
+                }
+            }
+        } onCancel: {
+            Task { await self.resume() }
+        }
+        try Task.checkCancellation()
+    }
+
+    func waitUntilRequested(count: Int) async -> Duration {
+        if requestedCadences.count >= count { return requestedCadences[count - 1] }
+        return await withCheckedContinuation { continuation in
+            requestWaiters.append((count, continuation))
+        }
+    }
+
+    func resume() {
+        sleepContinuation?.resume()
+        sleepContinuation = nil
+    }
+}
+
 private struct MultiEnvironmentFixture {
     let directory: URL
     let transport: MultiEnvironmentHTTPTransport
@@ -1103,6 +1350,7 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var detailData: [String: [String: Data]] = [:]
     private var reachableHosts: Set<String>
     private var shellReadsEnabledHosts: Set<String>
+    private var shellReadCounts: [String: Int] = [:]
     private var dispatched: [MultiEnvironmentDispatchRecord] = []
     private var hostsDroppingNextCreateReply = Set<String>()
 
@@ -1148,16 +1396,23 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         dispatched
     }
 
+    func shellReadCount(host: String) -> Int {
+        shellReadCounts[host, default: 0]
+    }
+
     func dropNextCreateReply(host: String) {
         hostsDroppingNextCreateReply.insert(host)
     }
 
     func data(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
         let host = request.url?.host ?? ""
+        let path = request.url?.path ?? ""
+        if path == "/api/orchestration/shell" {
+            shellReadCounts[host, default: 0] += 1
+        }
         guard reachableHosts.contains(host) else {
             throw URLError(.cannotConnectToHost)
         }
-        let path = request.url?.path ?? ""
         if path == "/api/orchestration/shell",
            shellReadsEnabledHosts.contains(host),
            let data = shellData[host] {
