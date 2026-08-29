@@ -201,6 +201,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
             historyCursor: bounded.historyCursor,
             hasMoreHistory: bounded.hasMoreHistory,
             latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+            payloadBudgetExceeded: bounded.payloadBudgetExceeded,
           };
         }),
       )

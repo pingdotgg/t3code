@@ -628,6 +628,7 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
   status: Schema.Literals(["pending", "ready", "failed", "superseded"]),
   summaryMessageId: Schema.NullOr(MessageId),
   summaryText: Schema.String,
+  detailInTurnItem: Schema.optional(Schema.Literal(true)),
   createdByProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
@@ -737,6 +738,7 @@ const OrchestrationV2PlanArtifactBaseFields = {
   runId: Schema.NullOr(RunId),
   nodeId: NodeId,
   status: Schema.Literals(["draft", "active", "completed", "superseded"]),
+  detailInTurnItem: Schema.optional(Schema.Literal(true)),
 } as const;
 
 export const OrchestrationV2PlanArtifact = Schema.Union([
@@ -2462,6 +2464,8 @@ export const OrchestrationV2ThreadBoundedSnapshot = Schema.Struct({
    * has no local rows (inherited-only).
    */
   latestLocalTurnOrdinal: Schema.NullOr(NonNegativeInt),
+  /** True only when required live control state alone exceeds the transport budget. */
+  payloadBudgetExceeded: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2ThreadBoundedSnapshot = typeof OrchestrationV2ThreadBoundedSnapshot.Type;
 
