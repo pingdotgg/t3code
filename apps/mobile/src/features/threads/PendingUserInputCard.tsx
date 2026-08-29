@@ -260,7 +260,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         style={{ flexShrink: 1 }}
       >
         {!canRespond ? (
-          <Text className="font-sans text-sm leading-5 text-neutral-600 dark:text-neutral-400">
+          <Text className="font-sans text-sm leading-5 text-adaptive-neutral-600-400">
             The provider process for this request is no longer available. Interrupt or restart the
             run to continue.
           </Text>
