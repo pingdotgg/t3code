@@ -57,7 +57,8 @@ import {
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { ProjectionMaintenanceV2 } from "./ProjectionMaintenance.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
   OrchestrationV2EventSinkLayerLive,
   OrchestrationV2LayerLive,
@@ -98,12 +99,49 @@ const ProjectServiceTestLayer = Layer.mock(ProjectService.ProjectService)({
 });
 
 const driver = ProviderDriverKind.make("codex");
+const lifecycleProviderCapabilities = {
+  ...CodexProviderCapabilitiesV2,
+  sessions: {
+    ...CodexProviderCapabilitiesV2.sessions,
+    supportsMultipleProviderThreadsPerSession: false,
+  },
+};
 const orchestrationAdapter = {
   instanceId: modelSelection.instanceId,
   driver,
-  getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+  getCapabilities: () => Effect.succeed(lifecycleProviderCapabilities),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-  openSession: () => Effect.die("sessions are not used by lifecycle tests"),
+  openSession: (input) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      return {
+        instanceId: modelSelection.instanceId,
+        driver,
+        providerSessionId: input.providerSessionId,
+        providerSession: {
+          id: input.providerSessionId,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          status: "ready",
+          cwd: input.runtimePolicy.cwd ?? process.cwd(),
+          model: input.modelSelection.model ?? "gpt-5.4",
+          capabilities: lifecycleProviderCapabilities,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+        events: Stream.never,
+        ensureThread: () => Effect.die("ensureThread is unused by lifecycle tests"),
+        resumeThread: () => Effect.die("resumeThread is unused by lifecycle tests"),
+        startTurn: () => Effect.void,
+        steerTurn: () => Effect.void,
+        interruptTurn: () => Effect.void,
+        respondToRuntimeRequest: () => Effect.void,
+        readThreadSnapshot: () => Effect.die("readThreadSnapshot is unused by lifecycle tests"),
+        rollbackThread: () => Effect.die("rollbackThread is unused by lifecycle tests"),
+        forkThread: () => Effect.die("forkThread is unused by lifecycle tests"),
+      } satisfies ProviderAdapterV2SessionRuntime;
+    }),
 } as ProviderAdapterV2Shape;
 const providerInstance = {
   instanceId: modelSelection.instanceId,
@@ -1378,6 +1416,8 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const orchestrator = yield* OrchestratorV2;
       const eventSink = yield* EventSinkV2;
       const sql = yield* SqlClient.SqlClient;
+      const effectWorker = yield* OrchestrationEffectWorkerV2;
+      const providerSessions = yield* ProviderSessionManagerV2;
       const maintenance = yield* ProjectionMaintenanceV2;
       const threadId = ThreadId.make("runtime-layer-deferred-settle-thread");
 
@@ -1419,30 +1459,15 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const providerSessionId = ProviderSessionId.make(
         "runtime-layer-deferred-settle-provider-session",
       );
-      const providerSessionAttachedAt = yield* DateTime.now;
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make("runtime-layer-deferred-settle-provider-session-attached"),
-            type: "provider-session.attached",
-            threadId,
-            driver,
-            providerInstanceId: modelSelection.instanceId,
-            occurredAt: providerSessionAttachedAt,
-            payload: {
-              id: providerSessionId,
-              driver,
-              providerInstanceId: modelSelection.instanceId,
-              status: "ready",
-              cwd: "/tmp/runtime-layer-deferred-settle",
-              model: modelSelection.model,
-              capabilities: CodexProviderCapabilitiesV2,
-              createdAt: providerSessionAttachedAt,
-              updatedAt: providerSessionAttachedAt,
-              lastError: null,
-            },
-          },
-        ],
+      yield* providerSessions.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy: {
+          cwd: "/tmp/runtime-layer-deferred-settle",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        },
       });
       yield* orchestrator.dispatch({
         type: "thread.organization.defer",
@@ -1521,6 +1546,19 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
           },
         ],
       );
+      assert.isAtLeast(yield* effectWorker.drain(), 1);
+      assert.isTrue(Option.isNone(yield* providerSessions.get(providerSessionId)));
+      const completedSettleEffects = yield* sql<{ readonly status: string }>`
+        SELECT status
+        FROM orchestration_v2_effect_outbox
+        WHERE command_id = ${applyCommand.commandId}
+        ORDER BY effect_id ASC
+      `;
+      assert.deepEqual(
+        completedSettleEffects.map((effect) => effect.status),
+        ["succeeded"],
+      );
+      assert.equal(yield* effectWorker.drain(), 0);
 
       const rebuilt = yield* maintenance.rebuild;
       assert.isTrue(rebuilt.valid);
@@ -1535,6 +1573,8 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const orchestrator = yield* OrchestratorV2;
       const eventSink = yield* EventSinkV2;
       const sql = yield* SqlClient.SqlClient;
+      const effectWorker = yield* OrchestrationEffectWorkerV2;
+      const providerSessions = yield* ProviderSessionManagerV2;
 
       const createStartingThread = (suffix: string) =>
         Effect.gen(function* () {
@@ -1610,30 +1650,15 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const providerSessionId = ProviderSessionId.make(
         "runtime-layer-deferred-archive-provider-session",
       );
-      const providerSessionAttachedAt = yield* DateTime.now;
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make("runtime-layer-deferred-archive-provider-session-attached"),
-            type: "provider-session.attached",
-            threadId: archived.threadId,
-            driver,
-            providerInstanceId: modelSelection.instanceId,
-            occurredAt: providerSessionAttachedAt,
-            payload: {
-              id: providerSessionId,
-              driver,
-              providerInstanceId: modelSelection.instanceId,
-              status: "ready",
-              cwd: "/tmp/runtime-layer-deferred-archive",
-              model: modelSelection.model,
-              capabilities: CodexProviderCapabilitiesV2,
-              createdAt: providerSessionAttachedAt,
-              updatedAt: providerSessionAttachedAt,
-              lastError: null,
-            },
-          },
-        ],
+      yield* providerSessions.open({
+        threadId: archived.threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy: {
+          cwd: "/tmp/runtime-layer-deferred-archive",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        },
       });
       yield* orchestrator.dispatch({
         type: "thread.organization.defer",
@@ -1650,8 +1675,11 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const archiveApplyCommandId = CommandId.make(
         `command:system:thread-organization-defer:${archived.threadId}:${archived.run.id}`,
       );
-      const archiveEffects = yield* sql<{ readonly payload_json: string }>`
-        SELECT payload_json
+      const archiveEffects = yield* sql<{
+        readonly payload_json: string;
+        readonly status: string;
+      }>`
+        SELECT payload_json, status
         FROM orchestration_v2_effect_outbox
         WHERE command_id = ${archiveApplyCommandId}
         ORDER BY effect_id ASC
@@ -1667,6 +1695,33 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
           },
           { type: "terminal.cleanup" },
         ],
+      );
+      assert.deepEqual(
+        archiveEffects.map((effect) => effect.status),
+        ["pending", "pending"],
+      );
+      assert.isAtLeast(yield* effectWorker.drain(), 2);
+      assert.isTrue(Option.isNone(yield* providerSessions.get(providerSessionId)));
+      const archiveRetry = yield* orchestrator.dispatch({
+        type: "thread.organization.defer.apply",
+        commandId: archiveApplyCommandId,
+        threadId: archived.threadId,
+        runId: archived.run.id,
+      });
+      assert.deepEqual(
+        archiveRetry.storedEvents.map((stored) => stored.event.type),
+        ["thread.archived", "provider-session.detached"],
+      );
+      assert.equal(yield* effectWorker.drain(), 0);
+      const completedArchiveEffects = yield* sql<{ readonly status: string }>`
+        SELECT status
+        FROM orchestration_v2_effect_outbox
+        WHERE command_id = ${archiveApplyCommandId}
+        ORDER BY effect_id ASC
+      `;
+      assert.deepEqual(
+        completedArchiveEffects.map((effect) => effect.status),
+        ["succeeded", "succeeded"],
       );
 
       const stale = yield* createStartingThread("stale");

@@ -37,7 +37,10 @@ const ToolsListPayload = Schema.fromJsonString(
       tools: Schema.Array(
         Schema.Struct({
           name: Schema.String,
-          inputSchema: Schema.Struct({ type: Schema.optional(Schema.String) }),
+          inputSchema: Schema.Struct({
+            type: Schema.optional(Schema.String),
+            properties: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+          }),
           annotations: Schema.optional(
             Schema.Struct({
               readOnlyHint: Schema.optional(Schema.Boolean),
@@ -114,6 +117,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       // than replacing them.
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
+      expect(toolNames).toContain("t3_thread_defer_organization");
 
       // The handoff tool mutates thread state, reaches the network (origin
       // fetch), and runs project setup scripts, so its MCP hints must not
@@ -132,6 +136,11 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       for (const tool of tools) {
         expect(tool.inputSchema.type, `inputSchema.type of ${tool.name}`).toBe("object");
       }
+      const deferredOrganization = tools.find(
+        (tool) => tool.name === "t3_thread_defer_organization",
+      );
+      expect(deferredOrganization?.inputSchema.properties).toHaveProperty("operation");
+      expect(deferredOrganization?.inputSchema.properties).toHaveProperty("action");
     }),
   ).pipe(Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, NodeServices.layer))),
 );

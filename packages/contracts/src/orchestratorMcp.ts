@@ -537,23 +537,26 @@ export const OrchestratorMcpDeferredOrganizationIntent = Schema.Struct({
 export type OrchestratorMcpDeferredOrganizationIntent =
   typeof OrchestratorMcpDeferredOrganizationIntent.Type;
 
-export const OrchestratorMcpThreadDeferOrganizationInput = Schema.Union([
-  Schema.Struct({
-    operation: Schema.Literal("read"),
+export const OrchestratorMcpThreadDeferOrganizationInput = Schema.Struct({
+  operation: Schema.Literals(["read", "schedule", "cancel"]).annotate({
+    description:
+      "Read the current intent, schedule settle/archive after this run, or cancel the intent.",
   }),
-  Schema.Struct({
-    operation: Schema.Literal("schedule"),
-    action: Schema.Literals(["settle", "archive"]).annotate({
+  action: Schema.optional(
+    Schema.Literals(["settle", "archive"]).annotate({
       description:
-        "Organization action to apply only after this calling run completes safely with no newer, queued, or blocked work.",
+        "Required for schedule only. Applies after this calling run completes safely with no newer, queued, or blocked work.",
     }),
-    clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  ),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+}).check(
+  Schema.makeFilter((input) => {
+    if (input.operation === "schedule") {
+      return input.action !== undefined || "Schedule requires an action.";
+    }
+    return input.action === undefined || `${input.operation} does not accept an action.`;
   }),
-  Schema.Struct({
-    operation: Schema.Literal("cancel"),
-    clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-  }),
-]);
+);
 export type OrchestratorMcpThreadDeferOrganizationInput =
   typeof OrchestratorMcpThreadDeferOrganizationInput.Type;
 

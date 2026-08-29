@@ -240,5 +240,10 @@ describe("orchestrator MCP contracts", () => {
     expect(() =>
       decodeThreadDeferOrganizationInput({ operation: "schedule", action: "delete" }),
     ).toThrow();
+    expect(() => decodeThreadDeferOrganizationInput({ operation: "schedule" })).toThrow();
+    expect(() =>
+      decodeThreadDeferOrganizationInput({ operation: "read", action: "settle" }),
+    ).toThrow();
+    expect(() => decodeThreadDeferOrganizationInput({ operation: "later" })).toThrow();
   });
 });

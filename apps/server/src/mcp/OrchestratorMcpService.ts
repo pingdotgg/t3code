@@ -1887,7 +1887,7 @@ const make = Effect.gen(function* () {
                   }),
                   threadId: scope.threadId,
                   runId: parentRun.id,
-                  action: input.action,
+                  action: input.action!,
                 } satisfies OrchestrationV2Command;
               });
         yield* threadManagement

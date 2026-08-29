@@ -178,6 +178,7 @@ export interface OrchestratorV2DispatchResult {
 
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
+  readonly recoverDeferredOrganization: Effect.Effect<void, OrchestratorV2Error>;
   readonly dispatch: (
     command: OrchestrationV2Command,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
@@ -1435,64 +1436,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: movesForward ? { ...thread, lastVisitedAt: visitedAt.value } : thread,
     });
   });
-
-  const queueProviderSessionDetaches = Effect.fn(
-    "orchestrationV2.dispatch.queueProviderSessionDetaches",
-  )(function* (input: {
-    readonly command: OrchestrationV2Command;
-    readonly threadId: ThreadId;
-    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
-    readonly effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>;
-    readonly projection: OrchestrationV2ThreadProjection;
-    readonly providerSessionIds: ReadonlySet<ProviderSessionId>;
-    readonly occurredAt: DateTime.Utc;
-    readonly detail: string;
-    readonly revokeMcpCredential: boolean;
-  }) {
-    const liveSessions = input.projection.providerSessions.filter(
-      (session) =>
-        input.providerSessionIds.has(session.id) &&
-        session.status !== "stopped" &&
-        session.status !== "error",
-    );
-    yield* Effect.forEach(
-      liveSessions,
-      (session) =>
-        Effect.gen(function* () {
-          yield* emit(
-            input.events,
-            input.command,
-          )({
-            type: "provider-session.detached",
-            threadId: input.threadId,
-            driver: session.driver,
-            providerInstanceId: session.providerInstanceId,
-            occurredAt: input.occurredAt,
-            payload: {
-              providerSessionId: session.id,
-              detachedAt: input.occurredAt,
-              reason: input.detail,
-            },
-          });
-          yield* Ref.update(input.effects, (existing) => [
-            ...existing,
-            {
-              id: `effect:${input.command.commandId}:provider-session.detach:${session.id}`,
-              commandId: input.command.commandId,
-              threadId: input.threadId,
-              request: {
-                type: "provider-session.detach",
-                providerSessionId: session.id,
-                detail: input.detail,
-                ...(input.revokeMcpCredential ? { revokeMcpCredential: true } : {}),
-              },
-            } satisfies PendingOrchestrationEffectV2,
-          ]);
-        }),
-      { concurrency: 1, discard: true },
-    );
-  });
-
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2Command,
@@ -1518,6 +1461,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    options?: { readonly clearDeferredOrganization?: boolean },
   ) {
     const projection = yield* projectionStore.getThreadProjection(command.threadId).pipe(
       Effect.mapError(
@@ -1815,6 +1759,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
       }
     })();
+    const committedThread =
+      options?.clearDeferredOrganization === true
+        ? { ...updatedThread, deferredOrganization: null }
+        : updatedThread;
     const eventType = (() => {
       switch (command.type) {
         case "thread.archive":
@@ -1856,9 +1804,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     )({
       type: eventType,
       threadId: command.threadId,
-      providerInstanceId: updatedThread.providerInstanceId,
+      providerInstanceId: committedThread.providerInstanceId,
       occurredAt: now,
-      payload: updatedThread,
+      payload: committedThread,
     });
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
@@ -1952,28 +1900,73 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
     if (detachSessionIds.size > 0) {
-      yield* queueProviderSessionDetaches({
-        command,
-        threadId: command.threadId,
-        events,
-        effects,
-        projection,
-        providerSessionIds: detachSessionIds,
-        occurredAt: now,
-        detail:
-          command.type === "thread.archive"
-            ? "Thread archived."
-            : command.type === "thread.settle"
-              ? "Thread settled."
-              : command.type === "thread.delete"
-                ? "Thread deleted."
-                : command.type === "thread.metadata.update"
-                  ? "Workspace changed."
-                  : command.type === "thread.runtime-mode.set"
-                    ? "Runtime mode changed."
-                    : "Provider or model selection changed.",
-        revokeMcpCredential: command.type === "thread.archive" || command.type === "thread.delete",
-      });
+      const liveSessions = projection.providerSessions.filter(
+        (session) =>
+          detachSessionIds.has(session.id) &&
+          session.status !== "stopped" &&
+          session.status !== "error",
+      );
+      yield* Effect.forEach(
+        liveSessions,
+        (session) =>
+          Effect.gen(function* () {
+            yield* emit(
+              events,
+              command,
+            )({
+              type: "provider-session.detached",
+              threadId: command.threadId,
+              driver: session.driver,
+              providerInstanceId: session.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                providerSessionId: session.id,
+                detachedAt: now,
+                reason:
+                  command.type === "thread.archive"
+                    ? "Thread archived."
+                    : command.type === "thread.settle"
+                      ? "Thread settled."
+                      : command.type === "thread.delete"
+                        ? "Thread deleted."
+                        : command.type === "thread.metadata.update"
+                          ? "Workspace changed."
+                          : command.type === "thread.runtime-mode.set"
+                            ? "Runtime mode changed."
+                            : "Provider or model selection changed.",
+              },
+            });
+            const pendingEffect = {
+              id: `effect:${command.commandId}:provider-session.detach:${session.id}`,
+              commandId: command.commandId,
+              threadId: command.threadId,
+              request: {
+                type: "provider-session.detach",
+                providerSessionId: session.id,
+                detail:
+                  command.type === "thread.archive"
+                    ? "Thread archived."
+                    : command.type === "thread.settle"
+                      ? "Thread settled."
+                      : command.type === "thread.delete"
+                        ? "Thread deleted."
+                        : command.type === "thread.metadata.update"
+                          ? "Workspace changed."
+                          : command.type === "thread.runtime-mode.set"
+                            ? "Runtime mode changed."
+                            : "Provider or model selection changed.",
+                // Terminal detaches revoke the thread's MCP credentials; other
+                // detach reasons keep them so a re-attaching provider process
+                // stays authorized.
+                ...(command.type === "thread.archive" || command.type === "thread.delete"
+                  ? { revokeMcpCredential: true }
+                  : {}),
+              },
+            } satisfies PendingOrchestrationEffectV2;
+            yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
+          }),
+        { concurrency: 1, discard: true },
+      );
     }
 
     if (command.type === "thread.archive" || command.type === "thread.delete") {
@@ -2112,81 +2105,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         return;
       }
-      if (intent.action === "settle") {
-        yield* emit(
-          events,
-          command,
-        )({
-          type: "thread.settled",
-          threadId: command.threadId,
-          providerInstanceId: thread.providerInstanceId,
-          occurredAt: now,
-          payload: {
-            ...thread,
-            deferredOrganization: null,
-            settledOverride: "settled",
-            settledAt: now,
-            pinnedAt: null,
-            pinOrderKey: null,
-            updatedAt: now,
-          },
-        });
-        yield* queueProviderSessionDetaches({
-          command,
-          threadId: command.threadId,
-          events,
-          effects,
-          projection,
-          providerSessionIds: new Set(projection.providerSessions.map((session) => session.id)),
-          occurredAt: now,
-          detail: "Thread settled.",
-          revokeMcpCredential: false,
-        });
-        return;
-      }
-      yield* emit(
-        events,
-        command,
-      )({
-        type: "thread.archived",
-        threadId: command.threadId,
-        providerInstanceId: thread.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          ...thread,
-          deferredOrganization: null,
-          archivedAt: now,
-          titleRegeneration: null,
-          updatedAt: now,
-        },
-      });
-      yield* disposeAllDelegatedCompletionCohorts({
-        command,
-        events,
-        projection,
-        now,
-        cancelQueuedDelivery: false,
-      });
-      yield* queueProviderSessionDetaches({
-        command,
-        threadId: command.threadId,
+      yield* dispatchThreadMutation(
+        intent.action === "settle"
+          ? {
+              type: "thread.settle",
+              commandId: command.commandId,
+              threadId: command.threadId,
+            }
+          : {
+              type: "thread.archive",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              requireNoPendingRuntimeRequests: true,
+            },
         events,
         effects,
-        projection,
-        providerSessionIds: new Set(projection.providerSessions.map((session) => session.id)),
-        occurredAt: now,
-        detail: "Thread archived.",
-        revokeMcpCredential: true,
-      });
-      yield* Ref.update(effects, (existing) => [
-        ...existing,
-        {
-          id: `effect:${command.commandId}:terminal.cleanup`,
-          commandId: command.commandId,
-          threadId: command.threadId,
-          request: { type: "terminal.cleanup" },
-        } satisfies PendingOrchestrationEffectV2,
-      ]);
+        { clearDeferredOrganization: true },
+      );
     },
   );
 
@@ -7491,39 +7426,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // The high-water subscription deliberately skips history, so recover the
   // two terminal side effects from current projections instead: one queued
   // run per idle thread, plus any app-owned child result not yet transferred.
-  yield* projectionStore.getShellSnapshot().pipe(
+  const recoverDeferredOrganization = projectionStore.getShellSnapshot().pipe(
     Effect.flatMap((shell) =>
       Effect.forEach(
         [...shell.threads, ...shell.archivedThreads].filter(
           (thread) => thread.deferredOrganization != null,
         ),
         (thread) =>
-          threadDispatch.withLock(
-            thread.id,
-            Effect.gen(function* () {
-              const projection = yield* projectionStore.getThreadProjection(thread.id);
-              const intent = projection.thread.deferredOrganization;
-              if (intent == null) return;
-              const boundRun = projection.runs.find((run) => run.id === intent.runId);
-              const hasNewerRun =
-                boundRun !== undefined &&
-                projection.runs.some((run) => run.ordinal > boundRun.ordinal);
-              if (
-                boundRun === undefined ||
-                hasNewerRun ||
-                ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(
-                  boundRun.status,
-                )
-              ) {
-                yield* applyDeferredOrganization(thread.id, intent.runId);
-              }
-            }),
-          ),
+          threadDispatch
+            .withLock(
+              thread.id,
+              Effect.gen(function* () {
+                const projection = yield* projectionStore.getThreadProjection(thread.id);
+                const intent = projection.thread.deferredOrganization;
+                if (intent == null) return;
+                const boundRun = projection.runs.find((run) => run.id === intent.runId);
+                const hasNewerRun =
+                  boundRun !== undefined &&
+                  projection.runs.some((run) => run.ordinal > boundRun.ordinal);
+                if (
+                  boundRun === undefined ||
+                  hasNewerRun ||
+                  ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(
+                    boundRun.status,
+                  )
+                ) {
+                  yield* applyDeferredOrganization(thread.id, intent.runId);
+                }
+              }),
+            )
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to recover deferred thread organization", {
+                  threadId: thread.id,
+                  cause,
+                }),
+              ),
+            ),
         { concurrency: 8, discard: true },
       ),
     ),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Failed to recover deferred thread organization", { cause }),
+    Effect.mapError(
+      (cause) =>
+        new OrchestratorProjectionError({
+          threadId: ThreadId.make("thread:shell"),
+          cause,
+        }),
     ),
   );
   yield* resumeQueuedRuns.pipe(
@@ -7622,6 +7570,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   return OrchestratorV2.of({
     resumeQueuedRuns,
+    recoverDeferredOrganization,
     dispatch: dispatchWithReceipt,
     getThreadProjection: (threadId) =>
       projectionStore
@@ -7720,6 +7669,13 @@ export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
       new OrchestratorDispatchError({
         commandId: CommandId.make("command:system:resume-queued-runs"),
         commandType: "message.dispatch",
+        cause: "Orchestration V2 live runtime is not configured.",
+      }),
+    ),
+    recoverDeferredOrganization: Effect.fail(
+      new OrchestratorDispatchError({
+        commandId: CommandId.make("command:system:recover-deferred-organization"),
+        commandType: "thread.organization.defer.apply",
         cause: "Orchestration V2 live runtime is not configured.",
       }),
     ),

@@ -31,6 +31,7 @@ import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
+import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
@@ -426,6 +427,17 @@ export function runOrderedV2StartupPhases<
   });
 }
 
+export const runV2RecoveryPhase = <
+  Recovery,
+  RecoveryError,
+  RecoveryContext,
+  DeferredError,
+  DeferredContext,
+>(input: {
+  readonly recoverProviderRuntime: Effect.Effect<Recovery, RecoveryError, RecoveryContext>;
+  readonly recoverDeferredOrganization: Effect.Effect<void, DeferredError, DeferredContext>;
+}) => input.recoverProviderRuntime.pipe(Effect.tap(() => input.recoverDeferredOrganization));
+
 export const make = (options?: StartupOptions) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
@@ -433,6 +445,7 @@ export const make = (options?: StartupOptions) =>
     const projectionMaintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
     const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -552,7 +565,13 @@ export const make = (options?: StartupOptions) =>
           "orchestration-v2.projections.rebuild",
           projectionMaintenance.rebuild,
         ),
-        recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+        recover: runStartupPhase(
+          "orchestration-v2.recovery",
+          runV2RecoveryPhase({
+            recoverProviderRuntime: providerRuntimeRecovery.recover,
+            recoverDeferredOrganization: orchestrator.recoverDeferredOrganization,
+          }),
+        ),
         startEffectWorker: runStartupPhase(
           "orchestration-v2.effect-worker.start",
           startEffectWorkerWithRelay({
