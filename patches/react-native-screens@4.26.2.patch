@@ -1107,18 +1107,45 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
  
    if (needsNavigationControllerLayout) {
 diff --git a/ios/RNSScreenStackHeaderSubview.mm b/ios/RNSScreenStackHeaderSubview.mm
-index add33c4807e038dcd846f6c72b2fc472ded02809..9a7c7a8a775579c85de39f921e7a362241a72075 100644
+index add33c4807e038dcd846f6c72b2fc472ded02809..489afa5fa2da09c1ec6986d1832b58bb595396ae 100644
 --- a/ios/RNSScreenStackHeaderSubview.mm
 +++ b/ios/RNSScreenStackHeaderSubview.mm
-@@ -20,6 +20,7 @@ @implementation RNSScreenStackHeaderSubview {
+@@ -20,7 +20,9 @@ @implementation RNSScreenStackHeaderSubview {
    // This is a strong reference to UIBarButtonItem which creates a retain cycle.
    // The cycle is cleared via `invalidateUIBarButtonItem` method, called by `invalidate` callback.
    UIBarButtonItem *_barButtonItem;
 +  NSString *_barButtonItemIdentifier;
    BOOL _hidesSharedBackground;
++  UILabel *_titleScrollEdgeEffectGuide;
  }
  
-@@ -124,6 +125,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+ #pragma mark - Common
+@@ -102,5 +104,24 @@ - (void)updateShadowStateWithFrame:(CGRect)frame
+ - (void)layoutSubviews
+ {
+   [super layoutSubviews];
++#if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
++  if (@available(iOS 26.0, *)) {
++    if (_type == RNSScreenStackHeaderSubviewTypeTitle || _type == RNSScreenStackHeaderSubviewTypeCenter) {
++      // UIKit shapes the navigation bar's scroll-edge fade around native labels,
++      // but does not recognize Fabric's custom text views. An empty, non-interactive
++      // label supplies the title's geometry without drawing or becoming a bar item.
++      if (_titleScrollEdgeEffectGuide == nil) {
++        _titleScrollEdgeEffectGuide = [UILabel new];
++        _titleScrollEdgeEffectGuide.accessibilityElementsHidden = YES;
++        // Append after Fabric's children so their mount/unmount indices stay intact.
++        [self addSubview:_titleScrollEdgeEffectGuide];
++      }
++      _titleScrollEdgeEffectGuide.frame = self.bounds;
++    } else {
++      [_titleScrollEdgeEffectGuide removeFromSuperview];
++      _titleScrollEdgeEffectGuide = nil;
++    }
++  }
++#endif
+   [self updateShadowStateInContextOfAncestorView:[self findNavigationBar]];
+ }
+@@ -124,6 +145,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    const auto &newHeaderSubviewProps = *std::static_pointer_cast<const react::RNSScreenStackHeaderSubviewProps>(props);
  
    [self setType:[RNSConvert RNSScreenStackHeaderSubviewTypeFromCppEquivalent:newHeaderSubviewProps.type]];
@@ -1126,7 +1153,7 @@ index add33c4807e038dcd846f6c72b2fc472ded02809..9a7c7a8a775579c85de39f921e7a3622
    [self setHidesSharedBackground:newHeaderSubviewProps.hidesSharedBackground];
    [self setSynchronousShadowStateUpdatesEnabled:newHeaderSubviewProps.synchronousShadowStateUpdatesEnabled];
    [super updateProps:props oldProps:oldProps];
-@@ -276,7 +278,14 @@ - (void)configureBarButtonItem
+@@ -276,7 +298,14 @@ - (void)configureBarButtonItem
  #if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
    if (@available(iOS 26.0, *)) {
      if (_barButtonItem != nil) {
@@ -1142,7 +1169,7 @@ index add33c4807e038dcd846f6c72b2fc472ded02809..9a7c7a8a775579c85de39f921e7a3622
      }
    }
  #endif // RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
-@@ -284,10 +293,22 @@ - (void)configureBarButtonItem
+@@ -284,10 +313,22 @@ - (void)configureBarButtonItem
  
  - (void)setHidesSharedBackground:(BOOL)hidesSharedBackground
  {
@@ -1166,7 +1193,7 @@ index add33c4807e038dcd846f6c72b2fc472ded02809..9a7c7a8a775579c85de39f921e7a3622
  
  // Needed because of this: https://github.com/facebook/react-native/pull/37274
 diff --git a/lib/commonjs/components/ScreenStackHeaderConfig.js b/lib/commonjs/components/ScreenStackHeaderConfig.js
-index 8c509f2657105cfd86448347c1a01fb73651ff9e..5e3b5185c0ea33c6b98f5daed69239d2c0d0ce90 100644
+index 8c509f2657105cfd86448347c1a01fb73651ff9e..e668e089a1788973cb122a150be7846364a2a2cf 100644
 --- a/lib/commonjs/components/ScreenStackHeaderConfig.js
 +++ b/lib/commonjs/components/ScreenStackHeaderConfig.js
 @@ -26,17 +26,42 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
@@ -1338,7 +1365,7 @@ index ab93f62e4a7049d63c6681cecbd6cf8b1d07ce10..9dca2ab640e92161eb647b819a989acd
  //# sourceMappingURL=prepareHeaderBarButtonItems.js.map
 \ No newline at end of file
 diff --git a/lib/module/components/ScreenStackHeaderConfig.js b/lib/module/components/ScreenStackHeaderConfig.js
-index 68e3ba6a78314aba908d07098bb6982d11e6ee80..b787b3cf0284ffb81c80360a06c4059277bf4c1e 100644
+index 68e3ba6a78314aba908d07098bb6982d11e6ee80..db5d17bfdac19ed3e664b55b6a73ce49766ac7c5 100644
 --- a/lib/module/components/ScreenStackHeaderConfig.js
 +++ b/lib/module/components/ScreenStackHeaderConfig.js
 @@ -22,17 +22,42 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
