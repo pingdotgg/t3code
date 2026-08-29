@@ -1,26 +1,20 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { ServerConfig } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 
-import { useEnvironmentServerConfig } from "../state/entities";
 import { useConnectionController } from "../features/connection/useConnectionController";
-import { environmentPresentations, useEnvironmentPresentation } from "./presentation";
-import {
-  projectEnvironmentPresentation,
-  type EnvironmentPresentation,
-} from "../state/environments";
+import { environmentPresentations } from "./presentation";
 import { useWorkspaceState } from "../state/workspace";
 import type { SavedRemoteConnection } from "../lib/connection";
 import { appAtomRegistry } from "./atom-registry";
 import type { ConnectedEnvironmentSummary, EnvironmentRuntimeState } from "./remote-runtime-types";
-import { environmentSession, usePreparedConnection } from "./session";
+import { environmentSession } from "./session";
 import { environmentCatalog } from "../connection/catalog";
+import { createRemoteEnvironmentProjectionAtoms } from "./remote-environment-projections";
+import { serverEnvironment } from "./server";
 
 const connectionPairingUrlAtom = Atom.make("").pipe(
   Atom.keepAlive,
@@ -36,64 +30,29 @@ export function setPendingConnectionError(message: string | null): void {
   appAtomRegistry.set(pendingConnectionErrorAtom, message);
 }
 
-function toSavedConnection(
-  environment: EnvironmentPresentation,
-  prepared: Option.Option<PreparedConnection>,
-): SavedRemoteConnection {
-  const displayUrl = environment.displayUrl ?? "";
-  const active = Option.getOrNull(prepared);
-  const httpBaseUrl = active?.httpBaseUrl ?? displayUrl;
-  const socketUrl = active?.socketUrl ?? "";
-  const wsBaseUrl =
-    socketUrl === ""
-      ? displayUrl.startsWith("https://")
-        ? displayUrl.replace(/^https:/, "wss:")
-        : displayUrl.replace(/^http:/, "ws:")
-      : new URL(socketUrl).origin;
-  const authorization = active?.httpAuthorization ?? null;
+const remoteEnvironmentProjections = createRemoteEnvironmentProjectionAtoms({
+  presentationAtom: environmentPresentations.presentationAtom,
+  preparedConnectionAtom: environmentSession.preparedConnectionValueAtom,
+  serverConfigAtom: serverEnvironment.configValueAtom,
+});
 
-  return {
-    environmentId: environment.environmentId,
-    environmentLabel: environment.label,
-    pairingUrl: displayUrl,
-    displayUrl,
-    httpBaseUrl,
-    wsBaseUrl,
-    bearerToken: authorization?._tag === "Bearer" ? authorization.token : null,
-    ...(environment.relayManaged
-      ? {
-          authenticationMethod: "dpop" as const,
-          relayManaged: true as const,
-          ...(authorization?._tag === "Dpop" ? { dpopAccessToken: authorization.accessToken } : {}),
-        }
-      : { authenticationMethod: "bearer" as const }),
-  };
-}
+const EMPTY_SAVED_CONNECTION_ATOM = Atom.make<SavedRemoteConnection | null>(null).pipe(
+  Atom.withLabel("mobile:saved-connection:empty"),
+);
+
+const EMPTY_RUNTIME_STATE_ATOM = Atom.make<EnvironmentRuntimeState | null>(null).pipe(
+  Atom.withLabel("mobile:environment-runtime-state:empty"),
+);
 
 const savedConnectionsByIdAtom = Atom.make((get) => {
   const presentationById = get(environmentPresentations.presentationsAtom);
   return Object.fromEntries(
-    [...presentationById.entries()].map(([environmentId, presentation]) => [
-      environmentId,
-      toSavedConnection(
-        projectEnvironmentPresentation(environmentId, presentation),
-        get(environmentSession.preparedConnectionValueAtom(environmentId)),
-      ),
-    ]),
+    [...presentationById.keys()].flatMap((environmentId) => {
+      const connection = get(remoteEnvironmentProjections.savedConnectionAtom(environmentId));
+      return connection === null ? [] : [[environmentId, connection]];
+    }),
   ) as Record<EnvironmentId, SavedRemoteConnection>;
 }).pipe(Atom.withLabel("mobile:saved-connections-by-id"));
-
-function toRuntimeState(
-  environment: EnvironmentPresentation,
-  serverConfig: ServerConfig | null,
-): EnvironmentRuntimeState {
-  return {
-    connectionState: environment.connection.phase,
-    connectionError: environment.connection.error,
-    connectionErrorTraceId: environment.connection.traceId,
-    serverConfig,
-  };
-}
 
 export function useSavedRemoteConnections() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
@@ -108,23 +67,21 @@ export function useSavedRemoteConnections() {
 export function useSavedRemoteConnection(
   environmentId: EnvironmentId | null,
 ): SavedRemoteConnection | null {
-  const { presentation } = useEnvironmentPresentation(environmentId);
-  const prepared = usePreparedConnection(environmentId);
-  if (environmentId === null || presentation === null) {
-    return null;
-  }
-  return toSavedConnection(projectEnvironmentPresentation(environmentId, presentation), prepared);
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_SAVED_CONNECTION_ATOM
+      : remoteEnvironmentProjections.savedConnectionAtom(environmentId),
+  );
 }
 
 export function useRemoteEnvironmentRuntime(
   environmentId: EnvironmentId | null,
 ): EnvironmentRuntimeState | null {
-  const { presentation } = useEnvironmentPresentation(environmentId);
-  const serverConfig = useEnvironmentServerConfig(environmentId);
-  if (environmentId === null || presentation === null) {
-    return null;
-  }
-  return toRuntimeState(projectEnvironmentPresentation(environmentId, presentation), serverConfig);
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_RUNTIME_STATE_ATOM
+      : remoteEnvironmentProjections.runtimeStateAtom(environmentId),
+  );
 }
 
 export function useRemoteConnectionStatus() {
