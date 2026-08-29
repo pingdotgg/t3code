@@ -113,6 +113,39 @@ describe("QueuedRunsControl attachments and edit mode", () => {
     expect(html).toContain("https://assets.test/attachment-1");
     expect(html).toContain("Queued with a screenshot");
     expect(html).toContain("Edit queued message");
+    expect(html).toContain("Reorder queued message");
+    expect(html).not.toContain("Move queued message up");
+  });
+
+  it("drops the optimistic pending row once the projection holds its message", () => {
+    state.projection = {
+      projection: { messages: [{ id: "message:acknowledged", text: "hello" }] },
+    };
+    state.workflow = {
+      activeRun: { id: "run:active" },
+      canPromoteToSteer: true,
+      canReorder: true,
+      queuedRuns: [],
+    };
+
+    const html = renderToStaticMarkup(
+      <QueuedRunsControl
+        environmentId={"environment:test" as never}
+        optimisticMessages={[
+          {
+            id: "message:acknowledged" as never,
+            inputIntent: "queued_turn",
+            text: "hello",
+            attachments: [],
+          },
+        ]}
+        threadId={"thread:test" as never}
+        editingRunId={null}
+        onEditQueuedRun={() => undefined}
+      />,
+    );
+
+    expect(html).toBe("");
   });
 
   it("hides the row that is being edited in the composer", () => {
