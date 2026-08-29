@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
-import { ProjectMcpCreateInput, ProjectMcpListInput } from "./projectMcp.ts";
+import { ProjectMcpCreateInput, ProjectMcpFailure, ProjectMcpListInput } from "./projectMcp.ts";
 
 const decodeCreateInput = Schema.decodeUnknownSync(ProjectMcpCreateInput);
 const decodeListInput = Schema.decodeUnknownSync(ProjectMcpListInput);
+const decodeFailure = Schema.decodeUnknownSync(ProjectMcpFailure);
 
 describe("project MCP contracts", () => {
   it("bounds project list pages", () => {
@@ -59,5 +60,15 @@ describe("project MCP contracts", () => {
         },
       }),
     ).toThrow();
+  });
+
+  it("identifies retries bound to deleted project ids", () => {
+    expect(
+      decodeFailure({
+        _tag: "ProjectMcpFailure",
+        code: "project_deleted",
+        message: "Use a new clientRequestId.",
+      }),
+    ).toMatchObject({ code: "project_deleted" });
   });
 });

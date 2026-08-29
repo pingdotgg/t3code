@@ -137,6 +137,7 @@ export class ProjectMcpFailure extends Schema.TaggedErrorClass<ProjectMcpFailure
     code: Schema.Literals([
       "capability_denied",
       "project_not_found",
+      "project_deleted",
       "project_not_empty",
       "invalid_request",
       "operation_failed",

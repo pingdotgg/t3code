@@ -166,6 +166,18 @@ it.layer(TestLayer)("ProjectService", (it) => {
       assert.isTrue(Option.isSome(yield* service.getById(projectId, { includeDeleted: true })));
       assert.deepEqual((yield* service.snapshot).projects, []);
 
+      const replayedCreate = yield* service.create({
+        commandId: CommandId.make("command:project:create"),
+        projectId,
+        title: "Project",
+        workspaceRoot: "/work/project/",
+        defaultModelSelection: modelSelection,
+        defaultThreadEnvMode: "worktree",
+        faviconPath: "/work/project/custom-icon.svg",
+      });
+      assert.equal(replayedCreate.deletedAt, deleted.deletedAt);
+      assert.equal(replayedCreate.title, "Renamed");
+
       const sql = yield* SqlClient.SqlClient;
       const changes = yield* sql<{ readonly event_type: string }>`
         SELECT event_type

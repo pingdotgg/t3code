@@ -228,7 +228,7 @@ const make = Effect.gen(function* () {
         projectId,
         Effect.gen(function* () {
           const existing = yield* projects
-            .getById(projectId)
+            .getById(projectId, { includeDeleted: true })
             .pipe(
               Effect.mapError((error) =>
                 failure(
@@ -238,6 +238,12 @@ const make = Effect.gen(function* () {
               ),
             );
           if (Option.isSome(existing)) {
+            if (existing.value.deletedAt !== null) {
+              return yield* failure(
+                "project_deleted",
+                `Project '${projectId}' created by this clientRequestId was deleted. Use a new clientRequestId to create a new project; the deleted record will not be resurrected.`,
+              );
+            }
             return yield* projectView(existing.value, yield* loadSettings);
           }
           const settings = yield* loadSettings;

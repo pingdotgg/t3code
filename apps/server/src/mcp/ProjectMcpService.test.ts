@@ -257,7 +257,14 @@ it.effect("clones before registration and requires explicit cascading for nonemp
               yield* Ref.set(state, created);
               return created;
             }),
-          getById: () => Ref.get(state).pipe(Effect.map(Option.fromNullishOr)),
+          getById: (_projectId, options) =>
+            Ref.get(state).pipe(
+              Effect.map((current) =>
+                current === null || (current.deletedAt !== null && options?.includeDeleted !== true)
+                  ? Option.none()
+                  : Option.some(current),
+              ),
+            ),
           delete: ({ projectId }) =>
             Effect.gen(function* () {
               yield* Ref.update(deletedProjects, (current) => [...current, projectId]);
@@ -382,6 +389,22 @@ it.effect("clones before registration and requires explicit cascading for nonemp
       });
       expect(yield* Ref.get(deletedProjects)).toEqual([projectId]);
       expect(yield* Ref.get(lockedProjects)).toEqual([projectId, projectId, projectId]);
+
+      const createRetry = yield* service
+        .create(scope, {
+          title: project.title,
+          source: {
+            type: "clone",
+            destinationPath: "/work/cloned",
+            remoteUrl: "https://example.com/acme/repo.git",
+          },
+          clientRequestId: "clone-and-delete",
+        })
+        .pipe(Effect.flip);
+      expect(createRetry).toMatchObject({ code: "project_deleted" });
+      expect(createRetry.message).toContain("Use a new clientRequestId");
+      expect(yield* Ref.get(cloneInputs)).toEqual([{ destinationPath: "/work/cloned" }]);
+      expect((yield* Ref.get(state))?.deletedAt).toBe(now);
     }).pipe(Effect.provide(testLayer));
   }),
 );

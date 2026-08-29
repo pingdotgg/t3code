@@ -158,6 +158,8 @@ clone completes, a retry may reuse the destination only when its exact stored or
 checked-out commit matches a locally recorded `origin` remote-tracking ref, and its tracked checkout
 is clean. Recovery does not fetch the remote. Empty, modified, interrupted, and unrelated-history
 repositories are not adopted; register an intentional one with `existing_directory` instead.
+If a stable `clientRequestId` already names a deleted project, create fails with `project_deleted`
+before touching the filesystem. Use a new request ID; deleted project records are never resurrected.
 
 `t3_project_update` changes only supplied fields. Explicit `null` clears model, workspace-mode, and
 icon overrides, while omitted fields remain unchanged. Script updates change configuration but do
