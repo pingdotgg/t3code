@@ -25,10 +25,7 @@ import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexA
 import { makeKeyedSerialExecutor } from "../orchestration-v2/KeyedSerialExecutor.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import {
-  layer as threadManagementLayer,
-  ThreadManagementService,
-} from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
@@ -136,7 +133,7 @@ it.effect("creates, reads, and updates project defaults through the project MCP 
         }),
       ),
       Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
-      Layer.provide(Layer.mock(ThreadManagementService)({})),
+      Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
       Layer.provide(NodeServices.layer),
     );
 
@@ -211,7 +208,7 @@ it.effect("loads response settings before committing project mutations", () =>
         }),
       ),
       Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
-      Layer.provide(Layer.mock(ThreadManagementService)({})),
+      Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
       Layer.provide(NodeServices.layer),
     );
 
@@ -299,7 +296,7 @@ it.effect("clones before registration and requires explicit cascading for nonemp
         }),
       ),
       Layer.provide(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagement.ThreadManagementService)({
           withProjectMutationLock: (lockedProjectId, effect) =>
             Ref.update(lockedProjects, (current) => [...current, lockedProjectId]).pipe(
               Effect.andThen(effect),
@@ -421,7 +418,7 @@ it.effect("serializes project deletion against new thread claims", () =>
     const allowSnapshot = yield* Deferred.make<void>();
     const competingClaim = yield* Deferred.make<void>();
     const projectMutations = yield* makeKeyedSerialExecutor<ProjectId>();
-    const threadManagementLayer = Layer.mock(ThreadManagementService)({
+    const blockedThreadManagementLayer = Layer.mock(ThreadManagement.ThreadManagementService)({
       withProjectMutationLock: projectMutations.withLock,
       getShellSnapshot: () =>
         Deferred.succeed(snapshotEntered, undefined).pipe(
@@ -452,7 +449,7 @@ it.effect("serializes project deletion against new thread claims", () =>
         }),
       ),
       Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
-      Layer.provide(threadManagementLayer),
+      Layer.provide(blockedThreadManagementLayer),
       Layer.provide(NodeServices.layer),
     );
 
@@ -528,12 +525,12 @@ it.effect("serializes delegated thread admission with cascading project deletion
       registry,
       { databaseLayer: SqlitePersistenceMemory, runEffectWorker: false },
     );
-    const actualThreads = threadManagementLayer.pipe(Layer.provide(orchestrator));
+    const actualThreads = ThreadManagement.layer.pipe(Layer.provide(orchestrator));
     const gatedThreads = Layer.effect(
-      ThreadManagementService,
+      ThreadManagement.ThreadManagementService,
       Effect.gen(function* () {
-        const actual = yield* ThreadManagementService;
-        return ThreadManagementService.of({
+        const actual = yield* ThreadManagement.ThreadManagementService;
+        return ThreadManagement.ThreadManagementService.of({
           ...actual,
           withProjectMutationLock: (lockedProjectId, effect) =>
             Deferred.succeed(deleteLockAttempted, undefined).pipe(
@@ -573,7 +570,7 @@ it.effect("serializes delegated thread admission with cascading project deletion
 
     yield* Effect.gen(function* () {
       const projects = yield* ProjectMcp.ProjectMcpService;
-      const threads = yield* ThreadManagementService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
       yield* threads.dispatch({
         type: "thread.create",
         createdBy: "user",
@@ -706,7 +703,7 @@ it.effect("paginates summaries before loading project files and reads settings o
         }),
       ),
       Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
-      Layer.provide(Layer.mock(ThreadManagementService)({})),
+      Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
       Layer.provide(NodeServices.layer),
     );
 
@@ -774,7 +771,7 @@ it.effect("serializes overlapping create retries with the same idempotency key",
             ),
         }),
       ),
-      Layer.provide(Layer.mock(ThreadManagementService)({})),
+      Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
       Layer.provide(NodeServices.layer),
     );
     const input = {
@@ -861,7 +858,7 @@ it.effect("retries registration after a completed clone without changing the pro
             ),
         }),
       ),
-      Layer.provide(Layer.mock(ThreadManagementService)({})),
+      Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
       Layer.provide(NodeServices.layer),
     );
     const input = {
