@@ -4,6 +4,7 @@ import {
   CommandId,
   EnvironmentId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
   type Project,
   ProjectId,
   ProviderInstanceId,
@@ -153,6 +154,12 @@ interface HarnessOptions {
     readonly worktreePath: string | null;
     readonly active?: boolean;
   }>;
+  readonly archivedProjectThread?: {
+    readonly id: ThreadId;
+    readonly title: string;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+  };
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -242,31 +249,52 @@ const makeHarness = (options: HarnessOptions = {}) => {
             : Option.none(),
         ),
   );
-  const listProjectThreads = vi.fn(() =>
-    Effect.succeed(
-      (
-        options.projectThreads ?? [
+  const projectThreadShells = (
+    options.projectThreads ?? [
+      {
+        id: threadId,
+        title: "Worktree test thread",
+        branch: thread?.branch ?? null,
+        worktreePath: thread?.worktreePath ?? null,
+      },
+    ]
+  ).map(
+    (item) =>
+      ({
+        id: item.id,
+        projectId,
+        title: item.title,
+        branch: item.branch,
+        worktreePath: item.worktreePath,
+        status: item.active === true ? "running" : "idle",
+        activeRunId: item.active === true ? "run-active" : null,
+        lineage: { relationshipToParent: "none" },
+      }) as OrchestrationV2ThreadShell,
+  );
+  const archivedThreadShells =
+    options.archivedProjectThread === undefined
+      ? []
+      : ([
           {
-            id: threadId,
-            title: "Worktree test thread",
-            branch: thread?.branch ?? null,
-            worktreePath: thread?.worktreePath ?? null,
-          },
-        ]
-      ).map(
-        (item) =>
-          ({
-            id: item.id,
+            ...(projectThreadShells[0] ?? makeProjection({}).thread),
+            id: options.archivedProjectThread.id,
             projectId,
-            title: item.title,
-            branch: item.branch,
-            worktreePath: item.worktreePath,
-            status: item.active === true ? "running" : "idle",
-            activeRunId: item.active === true ? "run-active" : null,
+            title: options.archivedProjectThread.title,
+            branch: options.archivedProjectThread.branch,
+            worktreePath: options.archivedProjectThread.worktreePath,
+            activeRunId: null,
+            archivedAt: "2026-01-02T00:00:00.000Z",
             lineage: { relationshipToParent: "none" },
-          }) as never,
-      ),
-    ),
+          },
+        ] as ReadonlyArray<OrchestrationV2ThreadShell>);
+  const listProjectThreads = vi.fn(() => Effect.succeed(projectThreadShells));
+  const getShellSnapshot = vi.fn(() =>
+    Effect.succeed({
+      schemaVersion: 1,
+      snapshotSequence: 1,
+      threads: projectThreadShells,
+      archivedThreads: archivedThreadShells,
+    } as never),
   );
   const removeWorktree = vi.fn((_: unknown) =>
     options.removeWorktreeFails
@@ -465,6 +493,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       Layer.mergeAll(
         Layer.mock(ThreadManagementService)({
           dispatch,
+          getShellSnapshot,
           getThreadProjection,
           listProjectThreads,
           sendToThread,
@@ -1445,6 +1474,34 @@ describe("t3_worktree_list", () => {
       const result = yield* runList(harness, { bindingLimit: 1 });
       expect(result.worktrees[0]?.bindingCount).toBe(3);
       expect(result.worktrees[0]?.bindings).toHaveLength(1);
+    });
+  });
+
+  it.effect("includes archived thread bindings retained on a physical checkout", () => {
+    const archivedThreadId = ThreadId.make("thread-archived-list-owner");
+    const harness = makeHarness({
+      worktrees: [{ path: workspaceRoot, refName: "dev" }],
+      archivedProjectThread: {
+        id: archivedThreadId,
+        title: "Archived checkout owner",
+        branch: "dev",
+        worktreePath: workspaceRoot,
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* runList(harness, { limit: 1 });
+
+      expect(result.worktrees[0]).toMatchObject({
+        path: workspaceRoot,
+        bindingCount: 2,
+        bindings: expect.arrayContaining([
+          expect.objectContaining({
+            threadId: archivedThreadId,
+            recordedWorktreePath: workspaceRoot,
+            active: false,
+          }),
+        ]),
+      });
     });
   });
 

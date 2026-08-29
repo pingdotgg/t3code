@@ -150,9 +150,14 @@ const make = Effect.gen(function* () {
   const loadProjectThreads = (
     projectId: ProjectId,
   ): Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, WorktreeMcpFailure> =>
-    threadManagement
-      .listProjectThreads({ projectId, includeSubagents: true })
-      .pipe(asOperationFailed(`Unable to list threads in project ${projectId}`));
+    threadManagement.getShellSnapshot().pipe(
+      Effect.map((snapshot) =>
+        [...snapshot.threads, ...snapshot.archivedThreads].filter(
+          (thread) => thread.projectId === projectId,
+        ),
+      ),
+      asOperationFailed(`Unable to list threads in project ${projectId}`),
+    );
 
   const readWorkspaceStatus = (workspacePath: string) =>
     gitWorkflow
