@@ -166,10 +166,13 @@ function ContrastAppearanceSync() {
 
 function GlassAppearanceSync() {
   const glassOpacity = useClientSettings((settings) => settings.glassOpacity);
+  const desktopBackdropEnabled = useClientSettings((settings) => settings.desktopBackdropEnabled);
 
   useEffect(() => {
-    document.documentElement.style.setProperty("--glass-opacity", `${glassOpacity}%`);
-  }, [glassOpacity]);
+    const root = document.documentElement;
+    root.style.setProperty("--glass-opacity", `${glassOpacity}%`);
+    root.dataset.desktopBackdrop = desktopBackdropEnabled ? "on" : "off";
+  }, [desktopBackdropEnabled, glassOpacity]);
 
   return null;
 }

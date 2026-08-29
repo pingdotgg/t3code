@@ -34,6 +34,8 @@ const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linu
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
+const WINDOWS_TRANSPARENT_BACKGROUND_COLOR = "#00000000";
+const WINDOWS_ACRYLIC_MATERIAL = "acrylic" as const;
 const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 // Renderer crash (usually V8 OOM on long sessions) recovery: reload after a
 // short delay, at most MAX_ATTEMPTS times per rolling WINDOW so a renderer
@@ -129,6 +131,80 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
   return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
 }
 
+const windowsWithAcrylicBackdrop = new WeakSet<Electron.BrowserWindow>();
+const windowsWithoutAcrylicBackdrop = new WeakSet<Electron.BrowserWindow>();
+
+export function getWindowBackdropOptions(
+  platform: NodeJS.Platform,
+  shouldUseDarkColors: boolean,
+  desktopBackdropEnabled = true,
+): Pick<
+  Electron.BrowserWindowConstructorOptions,
+  | "backgroundColor"
+  | "backgroundMaterial"
+  | "frame"
+  | "roundedCorners"
+  | "thickFrame"
+  | "transparent"
+> {
+  if (platform !== "win32") {
+    return { backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors) };
+  }
+
+  return {
+    backgroundColor: desktopBackdropEnabled
+      ? WINDOWS_TRANSPARENT_BACKGROUND_COLOR
+      : getInitialWindowBackgroundColor(shouldUseDarkColors),
+    backgroundMaterial: desktopBackdropEnabled ? WINDOWS_ACRYLIC_MATERIAL : "none",
+    frame: false,
+    roundedCorners: true,
+    thickFrame: true,
+    transparent: true,
+  };
+}
+
+function applyWindowsBackdrop(
+  window: Electron.BrowserWindow,
+  platform: NodeJS.Platform,
+  shouldUseDarkColors: boolean,
+  desktopBackdropEnabled: boolean,
+): Effect.Effect<void> {
+  if (platform !== "win32") {
+    return Effect.void;
+  }
+
+  return Effect.try({
+    try: () => {
+      window.setBackgroundMaterial(desktopBackdropEnabled ? WINDOWS_ACRYLIC_MATERIAL : "none");
+      if (desktopBackdropEnabled) {
+        windowsWithAcrylicBackdrop.add(window);
+        windowsWithoutAcrylicBackdrop.delete(window);
+        window.setBackgroundColor(WINDOWS_TRANSPARENT_BACKGROUND_COLOR);
+      } else {
+        windowsWithAcrylicBackdrop.delete(window);
+        windowsWithoutAcrylicBackdrop.add(window);
+        window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+      }
+    },
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.gen(function* () {
+        windowsWithAcrylicBackdrop.delete(window);
+        windowsWithoutAcrylicBackdrop.add(window);
+        try {
+          window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+        } catch {
+          // Preserve the original backdrop failure; window creation must stay best effort.
+        }
+        yield* logWindowWarning("Windows backdrop material unavailable; using solid background", {
+          cause,
+        });
+      }),
+    ),
+  );
+}
+
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 
 function windowFitsWithinDisplay(
@@ -171,8 +247,12 @@ export function resolveInitialMainWindowBounds(
 // A self-contained "Connecting to WSL" splash, shown immediately in wsl-only
 // mode while the WSL backend (which serves the renderer) cold-boots. Inlined as
 // a data URL so it needs no bundled asset and no backend — pure CSS, no JS.
-function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
-  const background = getInitialWindowBackgroundColor(shouldUseDarkColors);
+function buildConnectingSplashDataUrl(
+  shouldUseDarkColors: boolean,
+  platform: NodeJS.Platform,
+): string {
+  const background =
+    platform === "win32" ? "transparent" : getInitialWindowBackgroundColor(shouldUseDarkColors);
   const label = shouldUseDarkColors ? "#9ca3af" : "#6b7280";
   const accent = shouldUseDarkColors ? "#f8fafc" : "#1f2937";
   const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
@@ -232,13 +312,25 @@ function syncWindowAppearance(
   window: Electron.BrowserWindow,
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
+  desktopBackdropEnabled: boolean,
 ): Effect.Effect<void> {
-  return Effect.sync(() => {
+  return Effect.gen(function* () {
     if (window.isDestroyed()) {
       return;
     }
 
-    window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+    if (platform === "win32") {
+      if (desktopBackdropEnabled && windowsWithAcrylicBackdrop.has(window)) {
+        window.setBackgroundColor(WINDOWS_TRANSPARENT_BACKGROUND_COLOR);
+      } else if (!desktopBackdropEnabled && windowsWithoutAcrylicBackdrop.has(window)) {
+        window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+      } else {
+        yield* applyWindowsBackdrop(window, platform, shouldUseDarkColors, desktopBackdropEnabled);
+      }
+    } else {
+      window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+    }
+
     const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
@@ -286,6 +378,14 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
+  const getDesktopBackdropEnabled = clientSettings.get.pipe(
+    Effect.map((settings) =>
+      Option.match(settings, {
+        onNone: () => DEFAULT_CLIENT_SETTINGS.desktopBackdropEnabled,
+        onSome: (value) => value.desktopBackdropEnabled,
+      }),
+    ),
+  );
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
 
   const dismissConnectingSplash = Effect.gen(function* () {
@@ -323,6 +423,7 @@ export const make = Effect.gen(function* () {
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const desktopBackdropEnabled = yield* getDesktopBackdropEnabled;
     const persistedSettings = yield* desktopSettings.get;
     const persistedBounds = persistedSettings.mainWindowBounds;
     const displayBoundsResult = yield* Effect.sync(() => {
@@ -353,7 +454,11 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      ...getWindowBackdropOptions(
+        environment.platform,
+        shouldUseDarkColors,
+        desktopBackdropEnabled,
+      ),
       ...iconOption,
       title: environment.displayName,
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
@@ -371,6 +476,12 @@ export const make = Effect.gen(function* () {
         webviewTag: true,
       },
     });
+    yield* applyWindowsBackdrop(
+      window,
+      environment.platform,
+      shouldUseDarkColors,
+      desktopBackdropEnabled,
+    );
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
@@ -795,6 +906,7 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existingWindow)) return;
 
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    const desktopBackdropEnabled = yield* getDesktopBackdropEnabled;
     const splash = yield* electronWindow.create({
       width: 360,
       height: 220,
@@ -806,7 +918,11 @@ export const make = Effect.gen(function* () {
       center: true,
       show: false,
       skipTaskbar: false,
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      ...getWindowBackdropOptions(
+        environment.platform,
+        shouldUseDarkColors,
+        desktopBackdropEnabled,
+      ),
       title: environment.displayName,
       webPreferences: {
         contextIsolation: true,
@@ -823,7 +939,13 @@ export const make = Effect.gen(function* () {
         splash.show();
       }
     });
-    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors));
+    yield* applyWindowsBackdrop(
+      splash,
+      environment.platform,
+      shouldUseDarkColors,
+      desktopBackdropEnabled,
+    );
+    void splash.loadURL(buildConnectingSplashDataUrl(shouldUseDarkColors, environment.platform));
     yield* logWindowInfo("connecting splash shown");
   }).pipe(
     // The splash is best-effort UX — never let it fail startup.
@@ -910,8 +1032,14 @@ export const make = Effect.gen(function* () {
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+      const desktopBackdropEnabled = yield* getDesktopBackdropEnabled;
       yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
+        syncWindowAppearance(
+          window,
+          shouldUseDarkColors,
+          environment.platform,
+          desktopBackdropEnabled,
+        ),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
   });

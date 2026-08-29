@@ -104,6 +104,7 @@ function makeFakeBrowserWindow() {
     }),
     restore: vi.fn(),
     setBackgroundColor: vi.fn(),
+    setBackgroundMaterial: vi.fn(),
     setAutoHideCursor: vi.fn(),
     setTitle: vi.fn(),
     setTitleBarOverlay: vi.fn(),
@@ -394,6 +395,28 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
   });
 
 describe("DesktopWindow", () => {
+  it("uses transparent Acrylic-ready window options only on Windows", () => {
+    assert.deepEqual(DesktopWindow.getWindowBackdropOptions("win32", true), {
+      backgroundColor: "#00000000",
+      backgroundMaterial: "acrylic",
+      frame: false,
+      roundedCorners: true,
+      thickFrame: true,
+      transparent: true,
+    });
+    assert.deepEqual(DesktopWindow.getWindowBackdropOptions("win32", true, false), {
+      backgroundColor: "#0a0a0a",
+      backgroundMaterial: "none",
+      frame: false,
+      roundedCorners: true,
+      thickFrame: true,
+      transparent: true,
+    });
+    assert.deepEqual(DesktopWindow.getWindowBackdropOptions("darwin", true), {
+      backgroundColor: "#0a0a0a",
+    });
+  });
+
   it("restores bounds only when the window fits within a connected display", () => {
     const persistedBounds = { x: 2040, y: 80, width: 1320, height: 880 };
     const displays = [

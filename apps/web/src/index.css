@@ -2018,6 +2018,36 @@ body {
 
 .electron-windows {
   --desktop-window-right-resize-inset: 6px;
+  --desktop-window-canvas: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+  --desktop-window-sidebar: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent);
+}
+
+html.electron-windows[data-desktop-backdrop="off"] {
+  --desktop-window-canvas: var(--background);
+  --desktop-window-sidebar: var(--sidebar);
+}
+
+/* Electron's Windows Acrylic backdrop is native to the BrowserWindow. The
+   renderer must leave the window and its primary app surfaces translucent so
+   that the native material can reach the entire client area. Reuse the
+   existing glass opacity preference; web, macOS, Linux, and mobile keep their
+   current surface behavior. */
+html.electron-windows,
+html.electron-windows body,
+html.electron-windows #root,
+html.electron-windows [data-slot="sidebar-wrapper"] {
+  background-color: transparent !important;
+}
+
+html.electron-windows .bg-background,
+html.electron-windows [data-slot="sidebar-inset"] {
+  background-color: var(--desktop-window-canvas) !important;
+}
+
+html.electron-windows .bg-sidebar,
+html.electron-windows [data-app-sidebar],
+html.electron-windows [data-slot="sidebar-inner"] {
+  background-color: var(--desktop-window-sidebar) !important;
 }
 
 /* App-chrome grain. Baked into each surface's own background (behind
