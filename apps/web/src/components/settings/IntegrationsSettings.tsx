@@ -80,6 +80,7 @@ import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   getClientSettings,
+  persistClientSettingsUpdate,
   useClientSettings,
   useClientSettingsHydrated,
   usePrimarySettings,
@@ -807,23 +808,44 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       });
       let targetName: string;
       if (input.target.kind === "new") {
-        const latestProfiles = getClientSettings().browserProfiles;
-        const taken = new Set(
-          resolveBrowserProfiles(latestProfiles).map((profile) => profile.name),
-        );
-        targetName = source.name;
-        for (let index = 2; taken.has(targetName); index += 1) {
-          targetName = `${source.name} ${index}`;
-        }
         // Registered only when something actually came over: an import that
         // found no cookies should not leave a new, empty profile behind.
         if (result.imported > 0) {
-          updateSettings({
-            browserProfiles: [
-              ...latestProfiles,
-              { id: input.target.profileId, name: targetName, kind: "persistent" as const },
-            ],
-          });
+          try {
+            const persisted = await persistClientSettingsUpdate((current) => {
+              const existing = current.browserProfiles.find(
+                (profile) => profile.id === input.target.profileId,
+              );
+              if (existing) return current;
+              const taken = new Set(
+                resolveBrowserProfiles(current.browserProfiles).map((profile) => profile.name),
+              );
+              let name = source.name;
+              for (let index = 2; taken.has(name); index += 1) name = `${source.name} ${index}`;
+              return {
+                ...current,
+                browserProfiles: [
+                  ...current.browserProfiles,
+                  { id: input.target.profileId, name, kind: "persistent" as const },
+                ],
+              };
+            });
+            targetName =
+              persisted.browserProfiles.find((profile) => profile.id === input.target.profileId)
+                ?.name ?? source.name;
+          } catch (cause) {
+            // This target id belongs only to the attempted new profile. Clear
+            // its partition so a failed registration cannot strand imported
+            // cookies behind a profile that disappears on restart.
+            await clearBrowserProfileData(
+              previewBridge,
+              [environmentId],
+              input.target.profileId,
+            ).catch(() => undefined);
+            throw cause;
+          }
+        } else {
+          targetName = source.name;
         }
       } else {
         targetName = input.target.name;

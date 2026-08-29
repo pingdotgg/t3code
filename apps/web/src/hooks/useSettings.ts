@@ -159,6 +159,28 @@ function persistClientSettings(settings: ClientSettings): void {
     });
 }
 
+/**
+ * Persists a client-settings update before publishing it to the in-memory
+ * snapshot. If another settings write lands while persistence is pending, the
+ * updater is reapplied to that newer snapshot and persisted again so neither
+ * change is lost.
+ */
+export async function persistClientSettingsUpdate(
+  update: (current: ClientSettings) => ClientSettings,
+  persist: (settings: ClientSettings) => Promise<void> = (settings) =>
+    ensureLocalApi().persistence.setClientSettings(settings),
+): Promise<ClientSettings> {
+  for (;;) {
+    const current = getClientSettingsSnapshot();
+    const next = update(current);
+    await persist(next);
+    if (getClientSettingsSnapshot() === current) {
+      replaceClientSettingsSnapshot(next);
+      return next;
+    }
+  }
+}
+
 // ── Key sets for routing patches ─────────────────────────────────────
 
 const SERVER_SETTINGS_KEYS = new Set<string>(Struct.keys(ServerSettings.fields));
