@@ -113,12 +113,12 @@ private struct FeatureTitleRegenerationTracker {
             pendingByThreadID[thread.id] = pending
             return nil
         }
+        guard pending.observedServerRequest else {
+            return nil
+        }
         guard thread.title == pending.originalTitle else {
             pendingByThreadID.removeValue(forKey: thread.id)
             return .completed(title: thread.title)
-        }
-        guard pending.observedServerRequest else {
-            return nil
         }
         pendingByThreadID.removeValue(forKey: thread.id)
         return .failed(title: pending.originalTitle)
