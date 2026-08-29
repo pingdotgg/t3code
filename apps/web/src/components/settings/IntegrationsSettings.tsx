@@ -66,6 +66,7 @@ import {
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  getClientSettings,
   useClientSettings,
   usePrimarySettings,
   useUpdatePrimarySettings,
@@ -555,7 +556,6 @@ function DesktopOnlyBrowserDefaults({ children }: { readonly children: ReactNode
  */
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
-  const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const updateSettings = useUpdatePrimarySettings();
   const { environments, isReady: environmentsReady } = useEnvironments();
   const [profilePendingRemoval, setProfilePendingRemoval] = useState<BrowserProfile | null>(null);
@@ -563,13 +563,14 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const [profileRemovalInFlight, setProfileRemovalInFlight] = useState(false);
 
   const addProfile = () => {
-    if (userProfiles.length >= BROWSER_PROFILE_MAX_COUNT) return;
-    const taken = new Set(resolveBrowserProfiles(userProfiles).map((profile) => profile.name));
+    const currentProfiles = getClientSettings().browserProfiles;
+    if (currentProfiles.length >= BROWSER_PROFILE_MAX_COUNT) return;
+    const taken = new Set(resolveBrowserProfiles(currentProfiles).map((profile) => profile.name));
     let name = "New profile";
     for (let index = 2; taken.has(name); index += 1) name = `New profile ${index}`;
     updateSettings({
       browserProfiles: [
-        ...userProfiles,
+        ...currentProfiles,
         { id: `profile-${randomUUID()}`, name, kind: "persistent" as const },
       ],
     });
@@ -578,8 +579,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const renameProfile = (id: string, next: string) => {
     const name = next.trim().slice(0, BROWSER_PROFILE_NAME_MAX_LENGTH);
     if (name === "") return;
+    const currentProfiles = getClientSettings().browserProfiles;
     updateSettings({
-      browserProfiles: userProfiles.map((profile) =>
+      browserProfiles: currentProfiles.map((profile) =>
         profile.id === id ? { ...profile, name } : profile,
       ),
     });
@@ -601,10 +603,13 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       setProfileRemovalInFlight(false);
       return;
     }
+    const currentSettings = getClientSettings();
     updateSettings({
-      browserProfiles: userProfiles.filter((profile) => profile.id !== id),
+      browserProfiles: currentSettings.browserProfiles.filter((profile) => profile.id !== id),
       // Reassign the default rather than leaving it pointing at nothing.
-      ...(defaultProfileId === id ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID } : {}),
+      ...(currentSettings.browserDefaultProfileId === id
+        ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
+        : {}),
     });
     setProfileRemovalInFlight(false);
     setProfilePendingRemoval(null);
