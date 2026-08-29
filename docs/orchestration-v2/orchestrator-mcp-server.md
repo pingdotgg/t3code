@@ -11,7 +11,8 @@ agent can use this endpoint to:
 - create one or more ordinary top-level T3 threads;
 - list and incrementally read project threads;
 - send or steer follow-up messages; and
-- wait for or interrupt ordinary thread runs.
+- wait for or interrupt ordinary thread runs; and
+- inspect, edit, reorder, cancel, or promote queued follow-up work.
 
 These are T3 orchestration operations, not provider-native sub-agent APIs.
 Delegated tasks always create a T3 child thread and run. The child receives
@@ -311,6 +312,33 @@ Interrupts a selected active run through the normal V2 `run.interrupt` command.
 Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
+
+## Queued Work Tools
+
+`t3_queue_list` and `t3_queue_read` expose queued runs in their durable delivery
+order. Both default to the calling thread; an explicit thread ID is accepted
+only within the same project. List results are paginated before message detail
+is shaped, and both tools bound returned message text. Attachment results are
+metadata references, never file contents.
+
+`t3_queue_edit` replaces a queued message's text. Omitting `attachmentIds`
+preserves its attachments, while an empty array clears them. A non-empty array
+is a full replacement and may reference only attachment IDs already owned by
+the target thread. `t3_queue_reorder` moves a user-authored queued run before
+another queued run or to the end. Server-owned automatic completion deliveries
+retain priority and cannot be edited, reordered, or promoted.
+
+`t3_queue_cancel` cancels only a run that is still queued; it never doubles as
+an active-turn interrupt. `t3_queue_promote_to_steer` consumes a queued user
+message through the existing provider steering policy. The target must still
+be an active, steerable run, and the provider's actual serialized steering path
+must accept the operation. Failed validation leaves the queued run intact.
+
+Every mutation accepts `clientRequestId`. Its command ID includes the provider
+session, operation, thread, and queued run, so retries replay the same durable
+receipt without colliding across queue targets. Mutations return the command ID
+and receipt sequence. Use `t3_queue_list` after reorder when the caller needs a
+fresh complete order.
 
 ## Delegated Task Lifecycle
 

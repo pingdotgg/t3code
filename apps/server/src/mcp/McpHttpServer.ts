@@ -14,6 +14,7 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as QueueMcpService from "./QueueMcpService.ts";
 import { OrchestratorToolkitHandlersLive } from "./toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import {
@@ -25,6 +26,8 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { QueueToolkitHandlersLive } from "./toolkits/queue/handlers.ts";
+import { QueueToolkit } from "./toolkits/queue/tools.ts";
 import { WorktreeToolkitHandlersLive } from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
@@ -226,6 +229,11 @@ export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(Orchestrato
   Layer.provide(OrchestratorMcpService.layer),
 );
 
+export const QueueToolkitRegistrationLive = McpServer.toolkit(QueueToolkit).pipe(
+  Layer.provide(QueueToolkitHandlersLive),
+  Layer.provide(QueueMcpService.layer),
+);
+
 export const WorktreeToolkitRegistrationLive = McpServer.toolkit(WorktreeToolkit).pipe(
   Layer.provide(WorktreeToolkitHandlersLive),
   Layer.provide(WorktreeMcpService.layer),
@@ -241,5 +249,6 @@ const McpTransportLive = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   OrchestratorToolkitRegistrationLive,
+  QueueToolkitRegistrationLive,
   WorktreeToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

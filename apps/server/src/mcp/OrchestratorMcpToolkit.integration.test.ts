@@ -25,6 +25,13 @@ import {
   type ProviderOptionDescriptor,
   ProviderThreadId,
   ProviderTurnId,
+  QueueMcpCancelResult,
+  QueueMcpEditResult,
+  QueueMcpListResult,
+  QueueMcpPromoteResult,
+  QueueMcpReadResult,
+  QueueMcpReorderResult,
+  RunId,
   type ScheduledTask,
   ScheduledTaskId,
   type ScheduledTaskUpsertInput,
@@ -100,6 +107,12 @@ const decodeThreadListResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadL
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 const decodeThreadWaitResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadWaitResult);
+const decodeQueueListResult = Schema.decodeUnknownEffect(QueueMcpListResult);
+const decodeQueueReadResult = Schema.decodeUnknownEffect(QueueMcpReadResult);
+const decodeQueueEditResult = Schema.decodeUnknownEffect(QueueMcpEditResult);
+const decodeQueueReorderResult = Schema.decodeUnknownEffect(QueueMcpReorderResult);
+const decodeQueueCancelResult = Schema.decodeUnknownEffect(QueueMcpCancelResult);
+const decodeQueuePromoteResult = Schema.decodeUnknownEffect(QueueMcpPromoteResult);
 
 const codexSelection = {
   instanceId: codexInstanceId,
@@ -611,7 +624,10 @@ describe("orchestrator MCP toolkit", () => {
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
             }),
           );
-          const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
+          const testLayer = Layer.merge(
+            McpHttpServer.OrchestratorToolkitRegistrationLive,
+            McpHttpServer.QueueToolkitRegistrationLive,
+          ).pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(orchestrationLayer),
             Layer.provide(providerRegistryLayer),
@@ -1031,7 +1047,15 @@ describe("orchestrator MCP toolkit", () => {
               threadId: parentThreadId,
               messageId: queuedUserMessageId,
               text: "Queue user follow-up work.",
-              attachments: [],
+              attachments: [
+                {
+                  type: "file",
+                  id: "attachment-queue-race",
+                  name: "queue-context.txt",
+                  mimeType: "text/plain",
+                  sizeBytes: 17,
+                },
+              ],
               modelSelection: codexSelection,
               dispatchMode: { type: "queue_after_active" },
             });
@@ -1050,6 +1074,56 @@ describe("orchestrator MCP toolkit", () => {
             if (queuedUserRun === undefined) {
               return yield* Effect.die(new Error("Queued user follow-up missing."));
             }
+            const secondQueuedMessageId = MessageId.make(
+              "message:mcp-parent:queue-race:user-second",
+            );
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-parent:queue-race:user-second"),
+              threadId: parentThreadId,
+              messageId: secondQueuedMessageId,
+              text: "Queue another user follow-up.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "queue_after_active" },
+            });
+            const twoUserRunsQueued = yield* waitForProjection(
+              orchestrator,
+              parentThreadId,
+              (projection) =>
+                projection.runs.filter(
+                  (run) =>
+                    run.status === "queued" &&
+                    (run.userMessageId === queuedUserMessageId ||
+                      run.userMessageId === secondQueuedMessageId),
+                ).length === 2,
+            );
+            const secondQueuedUserRun = twoUserRunsQueued.runs.find(
+              (run) => run.userMessageId === secondQueuedMessageId,
+            );
+            if (secondQueuedUserRun === undefined) {
+              return yield* Effect.die(new Error("Second queued user follow-up missing."));
+            }
+
+            const initialQueueCall = yield* invoke("t3_queue_list", { limit: 2 });
+            const initialQueue = yield* decodeQueueListResult(
+              initialQueueCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(initialQueue.runs).toHaveLength(2);
+            expect(initialQueue.runs[0]?.automaticCompletion).toBe(true);
+            expect(initialQueue.nextCursor).toBe(2);
+            const automaticEdit = yield* invoke("t3_queue_edit", {
+              queuedRunId: queueRace.queuedRun.id,
+              text: "Do not rewrite server-owned completion delivery.",
+              clientRequestId: "queue-edit-automatic-delivery",
+            });
+            expect(automaticEdit.structuredContent).toMatchObject({
+              _tag: "QueueMcpFailure",
+              code: "operation_rejected",
+            });
+
             const queueRaceStatus = yield* invoke("task_status", { taskId: queueRace.task.id });
             expect(queueRaceStatus.isError).toBe(false);
             yield* waitForProjection(
@@ -1062,12 +1136,141 @@ describe("orchestrator MCP toolkit", () => {
                 projection.subagents.find((task) => task.id === queueRace.task.id)
                   ?.completionDelivery?.state === "acknowledged",
             );
-            yield* orchestrator.dispatch({
-              type: "queued-run.cancel",
-              commandId: CommandId.make("command:mcp-parent:queue-race:cleanup"),
-              threadId: parentThreadId,
-              runId: queuedUserRun.id,
+
+            const queueReadCall = yield* invoke("t3_queue_read", {
+              queuedRunId: queuedUserRun.id,
             });
+            const queueRead = yield* decodeQueueReadResult(queueReadCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(queueRead.attachments.map((attachment) => attachment.id)).toEqual([
+              "attachment-queue-race",
+            ]);
+            const truncatedQueueRead = yield* decodeQueueReadResult(
+              (yield* invoke("t3_queue_read", {
+                queuedRunId: queuedUserRun.id,
+                maxChars: 5,
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(truncatedQueueRead.textTruncated).toBe(true);
+
+            const unownedAttachmentEdit = yield* invoke("t3_queue_edit", {
+              queuedRunId: queuedUserRun.id,
+              text: "Do not adopt another thread's attachment.",
+              attachmentIds: ["attachment-not-owned"],
+              clientRequestId: "queue-edit-unowned-attachment",
+            });
+            expect(unownedAttachmentEdit.structuredContent).toMatchObject({
+              _tag: "QueueMcpFailure",
+              code: "attachment_not_found",
+            });
+
+            const queueEditInput = {
+              queuedRunId: queuedUserRun.id,
+              text: "Edited queued user follow-up.",
+              clientRequestId: "queue-edit-race-user",
+            };
+            const queueEditCall = yield* invoke("t3_queue_edit", queueEditInput);
+            const queueEdit = yield* decodeQueueEditResult(queueEditCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(queueEdit.attachments.map((attachment) => attachment.id)).toEqual([
+              "attachment-queue-race",
+            ]);
+            const repeatedQueueEdit = yield* decodeQueueEditResult(
+              (yield* invoke("t3_queue_edit", queueEditInput)).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(repeatedQueueEdit.commandId).toBe(queueEdit.commandId);
+            expect(repeatedQueueEdit.receiptSequence).toBe(queueEdit.receiptSequence);
+
+            const clearQueueAttachments = yield* decodeQueueEditResult(
+              (yield* invoke("t3_queue_edit", {
+                queuedRunId: queuedUserRun.id,
+                text: "Edited queued user follow-up.",
+                attachmentIds: [],
+                clientRequestId: "queue-edit-race-user-clear",
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(clearQueueAttachments.attachments).toEqual([]);
+
+            const reorderCall = yield* invoke("t3_queue_reorder", {
+              queuedRunId: secondQueuedUserRun.id,
+              beforeRunId: queuedUserRun.id,
+              clientRequestId: "queue-reorder-race-users",
+            });
+            yield* decodeQueueReorderResult(reorderCall.structuredContent).pipe(Effect.orDie);
+            const reorderedQueue = yield* decodeQueueListResult(
+              (yield* invoke("t3_queue_list", {})).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(reorderedQueue.runs.map((run) => run.queuedRunId)).toEqual([
+              secondQueuedUserRun.id,
+              queuedUserRun.id,
+            ]);
+
+            const cancelInput = {
+              queuedRunId: secondQueuedUserRun.id,
+              clientRequestId: "queue-cancel-race-user-second",
+            };
+            const cancelledQueueRun = yield* decodeQueueCancelResult(
+              (yield* invoke("t3_queue_cancel", cancelInput)).structuredContent,
+            ).pipe(Effect.orDie);
+            const repeatedCancel = yield* decodeQueueCancelResult(
+              (yield* invoke("t3_queue_cancel", cancelInput)).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(repeatedCancel.receiptSequence).toBe(cancelledQueueRun.receiptSequence);
+            const terminalCancel = yield* invoke("t3_queue_cancel", {
+              queuedRunId: secondQueuedUserRun.id,
+              clientRequestId: "queue-cancel-race-user-second-new-attempt",
+            });
+            expect(terminalCancel.structuredContent).toMatchObject({
+              _tag: "QueueMcpFailure",
+              code: "operation_rejected",
+            });
+
+            const staleReorder = yield* invoke("t3_queue_reorder", {
+              queuedRunId: queuedUserRun.id,
+              beforeRunId: RunId.make("run:missing-queue-target"),
+              clientRequestId: "queue-reorder-stale-target",
+            });
+            expect(staleReorder.structuredContent).toMatchObject({
+              _tag: "QueueMcpFailure",
+              code: "operation_rejected",
+            });
+
+            const malformedRequestKey = yield* invoke("t3_queue_cancel", {
+              queuedRunId: queuedUserRun.id,
+              clientRequestId: "\ud800",
+            });
+            expect(malformedRequestKey.structuredContent).toMatchObject({
+              _tag: "QueueMcpFailure",
+              code: "invalid_request",
+            });
+
+            const activeCancel = yield* invoke("t3_queue_cancel", {
+              queuedRunId: parentRun.id,
+              clientRequestId: "queue-cancel-active-parent",
+            });
+            expect(activeCancel.structuredContent).toMatchObject({
+              _tag: "QueueMcpFailure",
+              code: "operation_rejected",
+            });
+
+            const promoteInput = {
+              queuedRunId: queuedUserRun.id,
+              targetRunId: parentRun.id,
+              clientRequestId: "queue-promote-race-user",
+            };
+            const promotedQueueRun = yield* decodeQueuePromoteResult(
+              (yield* invoke("t3_queue_promote_to_steer", promoteInput)).structuredContent,
+            ).pipe(Effect.orDie);
+            const repeatedPromotion = yield* decodeQueuePromoteResult(
+              (yield* invoke("t3_queue_promote_to_steer", promoteInput)).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(repeatedPromotion.receiptSequence).toBe(promotedQueueRun.receiptSequence);
+            const promotedProjection = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(promotedProjection.runs.find((run) => run.id === queuedUserRun.id)?.status).toBe(
+              "cancelled",
+            );
 
             // A native in-place Steer keeps the parent active. Once the
             // parent observes the child result, its queued delivery is stale.
@@ -1206,6 +1409,7 @@ describe("orchestrator MCP toolkit", () => {
                 batchThreadCreation: true,
                 threadManagement: true,
                 incrementalThreadRead: true,
+                queuedWork: true,
               },
               providers: expect.arrayContaining([
                 expect.objectContaining({
@@ -1996,6 +2200,13 @@ describe("orchestrator MCP toolkit", () => {
             });
             expect(foreignReadCall.structuredContent).toMatchObject({
               _tag: "OrchestratorMcpFailure",
+              code: "thread_not_found",
+            });
+            const foreignQueueCall = yield* invoke("t3_queue_list", {
+              threadId: foreignThreadId,
+            });
+            expect(foreignQueueCall.structuredContent).toMatchObject({
+              _tag: "QueueMcpFailure",
               code: "thread_not_found",
             });
             const listCall = yield* invoke("t3_thread_list", {
