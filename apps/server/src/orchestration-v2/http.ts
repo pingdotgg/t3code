@@ -137,7 +137,9 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
       ) {
         return yield* threadManagement
           .getThreadSnapshotWindow(threadId, {
-            rowLimit: THREAD_HISTORY_PAGE_POLICY.maxItems + 1,
+            // The SQL anchor is inclusive. History paging excludes that row,
+            // then needs one more row to prove another page exists.
+            rowLimit: THREAD_HISTORY_PAGE_POLICY.maxItems + 2,
             ...(anchorItemId === undefined ? {} : { anchorItemId }),
           })
           .pipe(
