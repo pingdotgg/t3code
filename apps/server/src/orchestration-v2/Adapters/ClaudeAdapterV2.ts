@@ -2064,6 +2064,7 @@ interface ActiveClaudeTurnContext {
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
+  readonly pendingSubagentModelsByToolUseId: Map<string, string>;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -2104,6 +2105,23 @@ interface ActiveClaudeToolCall {
   readonly parentNodeId: OrchestrationV2ExecutionNode["id"];
   readonly ordinal: number;
   readonly startedAt: DateTime.Utc;
+}
+
+const PENDING_CLAUDE_SUBAGENT_MODEL_CAP = 64;
+
+function rememberPendingClaudeSubagentModel(
+  pending: Map<string, string>,
+  toolUseId: string,
+  model: string,
+): void {
+  pending.set(toolUseId, model);
+  if (pending.size <= PENDING_CLAUDE_SUBAGENT_MODEL_CAP) {
+    return;
+  }
+  const oldest = pending.keys().next();
+  if (!oldest.done) {
+    pending.delete(oldest.value);
+  }
 }
 
 interface PendingClaudeRuntimeRequest {
@@ -2802,6 +2820,7 @@ export function makeClaudeAdapterV2(
           readonly toolUseId?: string;
           readonly prompt?: string;
           readonly title?: string;
+          readonly model?: string;
           readonly progress?: string;
           readonly result?: string;
           readonly status: Extract<
@@ -2904,7 +2923,7 @@ export function makeClaudeAdapterV2(
               },
               prompt: input.prompt ?? "",
               title: input.title ?? null,
-              model: input.context.input.modelSelection.model,
+              model: input.model ?? input.context.input.modelSelection.model,
               result: null,
               startedAt: now,
             }),
@@ -2923,6 +2942,7 @@ export function makeClaudeAdapterV2(
               : {}),
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.model === undefined ? {} : { model: input.model }),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
             ...(input.result === undefined ? {} : { result: input.result }),
             completedAt: input.status === "running" ? null : now,
@@ -3954,6 +3974,28 @@ export function makeClaudeAdapterV2(
 
           if (message.type === "assistant") {
             yield* completeProviderRetry(context, yield* DateTime.now);
+            const parentToolUseId = message.parent_tool_use_id;
+            const snapshotModel =
+              typeof message.message.model === "string" ? message.message.model.trim() : "";
+            const model = snapshotModel.length === 0 ? undefined : snapshotModel;
+            if (parentToolUseId !== null && model !== undefined) {
+              const subagent = context.subagentsByToolUseId.get(parentToolUseId);
+              if (subagent === undefined) {
+                rememberPendingClaudeSubagentModel(
+                  context.pendingSubagentModelsByToolUseId,
+                  parentToolUseId,
+                  model,
+                );
+              } else if (subagent.task.status === "running" && subagent.task.model !== model) {
+                yield* updateClaudeSubagentNode({
+                  context,
+                  taskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
+                  toolUseId: parentToolUseId,
+                  model,
+                  status: subagent.task.status,
+                });
+              }
+            }
           }
 
           if (isClaudeBackgroundTasksChangedMessage(message)) {
@@ -3974,11 +4016,19 @@ export function makeClaudeAdapterV2(
                 activeContext: context,
               });
             } else {
+              const model =
+                message.tool_use_id === undefined
+                  ? undefined
+                  : context.pendingSubagentModelsByToolUseId.get(message.tool_use_id);
+              if (message.tool_use_id !== undefined) {
+                context.pendingSubagentModelsByToolUseId.delete(message.tool_use_id);
+              }
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
+                ...(model === undefined ? {} : { model }),
                 title: message.description,
                 status: "running",
                 reopen: true,
@@ -4496,6 +4546,7 @@ export function makeClaudeAdapterV2(
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),
+              pendingSubagentModelsByToolUseId: new Map(),
             };
             // Continuation turns attach to the wake output the CLI already
             // produced instead of prompting it again: drain the buffered wake
