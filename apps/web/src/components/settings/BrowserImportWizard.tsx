@@ -185,6 +185,10 @@ function cookieCountLabel(count: number | undefined): string | undefined {
   return `${count.toLocaleString()} ${count === 1 ? "cookie" : "cookies"}`;
 }
 
+function cookieResultCount(count: number): string {
+  return `${count.toLocaleString()} ${count === 1 ? "cookie" : "cookies"}`;
+}
+
 type ConfigureStepProps = {
   readonly source: BrowserImportSource;
   readonly targetProfiles: ReadonlyArray<WizardTargetProfile>;
@@ -360,12 +364,18 @@ function DoneStep({
     <>
       <DialogHeader>
         <DialogTitle>
-          {imported > 0 ? `Imported ${imported} cookies` : "Nothing to import"}
+          {imported > 0
+            ? `Imported ${cookieResultCount(imported)}`
+            : skipped > 0
+              ? `Skipped ${cookieResultCount(skipped)}`
+              : "No cookies found"}
         </DialogTitle>
         <DialogDescription>
           {imported > 0
-            ? `Added to ${targetName}.${skipped > 0 ? ` ${skipped} couldn't be imported.` : ""}`
-            : "There were no cookies to import."}
+            ? `Added to ${targetName}.${skipped > 0 ? ` ${cookieResultCount(skipped)} skipped.` : ""}`
+            : skipped > 0
+              ? `No cookies were added to ${targetName}.`
+              : "There were no cookies to import."}
         </DialogDescription>
       </DialogHeader>
       {skippedDomains.length > 0 ? (
