@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const testState = vi.hoisted(() => ({
   resources: [] as Array<unknown>,
   assetState: "success" as "success" | "loading",
+  editorEnvironmentIds: [] as Array<unknown>,
+  remoteEnvironmentIds: [] as Array<unknown>,
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
@@ -23,18 +25,21 @@ vi.mock("../state/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../state/session")>()),
   usePreparedConnection: () => ({ _tag: "Loading" }),
 }));
-vi.mock("../state/entities", () => ({
-  useActiveEnvironmentId: () => EnvironmentId.make("env-windows"),
-}));
 vi.mock("../editorPreferences", () => ({
-  useOpenInPreferredEditor: () => vi.fn(),
+  useOpenInPreferredEditor: (environmentId: unknown) => {
+    testState.editorEnvironmentIds.push(environmentId);
+    return vi.fn();
+  },
   usePreferredEditor: () => ["vscode", vi.fn()],
 }));
 vi.mock("../remoteOpen", () => ({
-  useRemoteOpenResolution: () => ({
-    isResolved: true,
-    state: { mode: "local-exec", localExecutionUnavailableReason: null },
-  }),
+  useRemoteOpenResolution: (environmentId: unknown) => {
+    testState.remoteEnvironmentIds.push(environmentId);
+    return {
+      isResolved: true,
+      state: { mode: "local-exec", localExecutionUnavailableReason: null },
+    };
+  },
 }));
 vi.mock("~/lib/openPullRequestLink", () => ({ useOpenChangeRequestLink: () => vi.fn() }));
 
@@ -55,6 +60,8 @@ describe("ChatMarkdown workspace images", () => {
   beforeEach(() => {
     testState.resources = [];
     testState.assetState = "success";
+    testState.editorEnvironmentIds = [];
+    testState.remoteEnvironmentIds = [];
   });
 
   it("loads relative workspace paths through signed asset URLs", () => {
@@ -110,5 +117,20 @@ describe("ChatMarkdown workspace images", () => {
     expect(testState.resources).toEqual([]);
     expect(html).toContain('src="https://example.com/image.png"');
     expect(html).toContain("max-h-[30rem]");
+  });
+
+  it("uses the markdown owner's environment for file actions", () => {
+    const owningEnvironmentId = EnvironmentId.make("env-pull-request");
+
+    renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/workspace/project"
+        environmentId={owningEnvironmentId}
+        text="[Open](src/main.ts)"
+      />,
+    );
+
+    expect(testState.editorEnvironmentIds).toEqual([owningEnvironmentId]);
+    expect(testState.remoteEnvironmentIds).toEqual([owningEnvironmentId]);
   });
 });
