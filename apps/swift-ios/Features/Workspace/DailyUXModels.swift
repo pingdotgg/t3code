@@ -229,13 +229,16 @@ enum DailyUXCreationContext {
         unreachableEnvironments(in: snapshot.environments)
     }
 
+    /// Enabled environments a new task cannot reach. `.reconnecting` is a
+    /// transient state whose HTTP fallback still serves work, so the sidebar
+    /// and connection hub present it separately; only `.disconnected` is
+    /// unreachable here.
     static func unreachableEnvironments(
         in environments: [FeatureEnvironment]
     ) -> [FeatureEnvironment] {
         environments.filter { environment in
             guard environment.isEnabled else { return false }
             return environment.connectionState == .disconnected
-                || environment.connectionState == .reconnecting
         }
     }
 
