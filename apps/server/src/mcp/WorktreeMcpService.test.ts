@@ -14,12 +14,14 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as GitManager from "../git/GitManager.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import {
   OrchestratorDispatchError,
@@ -33,6 +35,8 @@ import {
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import { layer as worktreeMcpServiceLayer, WorktreeMcpService } from "./WorktreeMcpService.ts";
@@ -122,6 +126,8 @@ interface HarnessOptions {
     readonly refName: string | null;
   }>;
   readonly projectWorktreeRoot?: string;
+  readonly projectWorkspaceRoot?: string;
+  readonly useRealNonRepositoryWorkflow?: boolean;
   readonly workspaceStatuses?: Readonly<
     Record<string, { branch: string | null; dirty?: boolean; isRepo?: boolean }>
   >;
@@ -210,12 +216,16 @@ const makeHarness = (options: HarnessOptions = {}) => {
         return Effect.succeed({ delivery: "queued" } as ThreadManagementSendResult);
     }
   });
+  const configuredProject = {
+    ...project,
+    workspaceRoot: options.projectWorkspaceRoot ?? project.workspaceRoot,
+  };
   const getById = vi.fn((id: ProjectId) =>
     options.projectReadFails
       ? (Effect.fail("simulated project read failure") as never)
       : Effect.succeed(
           id === projectId && options.projectMissing !== true
-            ? Option.some(project)
+            ? Option.some(configuredProject)
             : Option.none(),
         ),
   );
@@ -403,6 +413,37 @@ const makeHarness = (options: HarnessOptions = {}) => {
             } as unknown as Path.Path),
           ),
         );
+  const gitWorkflowLayer = options.useRealNonRepositoryWorkflow
+    ? GitWorkflowService.layer.pipe(
+        Layer.provide(
+          Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+            detect: () => Effect.succeed(null),
+            resolve: () => Effect.fail("not a repository") as never,
+          }),
+        ),
+        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+        Layer.provide(
+          Layer.mock(GitManager.GitManager)({
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+            resolvePullRequest: () => Effect.die("unexpected resolvePullRequest"),
+            preparePullRequestThread: () => Effect.die("unexpected preparePullRequestThread"),
+          }),
+        ),
+      )
+    : Layer.mock(GitWorkflowService.GitWorkflowService)({
+        listRefs,
+        listWorktrees,
+        listLocalBranchNames,
+        localStatus,
+        invalidateLocalStatus,
+        fetchRemote,
+        resolveRemoteTrackingCommit,
+        createWorktree,
+        removeWorktree,
+        deleteLocalBranch,
+      } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>);
   const layer = serviceLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -418,18 +459,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         ServerSettings.layerTest({
           newWorktreesStartFromOrigin: options.newWorktreesStartFromOrigin ?? false,
         }),
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
-          listRefs,
-          listWorktrees,
-          listLocalBranchNames,
-          localStatus,
-          invalidateLocalStatus,
-          fetchRemote,
-          resolveRemoteTrackingCommit,
-          createWorktree,
-          removeWorktree,
-          deleteLocalBranch,
-        } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
+        gitWorkflowLayer,
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
           runForThread,
         } satisfies Partial<ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]>),
@@ -1086,6 +1116,34 @@ describe("t3_worktree_handoff", () => {
 });
 
 describe("t3_worktree_status", () => {
+  it.effect("reports a plain project directory as not a repository", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const plainDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-worktree-status-non-repo-",
+      });
+      const canonicalPlainDirectory = yield* fileSystem.realPath(plainDirectory);
+      const harness = makeHarness({
+        projectWorkspaceRoot: canonicalPlainDirectory,
+        useRealNonRepositoryWorkflow: true,
+      });
+
+      const result = yield* runStatus(harness);
+
+      expect(result).toMatchObject({
+        attached: false,
+        projectWorkspaceRoot: canonicalPlainDirectory,
+        actualWorkspace: {
+          workspacePath: canonicalPlainDirectory,
+          branch: null,
+          isRepo: false,
+          hasWorkingTreeChanges: false,
+        },
+        agreement: "not_repository",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reports an unattached thread", () => {
     const harness = makeHarness({ newWorktreesStartFromOrigin: true });
     return Effect.gen(function* () {

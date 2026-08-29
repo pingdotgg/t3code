@@ -519,7 +519,7 @@ const make = Effect.gen(function* () {
         [
           readDefaultStartFromOrigin,
           readWorkspaceStatus(workspacePath),
-          loadWorktrees(projectWorkspaceRoot),
+          Effect.option(loadWorktrees(projectWorkspaceRoot)),
           Effect.option(loadWorktrees(workspacePath)),
           fileSystem.exists(workspacePath).pipe(Effect.orElseSucceed(() => false)),
         ],
@@ -532,18 +532,20 @@ const make = Effect.gen(function* () {
       const agreement =
         !actual.isRepo && !workspaceExists
           ? "workspace_missing"
-          : !actual.isRepo || Option.isNone(workspaceInventory)
+          : !actual.isRepo
             ? "not_repository"
-            : workspaceInventory.value.repositoryCommonDir !==
-                  projectInventory.repositoryCommonDir ||
-                physicalWorkspacePath === null ||
-                !projectInventory.worktrees.some(
-                  (worktree) => worktree.path === physicalWorkspacePath,
-                )
+            : Option.isNone(projectInventory) || Option.isNone(workspaceInventory)
               ? "workspace_missing"
-              : actual.refName !== projection.thread.branch
-                ? "branch_mismatch"
-                : "in_sync";
+              : workspaceInventory.value.repositoryCommonDir !==
+                    projectInventory.value.repositoryCommonDir ||
+                  physicalWorkspacePath === null ||
+                  !projectInventory.value.worktrees.some(
+                    (worktree) => worktree.path === physicalWorkspacePath,
+                  )
+                ? "workspace_missing"
+                : actual.refName !== projection.thread.branch
+                  ? "branch_mismatch"
+                  : "in_sync";
 
       const result: WorktreeMcpStatusResult = {
         attached: projection.thread.worktreePath !== null,
