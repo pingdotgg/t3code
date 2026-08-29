@@ -68,6 +68,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   getClientSettings,
   useClientSettings,
+  useClientSettingsHydrated,
   usePrimarySettings,
   useUpdatePrimarySettings,
 } from "~/hooks/useSettings";
@@ -564,6 +565,7 @@ function DesktopOnlyBrowserDefaults({ children }: { readonly children: ReactNode
  */
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
+  const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdatePrimarySettings();
   const { environments, isReady: environmentsReady } = useEnvironments();
   const [profilePendingRemoval, setProfilePendingRemoval] = useState<BrowserProfile | null>(null);
@@ -574,8 +576,10 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     environmentsReady,
     environments.length,
   );
+  const profileWritesDisabled = disabled || !settingsHydrated;
 
   const addProfile = () => {
+    if (!settingsHydrated) return;
     const currentProfiles = getClientSettings().browserProfiles;
     if (currentProfiles.length >= BROWSER_PROFILE_MAX_COUNT) return;
     const taken = new Set(resolveBrowserProfiles(currentProfiles).map((profile) => profile.name));
@@ -590,6 +594,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   };
 
   const renameProfile = (id: string, next: string) => {
+    if (!settingsHydrated) return;
     const name = next.trim().slice(0, BROWSER_PROFILE_NAME_MAX_LENGTH);
     if (name === "") return;
     const currentProfiles = getClientSettings().browserProfiles;
@@ -601,6 +606,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   };
 
   const removeProfile = async (id: string) => {
+    if (!settingsHydrated) return;
     if (!removalAvailable) {
       setProfileRemovalError("Connect to an environment before removing this profile.");
       return;
@@ -640,7 +646,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
         <Button
           size="sm"
           variant="outline"
-          disabled={disabled || userProfiles.length >= BROWSER_PROFILE_MAX_COUNT}
+          disabled={profileWritesDisabled || userProfiles.length >= BROWSER_PROFILE_MAX_COUNT}
           onClick={addProfile}
         >
           <PlusIcon />
@@ -674,7 +680,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 <span
                   className={cn(
                     "flex min-w-0 items-center gap-2 text-sm text-foreground",
-                    disabled && "opacity-64",
+                    profileWritesDisabled && "opacity-64",
                   )}
                 >
                   {profile.name}
@@ -688,7 +694,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                   size="sm"
                   className="w-full sm:w-64"
                   aria-label={`Rename ${profile.name}`}
-                  disabled={disabled}
+                  disabled={profileWritesDisabled}
                   maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
                   value={profile.name}
                   onCommit={(next) => renameProfile(profile.id, next)}
@@ -702,7 +708,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                         <Button
                           size="icon-sm"
                           variant="ghost-muted"
-                          disabled={disabled || !removalAvailable}
+                          disabled={profileWritesDisabled || !removalAvailable}
                           aria-label={`Remove ${profile.name}`}
                           onClick={() => setProfilePendingRemoval(profile)}
                         >
@@ -758,9 +764,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             </AlertDialogClose>
             <Button
               variant="destructive"
-              disabled={profileRemovalInFlight || !removalAvailable}
+              disabled={profileRemovalInFlight || !settingsHydrated || !removalAvailable}
               onClick={() => {
-                if (profilePendingRemoval && removalAvailable) {
+                if (profilePendingRemoval && settingsHydrated && removalAvailable) {
                   void removeProfile(profilePendingRemoval.id);
                 }
               }}
@@ -777,7 +783,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
 function BrowserDefaultProfileSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
+  const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdatePrimarySettings();
+  const profileWritesDisabled = disabled || !settingsHydrated;
   // Incognito is deliberately absent: as a default it would open every tab
   // into storage that is discarded on close.
   const profiles = resolveBrowserProfiles(userProfiles).filter(
@@ -790,19 +798,25 @@ function BrowserDefaultProfileSetting({ disabled }: { readonly disabled: boolean
       {...searchableSetting("browser-default-profile")}
       description="Profile new browser tabs open under, including tabs an agent opens."
       resetAction={
-        !disabled && defaultProfileId !== DEFAULT_BROWSER_PROFILE_ID ? (
+        !profileWritesDisabled && defaultProfileId !== DEFAULT_BROWSER_PROFILE_ID ? (
           <SettingResetButton
             label="default browser profile"
-            onClick={() => updateSettings({ browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID })}
+            onClick={() => {
+              if (settingsHydrated) {
+                updateSettings({ browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID });
+              }
+            }}
           />
         ) : null
       }
       control={
         <Select
-          disabled={disabled}
+          disabled={profileWritesDisabled}
           value={selected?.id ?? DEFAULT_BROWSER_PROFILE_ID}
           onValueChange={(value) => {
-            if (value !== null) updateSettings({ browserDefaultProfileId: value });
+            if (settingsHydrated && value !== null) {
+              updateSettings({ browserDefaultProfileId: value });
+            }
           }}
         >
           <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Default browser profile">
