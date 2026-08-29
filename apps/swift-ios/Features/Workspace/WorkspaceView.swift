@@ -874,7 +874,11 @@ struct HomeThreadRowContext: Equatable {
         }
         return snapshot.threads.reduce(into: [String: HomeThreadRowContext]()) { result, thread in
             let project = projectByID[thread.projectID]
-            let environmentID = thread.environmentID ?? project?.environmentID
+            let normalizedThreadEnvironmentID = thread.environmentID?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let environmentID = normalizedThreadEnvironmentID?.isEmpty == false
+                ? normalizedThreadEnvironmentID
+                : project?.environmentID
             let environment = environmentID.flatMap { environmentByID[$0] }
             let environmentLabel = (environment?.name ?? thread.environmentName)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)

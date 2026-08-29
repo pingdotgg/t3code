@@ -342,6 +342,40 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
+    func rowContextFallsBackToProjectEnvironmentForBlankThreadEnvironment() throws {
+        let thread = FeatureThread(
+            id: "thread",
+            projectID: "project",
+            title: "Blank environment",
+            environmentID: "  "
+        )
+        let snapshot = FeatureSnapshot(
+            environments: [
+                FeatureEnvironment(
+                    id: "device",
+                    name: "Desk Mac",
+                    endpoint: "http://device",
+                    connectionState: .connected
+                ),
+            ],
+            projects: [
+                FeatureProject(
+                    id: "project",
+                    environmentID: "device",
+                    name: "t3code",
+                    path: "/work/t3code"
+                ),
+            ],
+            threads: [thread]
+        )
+
+        let context = try #require(HomeThreadRowContext.index(snapshot: snapshot)[thread.id])
+
+        #expect(context.environmentLabel == "Desk Mac")
+        #expect(context.copyContext.environmentID == "device")
+    }
+
+    @Test
     func pullRequestIndicatorsUseTheCurrentThreadBranchAndPreserveTheirState() {
         let thread = FeatureThread(
             id: "thread",
