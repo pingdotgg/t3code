@@ -1,7 +1,7 @@
 import type { LocalApi, PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   openTerminalLinkInPreview,
@@ -20,6 +20,21 @@ vi.mock("~/rightPanelStore", () => ({
   },
 }));
 
+const browserDefaultsMocks = vi.hoisted(() => ({
+  resolve: vi.fn(),
+}));
+
+vi.mock("~/browser/browserDefaults", () => ({
+  resolveBrowserDefaults: browserDefaultsMocks.resolve,
+  browserDefaultOpenViewport: (defaults: { viewport: unknown }) => defaults.viewport,
+  browserDefaultOpenProfileId: (defaults: { profileId: string }) => defaults.profileId,
+}));
+
+const hydratedDefaults = {
+  viewport: { _tag: "fixed", width: 1280, height: 720 } as const,
+  profileId: "work",
+};
+
 const threadRef = {
   environmentId: "local" as ScopedThreadRef["environmentId"],
   threadId: "thread-1" as ScopedThreadRef["threadId"],
@@ -34,11 +49,54 @@ const snapshot: PreviewSessionSnapshot = {
   updatedAt: "2026-06-20T00:00:00.000Z",
 };
 
+beforeEach(() => {
+  browserDefaultsMocks.resolve.mockResolvedValue(hydratedDefaults);
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("openTerminalLinkInPreview", () => {
+  it("waits for hydrated viewport and profile defaults before opening", async () => {
+    let hydrate: ((defaults: typeof hydratedDefaults) => void) | undefined;
+    browserDefaultsMocks.resolve.mockImplementationOnce(
+      () =>
+        new Promise<typeof hydratedDefaults>((resolve) => {
+          hydrate = resolve;
+        }),
+    );
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+
+    const opening = openTerminalLinkInPreview({
+      url: "http://localhost:3000/",
+      position: { x: 12, y: 34 },
+      threadRef,
+      openPreview,
+      localApi: {
+        contextMenu: {
+          show: vi.fn(async () => "open-in-preview"),
+        },
+      } as unknown as LocalApi,
+      fallbackToBrowser: vi.fn(),
+    });
+
+    await vi.waitFor(() => expect(browserDefaultsMocks.resolve).toHaveBeenCalledOnce());
+    expect(openPreview).not.toHaveBeenCalled();
+    hydrate?.(hydratedDefaults);
+    await opening;
+
+    expect(openPreview).toHaveBeenCalledWith({
+      environmentId: "local",
+      input: {
+        threadId: "thread-1",
+        url: "http://localhost:3000/",
+        viewport: hydratedDefaults.viewport,
+        profileId: hydratedDefaults.profileId,
+      },
+    });
+  });
+
   it("preserves context-menu failures with terminal link context before falling back", async () => {
     const cause = new Error("menu unavailable");
     const fallbackToBrowser = vi.fn();
