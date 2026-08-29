@@ -39,6 +39,7 @@ import { InfoIcon, MoreVertical, Plus as PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
+import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
@@ -944,7 +945,11 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                         setImportSession({
                           source,
                           environmentId: primaryEnvironment.environmentId,
-                          environmentName: primaryEnvironment.label,
+                          environmentName: resolveEnvironmentOptionLabel({
+                            isPrimary: true,
+                            environmentId: primaryEnvironment.environmentId,
+                            runtimeLabel: primaryEnvironment.label,
+                          }),
                         });
                       }}
                     >
