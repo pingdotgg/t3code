@@ -4,6 +4,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { clearBrowserProfileData } from "./IntegrationsSettings";
 
 const environmentId = "environment-a" as EnvironmentId;
+const secondEnvironmentId = "environment-b" as EnvironmentId;
 
 describe("clearBrowserProfileData", () => {
   it("waits for cookie and cache cleanup", async () => {
@@ -14,6 +15,26 @@ describe("clearBrowserProfileData", () => {
 
     expect(clearCookies).toHaveBeenCalledWith(environmentId, "profile-a");
     expect(clearCache).toHaveBeenCalledWith(environmentId, "profile-a");
+  });
+
+  it("clears every known environment before succeeding", async () => {
+    const clearCookies = vi.fn().mockResolvedValue(undefined);
+    const clearCache = vi.fn().mockResolvedValue(undefined);
+
+    await clearBrowserProfileData(
+      { clearCookies, clearCache },
+      [environmentId, secondEnvironmentId],
+      "profile-a",
+    );
+
+    expect(clearCookies.mock.calls).toEqual([
+      [environmentId, "profile-a"],
+      [secondEnvironmentId, "profile-a"],
+    ]);
+    expect(clearCache.mock.calls).toEqual([
+      [environmentId, "profile-a"],
+      [secondEnvironmentId, "profile-a"],
+    ]);
   });
 
   it("propagates cleanup failures", async () => {
