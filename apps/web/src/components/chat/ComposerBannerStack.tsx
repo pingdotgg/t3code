@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { XIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
-import { Button } from "../ui/button";
+import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 
 const DISMISS_TRANSITION_MS = 220;
 const frontExitStyle = {
@@ -35,16 +33,16 @@ const stackCapBorderClass: Record<ComposerBannerStackItem["variant"], string> = 
 
 export interface ComposerBannerStackItem {
   readonly id: string;
-  readonly variant: "default" | "error" | "info" | "success" | "warning";
+  readonly variant: ComposerBannerVariant;
   // Ordering hint for stack assemblers: front this banner even though its
   // variant is calm (e.g. live update progress). The stack itself ignores it.
   readonly urgent?: boolean;
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
+  readonly children?: ReactNode;
   readonly actions?: ReactNode;
   readonly className?: string;
-  readonly actionClassName?: string;
   readonly dismissLabel?: string;
   readonly onDismiss?: () => void;
 }
@@ -98,8 +96,8 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   };
 
   return (
-    <div
-      className={cn("group/banner-stack chat-composer-drawer-slot", className)}
+    <ComposerBanner.Attachment
+      className={cn("group/banner-stack", className)}
       data-composer-banner-drawer="true"
     >
       <div
@@ -177,7 +175,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
           </div>
         ) : null}
       </div>
-    </div>
+    </ComposerBanner.Attachment>
   );
 }
 
@@ -192,45 +190,42 @@ function ComposerBannerStackAlert({
   readonly exiting: boolean;
   readonly onDismissRequest: () => void;
 }) {
-  const dismissOnly = item.onDismiss && !item.actions;
-
   return (
-    <Alert
+    <ComposerBanner.Root
+      role="alert"
+      placement={attached ? "attached" : "floating"}
       variant={item.variant}
-      className={cn(
-        attached
-          ? "chat-composer-drawer-surface chat-composer-drawer-attached px-3 pt-2 pb-[calc(var(--chat-composer-attachment-overlap)_+_0.375rem)] text-xs sm:px-4"
-          : "alert-glass rounded-[22px]",
-        item.className,
-      )}
-      data-variant={item.variant}
+      className={item.className}
     >
-      {item.icon}
-      <AlertTitle>{item.title}</AlertTitle>
-      {item.description ? <AlertDescription>{item.description}</AlertDescription> : null}
-      {item.actions || item.onDismiss ? (
-        <AlertAction
-          className={cn(
-            item.actionClassName,
-            dismissOnly
-              ? "max-sm:col-start-3 max-sm:row-start-1 max-sm:mt-0 max-sm:self-start"
-              : undefined,
-          )}
-        >
-          {item.actions}
-          {item.onDismiss ? (
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label={item.dismissLabel ?? "Dismiss warning"}
-              disabled={exiting}
-              onClick={onDismissRequest}
-            >
-              <XIcon className="size-3.5" />
-            </Button>
+      <ComposerBanner.Row layout="wrap-actions">
+        <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
+        <ComposerBanner.Content className="font-medium">{item.title}</ComposerBanner.Content>
+        {item.actions || item.onDismiss ? (
+          <ComposerBanner.Actions>
+            {item.actions}
+            {item.onDismiss ? (
+              <ComposerBanner.Dismiss
+                aria-label={item.dismissLabel ?? "Dismiss warning"}
+                disabled={exiting}
+                onClick={onDismissRequest}
+              />
+            ) : null}
+          </ComposerBanner.Actions>
+        ) : null}
+      </ComposerBanner.Row>
+      {item.description || item.children ? (
+        <ComposerBanner.Children>
+          {item.description ? (
+            <ComposerBanner.Row>
+              <ComposerBanner.Icon />
+              <ComposerBanner.Content className="text-muted-foreground">
+                {item.description}
+              </ComposerBanner.Content>
+            </ComposerBanner.Row>
           ) : null}
-        </AlertAction>
+          {item.children}
+        </ComposerBanner.Children>
       ) : null}
-    </Alert>
+    </ComposerBanner.Root>
   );
 }

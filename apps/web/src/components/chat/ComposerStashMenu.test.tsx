@@ -18,10 +18,11 @@ describe("ComposerStashMenu", () => {
 
     expect(markup).toContain('data-composer-stash-drawer="true"');
     expect(markup).toContain("chat-composer-drawer-surface");
-    expect(markup).toContain("chat-composer-drawer-attached");
+    expect(markup).toContain('data-composer-banner-surface="attached"');
     expect(markup).toContain('aria-label="Close stash"');
+    expect(markup).toContain('aria-expanded="true"');
     expect(markup).not.toContain("dropdown-glass");
-    expect(markup).not.toContain("Stashed prompts");
+    expect(markup).toContain('aria-label="Stashed prompts"');
     expect(markup).toContain("Press Ctrl+S with a prompt in the composer to stash it.");
   });
 
@@ -82,13 +83,9 @@ describe("ComposerStashMenu", () => {
     expect(markup).toContain("1 image dropped");
     expect(markup).toContain("saving 1 image");
     expect(markup).not.toContain("absolute top-1/2 right-2");
-    expect(markup).toContain("pointer-events-none");
-    expect(markup).toContain("pointer-coarse:pointer-events-auto");
-    expect(markup).toContain("pointer-coarse:opacity-100");
-    expect(markup).not.toContain("bg-popover!");
-    expect(markup).toContain("[--control-icon-color:currentColor]");
-    expect(markup).toContain("size-3.5 stroke-2");
-    expect(markup).not.toContain("bg-background/90");
+    expect(markup).toContain('aria-label="Restore stashed prompt: Compare these screenshots"');
+    expect(markup.match(/aria-label="Delete stashed prompt"/g)).toHaveLength(2);
+    expect(markup).not.toContain('role="option"');
   });
 
   it("labels mixed file and image stashes without treating images as files", () => {
@@ -129,7 +126,7 @@ describe("ComposerStashMenu", () => {
     );
 
     expect(markup).toContain("(2 attachments)");
-    expect(markup).toContain("size-3.5 text-secondary-label");
+    expect(markup).toContain("lucide-file");
     expect(markup).not.toContain("(2 files)");
   });
 });

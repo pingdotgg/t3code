@@ -16,9 +16,7 @@ describe("ComposerStashBadge", () => {
     );
 
     expect(markup).toContain("chat-composer-stash-tab");
-    expect(markup).toContain("rounded-t-xl");
-    expect(markup).toContain("border-b-0");
-    expect(markup).toContain("items-center");
+    expect(markup).toContain('data-composer-banner-surface="attached"');
     expect(markup).not.toContain("items-start");
     expect(markup).not.toContain("rounded-full");
     expect(markup).not.toContain("opacity-70");

@@ -763,29 +763,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     outline: none;
   }
 
-  .chat-composer-shoulder-tab {
-    border-color: var(
-      --chat-composer-outline,
-      color-mix(in srgb, var(--contrast-foreground) 8%, transparent)
-    );
-    background: color-mix(
-      in srgb,
-      var(--chat-composer-glass-surface, var(--card)) var(--glass-opacity),
-      transparent
-    );
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
-    box-shadow: 0 -8px 24px -18px rgb(0 0 0 / 45%);
-
-    @variant dark {
-      box-shadow: 0 -10px 28px -18px rgb(0 0 0 / 80%);
-    }
-
-    @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-      background: var(--chat-composer-glass-surface, var(--card));
-    }
-  }
-
   .chat-composer-banner-stack-cap {
     --chat-composer-attached-surface: var(--chat-composer-glass-surface, var(--card));
     --chat-composer-attached-outline: var(
@@ -820,8 +797,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
      own no card fill or border themselves: a masked pseudo-element draws the
      same inset glass, 16px outer corners, quiet outline, and open attachment
      seam as the strip below. */
-  .chat-composer-drawer-surface,
-  .chat-composer-top-drawer {
+  .chat-composer-drawer-surface {
     --chat-composer-attachment-overlap: calc(1rem + 1px);
     --chat-composer-attached-surface: var(--chat-composer-glass-surface, var(--card));
     --chat-composer-attached-outline: var(
@@ -864,27 +840,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
   }
 
-  .chat-composer-drawer-attached,
-  .chat-composer-top-drawer {
+  .chat-composer-drawer-attached {
     padding-bottom: var(--chat-composer-attachment-overlap);
   }
 
-  [data-chat-composer-form="true"],
-  .chat-composer-drawer-slot,
-  .chat-composer-top-drawer {
-    --chat-composer-drawer-inset: 1.375rem;
-  }
-
-  .chat-composer-drawer-slot,
-  .chat-composer-top-drawer {
-    --chat-composer-attachment-overlap: calc(1rem + 1px);
-    width: calc(100% - var(--chat-composer-drawer-inset) - var(--chat-composer-drawer-inset));
-    max-width: calc(48rem - var(--chat-composer-drawer-inset) - var(--chat-composer-drawer-inset));
-    margin-inline: auto;
-    margin-bottom: calc(-1 * var(--chat-composer-attachment-overlap));
-  }
-
-  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)::before {
+  .chat-composer-drawer-surface::before {
     pointer-events: none;
     position: absolute;
     z-index: -1;
@@ -916,32 +876,22 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
   }
 
-  .chat-composer-drawer-slot + .chat-composer-drawer-slot::before,
-  .chat-composer-drawer-slot + :has(.chat-composer-top-drawer) .chat-composer-top-drawer::before {
-    border-top: 0;
-    border-radius: 0;
-  }
-
-  .chat-composer-top-drawer {
-    z-index: 0;
-  }
-
-  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="error"] {
+  .chat-composer-drawer-surface[data-variant="error"] {
     --chat-composer-attached-outline: color-mix(in srgb, var(--error) 32%, transparent);
     --chat-composer-attached-tint: color-mix(in srgb, var(--error) 8%, transparent);
   }
 
-  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="info"] {
+  .chat-composer-drawer-surface[data-variant="info"] {
     --chat-composer-attached-outline: color-mix(in srgb, var(--info) 32%, transparent);
     --chat-composer-attached-tint: color-mix(in srgb, var(--info) 4%, transparent);
   }
 
-  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="success"] {
+  .chat-composer-drawer-surface[data-variant="success"] {
     --chat-composer-attached-outline: color-mix(in srgb, var(--success) 32%, transparent);
     --chat-composer-attached-tint: color-mix(in srgb, var(--success) 4%, transparent);
   }
 
-  :is(.chat-composer-drawer-surface, .chat-composer-top-drawer)[data-variant="warning"] {
+  .chat-composer-drawer-surface[data-variant="warning"] {
     --chat-composer-attached-outline: color-mix(in srgb, var(--warning) 28%, transparent);
     --chat-composer-attached-tint: color-mix(in srgb, var(--warning) 8%, transparent);
   }
@@ -1048,11 +998,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
      default composer keeps the cheaper continuous layer. */
   .chat-composer-glass-shell:is(
     .chat-composer-glass-shell-attached,
-    :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    :has([data-composer-banner-surface="attached"])
   )::before,
   .chat-composer-glass-shell:is(
       .chat-composer-glass-shell-attached,
-      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+      :has([data-composer-banner-surface="attached"])
     )
     .chat-composer-glass-host::after {
     display: none;
@@ -1060,7 +1010,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .chat-composer-glass-shell:is(
       .chat-composer-glass-shell-attached,
-      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+      :has([data-composer-banner-surface="attached"])
     )
     .chat-composer-glass-host {
     box-shadow: none;
@@ -1068,7 +1018,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .chat-composer-glass-shell:is(
       .chat-composer-glass-shell-attached,
-      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+      :has([data-composer-banner-surface="attached"])
     )
     .chat-composer-glass-host
     [data-chat-composer-main-surface="true"] {
@@ -1106,7 +1056,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .chat-composer-glass-shell:is(
       .chat-composer-glass-shell-attached,
-      :has(.chat-composer-top-drawer)
+      :has([data-composer-banner-surface="attached"])
     )
     .chat-composer-glass-host
     [data-chat-composer-mobile-collapsed="true"] {
@@ -1116,7 +1066,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   .chat-composer-glass-shell-with-context .chat-composer-glass-host::after,
   .chat-composer-glass-shell-with-context:is(
       .chat-composer-glass-shell-attached,
-      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+      :has([data-composer-banner-surface="attached"])
     )
     [data-chat-composer-main-surface="true"]::after {
     /* Keep the attachment seam open; the strip continues the outer outline below. */
@@ -1167,7 +1117,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
   .chat-composer-glass-shell:is(
       .chat-composer-glass-shell-attached,
-      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+      :has([data-composer-banner-surface="attached"])
     )
     .chat-composer-context-strip {
     &::before {
@@ -1628,13 +1578,12 @@ html[data-theme-id] .chat-composer-glass-shell {
   }
 }
 
-html[data-theme-id]
-  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer) {
+html[data-theme-id] :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface) {
   --chat-composer-attached-surface: var(--app-theme-surface-raised);
 }
 
 html[data-theme-id]
-  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer):is(
+  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface):is(
     :not([data-variant]),
     [data-variant="default"]
   ) {
@@ -1658,7 +1607,7 @@ html[data-theme-id="t3-chat"] .chat-composer-glass-shell {
 }
 
 html[data-theme-id="t3-chat"]
-  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface, .chat-composer-top-drawer):is(
+  :is(.chat-composer-banner-stack-cap, .chat-composer-drawer-surface):is(
     :not([data-variant]),
     [data-variant="default"]
   ) {
