@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   MessageId,
   NodeId,
+  ProviderSessionId,
   RunId,
   RuntimeRequestId,
   TurnItemId,
@@ -420,5 +421,89 @@ describe("V2 client presentation", () => {
       },
     ]);
     expect(derivePendingThreadRequests(projection).userInputs).toEqual([]);
+  });
+
+  it("preserves structured-question selection mode and defaults legacy payloads", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const multiRequestId = RuntimeRequestId.make("request-multi-select");
+    const legacyRequestId = RuntimeRequestId.make("request-legacy-single-select");
+    const runtimeRequests = [multiRequestId, legacyRequestId].map((id) => ({
+      id,
+      nodeId: NodeId.make(`node-${id}`),
+      providerTurnId: null,
+      nativeRequestRef: null,
+      kind: "user_input" as const,
+      status: "pending" as const,
+      responseCapability: {
+        type: "live" as const,
+        providerSessionId: ProviderSessionId.make("provider-session-questions"),
+      },
+      createdAt: now,
+      resolvedAt: null,
+    }));
+    const common = {
+      threadId: v2Projection.thread.id,
+      runId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "user_input_request" as const,
+    };
+    const projection = {
+      ...v2Projection,
+      runtimeRequests,
+      turnItems: [
+        {
+          ...common,
+          id: TurnItemId.make("item-multi-select"),
+          nodeId: NodeId.make("node-request-multi-select"),
+          requestId: multiRequestId,
+          questions: [
+            {
+              id: "regions",
+              header: "Regions",
+              question: "Which regions?",
+              options: [
+                { label: "US", description: "United States" },
+                { label: "EU", description: "European Union" },
+              ],
+              multiSelect: true,
+            },
+          ],
+        },
+        {
+          ...common,
+          id: TurnItemId.make("item-legacy-single-select"),
+          nodeId: NodeId.make("node-request-legacy-single-select"),
+          requestId: legacyRequestId,
+          questions: [
+            {
+              id: "target",
+              header: "Target",
+              question: "Which target?",
+              options: [{ label: "Staging", description: "Staging environment" }],
+            },
+          ],
+        },
+      ],
+      updatedAt: now,
+    };
+
+    expect(
+      derivePendingThreadRequests(projection).userInputs.map((input) => ({
+        requestId: input.requestId,
+        multiSelect: input.questions[0]?.multiSelect,
+      })),
+    ).toEqual([
+      { requestId: multiRequestId, multiSelect: true },
+      { requestId: legacyRequestId, multiSelect: false },
+    ]);
   });
 });
