@@ -16,6 +16,7 @@ import {
   type OrchestrationV2ProviderThread,
   ProjectId,
   ProviderInstanceId,
+  type ProviderApprovalDecision,
   ProviderSessionId,
   ProviderTurnId,
   RunAttemptId,
@@ -29,6 +30,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
@@ -60,6 +62,7 @@ import {
   claudeMcpQueryOverrides,
   claudeQueryMessages,
   claudeRuntimeQueryPolicyForRuntimePolicy,
+  awaitClaudeApprovalDecision,
   loggedClaudeQueryOptions,
   makeClaudeAdapterV2,
   makeClaudeAgentSdkProtocolLogger,
@@ -711,6 +714,42 @@ describe("ClaudeAdapterV2 session permissions", () => {
       },
     ]);
   });
+});
+
+describe("ClaudeAdapterV2 approval cancellation", () => {
+  it.effect("observes an approval signal that was already aborted", () =>
+    Effect.gen(function* () {
+      const decision = yield* Deferred.make<"accept">();
+      const controller = new AbortController();
+      controller.abort();
+
+      const result = yield* awaitClaudeApprovalDecision(decision, controller.signal);
+
+      assert.equal(result, "cancel");
+    }),
+  );
+
+  it.effect("removes the cancellation listener after approval resolves", () =>
+    Effect.gen(function* () {
+      const decision = yield* Deferred.make<ProviderApprovalDecision>();
+      const controller = new AbortController();
+      let removes = 0;
+      const removeEventListener = controller.signal.removeEventListener.bind(controller.signal);
+      controller.signal.removeEventListener = (...args) => {
+        removes += 1;
+        return removeEventListener(...args);
+      };
+      const fiber = yield* Effect.forkChild(
+        awaitClaudeApprovalDecision(decision, controller.signal),
+      );
+      yield* Effect.yieldNow;
+      yield* Deferred.succeed(decision, "accept");
+      const result = yield* Fiber.join(fiber);
+
+      assert.equal(result, "accept");
+      assert.equal(removes, 1);
+    }),
+  );
 });
 
 describe("ClaudeAdapterV2 attachments", () => {
