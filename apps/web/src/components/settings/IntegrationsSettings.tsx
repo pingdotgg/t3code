@@ -1170,11 +1170,24 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             runWizardImport(importSession.source, importSession.environmentId, input)
           }
           onRefreshSource={() => refreshImportSource(importSession.source.id)}
-          onOpenFullDiskAccessSettings={() =>
-            void readLocalApi()
-              ?.shell.openSystemSettings("full-disk-access")
-              .catch(() => undefined)
-          }
+          onOpenFullDiskAccessSettings={() => {
+            const localApi = readLocalApi();
+            if (!localApi) {
+              toastManager.add({
+                type: "error",
+                title: "Open Full Disk Access manually",
+                description: "In System Settings, go to Privacy & Security → Full Disk Access.",
+              });
+              return;
+            }
+            void localApi.shell.openSystemSettings("full-disk-access").catch(() => {
+              toastManager.add({
+                type: "error",
+                title: "Could not open System Settings",
+                description: "Open Privacy & Security → Full Disk Access manually.",
+              });
+            });
+          }}
           onClose={() => setImportSession(null)}
         />
       ) : null}

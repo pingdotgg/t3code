@@ -129,6 +129,18 @@ export function BrowserImportWizard({
       .catch(() => setStep({ step: "blocked", reason: "readFailed" }));
   };
 
+  const recheckFullDiskAccess = () => {
+    void onRefreshSource()
+      .then((refreshed) => {
+        if (refreshed) {
+          setSource(refreshed);
+          setSourceProfileDirectory(refreshed.profiles[0]?.directory ?? sourceProfileDirectory);
+        }
+        setStep(refreshedSourceStep(refreshed));
+      })
+      .catch(() => setStep({ step: "blocked", reason: "readFailed" }));
+  };
+
   return (
     <Dialog open onOpenChange={(open) => (open || !canCloseWizard(step) ? undefined : onClose())}>
       <DialogPopup className="max-w-lg" showCloseButton={canCloseWizard(step)}>
@@ -139,7 +151,7 @@ export function BrowserImportWizard({
             source={source}
             onCancel={onClose}
             onOpenSettings={onOpenFullDiskAccessSettings}
-            onGranted={runImport}
+            onGranted={step.resume === "import" ? runImport : recheckFullDiskAccess}
           />
         ) : step.step === "importing" ? (
           <ImportingStep />
