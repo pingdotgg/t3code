@@ -34,6 +34,9 @@ itself cannot be edited or removed, because the environment rewrites it whenever
 changes. If the machine stops publishing it, the card disappears and clients using it fall back to
 the standard T3 Code look. A theme you saved always wins over a published one with the same id.
 
+When the theme editor is open, its draft stays visible while published themes change.
+Close the editor to show the latest selected theme.
+
 ## Publishing themes
 
 A machine publishes themes by writing files into the `themes` directory of the T3 Code state
