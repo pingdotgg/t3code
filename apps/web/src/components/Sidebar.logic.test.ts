@@ -1870,13 +1870,15 @@ describe("pruneDisabledEnvironmentIds", () => {
     ).toBe(current);
   });
 
-  it("resets to all-enabled when a catalog change leaves nothing enabled", () => {
+  it("returns all-enabled for the render where the last enabled environment disconnects", () => {
     // envB (the only enabled environment) disconnected; keeping envA disabled
     // would hide every thread while the filter button no longer renders.
+    const current = new Set<EnvironmentId>([envA]);
     const next = pruneDisabledEnvironmentIds({
-      disabledIds: new Set([envA]),
+      disabledIds: current,
       connectedEnvironmentIds: new Set([envA]),
     });
+    expect(next).not.toBe(current);
     expect(next.size).toBe(0);
   });
 

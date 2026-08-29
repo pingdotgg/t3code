@@ -1962,23 +1962,32 @@ export default function Sidebar() {
   // newly connected environment is visible by default and "select all" is the
   // natural empty state. Hidden entirely on single-environment setups.
   // Session-only, like the project scope.
-  const [disabledEnvironmentIds, setDisabledEnvironmentIds] = useState<ReadonlySet<EnvironmentId>>(
-    () => new Set(),
+  const [configuredDisabledEnvironmentIds, setConfiguredDisabledEnvironmentIds] = useState<
+    ReadonlySet<EnvironmentId>
+  >(() => new Set());
+  const connectedEnvironmentIds = useMemo(
+    () => new Set(environmentLabelById.keys()),
+    [environmentLabelById],
+  );
+  // Derive the safe set during render so a catalog change can never paint a
+  // filtered-empty frame before the state synchronization effect runs.
+  const disabledEnvironmentIds = useMemo(
+    () =>
+      pruneDisabledEnvironmentIds({
+        disabledIds: configuredDisabledEnvironmentIds,
+        connectedEnvironmentIds,
+      }),
+    [configuredDisabledEnvironmentIds, connectedEnvironmentIds],
   );
   const isEnvironmentFilterActive = disabledEnvironmentIds.size > 0;
   // An environment that leaves the catalog must not keep filtering from
   // beyond the grave: prune it so its threads reappear if it reconnects.
   useEffect(() => {
-    setDisabledEnvironmentIds((current) =>
-      pruneDisabledEnvironmentIds({
-        disabledIds: current,
-        connectedEnvironmentIds: new Set(environmentLabelById.keys()),
-      }),
-    );
-  }, [environmentLabelById]);
+    setConfiguredDisabledEnvironmentIds(disabledEnvironmentIds);
+  }, [disabledEnvironmentIds]);
   const handleToggleEnvironment = useCallback(
     (environmentId: EnvironmentId, checked: boolean) => {
-      setDisabledEnvironmentIds((current) =>
+      setConfiguredDisabledEnvironmentIds((current) =>
         toggleDisabledEnvironmentId({
           disabledIds: current,
           environmentId,
@@ -1990,7 +1999,7 @@ export default function Sidebar() {
     [environments],
   );
   const handleEnableAllEnvironments = useCallback(() => {
-    setDisabledEnvironmentIds((current) => (current.size === 0 ? current : new Set()));
+    setConfiguredDisabledEnvironmentIds((current) => (current.size === 0 ? current : new Set()));
   }, []);
 
   // Project scope: one menu above the list. Scoping filters the list without
