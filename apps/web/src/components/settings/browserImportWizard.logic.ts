@@ -81,6 +81,7 @@ export function canCloseWizard(step: WizardStep): boolean {
 export function initialWizardStep(source: BrowserImportSource): WizardStep {
   if (source.unavailable === "browserRunning") return { step: "quit" };
   if (source.unavailable !== undefined) return { step: "blocked", reason: source.unavailable };
+  if (source.profiles.length === 0) return { step: "blocked", reason: "unknownSourceProfile" };
   return { step: "configure" };
 }
 

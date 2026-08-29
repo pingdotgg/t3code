@@ -270,7 +270,9 @@ function ConfigureStep({
         <Button variant="outline" onClick={onCancel}>
           Cancel
         </Button>
-        <Button onClick={onImport}>Import</Button>
+        <Button disabled={sourceProfileDirectory === ""} onClick={onImport}>
+          Import
+        </Button>
       </DialogFooter>
     </>
   );

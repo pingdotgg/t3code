@@ -49,6 +49,19 @@ describe("initialWizardStep", () => {
       reason: "unsupportedPlatform",
     });
   });
+
+  it("blocks a ready source that reports no importable profiles", () => {
+    expect(initialWizardStep(source({ profiles: [] }))).toEqual({
+      step: "blocked",
+      reason: "unknownSourceProfile",
+    });
+  });
+
+  it("handles source availability before checking its profiles", () => {
+    expect(
+      initialWizardStep(source({ profiles: [], unavailable: "needsKeychainApproval" })),
+    ).toEqual({ step: "blocked", reason: "needsKeychainApproval" });
+  });
 });
 
 describe("canCloseWizard", () => {
@@ -104,6 +117,13 @@ describe("refreshedSourceStep", () => {
   it("blocks when the source vanished from the list", () => {
     expect(refreshedSourceStep(undefined)).toEqual({ step: "blocked", reason: "unknownSource" });
   });
+
+  it("blocks when the refreshed source has no profiles", () => {
+    expect(refreshedSourceStep(source({ profiles: [] }))).toEqual({
+      step: "blocked",
+      reason: "unknownSourceProfile",
+    });
+  });
 });
 
 describe("refreshedSourceProfileDirectory", () => {
@@ -133,6 +153,7 @@ describe("isRetryableReason", () => {
   it("does not offer a retry for a permanent failure", () => {
     expect(isRetryableReason("unsupportedPlatform")).toBe(false);
     expect(isRetryableReason("keychainItemMissing")).toBe(false);
+    expect(isRetryableReason("unknownSourceProfile")).toBe(false);
   });
 });
 
