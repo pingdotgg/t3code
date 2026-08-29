@@ -8,11 +8,13 @@ import {
   type Project,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   WorktreeMcpHandoffInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -78,6 +80,51 @@ const makeProjection = (overrides: ThreadFixture = {}): OrchestrationV2ThreadPro
       ...overrides,
     },
   }) as OrchestrationV2ThreadProjection;
+
+const shellFixture = (
+  overrides: Partial<OrchestrationV2ThreadShell>,
+): OrchestrationV2ThreadShell => {
+  const timestamp = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+  return {
+    createdBy: "user",
+    creationSource: "web",
+    id: threadId,
+    projectId,
+    title: "Worktree test thread",
+    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "test-model",
+    },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    lineage: {
+      parentThreadId: null,
+      relationshipToParent: null,
+      rootThreadId: threadId,
+    },
+    forkedFrom: null,
+    activeProviderThreadId: null,
+    latestRunId: null,
+    activeRunId: null,
+    status: "idle",
+    pendingRuntimeRequest: null,
+    latestVisibleMessage: null,
+    latestUserMessageAt: null,
+    hasActionableProposedPlan: false,
+    itemCount: 0,
+    visibleItemCount: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
+    ...overrides,
+  };
+};
 
 const project: Project = {
   id: projectId,
@@ -258,35 +305,41 @@ const makeHarness = (options: HarnessOptions = {}) => {
         worktreePath: thread?.worktreePath ?? null,
       },
     ]
-  ).map(
-    (item) =>
-      ({
-        id: item.id,
-        projectId,
-        title: item.title,
-        branch: item.branch,
-        worktreePath: item.worktreePath,
-        status: item.active === true ? "running" : "idle",
-        activeRunId: item.active === true ? "run-active" : null,
-        lineage: { relationshipToParent: "none" },
-      }) as unknown as OrchestrationV2ThreadShell,
+  ).map((item) =>
+    shellFixture({
+      id: item.id,
+      projectId,
+      title: item.title,
+      branch: item.branch,
+      worktreePath: item.worktreePath,
+      status: item.active === true ? "running" : "idle",
+      activeRunId: item.active === true ? RunId.make("run-active") : null,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: item.id,
+      },
+    }),
   );
   const archivedThreadShells =
     options.archivedProjectThread === undefined
       ? []
-      : ([
-          {
-            ...(projectThreadShells[0] ?? makeProjection({}).thread),
+      : [
+          shellFixture({
             id: options.archivedProjectThread.id,
             projectId,
             title: options.archivedProjectThread.title,
             branch: options.archivedProjectThread.branch,
             worktreePath: options.archivedProjectThread.worktreePath,
             activeRunId: null,
-            archivedAt: "2026-01-02T00:00:00.000Z",
-            lineage: { relationshipToParent: "none" },
-          },
-        ] as unknown as ReadonlyArray<OrchestrationV2ThreadShell>);
+            archivedAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: options.archivedProjectThread.id,
+            },
+          }),
+        ];
   const listProjectThreads = vi.fn(() => Effect.succeed(projectThreadShells));
   const getShellSnapshot = vi.fn(() =>
     Effect.succeed({
