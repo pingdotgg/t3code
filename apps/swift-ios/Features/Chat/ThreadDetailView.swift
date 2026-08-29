@@ -1454,6 +1454,12 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                                 in: collectionView
                             )
                         )
+                        if shouldFollowBottom {
+                            self.scrollToBottom(
+                                collectionView,
+                                animated: !isInitialLoad && lastIDChanged
+                            )
+                        }
                         return
                     }
                     if shouldFollowBottom {
