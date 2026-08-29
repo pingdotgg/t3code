@@ -178,6 +178,7 @@ function makeDeterministicAdapter(input: {
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly shouldComplete: (turn: ProviderAdapterV2TurnInput) => boolean;
+  readonly startedGate?: (turn: ProviderAdapterV2TurnInput) => Deferred.Deferred<void> | undefined;
   readonly terminalGate?: (turn: ProviderAdapterV2TurnInput) => Deferred.Deferred<void> | undefined;
   readonly response: (turn: ProviderAdapterV2TurnInput) => string;
 }): ProviderAdapterV2Shape {
@@ -280,6 +281,10 @@ function makeDeterministicAdapter(input: {
                   },
                 },
               ]);
+              const startedGate = input.startedGate?.(turnInput);
+              if (startedGate !== undefined) {
+                yield* Deferred.succeed(startedGate, undefined);
+              }
               const terminalGate = input.terminalGate?.(turnInput);
               if (terminalGate !== undefined) {
                 yield* Deferred.await(terminalGate);
@@ -475,6 +480,7 @@ describe("orchestrator MCP toolkit", () => {
         Effect.gen(function* () {
           const cwd = yield* checkpointWorkspace("orchestrator-mcp-toolkit");
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const providerStartGates = new Map<string, Deferred.Deferred<void>>();
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const registryLayer = makeProviderAdapterRegistryLayer([
@@ -485,6 +491,7 @@ describe("orchestrator MCP toolkit", () => {
               capturedTurns,
               shouldComplete: (turn) =>
                 turn.threadId !== parentThreadId && turn.message.text !== cancellationPrompt,
+              startedGate: (turn) => providerStartGates.get(turn.message.text),
               terminalGate: (turn) =>
                 turn.message.text.startsWith("Delegated task") ||
                 turn.message.text.startsWith("Delegated tasks")
@@ -2092,6 +2099,8 @@ describe("orchestrator MCP toolkit", () => {
               state: { archivedAt: null },
             });
 
+            const blockedThreadStarted = yield* Deferred.make<void>();
+            providerStartGates.set(cancellationPrompt, blockedThreadStarted);
             const blockedThreadCall = yield* invoke("create_threads", {
               threads: [{ prompt: cancellationPrompt, title: "Organization blockers" }],
               clientRequestId: "organize-blockers-create",
@@ -2099,9 +2108,8 @@ describe("orchestrator MCP toolkit", () => {
             const blockedThread = (yield* decodeCreateThreadsResult(
               blockedThreadCall.structuredContent,
             ).pipe(Effect.orDie)).threads[0]!;
-            yield* waitForProjection(orchestrator, blockedThread.threadId, (projection) =>
-              projection.runs.some((run) => run.status === "running"),
-            );
+            yield* Deferred.await(blockedThreadStarted);
+            providerStartGates.delete(cancellationPrompt);
             yield* invoke("t3_thread_send", {
               threadId: blockedThread.threadId,
               message: "Queue this behind the active run.",
