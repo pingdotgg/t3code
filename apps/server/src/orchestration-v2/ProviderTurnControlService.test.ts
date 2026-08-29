@@ -218,6 +218,7 @@ it.effect(
           getThreadShell: () => Effect.die("unused getThreadShell"),
           getThreadProjection: () => Ref.get(projection),
           getThreadSnapshot: () => Effect.die("unused getThreadSnapshot"),
+          getThreadSnapshotWindow: () => Effect.die("unused getThreadSnapshotWindow"),
         }),
       );
       const sessionManagerLayer = Layer.succeed(
