@@ -21,7 +21,7 @@ import * as Electron from "electron";
  */
 const SYSTEM_SETTINGS_URLS: Record<SystemSettingsPane, string> = {
   "full-disk-access":
-    "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFilesAccess",
+    "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles",
 };
 
 // Remote open-in-editor deep links (`vscode://vscode-remote/ssh-remote+…`)
