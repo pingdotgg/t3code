@@ -315,7 +315,8 @@ function SidebarUpdateControl() {
               aria-label={tooltip}
               aria-disabled={isInteractionDisabled || undefined}
               className={cn(
-                "inline-flex size-8 items-center justify-center rounded-[var(--control-radius)] outline-hidden ring-ring transition-colors focus-visible:ring-2",
+                "inline-flex size-8 items-center justify-center outline-hidden ring-ring transition-colors focus-visible:ring-2",
+                showUpdateDetails ? "rounded-full" : "rounded-[var(--control-radius)]",
                 isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
                 showUpdateIconState
                   ? cn(
