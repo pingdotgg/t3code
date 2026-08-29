@@ -1003,8 +1003,11 @@ export const make = Effect.gen(function* () {
               expiresAt: DateTime.toUtc(session.expiresAt ?? REUSABLE_DEV_SESSION_EXPIRES_AT),
             }) satisfies AuthPairingCredentialResult,
         ),
-        Effect.catchIf(SessionStore.isSessionCredentialInvalidError, () => fallback),
-        Effect.mapError((cause) => new ServerAuthPairingLinkCreationError({ cause })),
+        Effect.catch((cause) =>
+          SessionStore.isSessionCredentialInvalidError(cause)
+            ? fallback
+            : Effect.fail(new ServerAuthPairingLinkCreationError({ cause })),
+        ),
         Effect.withSpan("EnvironmentAuth.issueStartupPairingCredential"),
       );
     };
