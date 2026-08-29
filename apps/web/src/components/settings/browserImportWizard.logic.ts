@@ -58,9 +58,13 @@ export type ImportOutcome =
  */
 export type WizardStep =
   | { readonly step: "quit" }
-  | { readonly step: "fullDiskAccess"; readonly resume: "configure" | "import" }
+  | {
+      readonly step: "fullDiskAccess";
+      readonly resume: "configure" | "import";
+      readonly checked?: boolean;
+    }
   | { readonly step: "configure" }
-  | { readonly step: "checking" }
+  | { readonly step: "checking"; readonly check: "browser" | "fullDiskAccess" }
   | { readonly step: "importing" }
   | {
       readonly step: "done";
@@ -116,6 +120,12 @@ export function outcomeToStep(outcome: ImportOutcome): WizardStep {
 export function refreshedSourceStep(source: BrowserImportSource | undefined): WizardStep {
   if (source === undefined) return { step: "blocked", reason: "unknownSource" };
   return initialWizardStep(source);
+}
+
+/** A denied FDA recheck returns to the permission step with visible feedback. */
+export function fullDiskAccessRecheckStep(source: BrowserImportSource | undefined): WizardStep {
+  const next = refreshedSourceStep(source);
+  return next.step === "fullDiskAccess" ? { ...next, checked: true } : next;
 }
 
 /** Preserve the chosen source profile when a post-quit refresh still lists it. */
