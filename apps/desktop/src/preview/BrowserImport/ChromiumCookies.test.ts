@@ -11,10 +11,17 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { readChromiumCookieDatabase } from "./ChromiumCookies.ts";
 import { cookieScope } from "./CookieDatabase.ts";
 
-const encryptV10 = (value: string | Buffer, key: Buffer): Uint8Array => {
+const encryptChromium = (
+  prefix: "v10" | "v11",
+  value: string | Buffer,
+  key: Buffer,
+): Uint8Array => {
   const cipher = NodeCrypto.createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
-  return Buffer.concat([Buffer.from("v10"), cipher.update(value), cipher.final()]);
+  return Buffer.concat([Buffer.from(prefix), cipher.update(value), cipher.final()]);
 };
+
+const encryptV10 = (value: string | Buffer, key: Buffer): Uint8Array =>
+  encryptChromium("v10", value, key);
 
 describe("cookieScope", () => {
   it("keeps a host-only cookie host-only", () => {
@@ -141,6 +148,52 @@ describe("readChromiumCookieDatabase", () => {
       ]);
       expect(result.undecryptable).toBe(2);
       expect(result.undecryptableHosts).toEqual(["wrong.example", "short.example"]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("decrypts mixed v10 and v11 cookies with their respective keys", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-chromium-cookies-",
+      });
+      const filename = `${directory}/Cookies`;
+      const cbcV10 = Buffer.from("0123456789abcdef");
+      const cbcV11 = Buffer.from("fedcba9876543210");
+      const boundValue = (host: string, value: string) =>
+        Buffer.concat([NodeCrypto.createHash("sha256").update(host).digest(), Buffer.from(value)]);
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`create table meta (key text primary key, value text not null)`;
+        yield* sql`insert into meta values ('version', '24')`;
+        yield* sql`
+          create table cookies (
+            host_key text not null, name text not null, value text not null,
+            encrypted_value blob not null, path text not null, expires_utc integer not null,
+            is_secure integer not null, is_httponly integer not null, samesite integer not null,
+            top_frame_site_key text not null default ''
+          )
+        `;
+        yield* sql`insert into cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite) values
+          ('v10.example', 'v10-cookie', '', ${encryptChromium("v10", boundValue("v10.example", "v10 value"), cbcV10)}, '/', 0, 1, 0, 0)`;
+        yield* sql`insert into cookies (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite) values
+          ('v11.example', 'v11-cookie', '', ${encryptChromium("v11", boundValue("v11.example", "v11 value"), cbcV11)}, '/', 0, 1, 0, 0)`;
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+      const complete = yield* readChromiumCookieDatabase(filename, { cbcV10, cbcV11 }, "linux");
+      expect(complete.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
+        { name: "v10-cookie", value: "v10 value" },
+        { name: "v11-cookie", value: "v11 value" },
+      ]);
+      expect(complete.undecryptable).toBe(0);
+
+      const v10Only = yield* readChromiumCookieDatabase(filename, { cbcV10 }, "linux");
+      expect(v10Only.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
+        { name: "v10-cookie", value: "v10 value" },
+      ]);
+      expect(v10Only.undecryptable).toBe(1);
+      expect(v10Only.undecryptableHosts).toEqual(["v11.example"]);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
