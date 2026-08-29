@@ -1461,12 +1461,14 @@ function renderFeedEntry(
         })}
         {showAssistantMeta ? (
           <View className="mt-1 flex-row items-center gap-1">
-            <AssistantForkButton
-              environmentId={props.environmentId}
-              iconColor={iconSubtleColor}
-              projectedItem={message.projectedItem}
-              sourceTitle={props.threadTitle}
-            />
+            {message.projectedItem ? (
+              <AssistantForkButton
+                environmentId={props.environmentId}
+                iconColor={iconSubtleColor}
+                projectedItem={message.projectedItem}
+                sourceTitle={props.threadTitle}
+              />
+            ) : null}
             <CopyTextButton
               accessibilityLabel="Copy message"
               text={renderedText}

@@ -14,13 +14,14 @@ import type {
   MessageId,
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
+  OrchestrationMessage,
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItem,
   OrchestrationV2UserMessageInputIntent,
   RunId,
-  ThreadId,
 } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
@@ -77,7 +78,7 @@ export interface ThreadFeedMessage {
   readonly sourceThreadId: ThreadId;
   readonly createdAt: string;
   readonly updatedAt: string;
-  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+  readonly projectedItem?: OrchestrationV2ProjectedTurnItem;
 }
 
 type RawThreadFeedEntry =
@@ -753,6 +754,9 @@ export function buildPendingUserInputAnswers(
  */
 export function buildThreadFeed(
   visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  options?: {
+    readonly localMessages?: ReadonlyArray<OrchestrationMessage>;
+  },
 ): ThreadFeedEntry[] {
   const entries: RawThreadFeedEntry[] = [];
   for (const row of visibleTurnItems) {
@@ -800,6 +804,25 @@ export function buildThreadFeed(
       createdAt,
       runId: item.runId,
       activity,
+    });
+  }
+  for (const message of options?.localMessages ?? []) {
+    entries.push({
+      type: "message",
+      id: message.id,
+      createdAt: message.createdAt,
+      message: {
+        id: message.id,
+        role: message.role === "assistant" ? "assistant" : "user",
+        text: message.text,
+        attachments: message.attachments ?? [],
+        runId: null,
+        streaming: message.streaming,
+        visibility: "local",
+        sourceThreadId: ThreadId.make("local-feedback"),
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
+      },
     });
   }
   return groupAdjacentActivities(entries);

@@ -94,6 +94,32 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it("adds local feedback messages to an otherwise server-authored feed", () => {
+    const feed = buildThreadFeed([], {
+      localMessages: [
+        {
+          id: MessageId.make("feedback-local"),
+          role: "assistant",
+          text: "Feedback sent to OpenAI.\n\nThread ID: `codex-thread-1`",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-08-29T00:00:00.000Z",
+          updatedAt: "2026-08-29T00:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(feed).toHaveLength(1);
+    expect(feed[0]).toMatchObject({
+      type: "message",
+      message: {
+        id: "feedback-local",
+        role: "assistant",
+        text: expect.stringContaining("codex-thread-1"),
+      },
+    });
+  });
+
   it("keeps prominent activity visible while it is running", () => {
     expect(
       threadFeedActivityIsVisible({ prominent: true, status: "neutral", toolLike: true }),
