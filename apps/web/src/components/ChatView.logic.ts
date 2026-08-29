@@ -39,6 +39,19 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function shouldMarkThreadCompletionVisited(input: {
+  readonly completedAt: string | null | undefined;
+  readonly isAtTimelineEnd: boolean;
+  readonly isPageForeground: boolean;
+}): boolean {
+  return (
+    input.completedAt != null &&
+    Number.isFinite(Date.parse(input.completedAt)) &&
+    input.isAtTimelineEnd &&
+    input.isPageForeground
+  );
+}
+
 export function shouldDockDraftHeroForSubmission(input: {
   isDraftHeroState: boolean;
   activeThreadKey: string | null;

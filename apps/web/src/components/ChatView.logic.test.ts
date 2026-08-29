@@ -34,6 +34,7 @@ import {
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   shouldDockDraftHeroForSubmission,
+  shouldMarkThreadCompletionVisited,
   shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
@@ -44,6 +45,33 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("completion visit visibility", () => {
+  const visibleCompletion = {
+    completedAt: now,
+    isAtTimelineEnd: true,
+    isPageForeground: true,
+  };
+
+  it("marks a completion visited only when the latest reply is visible", () => {
+    expect(shouldMarkThreadCompletionVisited(visibleCompletion)).toBe(true);
+    expect(
+      shouldMarkThreadCompletionVisited({ ...visibleCompletion, isAtTimelineEnd: false }),
+    ).toBe(false);
+    expect(
+      shouldMarkThreadCompletionVisited({ ...visibleCompletion, isPageForeground: false }),
+    ).toBe(false);
+  });
+
+  it("rejects absent and malformed completion timestamps", () => {
+    expect(shouldMarkThreadCompletionVisited({ ...visibleCompletion, completedAt: null })).toBe(
+      false,
+    );
+    expect(
+      shouldMarkThreadCompletionVisited({ ...visibleCompletion, completedAt: "not-a-date" }),
+    ).toBe(false);
+  });
+});
 
 describe("draft hero submission transition", () => {
   it("does not dock the composer before a background submission", () => {

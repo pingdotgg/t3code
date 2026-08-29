@@ -13,6 +13,11 @@ request merges if **Auto-settle merged threads** is enabled.
 When you un-settle a thread, it returns to the top of the active list so you can find it right
 away. Its timestamps do not change. Other threads keep their positions.
 
+When an agent finishes after you leave a thread, the sidebar shows a **New reply** chip and a
+highlighted card. The chip appears alongside statuses such as **Needs input**, so a reply does not
+hide what the agent is waiting for. It clears when T3 Code is in the foreground and you view the
+newest message. Choose **Mark unread** from the thread menu to bring the indicator back.
+
 Right-click a pull request link in a thread and choose **Link to thread** to show that pull request
 in the sidebar. The thread settles when the linked pull request merges if **Auto-settle merged
 threads** is enabled. Right-click the same link and choose **Unlink from thread** to remove it.

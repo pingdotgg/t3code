@@ -348,6 +348,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   shouldDockDraftHeroForSubmission,
+  shouldMarkThreadCompletionVisited,
   shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
@@ -1508,6 +1509,13 @@ function ChatViewContent(props: ChatViewProps) {
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   const [composerOverlayHeight, setComposerOverlayHeight] = useState(0);
   const isAtEndRef = useRef(true);
+  const [isAtTimelineEnd, setIsAtTimelineEnd] = useState(false);
+  const [isPageForeground, setIsPageForeground] = useState(
+    () =>
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible" &&
+      document.hasFocus(),
+  );
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
@@ -1806,19 +1814,44 @@ function ChatViewContent(props: ChatViewProps) {
   const activeRunningTurnId =
     (activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null) ??
     (activeLatestTurn?.state === "running" ? activeLatestTurn.turnId : null);
-  // Reading a finished thread clears the sidebar's Done badge. The visit is
-  // stamped at the turn's completion time — not now/updatedAt — so it clears
-  // exactly the completion the user is looking at: a wake or completion that
-  // lands later still gets its signal (markThreadVisited never moves the
-  // timestamp backwards).
+  useEffect(() => {
+    const syncPageForeground = () => {
+      setIsPageForeground(document.visibilityState === "visible" && document.hasFocus());
+    };
+    window.addEventListener("focus", syncPageForeground);
+    window.addEventListener("blur", syncPageForeground);
+    document.addEventListener("visibilitychange", syncPageForeground);
+    return () => {
+      window.removeEventListener("focus", syncPageForeground);
+      window.removeEventListener("blur", syncPageForeground);
+      document.removeEventListener("visibilitychange", syncPageForeground);
+    };
+  }, []);
+
+  // A completion is read only when the latest reply is actually on screen.
+  // Keeping a thread routed in a background window, or viewing older history,
+  // must not silently consume its New reply signal. The visit is stamped at
+  // the completion time so a later completion can still raise attention.
   useEffect(() => {
     const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
+    if (
+      !serverThread?.id ||
+      completedAt == null ||
+      !shouldMarkThreadCompletionVisited({
+        completedAt,
+        isAtTimelineEnd,
+        isPageForeground,
+      })
+    ) {
+      return;
+    }
     markThreadVisited(
       scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
       completedAt,
     );
   }, [
+    isAtTimelineEnd,
+    isPageForeground,
     markThreadVisited,
     serverThread?.environmentId,
     serverThread?.id,
@@ -4261,6 +4294,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, []);
 
   const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
+    setIsAtTimelineEnd(isAtEnd);
     if (
       !isAtEnd &&
       liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
@@ -4344,6 +4378,9 @@ function ChatViewContent(props: ChatViewProps) {
   useEffect(() => {
     setPullRequestDialogState(null);
     isAtEndRef.current = true;
+    // Wait for the newly mounted timeline to report its real position before
+    // consuming a completion. The previous thread's end state is irrelevant.
+    setIsAtTimelineEnd(false);
     timelineScrollModeRef.current = "following-end";
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
     setTimelineLiveFollowEnabled(true);
@@ -6075,6 +6112,13 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        // Seed the read marker from the user's own message. If they leave the
+        // thread before the agent finishes, the later completion now has a
+        // stable baseline and can surface as New reply even on a fresh thread.
+        markThreadVisited(
+          scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+          messageCreatedAt,
+        );
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
