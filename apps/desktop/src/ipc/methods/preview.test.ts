@@ -46,9 +46,21 @@ describe("preview IPC methods", () => {
     const first = PreviewIpc.resolvePartitionScope("a", "b::c");
     const second = PreviewIpc.resolvePartitionScope("a::b", "c");
 
-    expect(first).toEqual({ scope: "a::b%3A%3Ac", persistent: true, namespace: "profile" });
-    expect(second).toEqual({ scope: "a%3A%3Ab::c", persistent: true, namespace: "profile" });
+    expect(first).toEqual({ scope: '["a","b::c"]', persistent: true, namespace: "profile" });
+    expect(second).toEqual({ scope: '["a::b","c"]', persistent: true, namespace: "profile" });
     expect(first.scope).not.toBe(second.scope);
+  });
+
+  it("preserves lone surrogates without collapsing them to replacement characters", () => {
+    const highSurrogate = PreviewIpc.resolvePartitionScope("environment", "profile-\ud800");
+    const lowSurrogate = PreviewIpc.resolvePartitionScope("environment", "profile-\udc00");
+    const replacement = PreviewIpc.resolvePartitionScope("environment", "profile-�");
+
+    expect(highSurrogate.scope).toBe('["environment","profile-\\ud800"]');
+    expect(lowSurrogate.scope).toBe('["environment","profile-\\udc00"]');
+    expect(highSurrogate.scope).not.toBe(lowSurrogate.scope);
+    expect(highSurrogate.scope).not.toBe(replacement.scope);
+    expect(lowSurrogate.scope).not.toBe(replacement.scope);
   });
 
   it("keeps the legacy default partition scope and incognito persistence", () => {
@@ -62,7 +74,7 @@ describe("preview IPC methods", () => {
     expect(
       PreviewIpc.resolvePartitionScope("environment::legacy", INCOGNITO_BROWSER_PROFILE_ID),
     ).toEqual({
-      scope: "environment%3A%3Alegacy::incognito",
+      scope: '["environment::legacy","incognito"]',
       persistent: false,
       namespace: "profile",
     });

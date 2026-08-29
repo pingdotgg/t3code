@@ -235,10 +235,11 @@ export function resolvePartitionScope(
   if (profileId === undefined || profileId === DEFAULT_BROWSER_PROFILE_ID) {
     return { scope: environmentId, persistent: true };
   }
-  // Encode each component independently so delimiters inside either id cannot
-  // make two distinct pairs hash to the same Electron partition.
+  // JSON's tuple framing is injective for strings, including lone UTF-16
+  // surrogates (which it escapes). URI encoding throws on those supported ids,
+  // while replacing them with U+FFFD would collapse distinct identities.
   return {
-    scope: `${encodeURIComponent(environmentId)}::${encodeURIComponent(profileId)}`,
+    scope: JSON.stringify([environmentId, profileId]),
     persistent: profileId !== INCOGNITO_BROWSER_PROFILE_ID,
     namespace: "profile" as const,
   };
