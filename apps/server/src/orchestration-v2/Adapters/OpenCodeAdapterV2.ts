@@ -47,6 +47,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -110,6 +111,31 @@ export const OPENCODE_DRIVER_KIND = OPENCODE_PROVIDER;
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_DRIVER_KIND);
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettingsSchema)({});
+
+let openCodeMessageIdEpochMillis = -1;
+let openCodeMessageIdCounter = 0;
+
+const makeOpenCodeMessageId = Effect.fnUntraced(function* () {
+  const epochMillis = DateTime.toEpochMillis(yield* DateTime.now);
+  if (epochMillis !== openCodeMessageIdEpochMillis) {
+    openCodeMessageIdEpochMillis = epochMillis;
+    openCodeMessageIdCounter = 0;
+  }
+  openCodeMessageIdCounter += 1;
+  const encodedTime = BigInt.asUintN(
+    48,
+    BigInt(epochMillis) * 0x1000n + BigInt(openCodeMessageIdCounter),
+  )
+    .toString(16)
+    .padStart(12, "0");
+  const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  const random = (yield* Effect.forEach(Array.from({ length: 28 }), () =>
+    Random.nextIntBetween(0, alphabet.length),
+  ))
+    .map((index) => alphabet[index])
+    .join("");
+  return `msg_${encodedTime}${random}`;
+});
 
 /**
  * OpenCode's session, message, part, and interaction-request identifiers are
@@ -234,6 +260,7 @@ interface ActiveOpenCodeTurn {
   readonly providerTurn: OrchestrationV2ProviderTurn;
   nextItemOrdinal: number;
   nativeUserMessageId: string | null;
+  admissionMessageId: string | null;
   interrupted: boolean;
   finalized: boolean;
   planId: PlanId | null;
@@ -2056,6 +2083,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             providerTurn,
             nextItemOrdinal: 1,
             nativeUserMessageId: message.id,
+            admissionMessageId: null,
             interrupted: false,
             finalized: false,
             planId: null,
@@ -2170,11 +2198,14 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           if (turn === null && state.parentSubagent !== null && isNewUserMessage) {
             turn = yield* createChildTurn(state, message);
           }
-          if (turn !== null && turn.nativeUserMessageId === null) {
+          const matchesAdmission =
+            turn !== null &&
+            (turn.admissionMessageId === null || turn.admissionMessageId === message.id);
+          if (turn !== null && matchesAdmission && turn.nativeUserMessageId === null) {
             turn.nativeUserMessageId = message.id;
             yield* emitProviderTurn(state, turn, "running", null);
           }
-          if (turn !== null && turn.admissionPending) {
+          if (turn !== null && matchesAdmission && turn.admissionPending) {
             if (advanceOpenCodePromptAdmission(turn, "user-message") === "reconcile-idle") {
               yield* reconcilePromptAdmission(state, turn);
             }
@@ -2328,12 +2359,6 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               const state = threads.get(event.properties.sessionID);
               if (state === undefined) return;
               if (event.properties.status.type === "busy") {
-                if (state.activeTurn?.admissionPending) {
-                  const turn = state.activeTurn;
-                  if (advanceOpenCodePromptAdmission(turn, "busy") === "reconcile-idle") {
-                    yield* reconcilePromptAdmission(state, turn);
-                  }
-                }
                 yield* updateProviderThread(state, { status: "active" });
                 return;
               }
@@ -2704,6 +2729,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 providerTurn,
                 nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
                 nativeUserMessageId: null,
+                admissionMessageId: yield* makeOpenCodeMessageId(),
                 interrupted: false,
                 finalized: false,
                 planId: null,
@@ -2735,6 +2761,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 "session.promptAsync",
                 {
                   sessionID: sessionId,
+                  messageID: turn.admissionMessageId!,
                   model: parsedModel,
                   ...(agent === undefined ? {} : { agent }),
                   ...(variant === undefined ? {} : { variant }),
@@ -2746,6 +2773,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 () =>
                   client.session.promptAsync({
                     sessionID: sessionId,
+                    messageID: turn.admissionMessageId!,
                     model: parsedModel,
                     ...(agent === undefined ? {} : { agent }),
                     ...(variant === undefined ? {} : { variant }),
@@ -2825,6 +2853,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 ...files,
               ];
               turn.admissionGeneration = state.nextAdmissionGeneration++;
+              turn.admissionMessageId = yield* makeOpenCodeMessageId();
               turn.admissionPending = true;
               turn.admissionAccepted = false;
               turn.admissionMessageObserved = false;
@@ -2832,10 +2861,16 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               turn.admissionSettled = Deferred.makeUnsafe<void>();
               yield* sdkCall(
                 "session.promptAsync",
-                { sessionID: sessionId, model: parsedModel, parts },
+                {
+                  sessionID: sessionId,
+                  messageID: turn.admissionMessageId,
+                  model: parsedModel,
+                  parts,
+                },
                 () =>
                   client.session.promptAsync({
                     sessionID: sessionId,
+                    messageID: turn.admissionMessageId!,
                     model: parsedModel,
                     parts,
                   }),
