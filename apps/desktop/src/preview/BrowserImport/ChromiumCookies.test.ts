@@ -92,7 +92,7 @@ describe("readChromiumCookieDatabase", () => {
         `;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
 
-      const result = yield* readChromiumCookieDatabase(filename, key, "darwin");
+      const result = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
 
       expect(result.undecryptable).toBe(0);
       expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
@@ -134,7 +134,7 @@ describe("readChromiumCookieDatabase", () => {
           ('short.example', 'short', '', ${encryptV10("short value", key)}, '/', 0, 1, 0, 0)`;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
 
-      const result = yield* readChromiumCookieDatabase(filename, key, "darwin");
+      const result = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
 
       expect(result.cookies.map(({ name, value }) => ({ name, value }))).toEqual([
         { name: "valid", value: "kept" },
@@ -170,7 +170,7 @@ describe("readChromiumCookieDatabase", () => {
           ('legacy.example', 'legacy', '', ${encryptV10(value, key)}, '/', 0, 0, 0, 0)`;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
 
-      const result = yield* readChromiumCookieDatabase(filename, key, "darwin");
+      const result = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
       expect(result.cookies[0]?.value).toBe(value);
       expect(result.undecryptable).toBe(0);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -192,7 +192,7 @@ describe("readChromiumCookieDatabase", () => {
 
       const error = yield* readChromiumCookieDatabase(
         filename,
-        Buffer.from("0123456789abcdef"),
+        { cbcV10: Buffer.from("0123456789abcdef") },
         "darwin",
       ).pipe(Effect.flip);
 
@@ -225,8 +225,8 @@ describe("readChromiumCookieDatabase", () => {
           ('legacy.example', 'legacy', '', ${Buffer.from("legacy cleartext")}, '/', 0, 0, 0, 0)`;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
 
-      const mac = yield* readChromiumCookieDatabase(filename, key, "darwin");
-      const linux = yield* readChromiumCookieDatabase(filename, key, "linux");
+      const mac = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
+      const linux = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "linux");
 
       expect(mac.cookies[0]?.value).toBe("legacy cleartext");
       expect(mac.undecryptable).toBe(0);
@@ -279,8 +279,8 @@ describe("readChromiumCookieDatabase", () => {
           ('partitioned.example', 'partitioned', 'must skip', ${new Uint8Array()}, '/', 0, 1, 0, 0, 'https://top.example')`;
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: chipsFilename })));
 
-      const legacy = yield* readChromiumCookieDatabase(legacyFilename, key, "darwin");
-      const chips = yield* readChromiumCookieDatabase(chipsFilename, key, "darwin");
+      const legacy = yield* readChromiumCookieDatabase(legacyFilename, { cbcV10: key }, "darwin");
+      const chips = yield* readChromiumCookieDatabase(chipsFilename, { cbcV10: key }, "darwin");
 
       expect(legacy.cookies.map(({ name }) => name)).toEqual(["legacy"]);
       expect(legacy.undecryptable).toBe(0);

@@ -183,8 +183,7 @@ export function decryptChromiumValue(
 
 /** Reads and decodes one snapshotted Chromium cookie database. */
 export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiumCookieDatabase")(
-  function* (snapshotPath: string, keys: ChromiumKeyMaterial | Buffer, platform: NodeJS.Platform) {
-    const keyMaterial = Buffer.isBuffer(keys) ? { cbcV10: keys } : keys;
+  function* (snapshotPath: string, keys: ChromiumKeyMaterial, platform: NodeJS.Platform) {
     const result = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const schemaVersion = yield* sql`select value from meta where key = 'version' limit 1`.pipe(
@@ -216,7 +215,7 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
           ? row.value
           : decryptChromiumValue(
               row.encrypted_value,
-              keyMaterial,
+              keys,
               row.host_key,
               result.schemaVersion,
               platform,
