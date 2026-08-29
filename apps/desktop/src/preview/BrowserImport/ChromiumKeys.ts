@@ -19,7 +19,8 @@
  */
 import * as Keyring from "@napi-rs/keyring";
 import * as NodeCrypto from "node:crypto";
-import * as NodeProcess from "node:process";
+
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -130,11 +131,12 @@ export const readLinuxSecret = Effect.fn("ChromiumKeys.readLinuxSecret")(functio
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const environment = yield* HostProcessEnvironment;
       const handle = yield* spawner
         .spawn(
           ChildProcess.make("secret-tool", ["lookup", "application", application], {
             stdin: "ignore",
-            env: { ...NodeProcess.env, LC_ALL: "C" },
+            env: { ...environment, LC_ALL: "C" },
           }),
         )
         .pipe(Effect.mapError((cause) => new ChromiumKeyError({ reason: "readFailed", cause })));

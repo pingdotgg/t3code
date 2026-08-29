@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { describe, expect, it } from "@effect/vitest";
-import * as NodeProcess from "node:process";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -115,7 +115,8 @@ describe("Linux Chromium secrets", () => {
       expect(error).toBeInstanceOf(ChromiumKeyError);
       expect(error.reason).toBe("needsKeychainApproval");
       expect(captured?.options.env?.LC_ALL).toBe("C");
-      expect(captured?.options.env?.PATH).toBe(NodeProcess.env.PATH);
+      expect(captured?.options.env?.PATH).toBe("/synthetic/bin");
+      expect(captured?.options.env?.SESSION_MARKER).toBe("kept");
     }).pipe(
       Effect.provide(
         secretToolLayer({
@@ -124,6 +125,11 @@ describe("Linux Chromium secrets", () => {
           capture: (value) => (captured = value),
         }),
       ),
+      Effect.provideService(HostProcessEnvironment, {
+        PATH: "/synthetic/bin",
+        SESSION_MARKER: "kept",
+        LC_ALL: "localized",
+      }),
     );
   });
 
