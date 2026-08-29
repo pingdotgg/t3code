@@ -1549,17 +1549,16 @@ const make = Effect.gen(function* () {
               );
             }
             if (
-              resolvedBranch === null &&
               requestedTransitionCommit !== null &&
               actualCommitExit.value.commitSha !== requestedTransitionCommit.commitSha
             ) {
               return yield* failure(
                 "partial_failure",
-                `Git detached HEAD while selecting '${requestedBranch}', but HEAD does not match the requested remote commit. The durable binding was not changed.`,
+                `Git selected '${requestedBranch}', but HEAD no longer matches the resolved target commit. The durable binding was not changed.`,
                 {
                   workspacePath: targetWorkspacePath,
                   recordedBranch: projection.thread.branch,
-                  actualBranch: null,
+                  actualBranch: actual.refName,
                   rollback: "not_possible",
                 },
               );

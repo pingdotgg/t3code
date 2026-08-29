@@ -2807,6 +2807,33 @@ describe("t3_thread_checkout", () => {
     });
   });
 
+  it.effect("does not claim a local switch changed before its first commit capture", () => {
+    const harness = makeHarness({
+      thread: { branch: "dev", worktreePath: null },
+      refs: rootRefs,
+      workspaceStatuses: { [workspaceRoot]: { branch: "dev" } },
+      dispatchFails: true,
+      resolvedCommits: ["before", "requested", "intervening", "intervening"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        runCheckout(harness, {
+          target: { type: "branch", branch: "feature/checkout" },
+        }),
+      );
+      expectTypedFailure(exit, {
+        _tag: "WorktreeMcpFailure",
+        code: "partial_failure",
+        partial: {
+          actualBranch: "feature/checkout",
+          rollback: "not_possible",
+        },
+      });
+      expect(harness.switchRef).toHaveBeenCalledTimes(1);
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    });
+  });
+
   for (const [change, options] of [
     ["a new commit", { resolvedCommits: ["before", "selected", "selected", "intervening"] }],
     ["new dirty files", { dirtyOnLocalStatusCall: 5 }],
